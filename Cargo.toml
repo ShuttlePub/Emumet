@@ -6,6 +6,6 @@ members = [
   "server"
 ]
 
-[workspace.package]
+[workspace.dependencies]
 anyhow = "1"
 thiserror = "1"
