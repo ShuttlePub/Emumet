@@ -1,0 +1,11 @@
+[workspace]
+members = [
+  "application",
+  "driver",
+  "kernel",
+  "server"
+]
+
+[workspace.package]
+anyhow = "1"
+thiserror = "1"
