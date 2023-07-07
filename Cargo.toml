@@ -9,3 +9,10 @@ members = [
 [workspace.dependencies]
 anyhow = "1"
 thiserror = "1"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["turtton"]
+description = "AccountService for ShuttlePub"
+documentation = "https://github.com/ShuttlePub/Emumet"
