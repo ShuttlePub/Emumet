@@ -1,0 +1,17 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    uses: ShuttlePub/workflows/.github/workflows/check.yml@main
+  coverage:
+    uses: ShuttlePub/workflows/.github/workflows/coverage.yml@main
+    secrets: inherit
