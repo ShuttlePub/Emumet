@@ -10,6 +10,8 @@ authors.workspace = true
 rand = "0.8"
 destructure = "0.1.2"
 serde = { version = "1", features = ["derive"] }
+uuid = { version = "1.4", features = ["serde", "v4"] }
+time = { version = "0.3", features = ["serde"] }
 
 async-trait = "0.1"
 anyhow = { workspace = true }
@@ -19,3 +21,5 @@ thiserror = { workspace = true }
 interface = []
 prelude = []
 default = ["prelude", "interface"]
+uuid = []
+time = []
