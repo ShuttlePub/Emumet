@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 pub struct AccessToken(String);
 
 impl AccessToken {
-    fn new(token: impl Into<String>) -> Self {
+    pub fn new(token: impl Into<String>) -> Self {
         Self(token.into())
     }
 }

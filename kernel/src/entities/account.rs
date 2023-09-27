@@ -1,37 +1,43 @@
 mod id;
-mod host;
-mod access_token;
-mod refresh_token;
+mod is_bot;
+mod name;
 
 use destructure::Destructure;
 use serde::Deserialize;
 use serde::Serialize;
+use time::OffsetDateTime;
+use uuid::Uuid;
 
 pub use self::id::*;
-pub use self::host::*;
-pub use self::access_token::*;
-pub use self::refresh_token::*;
+pub use self::is_bot::*;
+pub use self::name::*;
+
+use super::StellarAccountId;
+use super::time::CreatedAt;
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, Destructure)]
 pub struct Account {
     id: AccountId,
-    host: AccountHost,
-    access_token: AccessToken,
-    refresh_token: RefreshToken,
+    stellar_id: StellarAccountId,
+    name: AccountName,
+    is_bot: IsBot,
+    created_at: CreatedAt<Account>
 }
 
 impl Account {
     pub fn new(
-        id: impl Into<AccountId>,
-        host: impl Into<AccountHost>,
-        access_token: impl Into<AccessToken>,
-        refresh_token: impl Into<RefreshToken>,
+        id: impl Into<i64>,
+        stellar_id: impl Into<Uuid>,
+        name: impl Into<String>,
+        is_bot: impl Into<bool>,
+        created_at: impl Into<OffsetDateTime>,
     ) -> Self {
         Self {
-            id: id.into(),
-            host: host.into(),
-            access_token: access_token.into(),
-            refresh_token: refresh_token.into(),
+            id: AccountId::new(id),
+            stellar_id: StellarAccountId::new(stellar_id),
+            name: AccountName::new(name),
+            is_bot: IsBot::new(is_bot),
+            created_at: CreatedAt::new(created_at),
         }
     }
 
@@ -39,15 +45,19 @@ impl Account {
         &self.id
     }
 
-    pub fn host(&self) -> &AccountHost {
-        &self.host
+    pub fn stellar_id(&self) -> &StellarAccountId {
+        &self.stellar_id
     }
 
-    pub fn access_token(&self) -> &AccessToken {
-        &self.access_token
+    pub fn name(&self) -> &AccountName {
+        &self.name
     }
 
-    pub fn refresh_token(&self) -> &RefreshToken {
-        &self.refresh_token
+    pub fn is_bot(&self) -> &IsBot {
+        &self.is_bot
+    }
+
+    pub fn created_at(&self) -> &CreatedAt<Account> {
+        &self.created_at
     }
 }

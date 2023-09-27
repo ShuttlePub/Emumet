@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct RefreshToken(String);
 
 impl RefreshToken {
-    fn new(token: impl Into<String>) -> Self {
+    pub fn new(token: impl Into<String>) -> Self {
         Self(token.into())
     }
 }

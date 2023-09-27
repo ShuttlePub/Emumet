@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct AccountHost(String);
 
 impl AccountHost {
-    fn new(host: impl Into<String>) -> Self {
+    pub fn new(host: impl Into<String>) -> Self {
         Self(host.into())
     }
 }
