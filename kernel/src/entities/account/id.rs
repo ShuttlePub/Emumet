@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-struct AccountId(i64);
+pub struct AccountId(i64);
 
 impl AccountId {
     pub fn new(id: impl Into<i64>) -> Self {
