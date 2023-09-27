@@ -1,17 +1,17 @@
-mod id;
 mod access_token;
-mod refresh_token;
 mod host;
+mod id;
+mod refresh_token;
 
 use destructure::Destructure;
 use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
 
-pub use self::id::*;
 pub use self::access_token::*;
-pub use self::refresh_token::*;
 pub use self::host::*;
+pub use self::id::*;
+pub use self::refresh_token::*;
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, Destructure)]
 pub struct StellarAccount {

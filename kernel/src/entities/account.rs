@@ -12,8 +12,8 @@ pub use self::id::*;
 pub use self::is_bot::*;
 pub use self::name::*;
 
-use super::StellarAccountId;
 use super::time::CreatedAt;
+use super::StellarAccountId;
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, Destructure)]
 pub struct Account {
@@ -21,7 +21,7 @@ pub struct Account {
     stellar_id: StellarAccountId,
     name: AccountName,
     is_bot: IsBot,
-    created_at: CreatedAt<Account>
+    created_at: CreatedAt<Account>,
 }
 
 impl Account {
