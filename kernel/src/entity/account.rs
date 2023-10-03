@@ -11,8 +11,8 @@ pub use self::domain::*;
 pub use self::is_bot::*;
 pub use self::name::*;
 
-use super::Id;
 use super::common::CreatedAt;
+use super::Id;
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, Destructure)]
 pub struct Account {
