@@ -1,4 +1,4 @@
-mod id;
+mod domain;
 mod is_bot;
 mod name;
 
@@ -6,19 +6,18 @@ use destructure::Destructure;
 use serde::Deserialize;
 use serde::Serialize;
 use time::OffsetDateTime;
-use uuid::Uuid;
 
-pub use self::id::*;
+pub use self::domain::*;
 pub use self::is_bot::*;
 pub use self::name::*;
 
-use super::time::CreatedAt;
-use super::StellarAccountId;
+use super::Id;
+use super::common::CreatedAt;
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, Destructure)]
 pub struct Account {
-    id: AccountId,
-    stellar_id: StellarAccountId,
+    id: Id<Account>,
+    domain: Domain,
     name: AccountName,
     is_bot: IsBot,
     created_at: CreatedAt<Account>,
@@ -27,26 +26,26 @@ pub struct Account {
 impl Account {
     pub fn new(
         id: impl Into<i64>,
-        stellar_id: impl Into<Uuid>,
+        domain: impl Into<String>,
         name: impl Into<String>,
         is_bot: impl Into<bool>,
         created_at: impl Into<OffsetDateTime>,
     ) -> Self {
         Self {
-            id: AccountId::new(id),
-            stellar_id: StellarAccountId::new(stellar_id),
+            id: Id::new(id),
+            domain: Domain::new(domain),
             name: AccountName::new(name),
             is_bot: IsBot::new(is_bot),
             created_at: CreatedAt::new(created_at),
         }
     }
 
-    pub fn id(&self) -> &AccountId {
+    pub fn id(&self) -> &Id<Account> {
         &self.id
     }
 
-    pub fn stellar_id(&self) -> &StellarAccountId {
-        &self.stellar_id
+    pub fn domain(&self) -> &Domain {
+        &self.domain
     }
 
     pub fn name(&self) -> &AccountName {

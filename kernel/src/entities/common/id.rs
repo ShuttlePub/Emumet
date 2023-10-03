@@ -1,21 +1,23 @@
+use std::marker::PhantomData;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AccountId(i64);
+pub struct Id<T>(i64, PhantomData<T>);
 
-impl AccountId {
+impl<T> Id<T> {
     pub fn new(id: impl Into<i64>) -> Self {
-        Self(id.into())
+        Self(id.into(), PhantomData)
     }
 }
 
-impl From<AccountId> for i64 {
-    fn from(value: AccountId) -> Self {
+impl<T> From<Id<T>> for i64 {
+    fn from(value: Id<T>) -> Self {
         value.0
     }
 }
 
-impl AsRef<i64> for AccountId {
+impl<T> AsRef<i64> for Id<T> {
     fn as_ref(&self) -> &i64 {
         &self.0
     }
