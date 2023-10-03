@@ -21,18 +21,18 @@ pub struct Profile {
 
 impl Profile {
     pub fn new(
-        id: impl Into<Id<Account>>,
-        display_name: impl Into<DisplayName>,
-        summary: impl Into<Summary>,
-        icon: impl Into<Icon>,
-        banner: impl Into<Banner>,
+        id: impl Into<i64>,
+        display_name: impl Into<String>,
+        summary: impl Into<String>,
+        icon: impl Into<String>,
+        banner: impl Into<String>,
     ) -> Self {
         Self {
-            id: id.into(),
-            display_name: display_name.into(),
-            summary: summary.into(),
-            icon: icon.into(),
-            banner: banner.into(),
+            id: Id::new(id),
+            display_name: DisplayName::new(display_name),
+            summary: Summary::new(summary),
+            icon: Icon::new(icon),
+            banner: Banner::new(banner),
         }
     }
 
