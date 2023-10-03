@@ -16,7 +16,7 @@ pub struct Profile {
     display_name: DisplayName,
     summary: Summary,
     icon: Icon,
-    banner: Banner
+    banner: Banner,
 }
 
 impl Profile {
@@ -25,14 +25,14 @@ impl Profile {
         display_name: impl Into<DisplayName>,
         summary: impl Into<Summary>,
         icon: impl Into<Icon>,
-        banner: impl Into<Banner>
+        banner: impl Into<Banner>,
     ) -> Self {
         Self {
             id: id.into(),
             display_name: display_name.into(),
             summary: summary.into(),
             icon: icon.into(),
-            banner: banner.into()
+            banner: banner.into(),
         }
     }
 

@@ -11,7 +11,7 @@ pub struct Metadata {
     id: Id<Metadata>,
     account_id: Id<Account>,
     label: Label,
-    content: Content
+    content: Content,
 }
 
 impl Metadata {
@@ -19,13 +19,13 @@ impl Metadata {
         id: impl Into<Id<Metadata>>,
         account_id: impl Into<Id<Account>>,
         label: impl Into<Label>,
-        content: impl Into<Content>
+        content: impl Into<Content>,
     ) -> Self {
         Self {
             id: id.into(),
             account_id: account_id.into(),
             label: label.into(),
-            content: content.into()
+            content: content.into(),
         }
     }
 
