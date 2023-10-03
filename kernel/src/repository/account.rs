@@ -1,4 +1,4 @@
-use crate::{entities::Account, error::KernelError};
+use crate::{entity::Account, error::KernelError};
 
 pub trait AccountRepository: 'static + Sync + Send {
     fn find_by_id(&self, id: impl AsRef<i64>) -> Result<Option<Account>, KernelError>;
