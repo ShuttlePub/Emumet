@@ -1,12 +1,12 @@
-use crate::{entity::Account, error::KernelError};
+use crate::{entity::{Account, Id, AccountName}, error::KernelError};
 
 pub trait AccountRepository: 'static + Sync + Send {
-    fn find_by_id(&self, id: impl AsRef<i64>) -> Result<Option<Account>, KernelError>;
+    fn find_by_id(&self, id: &Id<Account>) -> Result<Option<Account>, KernelError>;
     fn find_by_stellar_id(
         &self,
-        stellar_id: impl AsRef<str>,
+        stellar_id: &Id<Account>,
     ) -> Result<Option<Account>, KernelError>;
-    fn find_by_name(&self, name: impl AsRef<str>) -> Result<Option<Account>, KernelError>;
+    fn find_by_name(&self, name: &AccountName) -> Result<Option<Account>, KernelError>;
     fn save(&self, account: &Account) -> Result<(), KernelError>;
     fn delete(&self, account: &Account) -> Result<(), KernelError>;
 }
