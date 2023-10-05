@@ -5,8 +5,12 @@ use crate::{
 
 #[async_trait::async_trait]
 pub trait StellarEmumetAccountRepository: 'static + Sync + Send {
-    async fn find_by_stellar_id(&self, id: &Id<StellarAccount>) -> Result<Vec<Account>, KernelError>;
-    async fn find_by_emumet_id(&self, id: &Id<Account>) -> Result<Vec<StellarAccount>, KernelError>;
+    async fn find_by_stellar_id(
+        &self,
+        id: &Id<StellarAccount>,
+    ) -> Result<Vec<Account>, KernelError>;
+    async fn find_by_emumet_id(&self, id: &Id<Account>)
+        -> Result<Vec<StellarAccount>, KernelError>;
     async fn save(
         &self,
         stellar_id: &Id<StellarAccount>,

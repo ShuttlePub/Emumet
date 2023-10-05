@@ -1,4 +1,7 @@
-use crate::{entity::{Profile, Account, Id}, error::KernelError};
+use crate::{
+    entity::{Account, Id, Profile},
+    error::KernelError,
+};
 
 #[async_trait::async_trait]
 pub trait ProfileRepository: 'static + Sync + Send {

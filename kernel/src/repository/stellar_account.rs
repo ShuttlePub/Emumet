@@ -5,7 +5,10 @@ use crate::{
 
 #[async_trait::async_trait]
 pub trait StellarAccountRepository: 'static + Sync + Send {
-    async fn find_by_id(&self, id: &Id<StellarAccount>) -> Result<Option<StellarAccount>, KernelError>;
+    async fn find_by_id(
+        &self,
+        id: &Id<StellarAccount>,
+    ) -> Result<Option<StellarAccount>, KernelError>;
     async fn find_by_refresh_token(
         &self,
         token: &RefreshToken,
