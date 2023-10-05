@@ -3,15 +3,16 @@ use crate::{
     error::KernelError,
 };
 
+#[async_trait::async_trait]
 pub trait StellarEmumetAccountRepository: 'static + Sync + Send {
-    fn find_by_stellar_id(&self, id: &Id<StellarAccount>) -> Result<Vec<Account>, KernelError>;
-    fn find_by_emumet_id(&self, id: &Id<Account>) -> Result<Vec<StellarAccount>, KernelError>;
-    fn save(
+    async fn find_by_stellar_id(&self, id: &Id<StellarAccount>) -> Result<Vec<Account>, KernelError>;
+    async fn find_by_emumet_id(&self, id: &Id<Account>) -> Result<Vec<StellarAccount>, KernelError>;
+    async fn save(
         &self,
         stellar_id: &Id<StellarAccount>,
         emumet_id: &Id<Account>,
     ) -> Result<(), KernelError>;
-    fn delete(
+    async fn delete(
         &self,
         stellar_id: &Id<StellarAccount>,
         emumet_id: &Id<Account>,
