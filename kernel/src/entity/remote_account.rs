@@ -1,9 +1,12 @@
 mod url;
 
+use serde::{Deserialize, Serialize};
+
 pub use self::url::*;
 
 use super::Id;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteAccount {
     id: Id<RemoteAccount>,
     url: Url,
