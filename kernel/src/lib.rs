@@ -2,6 +2,13 @@ mod entity;
 mod error;
 mod repository;
 
+#[cfg(feature = "prelude")]
+pub mod prelude {
+    pub mod entity {
+        pub use crate::entity::*;
+    }
+}
+
 #[cfg(feature = "interfaces")]
 pub mod interfaces {
     pub mod repository {
