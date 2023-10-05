@@ -20,6 +20,6 @@ thiserror = { workspace = true }
 [features]
 interface = []
 prelude = []
-default = ["prelude", "interface"]
+default = ["prelude", "interfaces"]
 uuid = []
 time = []
