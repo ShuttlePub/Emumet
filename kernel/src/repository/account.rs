@@ -1,5 +1,5 @@
 use crate::{
-    entity::{Account, AccountName, Id, AccountDomain},
+    entity::{Account, AccountDomain, AccountName, Id, StellarAccount},
     error::KernelError,
 };
 
@@ -8,8 +8,8 @@ pub trait AccountRepository: 'static + Sync + Send {
     async fn find_by_id(&self, id: &Id<Account>) -> Result<Option<Account>, KernelError>;
     async fn find_by_stellar_id(
         &self,
-        stellar_id: &Id<Account>,
-    ) -> Result<Option<Account>, KernelError>;
+        stellar_id: &Id<StellarAccount>,
+    ) -> Result<Vec<Account>, KernelError>;
     async fn find_by_name(&self, name: &AccountName) -> Result<Option<Account>, KernelError>;
     async fn find_by_domain(&self, domain: &AccountDomain) -> Result<Vec<Account>, KernelError>;
     async fn save(&self, account: &Account) -> Result<(), KernelError>;
