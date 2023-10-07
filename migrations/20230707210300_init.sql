@@ -1,7 +1,8 @@
 CREATE TABLE IF NOT EXISTS stellar_accounts
 (
-    id            UUID         NOT NULL PRIMARY KEY,
-    host          VARCHAR(512) NOT NULL PRIMARY KEY,
+    id            BIGSERIAL    NOT NULL PRIMARY KEY,
+    host          VARCHAR(512) NOT NULL,
+    client_id     VARCHAR(512) NOT NULL,
     access_token  VARCHAR(512) NOT NULL,
     refresh_token VARCHAR(512) NOT NULL
 );
@@ -9,12 +10,19 @@ CREATE TABLE IF NOT EXISTS stellar_accounts
 CREATE TABLE IF NOT EXISTS accounts
 (
     id         BIGSERIAL    NOT NULL PRIMARY KEY,
-    stellar_id UUID         NOT NULL PRIMARY KEY,
+    domain     TEXT         NOT NULL,
     name       VARCHAR(512) NOT NULL,
     is_bot     BOOLEAN      NOT NULL,
     created_at TIMESTAMP    NOT NULL,
-
-    FOREIGN KEY (stellar_id) REFERENCES stellar_accounts (id)
+    UNIQUE (domain, name)
+);
+CREATE TABLE IF NOT EXISTS stellar_emumet_accounts
+(
+    stellar_id BIGSERIAL NOT NULL,
+    emumet_id  BIGSERIAL NOT NULL,
+    PRIMARY KEY (stellar_id, emumet_id),
+    FOREIGN KEY (stellar_id) REFERENCES stellar_accounts (id),
+    FOREIGN KEY (emumet_id) REFERENCES accounts (id)
 );
 
 CREATE TABLE IF NOT EXISTS profiles
