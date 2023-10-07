@@ -2,6 +2,8 @@ mod entity;
 mod error;
 mod repository;
 
+pub use self::error::KernelError;
+
 #[cfg(feature = "prelude")]
 pub mod prelude {
     pub mod entity {
