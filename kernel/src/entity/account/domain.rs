@@ -1,21 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Domain(String);
+pub struct AccountDomain(String);
 
-impl Domain {
+impl AccountDomain {
     pub fn new(domain: impl Into<String>) -> Self {
         Self(domain.into())
     }
 }
 
-impl From<Domain> for String {
-    fn from(domain: Domain) -> Self {
+impl From<AccountDomain> for String {
+    fn from(domain: AccountDomain) -> Self {
         domain.0
     }
 }
 
-impl AsRef<str> for Domain {
+impl AsRef<str> for AccountDomain {
     fn as_ref(&self) -> &str {
         &self.0
     }

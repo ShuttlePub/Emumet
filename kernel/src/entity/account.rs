@@ -17,7 +17,7 @@ use super::Id;
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, Destructure)]
 pub struct Account {
     id: Id<Account>,
-    domain: Domain,
+    domain: AccountDomain,
     name: AccountName,
     is_bot: IsBot,
     created_at: CreatedAt<Account>,
@@ -33,7 +33,7 @@ impl Account {
     ) -> Self {
         Self {
             id: Id::new(id),
-            domain: Domain::new(domain),
+            domain: AccountDomain::new(domain),
             name: AccountName::new(name),
             is_bot: IsBot::new(is_bot),
             created_at: CreatedAt::new(created_at),
@@ -44,7 +44,7 @@ impl Account {
         &self.id
     }
 
-    pub fn domain(&self) -> &Domain {
+    pub fn domain(&self) -> &AccountDomain {
         &self.domain
     }
 
