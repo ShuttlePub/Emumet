@@ -8,6 +8,18 @@ pub enum FollowAccount {
     Remote(Id<RemoteAccount>),
 }
 
+impl Into<FollowAccount> for Id<Account> {
+    fn into(self) -> FollowAccount {
+        FollowAccount::Local(self)
+    }
+}
+
+impl Into<FollowAccount> for Id<RemoteAccount> {
+    fn into(self) -> FollowAccount {
+        FollowAccount::Remote(self)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Follow {
     id: Id<Follow>,
