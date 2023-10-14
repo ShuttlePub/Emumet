@@ -1,3 +1,4 @@
+use crate::KernelError;
 use serde::{Deserialize, Serialize};
 
 use super::{Account, Id, RemoteAccount};
@@ -28,11 +29,24 @@ pub struct Follow {
 }
 
 impl Follow {
-    pub fn new(id: Id<Follow>, source: FollowAccount, destination: FollowAccount) -> Self {
-        Self {
-            id,
-            source,
-            destination,
+    pub fn new(
+        id: Id<Follow>,
+        source: FollowAccount,
+        destination: FollowAccount,
+    ) -> Result<Self, KernelError> {
+        match (source, destination) {
+            (source @ FollowAccount::Local(_), destination @ FollowAccount::Local(_)) |
+            (source @ FollowAccount::Remote(_), destination@ FollowAccount::Remote(_)) => {
+                return Err(KernelError::InvalidValue {
+                    method: "Follow::new",
+                    value: format!("source: {:?}, destination: {:?}", source, destination),
+                });
+            }
+            (source, destination) => Ok(Self {
+                id,
+                source,
+                destination,
+            })
         }
     }
 
