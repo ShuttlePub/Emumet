@@ -8,15 +8,15 @@ pub enum FollowAccount {
     Remote(Id<RemoteAccount>),
 }
 
-impl Into<FollowAccount> for Id<Account> {
-    fn into(self) -> FollowAccount {
-        FollowAccount::Local(self)
+impl From<Id<Account>> for FollowAccount {
+    fn from(id: Id<Account>) -> Self {
+        Self::Local(id)
     }
 }
 
-impl Into<FollowAccount> for Id<RemoteAccount> {
-    fn into(self) -> FollowAccount {
-        FollowAccount::Remote(self)
+impl From<Id<RemoteAccount>> for FollowAccount {
+    fn from(id: Id<RemoteAccount>) -> Self {
+        Self::Remote(id)
     }
 }
 
