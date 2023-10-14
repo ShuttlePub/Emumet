@@ -2,9 +2,7 @@ use crate::DriverError;
 use kernel::prelude::entity::{AccountDomain, AccountName, CreatedAt, Id, IsBot, StellarAccount};
 use kernel::KernelError;
 use kernel::{interfaces::repository::AccountRepository, prelude::entity::Account};
-use sqlx::postgres::PgTypeKind::Domain;
 use sqlx::{types::time::OffsetDateTime, PgConnection, Pool, Postgres};
-use std::iter::Map;
 
 #[derive(Debug, Clone)]
 pub struct AccountDatabase {
