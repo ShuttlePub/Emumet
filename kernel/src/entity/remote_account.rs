@@ -13,11 +13,8 @@ pub struct RemoteAccount {
 }
 
 impl RemoteAccount {
-    pub fn new(id: impl Into<i64>, url: impl Into<String>) -> Self {
-        Self {
-            id: Id::new(id),
-            url: Url::new(url),
-        }
+    pub fn new(id: Id<RemoteAccount>, url: Url) -> Self {
+        Self { id, url }
     }
 
     pub fn id(&self) -> &Id<RemoteAccount> {

@@ -22,16 +22,16 @@ pub struct StellarAccount {
 
 impl StellarAccount {
     pub fn new(
-        id: impl Into<i64>,
-        host: impl Into<String>,
-        access_token: impl Into<String>,
-        refresh_token: impl Into<String>,
+        id: Id<StellarAccount>,
+        host: AccountHost,
+        access_token: AccessToken,
+        refresh_token: RefreshToken,
     ) -> Self {
         Self {
-            id: Id::new(id),
-            host: AccountHost::new(host),
-            access_token: AccessToken::new(access_token),
-            refresh_token: RefreshToken::new(refresh_token),
+            id,
+            host,
+            access_token,
+            refresh_token,
         }
     }
 

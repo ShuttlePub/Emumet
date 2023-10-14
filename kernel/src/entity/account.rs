@@ -25,18 +25,18 @@ pub struct Account {
 
 impl Account {
     pub fn new(
-        id: impl Into<i64>,
-        domain: impl Into<String>,
-        name: impl Into<String>,
-        is_bot: impl Into<bool>,
-        created_at: impl Into<OffsetDateTime>,
+        id: Id<Account>,
+        domain: AccountDomain,
+        name: AccountName,
+        is_bot: IsBot,
+        created_at: CreatedAt<Account>,
     ) -> Self {
         Self {
-            id: Id::new(id),
-            domain: AccountDomain::new(domain),
-            name: AccountName::new(name),
-            is_bot: IsBot::new(is_bot),
-            created_at: CreatedAt::new(created_at),
+            id,
+            domain,
+            name,
+            is_bot,
+            created_at,
         }
     }
 

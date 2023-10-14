@@ -1,6 +1,6 @@
 use crate::DriverError;
 use kernel::interfaces::repository::MetadataRepository;
-use kernel::prelude::entity::{Account, Id, Metadata};
+use kernel::prelude::entity::{Account, Content, Id, Label, Metadata};
 use kernel::KernelError;
 use sqlx::{PgConnection, Pool, Postgres};
 
@@ -51,11 +51,25 @@ impl MetadataRepository for MetadataDatabase {
     }
 }
 
+#[derive(sqlx::FromRow)]
 pub(in crate::database) struct MetadataRow {
     id: i64,
     account_id: i64,
-    key: String,
-    value: String,
+    label: String,
+    content: String,
+}
+
+fn to_metadata(row: MetadataRow) -> Metadata {
+    Metadata::new(
+        Id::new(row.id),
+        Id::new(row.account_id),
+        Label::new(row.label),
+        Content::new(row.content),
+    )
+}
+
+fn to_metadata_with_result(row: MetadataRow) -> Result<Metadata, DriverError> {
+    Ok(to_metadata(row))
 }
 
 pub(in crate::database) struct MetadataInternal;
@@ -68,8 +82,8 @@ impl MetadataInternal {
         )
         .bind(metadata.id().as_ref())
         .bind(metadata.account_id().as_ref())
-        .bind(metadata.key().as_ref())
-        .bind(metadata.value().as_ref())
+        .bind(metadata.label().as_ref())
+        .bind(metadata.content().as_ref())
         .execute(con)
         .await?;
         Ok(())
@@ -78,8 +92,8 @@ impl MetadataInternal {
     pub async fn update(metadata: &Metadata, con: &mut PgConnection) -> Result<(), DriverError> {
         // language=sql
         sqlx::query(r#"UPDATE metadatas SET label = $1, content = $2 WHERE id = $3"#)
-            .bind(metadata.key().as_ref())
-            .bind(metadata.value().as_ref())
+            .bind(metadata.label().as_ref())
+            .bind(metadata.content().as_ref())
             .bind(metadata.id().as_ref())
             .execute(con)
             .await?;
@@ -103,13 +117,12 @@ impl MetadataInternal {
         con: &mut PgConnection,
     ) -> Result<Option<Metadata>, DriverError> {
         // language=sql
-        let row = sqlx::query_as::<_, MetadataRow>(r#"SELECT * FROM metadatas WHERE id = $1"#)
+        sqlx::query_as::<_, MetadataRow>(r#"SELECT * FROM metadatas WHERE id = $1"#)
             .bind(id.as_ref())
             .fetch_optional(con)
-            .await?;
-        let metadata = row
-            .map(|row| Metadata::new(Id::new(row.id), Id::new(row.account_id), row.key, row.value));
-        Ok(metadata)
+            .await?
+            .map(to_metadata_with_result)
+            .transpose()
     }
 
     pub async fn find_by_account_id(
@@ -117,15 +130,14 @@ impl MetadataInternal {
         con: &mut PgConnection,
     ) -> Result<Vec<Metadata>, DriverError> {
         // language=sql
-        let rows =
+        let metadatas =
             sqlx::query_as::<_, MetadataRow>(r#"SELECT * FROM metadatas WHERE account_id = $1"#)
                 .bind(account_id.as_ref())
                 .fetch_all(con)
-                .await?;
-        let metadatas = rows
-            .into_iter()
-            .map(|row| Metadata::new(Id::new(row.id), Id::new(row.account_id), row.key, row.value))
-            .collect();
+                .await?
+                .into_iter()
+                .map(to_metadata)
+                .collect();
         Ok(metadatas)
     }
 }

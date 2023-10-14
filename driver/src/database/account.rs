@@ -1,8 +1,10 @@
 use crate::DriverError;
-use kernel::prelude::entity::{AccountDomain, AccountName, Id, StellarAccount};
+use kernel::prelude::entity::{AccountDomain, AccountName, CreatedAt, Id, IsBot, StellarAccount};
 use kernel::KernelError;
 use kernel::{interfaces::repository::AccountRepository, prelude::entity::Account};
+use sqlx::postgres::PgTypeKind::Domain;
 use sqlx::{types::time::OffsetDateTime, PgConnection, Pool, Postgres};
+use std::iter::Map;
 
 #[derive(Debug, Clone)]
 pub struct AccountDatabase {
@@ -63,12 +65,27 @@ impl AccountRepository for AccountDatabase {
     }
 }
 
+#[derive(sqlx::FromRow)]
 pub(in crate::database) struct AccountRow {
     id: i64,
     domain: String,
     name: String,
     is_bot: bool,
     created_at: OffsetDateTime,
+}
+
+fn to_account(row: AccountRow) -> Account {
+    Account::new(
+        Id::new(row.id),
+        AccountDomain::new(row.domain),
+        AccountName::new(row.name),
+        IsBot::new(row.is_bot),
+        CreatedAt::new(row.created_at),
+    )
+}
+
+fn to_account_with_result(row: AccountRow) -> Result<Account, DriverError> {
+    Ok(to_account(row))
 }
 
 pub(in crate::database) struct PgAccountInternal;
@@ -125,15 +142,7 @@ impl PgAccountInternal {
         .bind(id.as_ref())
         .fetch_optional(con)
         .await?
-        .map(|row| -> Result<Account, DriverError> {
-            Ok(Account::new(
-                row.id,
-                row.domain,
-                row.name,
-                row.is_bot,
-                row.created_at,
-            ))
-        })
+        .map(to_account_with_result)
         .transpose()
     }
 
@@ -142,23 +151,16 @@ impl PgAccountInternal {
         con: &mut PgConnection,
     ) -> Result<Vec<Account>, DriverError> {
         // language=sql
-        sqlx::query_as::<_, AccountRow>(
+        let accounts = sqlx::query_as::<_, AccountRow>(
             r#"SELECT id, domain, name, is_bot, created_at FROM accounts INNER JOIN stellar_emumet_accounts ON accounts.id = stellar_emumet_accounts.emumet_id WHERE stellar_emumet_accounts.emumet_id = $1"#
         )
             .bind(stellar_id.as_ref())
             .fetch_all(con)
             .await?
             .into_iter()
-            .map(|row| -> Result<Account, DriverError> {
-                Ok(Account::new(
-                    row.id,
-                    row.domain,
-                    row.name,
-                    row.is_bot,
-                    row.created_at,
-                ))
-            })
-            .collect()
+            .map(to_account)
+            .collect::<Vec<Account>>();
+        Ok(accounts)
     }
 
     pub async fn find_by_name(
@@ -172,15 +174,7 @@ impl PgAccountInternal {
         .bind(name.as_ref())
         .fetch_optional(con)
         .await?
-        .map(|row| -> Result<Account, DriverError> {
-            Ok(Account::new(
-                row.id,
-                row.domain,
-                row.name,
-                row.is_bot,
-                row.created_at,
-            ))
-        })
+        .map(to_account_with_result)
         .transpose()
     }
 
@@ -189,22 +183,15 @@ impl PgAccountInternal {
         con: &mut PgConnection,
     ) -> Result<Vec<Account>, DriverError> {
         // language=sql
-        sqlx::query_as::<_, AccountRow>(
+        let accounts = sqlx::query_as::<_, AccountRow>(
             r#"SELECT id, domain, name, is_bot, created_at FROM accounts WHERE domain = $1"#,
         )
         .bind(domain.as_ref())
         .fetch_all(con)
         .await?
         .into_iter()
-        .map(|row| -> Result<Account, DriverError> {
-            Ok(Account::new(
-                row.id,
-                row.domain,
-                row.name,
-                row.is_bot,
-                row.created_at,
-            ))
-        })
-        .collect()
+        .map(to_account)
+        .collect::<Vec<Account>>();
+        Ok(accounts)
     }
 }

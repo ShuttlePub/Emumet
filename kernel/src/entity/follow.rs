@@ -28,15 +28,11 @@ pub struct Follow {
 }
 
 impl Follow {
-    pub fn new(
-        id: impl Into<i64>,
-        source: impl Into<FollowAccount>,
-        destination: impl Into<FollowAccount>,
-    ) -> Self {
+    pub fn new(id: Id<Follow>, source: FollowAccount, destination: FollowAccount) -> Self {
         Self {
-            id: Id::new(id),
-            source: source.into(),
-            destination: destination.into(),
+            id,
+            source,
+            destination,
         }
     }
 

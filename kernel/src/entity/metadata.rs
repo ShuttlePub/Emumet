@@ -15,17 +15,12 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    pub fn new(
-        id: impl Into<i64>,
-        account_id: impl Into<i64>,
-        label: impl Into<String>,
-        content: impl Into<String>,
-    ) -> Self {
+    pub fn new(id: Id<Metadata>, account_id: Id<Account>, label: Label, content: Content) -> Self {
         Self {
-            id: Id::new(id),
-            account_id: Id::new(account_id),
-            label: Label::new(label),
-            content: Content::new(content),
+            id,
+            account_id,
+            label,
+            content,
         }
     }
 
