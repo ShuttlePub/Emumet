@@ -6,6 +6,8 @@ pub enum KernelError {
         entity: &'static str,
         id: String,
     },
+    #[error("invalid value `{value}` in the following {method}.")]
+    InvalidValue { method: &'static str, value: String },
     #[error(transparent)]
     Serde(anyhow::Error),
     #[error(transparent)]
