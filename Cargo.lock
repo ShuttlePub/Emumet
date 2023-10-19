@@ -648,6 +648,7 @@ dependencies = [
  "thiserror",
  "time",
  "uuid",
+ "vodca",
 ]
 
 [[package]]
@@ -1744,6 +1745,16 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+
+[[package]]
+name = "vodca"
+version = "0.1.0"
+source = "git+https://github.com/turtton/vodca.git?rev=73bc4cf4ef6730e68ca948603a5358dd0d425a88#73bc4cf4ef6730e68ca948603a5358dd0d425a88"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.37",
+]
 
 [[package]]
 name = "wasi"
