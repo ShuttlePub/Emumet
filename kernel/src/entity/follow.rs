@@ -1,36 +1,41 @@
+mod id;
+
 use crate::KernelError;
 use serde::{Deserialize, Serialize};
+use vodca::References;
 
-use super::{Account, Id, RemoteAccount};
+pub use self::id::*;
+
+use super::{AccountId, RemoteAccountId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FollowAccount {
-    Local(Id<Account>),
-    Remote(Id<RemoteAccount>),
+    Local(AccountId),
+    Remote(RemoteAccountId),
 }
 
-impl From<Id<Account>> for FollowAccount {
-    fn from(id: Id<Account>) -> Self {
+impl From<AccountId> for FollowAccount {
+    fn from(id: AccountId) -> Self {
         Self::Local(id)
     }
 }
 
-impl From<Id<RemoteAccount>> for FollowAccount {
-    fn from(id: Id<RemoteAccount>) -> Self {
+impl From<RemoteAccountId> for FollowAccount {
+    fn from(id: RemoteAccountId) -> Self {
         Self::Remote(id)
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, References, Serialize, Deserialize)]
 pub struct Follow {
-    id: Id<Follow>,
+    id: FollowId,
     source: FollowAccount,
     destination: FollowAccount,
 }
 
 impl Follow {
     pub fn new(
-        id: Id<Follow>,
+        id: FollowId,
         source: FollowAccount,
         destination: FollowAccount,
     ) -> Result<Self, KernelError> {
@@ -48,17 +53,5 @@ impl Follow {
                 destination,
             }),
         }
-    }
-
-    pub fn id(&self) -> &Id<Follow> {
-        &self.id
-    }
-
-    pub fn source(&self) -> &FollowAccount {
-        &self.source
-    }
-
-    pub fn destination(&self) -> &FollowAccount {
-        &self.destination
     }
 }

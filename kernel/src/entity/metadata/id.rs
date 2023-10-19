@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 use vodca::{AsRefln, Fromln};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Fromln, AsRefln, Serialize, Deserialize)]
-pub struct ProfileDisplayName(String);
+pub struct MetadataId(i64);
 
-impl ProfileDisplayName {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+impl MetadataId {
+    pub fn new(id: impl Into<i64>) -> Self {
+        Self(id.into())
     }
 }

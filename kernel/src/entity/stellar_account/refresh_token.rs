@@ -1,22 +1,11 @@
 use serde::{Deserialize, Serialize};
+use vodca::{AsRefln, Fromln};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RefreshToken(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Fromln, AsRefln, Serialize, Deserialize)]
+pub struct StellarAccountRefreshToken(String);
 
-impl RefreshToken {
+impl StellarAccountRefreshToken {
     pub fn new(token: impl Into<String>) -> Self {
         Self(token.into())
-    }
-}
-
-impl From<RefreshToken> for String {
-    fn from(token: RefreshToken) -> Self {
-        token.0
-    }
-}
-
-impl AsRef<str> for RefreshToken {
-    fn as_ref(&self) -> &str {
-        &self.0
     }
 }

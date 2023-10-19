@@ -1,22 +1,11 @@
 use serde::{Deserialize, Serialize};
+use vodca::{AsRefln, Fromln};
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Fromln, AsRefln, Serialize, Deserialize)]
 pub struct AccountDomain(String);
 
 impl AccountDomain {
     pub fn new(domain: impl Into<String>) -> Self {
         Self(domain.into())
-    }
-}
-
-impl From<AccountDomain> for String {
-    fn from(domain: AccountDomain) -> Self {
-        domain.0
-    }
-}
-
-impl AsRef<str> for AccountDomain {
-    fn as_ref(&self) -> &str {
-        &self.0
     }
 }

@@ -1,11 +1,12 @@
+use crate::entity::FollowId;
 use crate::{
-    entity::{Follow, FollowAccount, Id},
+    entity::{Follow, FollowAccount},
     error::KernelError,
 };
 
 #[async_trait::async_trait]
 pub trait FollowRepository: 'static + Sync + Send {
-    async fn find_by_id(&self, id: &Id<Follow>) -> Result<Option<Follow>, KernelError>;
+    async fn find_by_id(&self, id: &FollowId) -> Result<Option<Follow>, KernelError>;
     async fn find_by_soruce_id(&self, id: &FollowAccount) -> Result<Vec<Follow>, KernelError>;
     async fn find_by_target_id(&self, id: &FollowAccount) -> Result<Vec<Follow>, KernelError>;
     async fn save(&self, follow: &Follow) -> Result<(), KernelError>;

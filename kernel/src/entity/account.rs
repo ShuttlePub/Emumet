@@ -1,34 +1,35 @@
 mod domain;
+mod id;
 mod is_bot;
 mod name;
 
 use destructure::Destructure;
 use serde::Deserialize;
 use serde::Serialize;
-use time::OffsetDateTime;
+use vodca::References;
 
 pub use self::domain::*;
+pub use self::id::*;
 pub use self::is_bot::*;
 pub use self::name::*;
 
 use super::common::CreatedAt;
-use super::Id;
 
-#[derive(Debug, Clone, Hash, Serialize, Deserialize, Destructure)]
+#[derive(Debug, Clone, Hash, References, Serialize, Deserialize, Destructure)]
 pub struct Account {
-    id: Id<Account>,
+    id: AccountId,
     domain: AccountDomain,
     name: AccountName,
-    is_bot: IsBot,
+    is_bot: AccountIsBot,
     created_at: CreatedAt<Account>,
 }
 
 impl Account {
     pub fn new(
-        id: Id<Account>,
+        id: AccountId,
         domain: AccountDomain,
         name: AccountName,
-        is_bot: IsBot,
+        is_bot: AccountIsBot,
         created_at: CreatedAt<Account>,
     ) -> Self {
         Self {
@@ -38,25 +39,5 @@ impl Account {
             is_bot,
             created_at,
         }
-    }
-
-    pub fn id(&self) -> &Id<Account> {
-        &self.id
-    }
-
-    pub fn domain(&self) -> &AccountDomain {
-        &self.domain
-    }
-
-    pub fn name(&self) -> &AccountName {
-        &self.name
-    }
-
-    pub fn is_bot(&self) -> &IsBot {
-        &self.is_bot
-    }
-
-    pub fn created_at(&self) -> &CreatedAt<Account> {
-        &self.created_at
     }
 }

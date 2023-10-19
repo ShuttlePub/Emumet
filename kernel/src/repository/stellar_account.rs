@@ -1,5 +1,6 @@
+use crate::entity::StellarAccountId;
 use crate::{
-    entity::{AccessToken, Id, RefreshToken, StellarAccount},
+    entity::{AccessToken, StellarAccount, StellarAccountRefreshToken},
     error::KernelError,
 };
 
@@ -7,11 +8,11 @@ use crate::{
 pub trait StellarAccountRepository: 'static + Sync + Send {
     async fn find_by_id(
         &self,
-        id: &Id<StellarAccount>,
+        id: &StellarAccountId,
     ) -> Result<Option<StellarAccount>, KernelError>;
     async fn find_by_refresh_token(
         &self,
-        token: &RefreshToken,
+        token: &StellarAccountRefreshToken,
     ) -> Result<Option<StellarAccount>, KernelError>;
     async fn find_by_access_token(
         &self,

@@ -1,21 +1,27 @@
 mod content;
+mod id;
 mod label;
 
 pub use self::content::*;
+pub use self::id::*;
 pub use self::label::*;
 
-use super::Account;
-use super::Id;
+use super::AccountId;
 
 pub struct Metadata {
-    id: Id<Metadata>,
-    account_id: Id<Account>,
-    label: Label,
-    content: Content,
+    id: MetadataId,
+    account_id: AccountId,
+    label: MetadataLabel,
+    content: MetadataContent,
 }
 
 impl Metadata {
-    pub fn new(id: Id<Metadata>, account_id: Id<Account>, label: Label, content: Content) -> Self {
+    pub fn new(
+        id: MetadataId,
+        account_id: AccountId,
+        label: MetadataLabel,
+        content: MetadataContent,
+    ) -> Self {
         Self {
             id,
             account_id,
@@ -24,19 +30,19 @@ impl Metadata {
         }
     }
 
-    pub fn id(&self) -> &Id<Metadata> {
+    pub fn id(&self) -> &MetadataId {
         &self.id
     }
 
-    pub fn account_id(&self) -> &Id<Account> {
+    pub fn account_id(&self) -> &AccountId {
         &self.account_id
     }
 
-    pub fn label(&self) -> &Label {
+    pub fn label(&self) -> &MetadataLabel {
         &self.label
     }
 
-    pub fn content(&self) -> &Content {
+    pub fn content(&self) -> &MetadataContent {
         &self.content
     }
 }

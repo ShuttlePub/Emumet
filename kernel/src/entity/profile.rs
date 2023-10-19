@@ -7,25 +7,27 @@ pub use self::banner::*;
 pub use self::display_name::*;
 pub use self::icon::*;
 pub use self::summary::*;
+use serde::{Deserialize, Serialize};
+use vodca::References;
 
-use super::Account;
-use super::Id;
+use super::AccountId;
 
+#[derive(Debug, Clone, Hash, References, Serialize, Deserialize)]
 pub struct Profile {
-    id: Id<Account>,
-    display_name: DisplayName,
-    summary: Summary,
-    icon: Icon,
-    banner: Banner,
+    id: AccountId,
+    display_name: ProfileDisplayName,
+    summary: ProfileSummary,
+    icon: ProfileIcon,
+    banner: ProfileBanner,
 }
 
 impl Profile {
     pub fn new(
-        id: Id<Account>,
-        display_name: DisplayName,
-        summary: Summary,
-        icon: Icon,
-        banner: Banner,
+        id: AccountId,
+        display_name: ProfileDisplayName,
+        summary: ProfileSummary,
+        icon: ProfileIcon,
+        banner: ProfileBanner,
     ) -> Self {
         Self {
             id,
@@ -34,25 +36,5 @@ impl Profile {
             icon,
             banner,
         }
-    }
-
-    pub fn id(&self) -> &Id<Account> {
-        &self.id
-    }
-
-    pub fn display_name(&self) -> &DisplayName {
-        &self.display_name
-    }
-
-    pub fn summary(&self) -> &Summary {
-        &self.summary
-    }
-
-    pub fn icon(&self) -> &Icon {
-        &self.icon
-    }
-
-    pub fn banner(&self) -> &Banner {
-        &self.banner
     }
 }

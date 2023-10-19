@@ -1,6 +1,6 @@
 use crate::DriverError;
 use kernel::interfaces::repository::MetadataRepository;
-use kernel::prelude::entity::{Account, Content, Id, Label, Metadata};
+use kernel::prelude::entity::{AccountId, Metadata, MetadataContent, MetadataId, MetadataLabel};
 use kernel::KernelError;
 use sqlx::{PgConnection, Pool, Postgres};
 
@@ -17,7 +17,7 @@ impl MetadataDatabase {
 
 #[async_trait::async_trait]
 impl MetadataRepository for MetadataDatabase {
-    async fn find_by_id(&self, id: &Id<Metadata>) -> Result<Option<Metadata>, KernelError> {
+    async fn find_by_id(&self, id: &MetadataId) -> Result<Option<Metadata>, KernelError> {
         let mut con = self.pool.acquire().await.map_err(DriverError::SqlX)?;
         let found = MetadataInternal::find_by_id(id, &mut con).await?;
         Ok(found)
@@ -25,7 +25,7 @@ impl MetadataRepository for MetadataDatabase {
 
     async fn find_by_account_id(
         &self,
-        account_id: &Id<Account>,
+        account_id: &AccountId,
     ) -> Result<Vec<Metadata>, KernelError> {
         let mut con = self.pool.acquire().await.map_err(DriverError::SqlX)?;
         let found = MetadataInternal::find_by_account_id(account_id, &mut con).await?;
@@ -44,7 +44,7 @@ impl MetadataRepository for MetadataDatabase {
         Ok(())
     }
 
-    async fn delete(&self, account_id: &Id<Account>) -> Result<(), KernelError> {
+    async fn delete(&self, account_id: &AccountId) -> Result<(), KernelError> {
         let mut con = self.pool.acquire().await.map_err(DriverError::SqlX)?;
         MetadataInternal::delete(account_id, &mut con).await?;
         Ok(())
@@ -61,10 +61,10 @@ pub(in crate::database) struct MetadataRow {
 
 fn to_metadata(row: MetadataRow) -> Metadata {
     Metadata::new(
-        Id::new(row.id),
-        Id::new(row.account_id),
-        Label::new(row.label),
-        Content::new(row.content),
+        MetadataId::new(row.id),
+        AccountId::new(row.account_id),
+        MetadataLabel::new(row.label),
+        MetadataContent::new(row.content),
     )
 }
 
@@ -100,10 +100,7 @@ impl MetadataInternal {
         Ok(())
     }
 
-    pub async fn delete(
-        account_id: &Id<Account>,
-        con: &mut PgConnection,
-    ) -> Result<(), DriverError> {
+    pub async fn delete(account_id: &AccountId, con: &mut PgConnection) -> Result<(), DriverError> {
         // language=sql
         sqlx::query(r#"DELETE FROM metadatas WHERE account_id = $1"#)
             .bind(account_id.as_ref())
@@ -113,7 +110,7 @@ impl MetadataInternal {
     }
 
     pub async fn find_by_id(
-        id: &Id<Metadata>,
+        id: &MetadataId,
         con: &mut PgConnection,
     ) -> Result<Option<Metadata>, DriverError> {
         // language=sql
@@ -126,7 +123,7 @@ impl MetadataInternal {
     }
 
     pub async fn find_by_account_id(
-        account_id: &Id<Account>,
+        account_id: &AccountId,
         con: &mut PgConnection,
     ) -> Result<Vec<Metadata>, DriverError> {
         // language=sql

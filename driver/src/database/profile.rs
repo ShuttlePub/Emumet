@@ -1,6 +1,8 @@
 use crate::DriverError;
 use kernel::interfaces::repository::ProfileRepository;
-use kernel::prelude::entity::{Account, Banner, DisplayName, Icon, Id, Profile, Summary};
+use kernel::prelude::entity::{
+    AccountId, Profile, ProfileBanner, ProfileDisplayName, ProfileIcon, ProfileSummary,
+};
 use kernel::KernelError;
 use sqlx::{PgConnection, Pool, Postgres};
 
@@ -17,7 +19,7 @@ impl ProfileDatabase {
 
 #[async_trait::async_trait]
 impl ProfileRepository for ProfileDatabase {
-    async fn find_by_id(&self, id: &Id<Account>) -> Result<Option<Profile>, KernelError> {
+    async fn find_by_id(&self, id: &AccountId) -> Result<Option<Profile>, KernelError> {
         let mut con = self.pool.acquire().await.map_err(DriverError::SqlX)?;
         let found = PgProfileInternal::find_by_id(id, &mut con).await?;
         Ok(found)
@@ -53,11 +55,11 @@ pub(in crate::database) struct ProfileRow {
 
 fn to_profile(row: ProfileRow) -> Profile {
     Profile::new(
-        Id::new(row.id),
-        DisplayName::new(row.display_name),
-        Summary::new(row.summary),
-        Icon::new(row.icon),
-        Banner::new(row.banner),
+        AccountId::new(row.id),
+        ProfileDisplayName::new(row.display_name),
+        ProfileSummary::new(row.summary),
+        ProfileIcon::new(row.icon),
+        ProfileBanner::new(row.banner),
     )
 }
 
@@ -106,7 +108,7 @@ impl PgProfileInternal {
     }
 
     pub async fn find_by_id(
-        id: &Id<Account>,
+        id: &AccountId,
         con: &mut PgConnection,
     ) -> Result<Option<Profile>, DriverError> {
         // language=sql

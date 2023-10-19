@@ -2,25 +2,14 @@ use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use vodca::{AsRefln, Fromln};
 
-#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Fromln, AsRefln, Serialize, Deserialize)]
 pub struct CreatedAt<T>(OffsetDateTime, PhantomData<T>);
 
 impl<T> CreatedAt<T> {
     pub fn new(time: impl Into<OffsetDateTime>) -> Self {
         Self(time.into(), PhantomData)
-    }
-}
-
-impl<T> From<CreatedAt<T>> for OffsetDateTime {
-    fn from(value: CreatedAt<T>) -> Self {
-        value.0
-    }
-}
-
-impl<T> AsRef<OffsetDateTime> for CreatedAt<T> {
-    fn as_ref(&self) -> &OffsetDateTime {
-        &self.0
     }
 }
 

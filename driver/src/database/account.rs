@@ -1,5 +1,7 @@
 use crate::DriverError;
-use kernel::prelude::entity::{AccountDomain, AccountName, CreatedAt, Id, IsBot, StellarAccount};
+use kernel::prelude::entity::{
+    AccountDomain, AccountId, AccountIsBot, AccountName, CreatedAt, StellarAccountId,
+};
 use kernel::KernelError;
 use kernel::{interfaces::repository::AccountRepository, prelude::entity::Account};
 use sqlx::{types::time::OffsetDateTime, PgConnection, Pool, Postgres};
@@ -17,7 +19,7 @@ impl AccountDatabase {
 
 #[async_trait::async_trait]
 impl AccountRepository for AccountDatabase {
-    async fn find_by_id(&self, id: &Id<Account>) -> Result<Option<Account>, KernelError> {
+    async fn find_by_id(&self, id: &AccountId) -> Result<Option<Account>, KernelError> {
         let mut con = self.pool.acquire().await.map_err(DriverError::SqlX)?;
         let found = PgAccountInternal::find_by_id(id, &mut con).await?;
         Ok(found)
@@ -25,7 +27,7 @@ impl AccountRepository for AccountDatabase {
 
     async fn find_by_stellar_id(
         &self,
-        stellar_id: &Id<StellarAccount>,
+        stellar_id: &StellarAccountId,
     ) -> Result<Vec<Account>, KernelError> {
         let mut con = self.pool.acquire().await.map_err(DriverError::SqlX)?;
         let found = PgAccountInternal::find_by_stellar_id(stellar_id, &mut con).await?;
@@ -56,7 +58,7 @@ impl AccountRepository for AccountDatabase {
         Ok(())
     }
 
-    async fn delete(&self, id: &Id<Account>) -> Result<(), KernelError> {
+    async fn delete(&self, id: &AccountId) -> Result<(), KernelError> {
         let mut con = self.pool.acquire().await.map_err(DriverError::SqlX)?;
         PgAccountInternal::delete(id, &mut con).await?;
         Ok(())
@@ -74,10 +76,10 @@ pub(in crate::database) struct AccountRow {
 
 fn to_account(row: AccountRow) -> Account {
     Account::new(
-        Id::new(row.id),
+        AccountId::new(row.id),
         AccountDomain::new(row.domain),
         AccountName::new(row.name),
-        IsBot::new(row.is_bot),
+        AccountIsBot::new(row.is_bot),
         CreatedAt::new(row.created_at),
     )
 }
@@ -119,7 +121,7 @@ impl PgAccountInternal {
         Ok(())
     }
 
-    pub async fn delete(id: &Id<Account>, con: &mut PgConnection) -> Result<(), DriverError> {
+    pub async fn delete(id: &AccountId, con: &mut PgConnection) -> Result<(), DriverError> {
         // language=sql
         sqlx::query(r#"DELETE FROM accounts WHERE id = $1"#)
             .bind(id.as_ref())
@@ -130,7 +132,7 @@ impl PgAccountInternal {
     }
 
     pub async fn find_by_id(
-        id: &Id<Account>,
+        id: &AccountId,
         con: &mut PgConnection,
     ) -> Result<Option<Account>, DriverError> {
         // language=sql
@@ -145,7 +147,7 @@ impl PgAccountInternal {
     }
 
     pub async fn find_by_stellar_id(
-        stellar_id: &Id<StellarAccount>,
+        stellar_id: &StellarAccountId,
         con: &mut PgConnection,
     ) -> Result<Vec<Account>, DriverError> {
         // language=sql

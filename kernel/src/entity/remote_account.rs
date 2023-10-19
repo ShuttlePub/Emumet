@@ -1,27 +1,20 @@
+mod id;
 mod url;
 
 use serde::{Deserialize, Serialize};
+use vodca::References;
 
+pub use self::id::*;
 pub use self::url::*;
 
-use super::Id;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, References, Serialize, Deserialize)]
 pub struct RemoteAccount {
-    id: Id<RemoteAccount>,
-    url: Url,
+    id: RemoteAccountId,
+    url: RemoteAccountUrl,
 }
 
 impl RemoteAccount {
-    pub fn new(id: Id<RemoteAccount>, url: Url) -> Self {
+    pub fn new(id: RemoteAccountId, url: RemoteAccountUrl) -> Self {
         Self { id, url }
-    }
-
-    pub fn id(&self) -> &Id<RemoteAccount> {
-        &self.id
-    }
-
-    pub fn url(&self) -> &Url {
-        &self.url
     }
 }

@@ -1,22 +1,11 @@
 use serde::{Deserialize, Serialize};
+use vodca::{AsRefln, Fromln};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Icon(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Fromln, AsRefln, Serialize, Deserialize)]
+pub struct ProfileIcon(String);
 
-impl Icon {
+impl ProfileIcon {
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
-    }
-}
-
-impl AsRef<str> for Icon {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<Icon> for String {
-    fn from(value: Icon) -> Self {
-        value.0
     }
 }
