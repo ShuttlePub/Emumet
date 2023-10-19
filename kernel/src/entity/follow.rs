@@ -14,6 +14,26 @@ pub enum FollowAccount {
     Remote(RemoteAccountId),
 }
 
+impl FollowAccount {
+    pub fn new(
+        local: Option<AccountId>,
+        remote: Option<RemoteAccountId>,
+    ) -> Result<Self, KernelError> {
+        match (local, remote) {
+            (Some(local), None) => Ok(Self::Local(local)),
+            (None, Some(remote)) => Ok(Self::Remote(remote)),
+            (Some(local), Some(remote)) => Err(KernelError::InvalidValue {
+                method: "FollowAccount::new",
+                value: format!("local: {:?} and remote: {:?}", local, remote),
+            }),
+            (None, None) => Err(KernelError::InvalidValue {
+                method: "FollowAccount::new",
+                value: "local: None and remote: None".to_string(),
+            }),
+        }
+    }
+}
+
 impl From<AccountId> for FollowAccount {
     fn from(id: AccountId) -> Self {
         Self::Local(id)
