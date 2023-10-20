@@ -9,12 +9,12 @@ pub use self::id::*;
 use super::{AccountId, RemoteAccountId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum FollowAccount {
+pub enum FollowAccountId {
     Local(AccountId),
     Remote(RemoteAccountId),
 }
 
-impl FollowAccount {
+impl FollowAccountId {
     pub fn new(
         local: Option<AccountId>,
         remote: Option<RemoteAccountId>,
@@ -34,13 +34,13 @@ impl FollowAccount {
     }
 }
 
-impl From<AccountId> for FollowAccount {
+impl From<AccountId> for FollowAccountId {
     fn from(id: AccountId) -> Self {
         Self::Local(id)
     }
 }
 
-impl From<RemoteAccountId> for FollowAccount {
+impl From<RemoteAccountId> for FollowAccountId {
     fn from(id: RemoteAccountId) -> Self {
         Self::Remote(id)
     }
@@ -49,19 +49,19 @@ impl From<RemoteAccountId> for FollowAccount {
 #[derive(Debug, Clone, References, Serialize, Deserialize)]
 pub struct Follow {
     id: FollowId,
-    source: FollowAccount,
-    destination: FollowAccount,
+    source: FollowAccountId,
+    destination: FollowAccountId,
 }
 
 impl Follow {
     pub fn new(
         id: FollowId,
-        source: FollowAccount,
-        destination: FollowAccount,
+        source: FollowAccountId,
+        destination: FollowAccountId,
     ) -> Result<Self, KernelError> {
         match (source, destination) {
-            (source @ FollowAccount::Local(_), destination @ FollowAccount::Local(_))
-            | (source @ FollowAccount::Remote(_), destination @ FollowAccount::Remote(_)) => {
+            (source @ FollowAccountId::Local(_), destination @ FollowAccountId::Local(_))
+            | (source @ FollowAccountId::Remote(_), destination @ FollowAccountId::Remote(_)) => {
                 Err(KernelError::InvalidValue {
                     method: "Follow::new",
                     value: format!("source: {:?}, destination: {:?}", source, destination),
