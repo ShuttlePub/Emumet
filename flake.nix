@@ -17,6 +17,9 @@
       devShells.default = mkShell {
         nativeBuildInputs = [ pkg-config ];
         buildInputs = [ openssl ];
+        packages = [
+            nodePackages.pnpm
+        ];
       };
     });
 }
