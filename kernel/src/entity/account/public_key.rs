@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use vodca::{AsRefln, Fromln};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Fromln, AsRefln, Serialize, Deserialize)]
-pub struct AccountId(Uuid);
+pub struct AccountPublicKey(String);
 
-impl AccountId {
-    pub fn new(id: impl Into<Uuid>) -> Self {
-        Self(id.into())
+impl AccountPublicKey {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
     }
 }
