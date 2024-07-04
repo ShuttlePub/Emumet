@@ -9,7 +9,7 @@ Table account_events {
     }
 }
 Table accounts {
-    id UUID [pk, ref: < account_events.account_id]
+    id UUID [pk]
     name TEXT [not null]
     private_key TEXT [not null]
     public_key TEXT [not null]
@@ -36,7 +36,7 @@ Table profile_events {
     }
 }
 Table profiles {
-    account_id UUID [not null, pk, ref: - profile_events.account_id]
+    account_id UUID [not null, pk, ref: - accounts.id]
     display TEXT
     summary TEXT
     icon_id UUID [ref: - images.id]
@@ -54,7 +54,7 @@ Table metadata_events {
     }
 }
 Table metadatas {
-    id UUID [not null, pk, ref: < metadata_events.metadata_id]
+    id UUID [not null, pk]
     account_id UUID [not null, ref: > accounts.id]
     label TEXT [not null]
     content TEXT [not null]
@@ -77,7 +77,7 @@ Table stellar_account_events {
     }
 }
 Table stellar_accounts {
-    id UUID [not null, pk, ref: < stellar_account_events.stellar_account_id]
+    id UUID [not null, pk]
     host_id UUID [not null, ref: > stellar_hosts.id]
     client_id TEXT [not null]
     access_token TEXT [not null]
@@ -103,7 +103,7 @@ Table follow_events {
     }
 }
 Table follows {
-    id UUID [not null, pk, ref: < follow_events.follow_id]
+    id UUID [not null, pk]
     follower_local_id UUID [ref: > accounts.id]
     follower_remote_id UUID [ref: > remote_accounts.id]
     followee_local_id UUID [ref: > accounts.id]
@@ -134,8 +134,8 @@ Table moderator_events {
     }
 }
 Table moderators {
-    stellar_id UUID [not null, ref: > stellar_accounts.id]
-    role_id UUID [not null, ref: > moderator_roles.id]
+    stellar_id UUID [not null, pk, ref: > stellar_accounts.id]
+    role_id UUID [not null, pk, ref: > moderator_roles.id]
 }
 
 Table account_report_events {
@@ -149,7 +149,7 @@ Table account_report_events {
     }
 }
 Table account_reports {
-    id UUID [not null, pk, ref: < account_report_events.report_id]
+    id UUID [not null, pk]
     target_id UUID [not null, ref: > accounts.id]
     reported_id UUID [not null, ref: > stellar_accounts.id]
     type TEXT [not null]
@@ -170,9 +170,9 @@ Table account_moderation_events {
     }
 }
 Table account_moderations {
-    id UUID [not null, pk, ref: < account_moderation_events.moderation_id]
+    id UUID [not null, pk]
     target_id UUID [not null, ref: > accounts.id]
-    moderator_id UUID [not null, ref: > moderators.stellar_id]
+    moderator_id UUID [not null, ref: > stellar_accounts.id]
     type TEXT [not null]
     comment TEXT [not null]
     created_at TIMESTAMP [not null]
@@ -197,9 +197,9 @@ Table stellar_account_moderation_events {
     }
 }
 Table stellar_account_moderations {
-    id UUID [not null, pk, ref: < stellar_account_moderation_events.moderation_id]
+    id UUID [not null, pk]
     target_id UUID [not null, ref: > stellar_accounts.id]
-    moderator_id UUID [not null, ref: > moderators.stellar_id]
+    moderator_id UUID [not null, ref: > stellar_accounts.id]
     type TEXT [not null]
     comment TEXT [not null]
     created_at TIMESTAMP [not null]
@@ -224,9 +224,9 @@ Table host_moderation_events {
     }
 }
 Table host_moderations {
-    id UUID [not null, pk, ref: < host_moderation_events.moderation_id]
+    id UUID [not null, pk]
     host_id UUID [not null, ref: > stellar_hosts.id]
-    moderator_id UUID [not null, ref: > moderators.stellar_id]
+    moderator_id UUID [not null, ref: > stellar_accounts.id]
     type TEXT [not null]
     comment TEXT [not null]
     created_at TIMESTAMP [not null]
@@ -239,4 +239,3 @@ Table host_moderation_reports {
         (moderation_id, report_id) [pk]
     }
 }
-
