@@ -1,9 +1,9 @@
-mod account;
-mod follow;
-mod metadata;
-mod profile;
+mod postgres;
 
-pub use self::account::*;
-pub use self::follow::*;
-pub use self::metadata::*;
-pub use self::profile::*;
+use error_stack::ResultExt;
+use kernel::KernelError;
+pub use postgres::*;
+
+pub(crate) fn env(key: &str) -> error_stack::Result<String, KernelError> {
+    dotenvy::var(key).change_context_lazy(|| KernelError::Internal)
+}
