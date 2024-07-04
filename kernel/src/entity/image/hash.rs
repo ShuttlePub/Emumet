@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use vodca::{AsRefln, Fromln};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Fromln, AsRefln, Serialize, Deserialize)]
-pub struct ProfileBanner(String);
+pub struct ImageHash(String);
 
-impl ProfileBanner {
+impl ImageHash {
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
