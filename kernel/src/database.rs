@@ -1,5 +1,8 @@
 use crate::KernelError;
 
+/// Databaseのトランザクション処理を示すトレイト
+///
+/// 現状は何もないが、将来的にトランザクション時に使える機能を示す可能性を考えて用意している
 pub trait Transaction {}
 
 pub trait DatabaseConnection: Sync + Send + 'static {
