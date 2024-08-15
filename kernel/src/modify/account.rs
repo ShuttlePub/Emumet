@@ -1,5 +1,5 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
-use crate::entity::Account;
+use crate::entity::{Account, AccountEvent, AccountId, CommandEnvelope};
 use crate::KernelError;
 
 pub trait AccountModifier: Sync + Send + 'static {
@@ -8,20 +8,20 @@ pub trait AccountModifier: Sync + Send + 'static {
     async fn create(
         &self,
         transaction: &mut Self::Transaction,
-        account: Account,
-    ) -> error_stack::Result<Account, KernelError>;
+        account: &Account,
+    ) -> error_stack::Result<(), KernelError>;
 
     async fn update(
         &self,
         transaction: &mut Self::Transaction,
-        account: Account,
-    ) -> error_stack::Result<Account, KernelError>;
+        account: &Account,
+    ) -> error_stack::Result<(), KernelError>;
 
     async fn delete(
         &self,
         transaction: &mut Self::Transaction,
-        account: Account,
-    ) -> error_stack::Result<Account, KernelError>;
+        account_id: &AccountId,
+    ) -> error_stack::Result<(), KernelError>;
 }
 
 pub trait DependOnAccountModifier: Sync + Send + DependOnDatabaseConnection {
@@ -38,14 +38,9 @@ pub trait AccountEventModifier: 'static + Sync + Send {
     async fn handle(
         &self,
         transaction: &mut Self::Transaction,
-        account: Account,
-    ) -> error_stack::Result<Account, KernelError>;
-
-    async fn delete(
-        &self,
-        transaction: &mut Self::Transaction,
-        account: Account,
-    ) -> error_stack::Result<Account, KernelError>;
+        account_id: &AccountId,
+        event: &CommandEnvelope<AccountEvent, Account>,
+    ) -> error_stack::Result<(), KernelError>;
 }
 
 pub trait DependOnAccountEventModifier: Sync + Send + DependOnDatabaseConnection {

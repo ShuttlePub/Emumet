@@ -1,5 +1,7 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
-use crate::entity::{Account, AccountId, AccountName, EventVersion, StellarAccountId};
+use crate::entity::{
+    Account, AccountEvent, AccountId, AccountName, EventEnvelope, EventVersion, StellarAccountId,
+};
 use crate::KernelError;
 
 pub trait AccountQuery: Sync + Send + 'static {
@@ -40,5 +42,13 @@ pub trait AccountEventQuery: Sync + Send + 'static {
         transaction: &mut Self::Transaction,
         id: &AccountId,
         since: Option<&EventVersion<Account>>,
-    ) -> error_stack::Result<Option<Account>, KernelError>;
+    ) -> error_stack::Result<Vec<EventEnvelope<AccountEvent, Account>>, KernelError>;
+}
+
+pub trait DependOnAccountEventQuery: Sync + Send + DependOnDatabaseConnection {
+    type AccountEventQuery: AccountEventQuery<
+        Transaction = <Self::DatabaseConnection as DatabaseConnection>::Transaction,
+    >;
+
+    fn account_event_query(&self) -> &Self::AccountEventQuery;
 }

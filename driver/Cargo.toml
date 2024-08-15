@@ -9,10 +9,15 @@ authors.workspace = true
 [dependencies]
 dotenvy = "0.15.7"
 deadpool-redis = "0.12.0"
-sqlx = { version = "0.7", features = ["uuid", "time", "postgres", "runtime-tokio-native-tls"] }
+sqlx = { version = "0.7", features = ["uuid", "time", "postgres", "runtime-tokio-native-tls", "json"] }
 serde_json = "1"
+uuid = { workspace = true }
+time = { workspace = true }
 async-trait = "0.1"
 
 error-stack = { workspace = true }
 
 kernel = { path = "../kernel" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "test-util"] }

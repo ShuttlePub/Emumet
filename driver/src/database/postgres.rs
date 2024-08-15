@@ -1,6 +1,7 @@
 mod account;
+mod account_event;
 
-pub use account::*;
+pub use {account::*, account_event::*};
 
 use crate::database::env;
 use crate::ConvertError;
@@ -24,6 +25,16 @@ impl PostgresDatabase {
         let pool = Pool::connect(&url).await.convert_error()?;
         Ok(Self { pool })
     }
+}
+
+#[derive(sqlx::FromRow)]
+pub(in crate::database::postgres) struct VersionRow {
+    pub version: i64,
+}
+
+#[derive(sqlx::FromRow)]
+pub(in crate::database::postgres) struct CountRow {
+    pub count: i64,
 }
 
 pub struct PostgresConnection(PoolConnection<Postgres>);
