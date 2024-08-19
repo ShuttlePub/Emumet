@@ -1,7 +1,8 @@
-use crate::database::postgres::{CountRow, VersionRow};
-use crate::database::{PostgresConnection, PostgresDatabase};
-use crate::ConvertError;
 use error_stack::Report;
+use sqlx::PgConnection;
+use time::OffsetDateTime;
+use uuid::Uuid;
+
 use kernel::interfaces::modify::{
     AccountEventModifier, AccountModifier, DependOnAccountEventModifier,
 };
@@ -13,9 +14,10 @@ use kernel::prelude::entity::{
     ExpectedEventVersion,
 };
 use kernel::KernelError;
-use sqlx::PgConnection;
-use time::OffsetDateTime;
-use uuid::Uuid;
+
+use crate::database::postgres::{CountRow, VersionRow};
+use crate::database::{PostgresConnection, PostgresDatabase};
+use crate::ConvertError;
 
 #[derive(sqlx::FromRow)]
 struct AccountEventRow {
@@ -88,7 +90,7 @@ impl AccountEventQuery for PostgresAccountEventRepository {
 impl DependOnAccountEventQuery for PostgresDatabase {
     type AccountEventQuery = PostgresAccountEventRepository;
 
-    fn account_event_query(&self) -> &Self::AccountQuery {
+    fn account_event_query(&self) -> &Self::AccountEventQuery {
         &PostgresAccountEventRepository
     }
 }
@@ -191,7 +193,7 @@ impl AccountEventModifier for PostgresAccountEventRepository {
 impl DependOnAccountEventModifier for PostgresDatabase {
     type AccountEventModifier = PostgresAccountEventRepository;
 
-    fn account_event_modifier(&self) -> &Self::AccountModifier {
+    fn account_event_modifier(&self) -> &Self::AccountEventModifier {
         &PostgresAccountEventRepository
     }
 }
@@ -222,15 +224,16 @@ impl PostgresAccountEventRepository {
 #[cfg(test)]
 mod test {
     mod query {
-        use crate::database::PostgresDatabase;
+        use uuid::Uuid;
+
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::DependOnAccountEventModifier;
+        use kernel::interfaces::modify::{AccountEventModifier, DependOnAccountEventModifier};
         use kernel::interfaces::query::{AccountEventQuery, DependOnAccountEventQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventEnvelope, EventVersion,
         };
-        use uuid::Uuid;
+
+        use crate::database::PostgresDatabase;
 
         #[tokio::test]
         async fn find_by_id() {
@@ -249,6 +252,17 @@ mod test {
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
             );
+            let updated_account = Account::update(AccountIsBot::new(true));
+            let deleted_account = Account::delete();
+
+            db.account_event_modifier()
+                .handle(&mut transaction, &account_id, &deleted_account)
+                .await
+                .unwrap();
+            db.account_event_modifier()
+                .handle(&mut transaction, &account_id, &updated_account)
+                .await
+                .unwrap();
             db.account_event_modifier()
                 .handle(&mut transaction, &account_id, &created_account)
                 .await
@@ -258,9 +272,10 @@ mod test {
                 .find_by_id(&mut transaction, &account_id, None)
                 .await
                 .unwrap();
-            assert_eq!(events.len(), 1);
-            let event = &events[0];
-            assert_eq!(event.version().as_ref(), &EventVersion::new(1));
+            assert_eq!(events.len(), 3);
+            assert_eq!(events[0].event(), created_account.event());
+            assert_eq!(events[1].event(), updated_account.event());
+            assert_eq!(events[2].event(), deleted_account.event());
         }
 
         #[tokio::test]
@@ -285,9 +300,14 @@ mod test {
                 .await
                 .unwrap();
 
+            let all_events = db
+                .account_event_query()
+                .find_by_id(&mut transaction, &account_id, None)
+                .await
+                .unwrap();
             let events = db
                 .account_event_query()
-                .find_by_id(&mut transaction, &account_id, Some(EventVersion::new(1)))
+                .find_by_id(&mut transaction, &account_id, Some(all_events[1].version()))
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
@@ -297,15 +317,17 @@ mod test {
     }
 
     mod modify {
-        use crate::database::PostgresDatabase;
+        use uuid::Uuid;
+
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{AccountEventModifier, DependOnAccountEventModifier};
-        use kernel::interfaces::query::{DependOnAccountEventQuery, DependOnAccountQuery};
+        use kernel::interfaces::query::{AccountEventQuery, DependOnAccountEventQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventEnvelope, EventVersion,
+            EventVersion,
         };
-        use uuid::Uuid;
+
+        use crate::database::PostgresDatabase;
 
         #[tokio::test]
         async fn basic_creation() {
