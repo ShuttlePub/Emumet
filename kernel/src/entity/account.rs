@@ -1,7 +1,7 @@
 use destructure::Destructure;
 use serde::Deserialize;
 use serde::Serialize;
-use vodca::References;
+use vodca::{Newln, References};
 
 use crate::entity::{CommandEnvelope, DeletedAt, ExpectedEventVersion};
 
@@ -19,7 +19,7 @@ mod name;
 mod private_key;
 mod public_key;
 
-#[derive(Debug, Clone, Hash, References, Serialize, Deserialize, Destructure)]
+#[derive(Debug, Clone, Hash, References, Newln, Serialize, Deserialize, Destructure)]
 pub struct Account {
     id: AccountId,
     name: AccountName,
@@ -28,28 +28,6 @@ pub struct Account {
     is_bot: AccountIsBot,
     created_at: CreatedAt<Account>,
     deleted_at: Option<DeletedAt<Account>>,
-}
-
-impl Account {
-    pub fn new(
-        id: AccountId,
-        name: AccountName,
-        private_key: AccountPrivateKey,
-        public_key: AccountPublicKey,
-        is_bot: AccountIsBot,
-        created_at: CreatedAt<Account>,
-        deleted_at: Option<DeletedAt<Account>>,
-    ) -> Self {
-        Self {
-            id,
-            name,
-            private_key,
-            public_key,
-            is_bot,
-            created_at,
-            deleted_at,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
