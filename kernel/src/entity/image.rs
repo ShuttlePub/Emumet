@@ -1,4 +1,4 @@
-mod blur_hash;
+mod blurhash;
 mod hash;
 mod id;
 mod url;
@@ -7,7 +7,7 @@ use destructure::Destructure;
 use serde::{Deserialize, Serialize};
 use vodca::References;
 
-pub use self::blur_hash::*;
+pub use self::blurhash::*;
 pub use self::hash::*;
 pub use self::id::*;
 pub use self::url::*;
