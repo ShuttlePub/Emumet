@@ -1,4 +1,5 @@
 mod account;
 mod image;
+mod metadata;
 
-pub use self::{account::*, image::*};
+pub use self::{account::*, image::*, metadata::*};

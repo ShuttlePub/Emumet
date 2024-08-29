@@ -1,11 +1,6 @@
 use serde::{Deserialize, Serialize};
-use vodca::{AsRefln, Fromln};
+use uuid::Uuid;
+use vodca::{AsRefln, Fromln, Newln};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Fromln, AsRefln, Serialize, Deserialize)]
-pub struct MetadataId(i64);
-
-impl MetadataId {
-    pub fn new(id: impl Into<i64>) -> Self {
-        Self(id.into())
-    }
-}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Fromln, AsRefln, Newln, Serialize, Deserialize)]
+pub struct MetadataId(Uuid);
