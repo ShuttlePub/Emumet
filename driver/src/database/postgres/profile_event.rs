@@ -1,16 +1,18 @@
-use crate::database::postgres::{CountRow, VersionRow};
-use crate::database::{PostgresConnection, PostgresDatabase};
-use crate::ConvertError;
 use error_stack::Report;
+use sqlx::PgConnection;
+use time::OffsetDateTime;
+
 use kernel::interfaces::modify::{DependOnProfileEventModifier, ProfileEventModifier};
 use kernel::interfaces::query::{DependOnProfileEventQuery, ProfileEventQuery};
+use kernel::KernelError;
 use kernel::prelude::entity::{
     Account, AccountId, CommandEnvelope, CreatedAt, EventEnvelope, EventVersion,
     ExpectedEventVersion, Profile, ProfileEvent,
 };
-use kernel::KernelError;
-use sqlx::PgConnection;
-use time::OffsetDateTime;
+
+use crate::ConvertError;
+use crate::database::{PostgresConnection, PostgresDatabase};
+use crate::database::postgres::{CountRow, VersionRow};
 
 struct ProfileEventRow {
     version: i64,
@@ -216,20 +218,18 @@ impl PostgresProfileEventRepository {
 #[cfg(test)]
 mod test {
     mod query {
-        use crate::database::{PostgresConnection, PostgresDatabase};
-        use crate::ConvertError;
-        use error_stack::Report;
+        use uuid::Uuid;
+
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnProfileEventModifier, ProfileEventModifier};
         use kernel::interfaces::query::{DependOnProfileEventQuery, ProfileEventQuery};
         use kernel::prelude::entity::{
-            AccountId, EventEnvelope, EventVersion, Profile, ProfileDisplayName, ProfileEvent,
+            AccountId, Profile, ProfileDisplayName,
             ProfileSummary,
         };
-        use kernel::KernelError;
-        use sqlx::PgConnection;
-        use time::OffsetDateTime;
-        use uuid::Uuid;
+
+        use crate::ConvertError;
+        use crate::database::PostgresDatabase;
 
         #[tokio::test]
         async fn find_by_id() {
@@ -323,12 +323,14 @@ mod test {
         }
 
         mod modify {
-            use crate::database::PostgresDatabase;
+            use uuid::Uuid;
+
             use kernel::interfaces::database::DatabaseConnection;
             use kernel::interfaces::modify::{DependOnProfileEventModifier, ProfileEventModifier};
             use kernel::interfaces::query::{DependOnProfileEventQuery, ProfileEventQuery};
             use kernel::prelude::entity::{AccountId, Profile, ProfileDisplayName, ProfileSummary};
-            use uuid::Uuid;
+
+            use crate::database::PostgresDatabase;
 
             #[tokio::test]
             async fn basic_creation() {
