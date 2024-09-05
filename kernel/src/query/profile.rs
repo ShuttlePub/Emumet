@@ -12,7 +12,7 @@ pub trait ProfileQuery: Sync + Send + 'static {
     ) -> error_stack::Result<Option<Profile>, KernelError>;
 }
 
-pub trait DependOnProfileQuery: Sync + Send {
+pub trait DependOnProfileQuery: Sync + Send + DependOnDatabaseConnection{
     type ProfileQuery: ProfileQuery<
         Transaction = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Transaction,
     >;

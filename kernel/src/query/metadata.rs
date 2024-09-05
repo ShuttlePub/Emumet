@@ -1,4 +1,4 @@
-use crate::database::Transaction;
+use crate::database::{DependOnDatabaseConnection, Transaction};
 use crate::entity::{AccountId, EventEnvelope, EventVersion, Metadata, MetadataEvent, MetadataId};
 use crate::KernelError;
 
@@ -18,7 +18,7 @@ pub trait MetadataQuery: Sync + Send + 'static {
     ) -> error_stack::Result<Vec<Metadata>, KernelError>;
 }
 
-pub trait DependOnMetadataQuery: Sync + Send {
+pub trait DependOnMetadataQuery: Sync + Send + DependOnDatabaseConnection {
     type MetadataQuery: MetadataQuery<
         Transaction = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Transaction,
     >;
@@ -37,7 +37,7 @@ pub trait MetadataEventQuery: Sync + Send + 'static {
     ) -> error_stack::Result<Vec<EventEnvelope<MetadataEvent, Metadata>>, KernelError>;
 }
 
-pub trait DependOnMetadataEventQuery: Sync + Send {
+pub trait DependOnMetadataEventQuery: Sync + Send + DependOnDatabaseConnection {
     type MetadataEventQuery: MetadataEventQuery<
         Transaction = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Transaction,
     >;
