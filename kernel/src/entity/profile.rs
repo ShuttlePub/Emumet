@@ -1,40 +1,75 @@
-mod banner;
 mod display_name;
-mod icon;
 mod summary;
 
-pub use self::banner::*;
 pub use self::display_name::*;
-pub use self::icon::*;
 pub use self::summary::*;
+use crate::entity::image::ImageId;
+use destructure::Destructure;
 use serde::{Deserialize, Serialize};
-use vodca::References;
+use vodca::{Newln, References};
 
-use super::AccountId;
+use super::{AccountId, CommandEnvelope, ExpectedEventVersion};
 
-#[derive(Debug, Clone, Hash, References, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, References, Newln, Destructure, Serialize, Deserialize)]
 pub struct Profile {
     id: AccountId,
-    display_name: ProfileDisplayName,
-    summary: ProfileSummary,
-    icon: ProfileIcon,
-    banner: ProfileBanner,
+    display_name: Option<ProfileDisplayName>,
+    summary: Option<ProfileSummary>,
+    icon: Option<ImageId>,
+    banner: Option<ImageId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProfileEvent {
+    Created {
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+    },
+    Updated {
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+    },
+    Deleted,
 }
 
 impl Profile {
-    pub fn new(
-        id: AccountId,
-        display_name: ProfileDisplayName,
-        summary: ProfileSummary,
-        icon: ProfileIcon,
-        banner: ProfileBanner,
-    ) -> Self {
-        Self {
-            id,
+    pub fn create(
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+    ) -> CommandEnvelope<ProfileEvent, Profile> {
+        let event = ProfileEvent::Created {
             display_name,
             summary,
             icon,
             banner,
-        }
+        };
+        CommandEnvelope::new(event, Some(ExpectedEventVersion::Nothing))
+    }
+
+    pub fn update(
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+    ) -> CommandEnvelope<ProfileEvent, Profile> {
+        let event = ProfileEvent::Updated {
+            display_name,
+            summary,
+            icon,
+            banner,
+        };
+        CommandEnvelope::new(event, None)
+    }
+
+    pub fn delete() -> CommandEnvelope<ProfileEvent, Profile> {
+        let event = ProfileEvent::Deleted;
+        CommandEnvelope::new(event, None)
     }
 }

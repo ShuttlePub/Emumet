@@ -3,8 +3,10 @@ mod account_event;
 mod image;
 mod metadata;
 mod metadata_event;
+mod profile;
+mod profile_event;
 
-pub use {account::*, account_event::*, image::*, metadata::*, metadata_event::*};
+pub use {account::*, account_event::*, image::*, metadata::*, metadata_event::*, profile::*, profile_event::*};
 
 use crate::database::env;
 use crate::ConvertError;
