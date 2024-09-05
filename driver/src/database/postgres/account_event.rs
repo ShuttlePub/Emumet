@@ -147,7 +147,10 @@ impl AccountEventModifier for PostgresAccountEventRepository {
                     .fetch_optional(con)
                     .await
                     .convert_error()?;
-                    if last_version.map(|row: VersionRow| row.version != *version.as_ref()).unwrap_or(true) {
+                    if last_version
+                        .map(|row: VersionRow| row.version != *version.as_ref())
+                        .unwrap_or(true)
+                    {
                         return Err(Report::new(KernelError::Concurrency).attach_printable(
                             format!(
                                 "Account {} version {} already exists",
