@@ -144,10 +144,10 @@ impl AccountEventModifier for PostgresAccountEventRepository {
                         "#,
                     )
                     .bind(account_id.as_ref())
-                    .fetch_one(con)
+                    .fetch_optional(con)
                     .await
                     .convert_error()?;
-                    if last_version.version != *version.as_ref() {
+                    if last_version.map(|row: VersionRow| row.version != *version.as_ref()).unwrap_or(true) {
                         return Err(Report::new(KernelError::Concurrency).attach_printable(
                             format!(
                                 "Account {} version {} already exists",
@@ -199,6 +199,7 @@ impl DependOnAccountEventModifier for PostgresDatabase {
 }
 
 impl PostgresAccountEventRepository {
+    // Used in the test
     async fn delete(
         &self,
         transaction: &PostgresConnection,
