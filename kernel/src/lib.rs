@@ -3,7 +3,6 @@ mod entity;
 mod error;
 mod modify;
 mod query;
-mod repository;
 
 pub use self::error::*;
 
@@ -24,8 +23,5 @@ pub mod interfaces {
     }
     pub mod modify {
         pub use crate::modify::*;
-    }
-    pub mod repository {
-        pub use crate::repository::*;
     }
 }
