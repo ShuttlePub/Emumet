@@ -8,7 +8,7 @@ use crate::entity::{CommandEnvelope, ExpectedEventVersion};
 use destructure::Destructure;
 use serde::Deserialize;
 use serde::Serialize;
-use vodca::{Newln, References};
+use vodca::{Nameln, Newln, References};
 
 pub use self::access_token::*;
 pub use self::client_id::*;
@@ -25,7 +25,7 @@ pub struct StellarAccount {
     refresh_token: StellarAccountRefreshToken,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all_fields = "snake_case")]
 pub enum StellarAccountEvent {
     Created {

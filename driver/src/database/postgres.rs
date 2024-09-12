@@ -5,10 +5,12 @@ mod metadata;
 mod metadata_event;
 mod profile;
 mod profile_event;
+mod stellar_account_event;
+mod stellar_account;
 
 pub use {
     account::*, account_event::*, image::*, metadata::*, metadata_event::*, profile::*,
-    profile_event::*,
+    profile_event::*, stellar_account_event::*, stellar_account::*,
 };
 
 use crate::database::env;
