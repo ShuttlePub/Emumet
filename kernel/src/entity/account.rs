@@ -1,7 +1,7 @@
 use destructure::Destructure;
 use serde::Deserialize;
 use serde::Serialize;
-use vodca::{Newln, References};
+use vodca::{Nameln, Newln, References};
 
 use crate::entity::{CommandEnvelope, DeletedAt, ExpectedEventVersion};
 
@@ -30,7 +30,7 @@ pub struct Account {
     deleted_at: Option<DeletedAt<Account>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all_fields = "snake_case")]
 pub enum AccountEvent {
     Created {

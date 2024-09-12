@@ -106,11 +106,7 @@ impl AccountEventModifier for PostgresAccountEventRepository {
     ) -> error_stack::Result<(), KernelError> {
         let mut con: &PgConnection = transaction;
 
-        let event_name = match event.event() {
-            AccountEvent::Created { .. } => "created",
-            AccountEvent::Updated { .. } => "updated",
-            AccountEvent::Deleted => "deleted",
-        };
+        let event_name = event.event().name();
         let version = event.version().as_ref();
         if let Some(version) = version {
             match version {

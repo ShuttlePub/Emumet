@@ -7,7 +7,7 @@ pub use self::id::*;
 pub use self::label::*;
 use destructure::Destructure;
 use serde::{Deserialize, Serialize};
-use vodca::{Newln, References};
+use vodca::{Nameln, Newln, References};
 
 use super::{AccountId, CommandEnvelope, CreatedAt, ExpectedEventVersion};
 
@@ -20,7 +20,7 @@ pub struct Metadata {
     created_at: CreatedAt<Metadata>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MetadataEvent {
     Created {

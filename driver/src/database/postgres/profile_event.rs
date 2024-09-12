@@ -98,11 +98,7 @@ impl ProfileEventModifier for PostgresProfileEventRepository {
     ) -> error_stack::Result<(), KernelError> {
         let mut con: &PgConnection = transaction;
 
-        let event_name = match event.event() {
-            ProfileEvent::Created { .. } => "created",
-            ProfileEvent::Updated { .. } => "updated",
-            ProfileEvent::Deleted => "deleted",
-        };
+        let event_name = event.event().name();
         let version = event.version().as_ref();
         if let Some(version) = version {
             match version {

@@ -100,11 +100,7 @@ impl MetadataEventModifier for PostgresMetadataEventRepository {
         event: &CommandEnvelope<MetadataEvent, Metadata>,
     ) -> error_stack::Result<(), KernelError> {
         let mut con: &PgConnection = transaction;
-        let event_name = match event.event() {
-            MetadataEvent::Created { .. } => "created",
-            MetadataEvent::Updated { .. } => "updated",
-            MetadataEvent::Deleted => "deleted",
-        };
+        let event_name = event.event().name();
         let version = event.version().as_ref();
         if let Some(version) = version {
             let version = match version {
