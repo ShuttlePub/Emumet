@@ -5,15 +5,15 @@ use uuid::Uuid;
 
 use kernel::interfaces::modify::{DependOnProfileEventModifier, ProfileEventModifier};
 use kernel::interfaces::query::{DependOnProfileEventQuery, ProfileEventQuery};
-use kernel::KernelError;
 use kernel::prelude::entity::{
     Account, AccountId, CommandEnvelope, CreatedAt, EventEnvelope, EventVersion,
     ExpectedEventVersion, Profile, ProfileEvent,
 };
+use kernel::KernelError;
 
-use crate::ConvertError;
-use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::database::postgres::{CountRow, VersionRow};
+use crate::database::{PostgresConnection, PostgresDatabase};
+use crate::ConvertError;
 
 #[derive(sqlx::FromRow)]
 struct ProfileEventRow {
@@ -225,13 +225,10 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnProfileEventModifier, ProfileEventModifier};
         use kernel::interfaces::query::{DependOnProfileEventQuery, ProfileEventQuery};
-        use kernel::prelude::entity::{
-            AccountId, Profile, ProfileDisplayName,
-            ProfileSummary,
-        };
+        use kernel::prelude::entity::{AccountId, Profile, ProfileDisplayName, ProfileSummary};
 
-        use crate::ConvertError;
         use crate::database::PostgresDatabase;
+        use crate::ConvertError;
 
         #[tokio::test]
         async fn find_by_id() {
