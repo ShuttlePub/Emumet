@@ -1,6 +1,7 @@
 use error_stack::Report;
 use sqlx::PgConnection;
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 use kernel::interfaces::modify::{DependOnProfileEventModifier, ProfileEventModifier};
 use kernel::interfaces::query::{DependOnProfileEventQuery, ProfileEventQuery};
@@ -14,9 +15,10 @@ use crate::ConvertError;
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::database::postgres::{CountRow, VersionRow};
 
+#[derive(sqlx::FromRow)]
 struct ProfileEventRow {
     version: i64,
-    account_id: AccountId,
+    account_id: Uuid,
     event_name: String,
     data: serde_json::Value,
     created_at: OffsetDateTime,

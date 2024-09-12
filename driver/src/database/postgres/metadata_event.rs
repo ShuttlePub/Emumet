@@ -16,8 +16,8 @@ use crate::ConvertError;
 
 #[derive(sqlx::FromRow)]
 struct MetadataEventRow {
-    id: i64,
-    account_id: i64,
+    version: i64,
+    metadata_id: i64,
     event_name: String,
     data: serde_json::Value,
     created_at: OffsetDateTime,
@@ -30,7 +30,7 @@ impl TryFrom<MetadataEventRow> for EventEnvelope<MetadataEvent, Metadata> {
         let event: MetadataEvent = serde_json::from_value(value.data.clone()).convert_error()?;
         Ok(EventEnvelope::new(
             event,
-            value.created_at.into(),
+            EventVersion::new(value.version),
             CreatedAt::new(value.created_at),
         ))
     }
