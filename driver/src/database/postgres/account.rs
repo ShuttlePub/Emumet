@@ -7,7 +7,6 @@ use kernel::prelude::entity::{
     DeletedAt, StellarAccountId,
 };
 use kernel::KernelError;
-use sqlx::postgres::any::AnyConnectionBackend;
 use sqlx::types::time::OffsetDateTime;
 use sqlx::types::Uuid;
 use sqlx::PgConnection;
@@ -47,7 +46,7 @@ impl AccountQuery for PostgresAccountRepository {
         transaction: &mut Self::Transaction,
         id: &AccountId,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
@@ -68,7 +67,7 @@ impl AccountQuery for PostgresAccountRepository {
         transaction: &mut Self::Transaction,
         stellar_id: &StellarAccountId,
     ) -> error_stack::Result<Vec<Account>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
@@ -90,7 +89,7 @@ impl AccountQuery for PostgresAccountRepository {
         transaction: &mut Self::Transaction,
         name: &AccountName,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
@@ -123,7 +122,7 @@ impl AccountModifier for PostgresAccountRepository {
         transaction: &mut Self::Transaction,
         account: &Account,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
@@ -148,7 +147,7 @@ impl AccountModifier for PostgresAccountRepository {
         transaction: &mut Self::Transaction,
         account: &Account,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
@@ -174,7 +173,7 @@ impl AccountModifier for PostgresAccountRepository {
         transaction: &mut Self::Transaction,
         account_id: &AccountId,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"

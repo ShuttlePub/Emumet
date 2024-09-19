@@ -40,7 +40,7 @@ impl ProfileQuery for PostgresProfileRepository {
         transaction: &mut Self::Transaction,
         account_id: &AccountId,
     ) -> error_stack::Result<Option<Profile>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, ProfileRow>(
             //language=postgresql
             r#"
@@ -71,7 +71,7 @@ impl ProfileModifier for PostgresProfileRepository {
         transaction: &mut Self::Transaction,
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
@@ -100,7 +100,7 @@ impl ProfileModifier for PostgresProfileRepository {
         transaction: &mut Self::Transaction,
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"

@@ -41,7 +41,7 @@ impl MetadataQuery for PostgresMetadataRepository {
         transaction: &mut Self::Transaction,
         metadata_id: &MetadataId,
     ) -> error_stack::Result<Option<Metadata>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, MetadataRow>(
             // language=postgresql
             r#"
@@ -62,7 +62,7 @@ impl MetadataQuery for PostgresMetadataRepository {
         transaction: &mut Self::Transaction,
         account_id: &AccountId,
     ) -> error_stack::Result<Vec<Metadata>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, MetadataRow>(
             // language=postgresql
             r#"
@@ -95,7 +95,7 @@ impl MetadataModifier for PostgresMetadataRepository {
         transaction: &mut Self::Transaction,
         metadata: &Metadata,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             // language=postgresql
             r#"
@@ -119,7 +119,7 @@ impl MetadataModifier for PostgresMetadataRepository {
         transaction: &mut Self::Transaction,
         metadata: &Metadata,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             // language=postgresql
             r#"
@@ -142,7 +142,7 @@ impl MetadataModifier for PostgresMetadataRepository {
         transaction: &mut Self::Transaction,
         metadata_id: &MetadataId,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             // language=postgresql
             r#"

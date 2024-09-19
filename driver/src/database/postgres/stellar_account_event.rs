@@ -49,7 +49,7 @@ impl StellarAccountEventQuery for PostgresStellarAccountEventRepository {
         since: Option<&EventVersion<StellarAccount>>,
     ) -> error_stack::Result<Vec<EventEnvelope<StellarAccountEvent, StellarAccount>>, KernelError>
     {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         if let Some(version) = since {
             sqlx::query_as::<_, StellarAccountEventRow>(
                 // language=postgresql
@@ -97,7 +97,7 @@ impl StellarAccountEventModifier for PostgresStellarAccountEventRepository {
         account_id: &StellarAccountId,
         event: &CommandEnvelope<StellarAccountEvent, StellarAccount>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         let event_name = event.event().name();
         let version = event.version().as_ref();
         if let Some(version) = version {

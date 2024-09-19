@@ -4,7 +4,7 @@ use time::OffsetDateTime;
 
 use kernel::interfaces::modify::{DependOnMetadataEventModifier, MetadataEventModifier};
 use kernel::interfaces::query::{
-    DependOnMetadataEventQuery, DependOnMetadataQuery, MetadataEventQuery,
+    DependOnMetadataEventQuery, MetadataEventQuery,
 };
 use kernel::prelude::entity::{
     CommandEnvelope, CreatedAt, EventEnvelope, EventVersion, ExpectedEventVersion, Metadata,
@@ -48,7 +48,7 @@ impl MetadataEventQuery for PostgresMetadataEventRepository {
         metadata_id: &MetadataId,
         since: Option<&EventVersion<Metadata>>,
     ) -> error_stack::Result<Vec<EventEnvelope<MetadataEvent, Metadata>>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         if let Some(version) = since {
             sqlx::query_as::<_, MetadataEventRow>(
                 // language=postgresql
@@ -96,7 +96,7 @@ impl MetadataEventModifier for PostgresMetadataEventRepository {
         metadata_id: &MetadataId,
         event: &CommandEnvelope<MetadataEvent, Metadata>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         let event_name = event.event().name();
         let version = event.version().as_ref();
         if let Some(version) = version {
@@ -195,7 +195,7 @@ mod test {
 
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnMetadataEventModifier, MetadataEventModifier};
-        use kernel::interfaces::query::{DependOnMetadataQuery, MetadataEventQuery};
+        use kernel::interfaces::query::{DependOnMetadataQuery};
         use kernel::prelude::entity::{
             AccountId, Metadata, MetadataContent, MetadataId, MetadataLabel,
         };

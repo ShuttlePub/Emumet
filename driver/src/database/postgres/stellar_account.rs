@@ -41,7 +41,7 @@ impl StellarAccountQuery for PostgresStellarAccountRepository {
         transaction: &mut Self::Transaction,
         account_id: &StellarAccountId,
     ) -> error_stack::Result<Option<StellarAccount>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, StellarAccountRow>(
             //language=postgresql
             r#"
@@ -72,7 +72,7 @@ impl StellarAccountModifier for PostgresStellarAccountRepository {
         transaction: &mut Self::Transaction,
         stellar_account: &StellarAccount,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
@@ -95,7 +95,7 @@ impl StellarAccountModifier for PostgresStellarAccountRepository {
         transaction: &mut Self::Transaction,
         stellar_account: &StellarAccount,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
@@ -118,7 +118,7 @@ impl StellarAccountModifier for PostgresStellarAccountRepository {
         transaction: &mut Self::Transaction,
         account_id: &StellarAccountId,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"

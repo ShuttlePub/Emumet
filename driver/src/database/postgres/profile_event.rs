@@ -48,7 +48,7 @@ impl ProfileEventQuery for PostgresProfileEventRepository {
         id: &AccountId,
         since: Option<&EventVersion<Profile>>,
     ) -> error_stack::Result<Vec<EventEnvelope<ProfileEvent, Profile>>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         if let Some(since) = since {
             sqlx::query_as::<_, ProfileEventRow>(
                 //language=postgresql
@@ -96,7 +96,7 @@ impl ProfileEventModifier for PostgresProfileEventRepository {
         account_id: &AccountId,
         event: &CommandEnvelope<ProfileEvent, Profile>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
 
         let event_name = event.event().name();
         let version = event.version().as_ref();
@@ -201,7 +201,7 @@ impl PostgresProfileEventRepository {
         account_id: &AccountId,
         event: &EventVersion<Account>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"

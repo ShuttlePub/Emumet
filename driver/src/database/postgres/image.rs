@@ -36,7 +36,7 @@ impl ImageQuery for PostgresImageRepository {
         transaction: &mut Self::Transaction,
         id: &ImageId,
     ) -> error_stack::Result<Option<Image>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, ImageRow>(
             // language=postgresql
             r#"
@@ -55,7 +55,7 @@ impl ImageQuery for PostgresImageRepository {
         transaction: &mut Self::Transaction,
         url: &ImageUrl,
     ) -> error_stack::Result<Option<Image>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, ImageRow>(
             // language=postgresql
             r#"
@@ -86,7 +86,7 @@ impl ImageModifier for PostgresImageRepository {
         transaction: &mut Self::Transaction,
         image: &Image,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             // language=postgresql
             r#"
@@ -108,7 +108,7 @@ impl ImageModifier for PostgresImageRepository {
         transaction: &mut Self::Transaction,
         image_id: &ImageId,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             // language=postgresql
             r#"

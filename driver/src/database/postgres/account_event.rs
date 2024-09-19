@@ -4,10 +4,10 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use kernel::interfaces::modify::{
-    AccountEventModifier, AccountModifier, DependOnAccountEventModifier,
+    AccountEventModifier, DependOnAccountEventModifier,
 };
 use kernel::interfaces::query::{
-    AccountEventQuery, DependOnAccountEventQuery, DependOnAccountQuery,
+    AccountEventQuery, DependOnAccountEventQuery,
 };
 use kernel::prelude::entity::{
     Account, AccountEvent, AccountId, CommandEnvelope, CreatedAt, EventEnvelope, EventVersion,
@@ -51,7 +51,7 @@ impl AccountEventQuery for PostgresAccountEventRepository {
         id: &AccountId,
         since: Option<&EventVersion<Account>>,
     ) -> error_stack::Result<Vec<EventEnvelope<AccountEvent, Account>>, KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         if let Some(version) = since {
             sqlx::query_as::<_, AccountEventRow>(
                 //language=postgresql
@@ -99,7 +99,7 @@ impl AccountEventModifier for PostgresAccountEventRepository {
         account_id: &AccountId,
         event: &CommandEnvelope<AccountEvent, Account>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
 
         let event_name = event.event().name();
         let version = event.version().as_ref();
@@ -204,7 +204,7 @@ impl PostgresAccountEventRepository {
         account_id: &AccountId,
         event: &EventVersion<Account>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
