@@ -37,7 +37,7 @@ impl TryFrom<ProfileEventRow> for EventEnvelope<ProfileEvent, Profile> {
     }
 }
 
-struct PostgresProfileEventRepository;
+pub struct PostgresProfileEventRepository;
 
 impl ProfileEventQuery for PostgresProfileEventRepository {
     type Transaction = PostgresConnection;
@@ -48,7 +48,7 @@ impl ProfileEventQuery for PostgresProfileEventRepository {
         id: &AccountId,
         since: Option<&EventVersion<Profile>>,
     ) -> error_stack::Result<Vec<EventEnvelope<ProfileEvent, Profile>>, KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         if let Some(since) = since {
             sqlx::query_as::<_, ProfileEventRow>(
                 //language=postgresql
@@ -75,7 +75,7 @@ impl ProfileEventQuery for PostgresProfileEventRepository {
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|rows| rows.into_iter().map(|row| row.try_into()).collect())
+        .and_then(|rows| rows.into_iter().map(|row| row.try_into()).collect())
     }
 }
 
@@ -96,12 +96,12 @@ impl ProfileEventModifier for PostgresProfileEventRepository {
         account_id: &AccountId,
         event: &CommandEnvelope<ProfileEvent, Profile>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
 
         let event_name = event.event().name();
         let version = event.version().as_ref();
         if let Some(version) = version {
-            match version {
+            let version = match version {
                 ExpectedEventVersion::Nothing => {
                     let amount = sqlx::query_as::<_, CountRow>(
                         //language=postgresql
@@ -112,13 +112,15 @@ impl ProfileEventModifier for PostgresProfileEventRepository {
                         "#,
                     )
                     .bind(account_id.as_ref())
-                    .fetch_one(con)
+                    .fetch_one(&mut *con)
                     .await
                     .convert_error()?;
                     if amount.count > 0 {
-                        return Err(Report::new(KernelError::Concurrency)
-                            .attach_printable(format!("Profile {} already exists", account_id)));
+                        return Err(Report::new(KernelError::Concurrency).attach_printable(
+                            format!("Profile {} already exists", account_id.as_ref()),
+                        ));
                     }
+                    0
                 }
                 ExpectedEventVersion::Exact(version) => {
                     let last_version = sqlx::query_as::<_, VersionRow>(
@@ -132,7 +134,7 @@ impl ProfileEventModifier for PostgresProfileEventRepository {
                         "#,
                     )
                     .bind(account_id.as_ref())
-                    .fetch_optional(con)
+                    .fetch_optional(&mut *con)
                     .await
                     .convert_error()?;
                     if last_version
@@ -142,13 +144,14 @@ impl ProfileEventModifier for PostgresProfileEventRepository {
                         return Err(Report::new(KernelError::Concurrency).attach_printable(
                             format!(
                                 "Profile {} version {} already exists",
-                                account_id,
+                                account_id.as_ref(),
                                 version.as_ref()
                             ),
                         ));
                     }
+                    *version.as_ref()
                 }
-            }
+            };
             sqlx::query(
                 //language=postgresql
                 r#"
@@ -156,13 +159,13 @@ impl ProfileEventModifier for PostgresProfileEventRepository {
             VALUES ($1, $2, $3, $4, now())
             "#,
             )
-            .bind(version.as_ref())
+            .bind(version)
             .bind(account_id.as_ref())
             .bind(event_name)
             .bind(serde_json::to_value(event.event()).convert_error()?)
             .execute(con)
             .await
-            .convert_error()
+            .convert_error()?;
         } else {
             sqlx::query(
                 //language=postgresql
@@ -172,12 +175,13 @@ impl ProfileEventModifier for PostgresProfileEventRepository {
             "#,
             )
             .bind(account_id.as_ref())
-            .bind(event.event_name())
-            .bind(serde_json::to_value(event.data()).convert_error()?)
+            .bind(event_name)
+            .bind(serde_json::to_value(event.event()).convert_error()?)
             .execute(con)
             .await
-            .convert_error()
+            .convert_error()?;
         }
+        Ok(())
     }
 }
 
@@ -193,11 +197,11 @@ impl PostgresProfileEventRepository {
     // Used in the test
     async fn delete(
         &self,
-        transaction: &PostgresConnection,
+        transaction: &mut PostgresConnection,
         account_id: &AccountId,
         event: &EventVersion<Account>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
@@ -209,7 +213,8 @@ impl PostgresProfileEventRepository {
         .bind(event.as_ref())
         .execute(con)
         .await
-        .convert_error()
+        .convert_error()?;
+        Ok(())
     }
 }
 

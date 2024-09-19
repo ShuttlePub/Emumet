@@ -30,7 +30,7 @@ impl From<ProfileRow> for Profile {
     }
 }
 
-struct PostgresProfileRepository;
+pub struct PostgresProfileRepository;
 
 impl ProfileQuery for PostgresProfileRepository {
     type Transaction = PostgresConnection;
@@ -40,7 +40,7 @@ impl ProfileQuery for PostgresProfileRepository {
         transaction: &mut Self::Transaction,
         account_id: &AccountId,
     ) -> error_stack::Result<Option<Profile>, KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         sqlx::query_as::<_, ProfileRow>(
             //language=postgresql
             r#"
@@ -71,7 +71,7 @@ impl ProfileModifier for PostgresProfileRepository {
         transaction: &mut Self::Transaction,
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
@@ -80,10 +80,15 @@ impl ProfileModifier for PostgresProfileRepository {
             "#,
         )
         .bind(profile.id().as_ref())
-        .bind(profile.display_name().as_ref())
-        .bind(profile.summary().as_ref())
-        .bind(profile.icon().as_ref())
-        .bind(profile.banner().as_ref())
+        .bind(
+            profile
+                .display_name()
+                .as_ref()
+                .map(ProfileDisplayName::as_ref),
+        )
+        .bind(profile.summary().as_ref().map(ProfileSummary::as_ref))
+        .bind(profile.icon().as_ref().map(ImageId::as_ref))
+        .bind(profile.banner().as_ref().map(ImageId::as_ref))
         .execute(con)
         .await
         .convert_error()?;
@@ -95,7 +100,7 @@ impl ProfileModifier for PostgresProfileRepository {
         transaction: &mut Self::Transaction,
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
@@ -103,10 +108,10 @@ impl ProfileModifier for PostgresProfileRepository {
             "#
         )
             .bind(profile.id().as_ref())
-            .bind(profile.display_name().as_ref())
-            .bind(profile.summary().as_ref())
-            .bind(profile.icon().as_ref())
-            .bind(profile.banner().as_ref())
+            .bind(profile.display_name().as_ref().map(ProfileDisplayName::as_ref))
+            .bind(profile.summary().as_ref().map(ProfileSummary::as_ref))
+            .bind(profile.icon().as_ref().map(ImageId::as_ref))
+            .bind(profile.banner().as_ref().map(ImageId::as_ref))
             .execute(con)
             .await
             .convert_error()?;

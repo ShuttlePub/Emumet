@@ -74,7 +74,7 @@ impl DatabaseConnection for PostgresDatabase {
 
 impl<T> ConvertError for Result<T, Error> {
     type Ok = T;
-    fn convert_error(self) -> error_stack::Result<Ok, KernelError> {
+    fn convert_error(self) -> error_stack::Result<T, KernelError> {
         self.map_err(|error| match error {
             Error::PoolTimedOut => Report::from(error).change_context(KernelError::Timeout),
             _ => Report::from(error).change_context(KernelError::Internal),

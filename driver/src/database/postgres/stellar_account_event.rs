@@ -37,7 +37,7 @@ impl TryFrom<StellarAccountEventRow> for EventEnvelope<StellarAccountEvent, Stel
     }
 }
 
-struct PostgresStellarAccountEventRepository;
+pub struct PostgresStellarAccountEventRepository;
 
 impl StellarAccountEventQuery for PostgresStellarAccountEventRepository {
     type Transaction = PostgresConnection;
@@ -49,7 +49,7 @@ impl StellarAccountEventQuery for PostgresStellarAccountEventRepository {
         since: Option<&EventVersion<StellarAccount>>,
     ) -> error_stack::Result<Vec<EventEnvelope<StellarAccountEvent, StellarAccount>>, KernelError>
     {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         if let Some(version) = since {
             sqlx::query_as::<_, StellarAccountEventRow>(
                 // language=postgresql
@@ -72,11 +72,11 @@ impl StellarAccountEventQuery for PostgresStellarAccountEventRepository {
                 "#,
             )
         }
-        .bind(id)
+        .bind(id.as_ref())
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|rows| rows.into_iter().map(|row| row.try_into()).collect())
+        .and_then(|rows| rows.into_iter().map(|row| row.try_into()).collect())
     }
 }
 
@@ -97,7 +97,7 @@ impl StellarAccountEventModifier for PostgresStellarAccountEventRepository {
         account_id: &StellarAccountId,
         event: &CommandEnvelope<StellarAccountEvent, StellarAccount>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         let event_name = event.event().name();
         let version = event.version().as_ref();
         if let Some(version) = version {
@@ -112,13 +112,13 @@ impl StellarAccountEventModifier for PostgresStellarAccountEventRepository {
                         "#,
                     )
                     .bind(account_id.as_ref())
-                    .fetch_one(con)
+                    .fetch_one(&mut *con)
                     .await
                     .convert_error()?;
-                    if amount.amount != 0 {
+                    if amount.count != 0 {
                         return Err(KernelError::Concurrency).attach_printable(format!(
                             "The account {} already has events",
-                            account_id
+                            account_id.as_ref()
                         ));
                     }
                     0
@@ -135,13 +135,13 @@ impl StellarAccountEventModifier for PostgresStellarAccountEventRepository {
                         "#,
                     )
                     .bind(account_id.as_ref())
-                    .fetch_one(con)
+                    .fetch_one(&mut *con)
                     .await
                     .convert_error()?;
                     if last_version.version != *version.as_ref() {
                         return Err(KernelError::Concurrency).attach_printable(format!(
                             "The account {} has version {} already exists",
-                            account_id,
+                            account_id.as_ref(),
                             version.as_ref()
                         ));
                     }
@@ -161,7 +161,7 @@ impl StellarAccountEventModifier for PostgresStellarAccountEventRepository {
                 .bind(serde_json::to_value(event.event()).convert_error()?)
                 .execute(con)
                 .await
-                .convert_error()?
+                .convert_error()?;
         } else {
             sqlx::query(
                 // language=postgresql
@@ -175,8 +175,9 @@ impl StellarAccountEventModifier for PostgresStellarAccountEventRepository {
                 .bind(serde_json::to_value(event.event()).convert_error()?)
                 .execute(con)
                 .await
-                .convert_error()?
+                .convert_error()?;
         }
+        Ok(())
     }
 }
 

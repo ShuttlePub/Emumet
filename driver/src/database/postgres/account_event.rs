@@ -40,7 +40,7 @@ impl TryFrom<AccountEventRow> for EventEnvelope<AccountEvent, Account> {
     }
 }
 
-struct PostgresAccountEventRepository;
+pub struct PostgresAccountEventRepository;
 
 impl AccountEventQuery for PostgresAccountEventRepository {
     type Transaction = PostgresConnection;
@@ -51,7 +51,7 @@ impl AccountEventQuery for PostgresAccountEventRepository {
         id: &AccountId,
         since: Option<&EventVersion<Account>>,
     ) -> error_stack::Result<Vec<EventEnvelope<AccountEvent, Account>>, KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         if let Some(version) = since {
             sqlx::query_as::<_, AccountEventRow>(
                 //language=postgresql
@@ -78,12 +78,7 @@ impl AccountEventQuery for PostgresAccountEventRepository {
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|versions| {
-            versions
-                .into_iter()
-                .map(|row| row.try_into())
-                .collect::<Result<Vec<_>, _>>()
-        })
+        .and_then(|versions| versions.into_iter().map(|row| row.try_into()).collect())
     }
 }
 
@@ -104,12 +99,12 @@ impl AccountEventModifier for PostgresAccountEventRepository {
         account_id: &AccountId,
         event: &CommandEnvelope<AccountEvent, Account>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
 
         let event_name = event.event().name();
         let version = event.version().as_ref();
         if let Some(version) = version {
-            match version {
+            let version: i64 = match version {
                 ExpectedEventVersion::Nothing => {
                     let amount = sqlx::query_as::<_, CountRow>(
                         //language=postgresql
@@ -120,13 +115,15 @@ impl AccountEventModifier for PostgresAccountEventRepository {
                     "#,
                     )
                     .bind(account_id.as_ref())
-                    .fetch_one(con)
+                    .fetch_one(&mut *con)
                     .await
                     .convert_error()?;
-                    if amount.amount != 0 {
-                        return Err(Report::new(KernelError::Concurrency)
-                            .attach_printable(format!("Account {} already exists", account_id)));
+                    if amount.count != 0 {
+                        return Err(Report::new(KernelError::Concurrency).attach_printable(
+                            format!("Account {} already exists", account_id.as_ref()),
+                        ));
                     }
+                    0
                 }
                 ExpectedEventVersion::Exact(version) => {
                     let last_version = sqlx::query_as::<_, VersionRow>(
@@ -140,7 +137,7 @@ impl AccountEventModifier for PostgresAccountEventRepository {
                         "#,
                     )
                     .bind(account_id.as_ref())
-                    .fetch_optional(con)
+                    .fetch_optional(&mut *con)
                     .await
                     .convert_error()?;
                     if last_version
@@ -150,13 +147,14 @@ impl AccountEventModifier for PostgresAccountEventRepository {
                         return Err(Report::new(KernelError::Concurrency).attach_printable(
                             format!(
                                 "Account {} version {} already exists",
-                                account_id,
+                                account_id.as_ref(),
                                 version.as_ref()
                             ),
                         ));
                     }
+                    *version.as_ref()
                 }
-            }
+            };
             sqlx::query(
                 //language=postgresql
                 r#"
@@ -170,7 +168,7 @@ impl AccountEventModifier for PostgresAccountEventRepository {
             .bind(serde_json::to_value(event.event()).convert_error()?)
             .execute(con)
             .await
-            .convert_error()
+            .convert_error()?;
         } else {
             sqlx::query(
                 //language=postgresql
@@ -179,13 +177,14 @@ impl AccountEventModifier for PostgresAccountEventRepository {
                 VALUES ($1, $2, $3, now())
                 "#,
             )
-            .bind(event.aggregate_id().as_ref())
+            .bind(account_id.as_ref())
             .bind(event_name)
             .bind(serde_json::to_value(event.event()).convert_error()?)
             .execute(con)
             .await
-            .convert_error()
+            .convert_error()?;
         }
+        Ok(())
     }
 }
 
@@ -201,11 +200,11 @@ impl PostgresAccountEventRepository {
     // Used in the test
     async fn delete(
         &self,
-        transaction: &PostgresConnection,
+        transaction: &mut PostgresConnection,
         account_id: &AccountId,
         event: &EventVersion<Account>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         sqlx::query(
             //language=postgresql
             r#"
@@ -217,7 +216,8 @@ impl PostgresAccountEventRepository {
         .bind(event.as_ref())
         .execute(con)
         .await
-        .convert_error()
+        .convert_error()?;
+        Ok(())
     }
 }
 

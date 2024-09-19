@@ -3,7 +3,9 @@ use sqlx::PgConnection;
 use time::OffsetDateTime;
 
 use kernel::interfaces::modify::{DependOnMetadataEventModifier, MetadataEventModifier};
-use kernel::interfaces::query::{DependOnMetadataQuery, MetadataEventQuery};
+use kernel::interfaces::query::{
+    DependOnMetadataEventQuery, DependOnMetadataQuery, MetadataEventQuery,
+};
 use kernel::prelude::entity::{
     CommandEnvelope, CreatedAt, EventEnvelope, EventVersion, ExpectedEventVersion, Metadata,
     MetadataEvent, MetadataId,
@@ -36,7 +38,7 @@ impl TryFrom<MetadataEventRow> for EventEnvelope<MetadataEvent, Metadata> {
     }
 }
 
-struct PostgresMetadataEventRepository;
+pub struct PostgresMetadataEventRepository;
 
 impl MetadataEventQuery for PostgresMetadataEventRepository {
     type Transaction = PostgresConnection;
@@ -46,7 +48,7 @@ impl MetadataEventQuery for PostgresMetadataEventRepository {
         metadata_id: &MetadataId,
         since: Option<&EventVersion<Metadata>>,
     ) -> error_stack::Result<Vec<EventEnvelope<MetadataEvent, Metadata>>, KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         if let Some(version) = since {
             sqlx::query_as::<_, MetadataEventRow>(
                 // language=postgresql
@@ -73,19 +75,14 @@ impl MetadataEventQuery for PostgresMetadataEventRepository {
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|versions| {
-            versions
-                .into_iter()
-                .map(|version| version.try_into())
-                .collect::<Result<Vec<_>, _>>()
-        })
+        .and_then(|versions| versions.into_iter().map(|event| event.try_into()).collect())
     }
 }
 
-impl DependOnMetadataQuery for PostgresDatabase {
-    type MetadataQuery = PostgresMetadataEventRepository;
+impl DependOnMetadataEventQuery for PostgresDatabase {
+    type MetadataEventQuery = PostgresMetadataEventRepository;
 
-    fn metadata_query(&self) -> &Self::MetadataQuery {
+    fn metadata_event_query(&self) -> &Self::MetadataEventQuery {
         &PostgresMetadataEventRepository
     }
 }
@@ -99,7 +96,7 @@ impl MetadataEventModifier for PostgresMetadataEventRepository {
         metadata_id: &MetadataId,
         event: &CommandEnvelope<MetadataEvent, Metadata>,
     ) -> error_stack::Result<(), KernelError> {
-        let mut con: &PgConnection = transaction;
+        let mut con: &mut PgConnection = transaction;
         let event_name = event.event().name();
         let version = event.version().as_ref();
         if let Some(version) = version {
@@ -114,13 +111,13 @@ impl MetadataEventModifier for PostgresMetadataEventRepository {
                         "#,
                     )
                     .bind(metadata_id.as_ref())
-                    .fetch_one(con)
+                    .fetch_one(&mut *con)
                     .await
                     .convert_error()?;
-                    if amount.amount != 0 {
+                    if amount.count != 0 {
                         return Err(KernelError::Concurrency).attach_printable(format!(
                             "Metadata with id {} already exists",
-                            metadata_id
+                            metadata_id.as_ref()
                         ));
                     }
                     0
@@ -137,13 +134,13 @@ impl MetadataEventModifier for PostgresMetadataEventRepository {
                         "#,
                     )
                     .bind(metadata_id.as_ref())
-                    .fetch_one(con)
+                    .fetch_one(&mut *con)
                     .await
                     .convert_error()?;
                     if last_version.version != *version.as_ref() {
                         return Err(KernelError::Concurrency).attach_printable(format!(
                             "Metadata with id {} version {} already exists",
-                            metadata_id,
+                            metadata_id.as_ref(),
                             version.as_ref()
                         ));
                     }
@@ -163,7 +160,7 @@ impl MetadataEventModifier for PostgresMetadataEventRepository {
             .bind(serde_json::to_value(event.event()).convert_error()?)
             .execute(con)
             .await
-            .convert_error()
+            .convert_error()?;
         } else {
             sqlx::query(
                 // language=postgresql
@@ -177,8 +174,9 @@ impl MetadataEventModifier for PostgresMetadataEventRepository {
             .bind(serde_json::to_value(event.event()).convert_error()?)
             .execute(con)
             .await
-            .convert_error()
+            .convert_error()?;
         }
+        Ok(())
     }
 }
 
