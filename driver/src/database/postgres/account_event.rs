@@ -3,12 +3,8 @@ use sqlx::PgConnection;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use kernel::interfaces::modify::{
-    AccountEventModifier, DependOnAccountEventModifier,
-};
-use kernel::interfaces::query::{
-    AccountEventQuery, DependOnAccountEventQuery,
-};
+use kernel::interfaces::modify::{AccountEventModifier, DependOnAccountEventModifier};
+use kernel::interfaces::query::{AccountEventQuery, DependOnAccountEventQuery};
 use kernel::prelude::entity::{
     Account, AccountEvent, AccountId, CommandEnvelope, CreatedAt, EventEnvelope, EventVersion,
     ExpectedEventVersion,

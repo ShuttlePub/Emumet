@@ -8,7 +8,6 @@ mod profile_event;
 mod stellar_account;
 mod stellar_account_event;
 
-
 use crate::database::env;
 use crate::ConvertError;
 use error_stack::Report;

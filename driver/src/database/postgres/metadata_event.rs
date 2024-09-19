@@ -3,9 +3,7 @@ use sqlx::PgConnection;
 use time::OffsetDateTime;
 
 use kernel::interfaces::modify::{DependOnMetadataEventModifier, MetadataEventModifier};
-use kernel::interfaces::query::{
-    DependOnMetadataEventQuery, MetadataEventQuery,
-};
+use kernel::interfaces::query::{DependOnMetadataEventQuery, MetadataEventQuery};
 use kernel::prelude::entity::{
     CommandEnvelope, CreatedAt, EventEnvelope, EventVersion, ExpectedEventVersion, Metadata,
     MetadataEvent, MetadataId,
@@ -195,7 +193,7 @@ mod test {
 
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnMetadataEventModifier, MetadataEventModifier};
-        use kernel::interfaces::query::{DependOnMetadataQuery};
+        use kernel::interfaces::query::DependOnMetadataQuery;
         use kernel::prelude::entity::{
             AccountId, Metadata, MetadataContent, MetadataId, MetadataLabel,
         };
