@@ -12,7 +12,9 @@ use destructure::Destructure;
 use serde::{Deserialize, Serialize};
 use vodca::{Nameln, Newln, References};
 
-#[derive(Debug, Clone, Hash, References, Newln, Destructure, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Hash, Eq, PartialEq, References, Newln, Destructure, Serialize, Deserialize,
+)]
 pub struct Profile {
     id: ProfileId,
     account_id: AccountId,

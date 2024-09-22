@@ -144,7 +144,7 @@ mod test {
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, Profile, ProfileDisplayName, ProfileSummary,
+            CreatedAt, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
         };
 
         use crate::database::PostgresDatabase;
@@ -154,9 +154,10 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = AccountId::new(Uuid::new_v4());
+            let profile_id = ProfileId::new(Uuid::new_v4());
+            let account_id = AccountId::new(Uuid::new_v4());
             let account = Account::new(
-                id.clone(),
+                account_id.clone(),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
@@ -165,7 +166,8 @@ mod test {
                 None,
             );
             let profile = Profile::new(
-                id,
+                profile_id,
+                account_id,
                 Some(ProfileDisplayName::new("display name")),
                 Some(ProfileSummary::new("summary")),
                 None,
@@ -184,7 +186,7 @@ mod test {
 
             let result = database
                 .profile_query()
-                .find_by_id(&mut transaction, &id)
+                .find_by_id(&mut transaction, &profile_id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(profile));
@@ -202,7 +204,7 @@ mod test {
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, Profile, ProfileDisplayName, ProfileSummary,
+            CreatedAt, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
         };
 
         use crate::database::PostgresDatabase;
@@ -212,9 +214,10 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = AccountId::new(Uuid::new_v4());
+            let profile_id = ProfileId::new(Uuid::new_v4());
+            let account_id = AccountId::new(Uuid::new_v4());
             let account = Account::new(
-                id.clone(),
+                account_id.clone(),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
@@ -223,7 +226,8 @@ mod test {
                 None,
             );
             let profile = Profile::new(
-                id,
+                profile_id,
+                account_id,
                 Some(ProfileDisplayName::new("display name")),
                 Some(ProfileSummary::new("summary")),
                 None,
@@ -246,9 +250,10 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = AccountId::new(Uuid::new_v4());
+            let profile_id = ProfileId::new(Uuid::new_v4());
+            let account_id = AccountId::new(Uuid::new_v4());
             let account = Account::new(
-                id.clone(),
+                account_id.clone(),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
@@ -257,7 +262,8 @@ mod test {
                 None,
             );
             let profile = Profile::new(
-                id.clone(),
+                profile_id.clone(),
+                account_id.clone(),
                 Some(ProfileDisplayName::new("display name")),
                 Some(ProfileSummary::new("summary")),
                 None,
@@ -275,7 +281,8 @@ mod test {
                 .unwrap();
 
             let updated_profile = Profile::new(
-                id,
+                profile_id.clone(),
+                account_id,
                 Some(ProfileDisplayName::new("updated display name")),
                 Some(ProfileSummary::new("updated summary")),
                 None,
@@ -289,7 +296,7 @@ mod test {
 
             let result = database
                 .profile_query()
-                .find_by_id(&mut transaction, &id)
+                .find_by_id(&mut transaction, &profile_id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(updated_profile));

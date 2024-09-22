@@ -1,5 +1,5 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
-use crate::entity::{CommandEnvelope, Metadata, MetadataEvent, MetadataId};
+use crate::entity::{Metadata, MetadataId};
 use crate::KernelError;
 
 pub trait MetadataModifier: Sync + Send + 'static {

@@ -171,6 +171,7 @@ mod test {
 
     mod query {
         use crate::database::PostgresDatabase;
+        use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
         use kernel::prelude::entity::{
@@ -182,7 +183,7 @@ mod test {
         #[tokio::test]
         async fn find_by_id() {
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.transaction().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
             let metadata = Metadata::new(
@@ -211,7 +212,7 @@ mod test {
         #[tokio::test]
         async fn find_by_account_id() {
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.transaction().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
             let metadata = Metadata::new(
@@ -250,6 +251,7 @@ mod test {
     }
     mod modify {
         use crate::database::PostgresDatabase;
+        use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
         use kernel::prelude::entity::{
@@ -261,7 +263,7 @@ mod test {
         #[tokio::test]
         async fn create() {
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.transaction().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
             let metadata = Metadata::new(
@@ -290,7 +292,7 @@ mod test {
         #[tokio::test]
         async fn update() {
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.transaction().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
             let metadata = Metadata::new(
@@ -333,7 +335,7 @@ mod test {
         #[tokio::test]
         async fn delete() {
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.transaction().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
             let metadata = Metadata::new(

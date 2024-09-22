@@ -185,13 +185,8 @@ mod test {
         use uuid::Uuid;
 
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountEventModifier, DependOnAccountEventModifier, DependOnEventModifier,
-            EventModifier,
-        };
-        use kernel::interfaces::query::{
-            AccountEventQuery, DependOnAccountEventQuery, DependOnEventQuery, EventQuery,
-        };
+        use kernel::interfaces::modify::{DependOnEventModifier, EventModifier};
+        use kernel::interfaces::query::{DependOnEventQuery, EventQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             EventId,
@@ -288,16 +283,10 @@ mod test {
         use uuid::Uuid;
 
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountEventModifier, DependOnAccountEventModifier, DependOnEventModifier,
-            EventModifier,
-        };
-        use kernel::interfaces::query::{
-            AccountEventQuery, DependOnAccountEventQuery, DependOnEventQuery, EventQuery,
-        };
+        use kernel::interfaces::modify::{DependOnEventModifier, EventModifier};
+        use kernel::interfaces::query::{DependOnEventQuery, EventQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion,
         };
 
         use crate::database::PostgresDatabase;
@@ -324,8 +313,6 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
-            let event = &events[0];
-            assert_eq!(event.version().as_ref(), &EventVersion::new(1));
         }
     }
 }

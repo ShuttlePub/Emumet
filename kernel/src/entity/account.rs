@@ -19,7 +19,9 @@ mod name;
 mod private_key;
 mod public_key;
 
-#[derive(Debug, Clone, Hash, References, Newln, Serialize, Deserialize, Destructure)]
+#[derive(
+    Debug, Clone, Hash, Eq, PartialEq, References, Newln, Serialize, Deserialize, Destructure,
+)]
 pub struct Account {
     id: AccountId,
     name: AccountName,

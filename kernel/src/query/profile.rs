@@ -1,5 +1,5 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
-use crate::entity::{EventEnvelope, EventVersion, Profile, ProfileEvent, ProfileId};
+use crate::entity::{Profile, ProfileId};
 use crate::KernelError;
 
 pub trait ProfileQuery: Sync + Send + 'static {

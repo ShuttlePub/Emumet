@@ -1,5 +1,5 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
-use crate::entity::{CommandEnvelope, StellarAccount, StellarAccountEvent, StellarAccountId};
+use crate::entity::{StellarAccount, StellarAccountId};
 use crate::KernelError;
 
 pub trait StellarAccountModifier: Sync + Send + 'static {

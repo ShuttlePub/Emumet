@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use time::OffsetDateTime;
 use vodca::{AsRefln, Fromln};
 
-#[derive(Debug, Clone, Hash, Fromln, AsRefln)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Fromln, AsRefln)]
 pub struct DeletedAt<T>(OffsetDateTime, PhantomData<T>);
 
 impl<T> DeletedAt<T> {

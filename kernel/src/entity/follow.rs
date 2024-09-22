@@ -1,6 +1,7 @@
 mod id;
 
 use crate::KernelError;
+use error_stack::ResultExt;
 use serde::{Deserialize, Serialize};
 use vodca::References;
 
@@ -18,18 +19,14 @@ impl FollowAccountId {
     pub fn new(
         local: Option<AccountId>,
         remote: Option<RemoteAccountId>,
-    ) -> Result<Self, KernelError> {
+    ) -> error_stack::Result<Self, KernelError> {
         match (local, remote) {
             (Some(local), None) => Ok(Self::Local(local)),
             (None, Some(remote)) => Ok(Self::Remote(remote)),
-            (Some(local), Some(remote)) => Err(KernelError::InvalidValue {
-                method: "FollowAccount::new",
-                value: format!("local: {:?} and remote: {:?}", local, remote),
-            }),
-            (None, None) => Err(KernelError::InvalidValue {
-                method: "FollowAccount::new",
-                value: "local: None and remote: None".to_string(),
-            }),
+            (Some(local), Some(remote)) => Err(KernelError::Internal)
+                .attach_printable(format!("local: {:?} and remote: {:?}", local, remote)),
+            (None, None) => Err(KernelError::Internal)
+                .attach_printable("local: None and remote: None".to_string()),
         }
     }
 }
@@ -58,14 +55,14 @@ impl Follow {
         id: FollowId,
         source: FollowAccountId,
         destination: FollowAccountId,
-    ) -> Result<Self, KernelError> {
+    ) -> error_stack::Result<Self, KernelError> {
         match (source, destination) {
             (source @ FollowAccountId::Local(_), destination @ FollowAccountId::Local(_))
             | (source @ FollowAccountId::Remote(_), destination @ FollowAccountId::Remote(_)) => {
-                Err(KernelError::InvalidValue {
-                    method: "Follow::new",
-                    value: format!("source: {:?}, destination: {:?}", source, destination),
-                })
+                Err(KernelError::Internal).attach_printable(format!(
+                    "source: {:?}, destination: {:?}",
+                    source, destination
+                ))
             }
             (source, destination) => Ok(Self {
                 id,

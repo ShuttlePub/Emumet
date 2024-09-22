@@ -1,7 +1,5 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
-use crate::entity::{
-    Account, AccountEvent, AccountId, AccountName, EventEnvelope, EventVersion, StellarAccountId,
-};
+use crate::entity::{Account, AccountId, AccountName, StellarAccountId};
 use crate::KernelError;
 
 pub trait AccountQuery: Sync + Send + 'static {

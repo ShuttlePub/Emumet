@@ -16,7 +16,9 @@ pub use self::host::*;
 pub use self::id::*;
 pub use self::refresh_token::*;
 
-#[derive(Debug, Clone, Hash, References, Newln, Serialize, Deserialize, Destructure)]
+#[derive(
+    Debug, Clone, Hash, Eq, PartialEq, References, Newln, Serialize, Deserialize, Destructure,
+)]
 pub struct StellarAccount {
     id: StellarAccountId,
     host: StellarAccountHost,

@@ -11,7 +11,7 @@ use vodca::{Nameln, Newln, References};
 
 use super::{AccountId, CommandEnvelope, CreatedAt, EventId, KnownEventVersion};
 
-#[derive(Debug, Clone, References, Newln, Destructure, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, References, Newln, Destructure, Serialize, Deserialize)]
 pub struct Metadata {
     id: MetadataId,
     account_id: AccountId,

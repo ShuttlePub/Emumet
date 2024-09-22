@@ -247,7 +247,7 @@ mod test {
 
             let accounts = database
                 .account_query()
-                .find_by_stellar_id(&mut transaction, &StellarAccountId::new(1))
+                .find_by_stellar_id(&mut transaction, &StellarAccountId::new(Uuid::new_v4()))
                 .await
                 .unwrap();
             assert!(accounts.is_empty());

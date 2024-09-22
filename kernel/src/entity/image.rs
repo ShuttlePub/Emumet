@@ -12,7 +12,9 @@ pub use self::hash::*;
 pub use self::id::*;
 pub use self::url::*;
 
-#[derive(Debug, Clone, Hash, References, Newln, Destructure, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Hash, Eq, PartialEq, References, Newln, Destructure, Serialize, Deserialize,
+)]
 pub struct Image {
     id: ImageId,
     url: ImageUrl,
