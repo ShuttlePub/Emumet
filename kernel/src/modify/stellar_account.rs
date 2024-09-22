@@ -31,20 +31,3 @@ pub trait DependOnStellarAccountModifier: Sync + Send + DependOnDatabaseConnecti
 
     fn stellar_account_modifier(&self) -> &Self::StellarAccountModifier;
 }
-
-pub trait StellarAccountEventModifier: 'static + Sync + Send {
-    type Transaction: Transaction;
-
-    async fn handle(
-        &self,
-        transaction: &mut Self::Transaction,
-        account_id: &StellarAccountId,
-        event: &CommandEnvelope<StellarAccountEvent, StellarAccount>,
-    ) -> error_stack::Result<(), KernelError>;
-}
-
-pub trait DependOnStellarAccountEventModifier: Sync + Send + DependOnDatabaseConnection {
-    type StellarAccountEventModifier: StellarAccountEventModifier<Transaction = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Transaction>;
-
-    fn stellar_account_event_modifier(&self) -> &Self::StellarAccountEventModifier;
-}

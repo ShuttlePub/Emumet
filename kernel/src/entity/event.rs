@@ -1,39 +1,24 @@
 use crate::entity::CreatedAt;
 use destructure::Destructure;
-use vodca::References;
+use vodca::{Newln, References};
 
+mod id;
 mod version;
 
-pub use version::*;
+pub use {id::*, version::*};
 
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, References, Destructure)]
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, References, Newln, Destructure)]
 pub struct EventEnvelope<Event, Entity> {
+    id: EventId<Event, Entity>,
     event: Event,
     version: EventVersion<Entity>,
     created_at: CreatedAt<Entity>,
 }
 
-impl<Event, Entity> EventEnvelope<Event, Entity> {
-    pub fn new(event: Event, version: EventVersion<Entity>, created_at: CreatedAt<Entity>) -> Self {
-        Self {
-            event,
-            version,
-            created_at,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, References, Destructure)]
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, References, Newln, Destructure)]
 pub struct CommandEnvelope<Event, Entity> {
+    id: EventId<Event, Entity>,
+    event_name: String,
     event: Event,
-    version: Option<ExpectedEventVersion<Entity>>,
-}
-
-impl<Event, Entity> CommandEnvelope<Event, Entity> {
-    pub(in crate::entity) fn new(
-        event: Event,
-        version: Option<ExpectedEventVersion<Entity>>,
-    ) -> Self {
-        Self { event, version }
-    }
+    prev_version: Option<KnownEventVersion<Entity>>,
 }

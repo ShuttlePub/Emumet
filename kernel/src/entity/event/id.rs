@@ -4,15 +4,15 @@ use uuid::Uuid;
 use vodca::{AsRefln, Fromln};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Fromln, AsRefln)]
-pub struct EventVersion<T>(Uuid, PhantomData<T>);
+pub struct EventId<Event, Entity>(Uuid, PhantomData<Event>, PhantomData<Entity>);
 
-impl<T> EventVersion<T> {
-    pub fn new(version: Uuid) -> Self {
-        Self(version, PhantomData)
+impl<Ev, En> EventId<Ev, En> {
+    pub fn new(id: Uuid) -> Self {
+        Self(id, PhantomData, PhantomData)
     }
 }
 
-impl<T> Serialize for EventVersion<T> {
+impl<Ev, En> Serialize for EventId<Ev, En> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -21,19 +21,11 @@ impl<T> Serialize for EventVersion<T> {
     }
 }
 
-impl<'de, T> Deserialize<'de> for EventVersion<T> {
+impl<'de, Ev, En> Deserialize<'de> for EventId<Ev, En> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         <Uuid>::deserialize(deserializer).map(Self::new)
     }
-}
-
-#[derive(Debug, Clone, Ord, PartialOrd, PartialEq, Eq, Hash)]
-pub enum KnownEventVersion<T> {
-    /// There is no event stream
-    Nothing,
-    /// There is an event stream and the version is the past event version of the event stream
-    Prev(EventVersion<T>),
 }

@@ -33,22 +33,3 @@ pub trait DependOnAccountQuery: Sync + Send + DependOnDatabaseConnection {
 
     fn account_query(&self) -> &Self::AccountQuery;
 }
-
-pub trait AccountEventQuery: Sync + Send + 'static {
-    type Transaction: Transaction;
-
-    async fn find_by_id(
-        &self,
-        transaction: &mut Self::Transaction,
-        id: &AccountId,
-        since: Option<&EventVersion<Account>>,
-    ) -> error_stack::Result<Vec<EventEnvelope<AccountEvent, Account>>, KernelError>;
-}
-
-pub trait DependOnAccountEventQuery: Sync + Send + DependOnDatabaseConnection {
-    type AccountEventQuery: AccountEventQuery<
-        Transaction = <Self::DatabaseConnection as DatabaseConnection>::Transaction,
-    >;
-
-    fn account_event_query(&self) -> &Self::AccountEventQuery;
-}

@@ -25,22 +25,3 @@ pub trait DependOnMetadataQuery: Sync + Send + DependOnDatabaseConnection {
 
     fn metadata_query(&self) -> &Self::MetadataQuery;
 }
-
-pub trait MetadataEventQuery: Sync + Send + 'static {
-    type Transaction: Transaction;
-
-    async fn find_by_id(
-        &self,
-        transaction: &mut Self::Transaction,
-        metadata_id: &MetadataId,
-        since: Option<&EventVersion<Metadata>>,
-    ) -> error_stack::Result<Vec<EventEnvelope<MetadataEvent, Metadata>>, KernelError>;
-}
-
-pub trait DependOnMetadataEventQuery: Sync + Send + DependOnDatabaseConnection {
-    type MetadataEventQuery: MetadataEventQuery<
-        Transaction = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Transaction,
-    >;
-
-    fn metadata_event_query(&self) -> &Self::MetadataEventQuery;
-}

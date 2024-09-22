@@ -3,7 +3,9 @@ use uuid::Uuid;
 
 use kernel::interfaces::modify::{DependOnProfileModifier, ProfileModifier};
 use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
-use kernel::prelude::entity::{AccountId, ImageId, Profile, ProfileDisplayName, ProfileSummary};
+use kernel::prelude::entity::{
+    AccountId, ImageId, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+};
 use kernel::KernelError;
 
 use crate::database::{PostgresConnection, PostgresDatabase};
@@ -12,6 +14,7 @@ use crate::ConvertError;
 #[derive(sqlx::FromRow)]
 struct ProfileRow {
     id: Uuid,
+    account_id: Uuid,
     display_name: Option<String>,
     summary: Option<String>,
     icon: Option<Uuid>,
@@ -21,6 +24,7 @@ struct ProfileRow {
 impl From<ProfileRow> for Profile {
     fn from(value: ProfileRow) -> Self {
         Profile::new(
+            ProfileId::new(value.id),
             AccountId::new(value.id),
             value.display_name.map(ProfileDisplayName::new),
             value.summary.map(ProfileSummary::new),
@@ -38,20 +42,20 @@ impl ProfileQuery for PostgresProfileRepository {
     async fn find_by_id(
         &self,
         transaction: &mut Self::Transaction,
-        account_id: &AccountId,
+        id: &ProfileId,
     ) -> error_stack::Result<Option<Profile>, KernelError> {
         let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, ProfileRow>(
             //language=postgresql
             r#"
-            SELECT account_id, display, summary, icon_id, banner_id FROM profiles WHERE account_id = $1
-            "#
+            SELECT id, account_id, display, summary, icon_id, banner_id FROM profiles WHERE id = $1
+            "#,
         )
-            .bind(account_id.as_ref())
-            .fetch_optional(con)
-            .await
-            .convert_error()
-            .map(|option| option.map(|row| row.into()))
+        .bind(id.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(|row| row.into()))
     }
 }
 

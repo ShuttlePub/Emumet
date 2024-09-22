@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use vodca::{Nameln, Newln, References};
 
-use crate::entity::{CommandEnvelope, DeletedAt, ExpectedEventVersion};
+use crate::entity::{CommandEnvelope, DeletedAt, EventId, KnownEventVersion};
 
 use super::common::CreatedAt;
 
@@ -30,7 +30,7 @@ pub struct Account {
     deleted_at: Option<DeletedAt<Account>>,
 }
 
-#[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all_fields = "snake_case")]
 pub enum AccountEvent {
     Created {
@@ -47,6 +47,7 @@ pub enum AccountEvent {
 
 impl Account {
     pub fn create(
+        id: AccountId,
         name: AccountName,
         private_key: AccountPrivateKey,
         public_key: AccountPublicKey,
@@ -58,16 +59,21 @@ impl Account {
             public_key,
             is_bot,
         };
-        CommandEnvelope::new(event, Some(ExpectedEventVersion::Nothing))
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Nothing),
+        )
     }
 
-    pub fn update(is_bot: AccountIsBot) -> CommandEnvelope<AccountEvent, Account> {
+    pub fn update(id: AccountId, is_bot: AccountIsBot) -> CommandEnvelope<AccountEvent, Account> {
         let event = AccountEvent::Updated { is_bot };
-        CommandEnvelope::new(event, None)
+        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
     }
 
-    pub fn delete() -> CommandEnvelope<AccountEvent, Account> {
+    pub fn delete(id: AccountId) -> CommandEnvelope<AccountEvent, Account> {
         let event = AccountEvent::Deleted;
-        CommandEnvelope::new(event, None)
+        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
     }
 }

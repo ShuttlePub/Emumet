@@ -1,5 +1,5 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
-use crate::entity::{AccountId, CommandEnvelope, Profile, ProfileEvent};
+use crate::entity::Profile;
 use crate::KernelError;
 
 pub trait ProfileModifier: Sync + Send + 'static {
@@ -24,23 +24,4 @@ pub trait DependOnProfileModifier: Sync + Send + DependOnDatabaseConnection {
     >;
 
     fn profile_modifier(&self) -> &Self::ProfileModifier;
-}
-
-pub trait ProfileEventModifier: 'static + Sync + Send {
-    type Transaction: Transaction;
-
-    async fn handle(
-        &self,
-        transaction: &mut Self::Transaction,
-        account_id: &AccountId,
-        event: &CommandEnvelope<ProfileEvent, Profile>,
-    ) -> error_stack::Result<(), KernelError>;
-}
-
-pub trait DependOnProfileEventModifier: Sync + Send + DependOnDatabaseConnection {
-    type ProfileEventModifier: ProfileEventModifier<
-        Transaction = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Transaction,
-    >;
-
-    fn profile_event_modifier(&self) -> &Self::ProfileEventModifier;
 }

@@ -1,5 +1,5 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
-use crate::entity::{AccountId, EventEnvelope, EventVersion, Profile, ProfileEvent};
+use crate::entity::{EventEnvelope, EventVersion, Profile, ProfileEvent, ProfileId};
 use crate::KernelError;
 
 pub trait ProfileQuery: Sync + Send + 'static {
@@ -8,7 +8,7 @@ pub trait ProfileQuery: Sync + Send + 'static {
     async fn find_by_id(
         &self,
         transaction: &mut Self::Transaction,
-        account_id: &AccountId,
+        id: &ProfileId,
     ) -> error_stack::Result<Option<Profile>, KernelError>;
 }
 
@@ -18,23 +18,4 @@ pub trait DependOnProfileQuery: Sync + Send + DependOnDatabaseConnection {
     >;
 
     fn profile_query(&self) -> &Self::ProfileQuery;
-}
-
-pub trait ProfileEventQuery: Sync + Send + 'static {
-    type Transaction: Transaction;
-
-    async fn find_by_id(
-        &self,
-        transaction: &mut Self::Transaction,
-        id: &AccountId,
-        since: Option<&EventVersion<Profile>>,
-    ) -> error_stack::Result<Vec<EventEnvelope<ProfileEvent, Profile>>, KernelError>;
-}
-
-pub trait DependOnProfileEventQuery: Sync + Send + DependOnDatabaseConnection {
-    type ProfileEventQuery: ProfileEventQuery<
-        Transaction = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Transaction,
-    >;
-
-    fn profile_event_query(&self) -> &Self::ProfileEventQuery;
 }

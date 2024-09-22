@@ -9,7 +9,7 @@ use destructure::Destructure;
 use serde::{Deserialize, Serialize};
 use vodca::{Nameln, Newln, References};
 
-use super::{AccountId, CommandEnvelope, CreatedAt, ExpectedEventVersion};
+use super::{AccountId, CommandEnvelope, CreatedAt, EventId, KnownEventVersion};
 
 #[derive(Debug, Clone, References, Newln, Destructure, Serialize, Deserialize)]
 pub struct Metadata {
@@ -37,6 +37,7 @@ pub enum MetadataEvent {
 
 impl Metadata {
     pub fn create(
+        id: MetadataId,
         account_id: AccountId,
         label: MetadataLabel,
         content: MetadataContent,
@@ -46,19 +47,25 @@ impl Metadata {
             label,
             content,
         };
-        CommandEnvelope::new(event, Some(ExpectedEventVersion::Nothing))
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Nothing),
+        )
     }
 
     pub fn update(
+        id: MetadataId,
         label: MetadataLabel,
         content: MetadataContent,
     ) -> CommandEnvelope<MetadataEvent, Metadata> {
         let event = MetadataEvent::Updated { label, content };
-        CommandEnvelope::new(event, None)
+        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
     }
 
-    pub fn delete() -> CommandEnvelope<MetadataEvent, Metadata> {
+    pub fn delete(id: MetadataId) -> CommandEnvelope<MetadataEvent, Metadata> {
         let event = MetadataEvent::Deleted;
-        CommandEnvelope::new(event, None)
+        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
     }
 }

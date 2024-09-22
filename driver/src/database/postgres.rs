@@ -1,12 +1,9 @@
 mod account;
-mod account_event;
+mod event;
 mod image;
 mod metadata;
-mod metadata_event;
 mod profile;
-mod profile_event;
 mod stellar_account;
-mod stellar_account_event;
 
 use crate::database::env;
 use crate::ConvertError;
@@ -16,6 +13,7 @@ use kernel::KernelError;
 use sqlx::pool::PoolConnection;
 use sqlx::{Error, PgConnection, Pool, Postgres};
 use std::ops::{Deref, DerefMut};
+use uuid::Uuid;
 
 const POSTGRESQL: &str = "postgresql";
 
@@ -34,7 +32,7 @@ impl PostgresDatabase {
 
 #[derive(sqlx::FromRow)]
 pub(in crate::database::postgres) struct VersionRow {
-    pub version: i64,
+    pub version: Uuid,
 }
 
 #[derive(sqlx::FromRow)]
