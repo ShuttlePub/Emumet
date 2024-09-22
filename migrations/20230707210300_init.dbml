@@ -1,11 +1,11 @@
-Table account_events {
-    version BIGINT [not null, increment]
-    account_id UUID [not null]
+Table event_streams {
+    version UUID [not null]
+    id UUID [not null]
     event_name TEXT [not null]
     data JSON [not null]
     created_at TIMESTAMP [not null]
     Indexes {
-        (account_id, version) [pk]
+        (id, version) [pk]
     }
 }
 Table accounts {
@@ -25,34 +25,15 @@ Table remote_accounts {
     icon_id UUID [not null, ref: - images.id]
 }
 
-Table profile_events {
-    version BIGINT [not null, increment]
-    account_id UUID [not null, ref: > accounts.id]
-    event_name TEXT [not null]
-    data JSON [not null]
-    created_at TIMESTAMP [not null]
-    Indexes {
-        (account_id, version) [pk]
-    }
-}
 Table profiles {
-    account_id UUID [not null, pk, ref: - accounts.id]
+    id UUID [not null, pk]
+    account_id UUID [not null, ref: - accounts.id]
     display TEXT
     summary TEXT
     icon_id UUID [ref: - images.id]
     banner_id UUID [ref: - images.id]
 }
 
-Table metadata_events {
-    version BIGINT [not null, increment]
-    metadata_id UUID [not null]
-    event_name TEXT [not null]
-    data JSON [not null]
-    created_at TIMESTAMP [not null]
-    Indexes {
-        (metadata_id, version) [pk]
-    }
-}
 Table metadatas {
     id UUID [not null, pk]
     account_id UUID [not null, ref: > accounts.id]
@@ -66,16 +47,6 @@ Table stellar_hosts {
     url TEXT [not null, unique]
 }
 
-Table stellar_account_events {
-    version BIGINT [not null, increment]
-    stellar_account_id UUID [not null]
-    event_name TEXT [not null]
-    data JSON [not null]
-    created_at TIMESTAMP [not null]
-    Indexes {
-        (stellar_account_id, version) [pk]
-    }
-}
 Table stellar_accounts {
     id UUID [not null, pk]
     host_id UUID [not null, ref: > stellar_hosts.id]
@@ -92,16 +63,6 @@ Table stellar_emumet_accounts {
     }
 }
 
-Table follow_events {
-    version BIGINT [not null, increment]
-    follow_id UUID [not null]
-    event_name TEXT [not null]
-    data JSON [not null]
-    created_at TIMESTAMP [not null]
-    Indexes {
-        (follow_id, version) [pk]
-    }
-}
 Table follows {
     id UUID [not null, pk]
     follower_local_id UUID [ref: > accounts.id]
@@ -118,124 +79,76 @@ Table images {
     blurhash TEXT [not null]
 }
 
-Table moderator_roles {
-    id UUID [not null, pk]
-    name TEXT [not null]
-}
 
-Table moderator_events {
-    version BIGINT [not null, increment]
-    stellar_id UUID [not null, ref: > stellar_accounts.id]
-    event_name TEXT [not null]
-    data JSON [not null]
-    created_at TIMESTAMP [not null]
-    Indexes {
-        (stellar_id, version) [pk]
-    }
-}
-Table moderators {
-    stellar_id UUID [not null, pk, ref: > stellar_accounts.id]
-    role_id UUID [not null, pk, ref: > moderator_roles.id]
-}
-
-Table account_report_events {
-    version BIGINT [not null, increment]
-    report_id UUID [not null]
-    event_name TEXT [not null]
-    data JSON [not null]
-    created_at TIMESTAMP [not null]
-    Indexes {
-        (report_id, version) [pk]
-    }
-}
-Table account_reports {
-    id UUID [not null, pk]
-    target_id UUID [not null, ref: > accounts.id]
-    reported_id UUID [not null, ref: > stellar_accounts.id]
-    type TEXT [not null]
-    comment TEXT [not null]
-    created_at TIMESTAMP [not null]
-    closed_at TIMESTAMP
-    close_reason TEXT
-}
-
-Table account_moderation_events {
-    version BIGINT [not null, increment]
-    moderation_id UUID [not null]
-    event_name TEXT [not null]
-    data JSON [not null]
-    created_at TIMESTAMP [not null]
-    Indexes {
-        (moderation_id, version) [pk]
-    }
-}
-Table account_moderations {
-    id UUID [not null, pk]
-    target_id UUID [not null, ref: > accounts.id]
-    moderator_id UUID [not null, ref: > stellar_accounts.id]
-    type TEXT [not null]
-    comment TEXT [not null]
-    created_at TIMESTAMP [not null]
-    closed_at TIMESTAMP
-}
-Table account_moderation_reports {
-    moderation_id UUID [not null, ref: > account_moderations.id]
-    report_id UUID [not null, ref: > account_reports.id]
-    Indexes {
-        (moderation_id, report_id) [pk]
-    }
-}
-
-Table stellar_account_moderation_events {
-    version BIGINT [not null, increment]
-    moderation_id UUID [not null]
-    event_name TEXT [not null]
-    data JSON [not null]
-    created_at TIMESTAMP [not null]
-    Indexes {
-        (moderation_id, version) [pk]
-    }
-}
-Table stellar_account_moderations {
-    id UUID [not null, pk]
-    target_id UUID [not null, ref: > stellar_accounts.id]
-    moderator_id UUID [not null, ref: > stellar_accounts.id]
-    type TEXT [not null]
-    comment TEXT [not null]
-    created_at TIMESTAMP [not null]
-    closed_at TIMESTAMP
-}
-Table stellar_account_moderation_reports {
-    moderation_id UUID [not null, ref: > stellar_account_moderations.id]
-    report_id UUID [not null, ref: > account_reports.id]
-    Indexes {
-        (moderation_id, report_id) [pk]
-    }
-}
-
-Table host_moderation_events {
-    version BIGINT [not null, increment]
-    moderation_id UUID [not null]
-    event_name TEXT [not null]
-    data JSON [not null]
-    created_at TIMESTAMP [not null]
-    Indexes {
-        (moderation_id, version) [pk]
-    }
-}
-Table host_moderations {
-    id UUID [not null, pk]
-    host_id UUID [not null, ref: > stellar_hosts.id]
-    moderator_id UUID [not null, ref: > stellar_accounts.id]
-    type TEXT [not null]
-    comment TEXT [not null]
-    created_at TIMESTAMP [not null]
-    closed_at TIMESTAMP
-}
-Table host_moderation_reports {
-    moderation_id UUID [not null, ref: > host_moderations.id]
-    report_id UUID [not null, ref: > account_reports.id]
-    Indexes {
-        (moderation_id, report_id) [pk]
-    }
-}
+// Table moderator_roles {
+//     id UUID [not null, pk]
+//     name TEXT [not null]
+// }
+// 
+// Table moderators {
+//     stellar_id UUID [not null, pk, ref: > stellar_accounts.id]
+//     role_id UUID [not null, pk, ref: > moderator_roles.id]
+// }
+// 
+// Table account_reports {
+//     id UUID [not null, pk]
+//     target_id UUID [not null, ref: > accounts.id]
+//     reported_id UUID [not null, ref: > stellar_accounts.id]
+//     type TEXT [not null]
+//     comment TEXT [not null]
+//     created_at TIMESTAMP [not null]
+//     closed_at TIMESTAMP
+//     close_reason TEXT
+// }
+// 
+// Table account_moderations {
+//     id UUID [not null, pk]
+//     target_id UUID [not null, ref: > accounts.id]
+//     moderator_id UUID [not null, ref: > stellar_accounts.id]
+//     type TEXT [not null]
+//     comment TEXT [not null]
+//     created_at TIMESTAMP [not null]
+//     closed_at TIMESTAMP
+// }
+// Table account_moderation_reports {
+//     moderation_id UUID [not null, ref: > account_moderations.id]
+//     report_id UUID [not null, ref: > account_reports.id]
+//     Indexes {
+//         (moderation_id, report_id) [pk]
+//     }
+// }
+// 
+// Table stellar_account_moderations {
+//     id UUID [not null, pk]
+//     target_id UUID [not null, ref: > stellar_accounts.id]
+//     moderator_id UUID [not null, ref: > stellar_accounts.id]
+//     type TEXT [not null]
+//     comment TEXT [not null]
+//     created_at TIMESTAMP [not null]
+//     closed_at TIMESTAMP
+// }
+// Table stellar_account_moderation_reports {
+//     moderation_id UUID [not null, ref: > stellar_account_moderations.id]
+//     report_id UUID [not null, ref: > account_reports.id]
+//     Indexes {
+//         (moderation_id, report_id) [pk]
+//     }
+// }
+// 
+// Table host_moderations {
+//     id UUID [not null, pk]
+//     host_id UUID [not null, ref: > stellar_hosts.id]
+//     moderator_id UUID [not null, ref: > stellar_accounts.id]
+//     type TEXT [not null]
+//     comment TEXT [not null]
+//     created_at TIMESTAMP [not null]
+//     closed_at TIMESTAMP
+// }
+// Table host_moderation_reports {
+//     moderation_id UUID [not null, ref: > host_moderations.id]
+//     report_id UUID [not null, ref: > account_reports.id]
+//     Indexes {
+//         (moderation_id, report_id) [pk]
+//     }
+// }
+// 
