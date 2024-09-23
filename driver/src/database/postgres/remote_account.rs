@@ -211,9 +211,7 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnRemoteAccountModifier, RemoteAccountModifier};
         use kernel::interfaces::query::{DependOnRemoteAccountQuery, RemoteAccountQuery};
-        use kernel::prelude::entity::{
-            RemoteAccount, RemoteAccountAcct, RemoteAccountId, RemoteAccountUrl,
-        };
+        use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
         use uuid::Uuid;
 
         #[tokio::test]
@@ -286,9 +284,7 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnRemoteAccountModifier, RemoteAccountModifier};
         use kernel::interfaces::query::{DependOnRemoteAccountQuery, RemoteAccountQuery};
-        use kernel::prelude::entity::{
-            RemoteAccount, RemoteAccountAcct, RemoteAccountId, RemoteAccountUrl,
-        };
+        use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
         use uuid::Uuid;
 
         #[tokio::test]
