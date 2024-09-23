@@ -1,5 +1,6 @@
 mod account;
 mod event;
+mod follow;
 mod image;
 mod metadata;
 mod profile;
