@@ -192,15 +192,15 @@ mod test {
     fn acct_url(name: Option<&str>) -> (RemoteAccountAcct, RemoteAccountUrl) {
         if let Some(name) = name {
             (
-                RemoteAccountAcct(format!("{}@example.com", name)),
-                RemoteAccountUrl(format!("https://example.com/users/{}", name)),
+                RemoteAccountAcct::new(format!("{}@example.com", name)),
+                RemoteAccountUrl::new(format!("https://example.com/users/{}", name)),
             )
         } else {
             static COUNTER: AtomicUsize = AtomicUsize::new(0);
             let c = COUNTER.fetch_add(1, Ordering::Relaxed);
             (
-                RemoteAccountAcct(format!("example{}@example.com", c)),
-                RemoteAccountUrl(format!("https://example.com/users/example{}", c)),
+                RemoteAccountAcct::new(format!("example{}@example.com", c)),
+                RemoteAccountUrl::new(format!("https://example.com/users/example{}", c)),
             )
         }
     }
@@ -219,9 +219,9 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId(Uuid::now_v7());
+            let id = RemoteAccountId::new(Uuid::now_v7());
             let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id, acct, url, None);
+            let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database
                 .remote_account_modifier()
                 .create(&mut transaction, &remote_account)
@@ -241,8 +241,12 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let (acct, url) = acct_url(None);
-            let remote_account =
-                RemoteAccount::new(RemoteAccountId(Uuid::now_v7()), acct, url, None);
+            let remote_account = RemoteAccount::new(
+                RemoteAccountId::new(Uuid::now_v7()),
+                acct.clone(),
+                url,
+                None,
+            );
             database
                 .remote_account_modifier()
                 .create(&mut transaction, &remote_account)
@@ -262,8 +266,12 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let (acct, url) = acct_url(None);
-            let remote_account =
-                RemoteAccount::new(RemoteAccountId(Uuid::now_v7()), acct, url, None);
+            let remote_account = RemoteAccount::new(
+                RemoteAccountId::new(Uuid::now_v7()),
+                acct,
+                url.clone(),
+                None,
+            );
             database
                 .remote_account_modifier()
                 .create(&mut transaction, &remote_account)
@@ -292,7 +300,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId(Uuid::now_v7());
+            let id = RemoteAccountId::new(Uuid::now_v7());
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id, acct, url, None);
             database
@@ -307,7 +315,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId(Uuid::now_v7());
+            let id = RemoteAccountId::new(Uuid::now_v7());
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database
@@ -336,7 +344,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId(Uuid::now_v7());
+            let id = RemoteAccountId::new(Uuid::now_v7());
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database

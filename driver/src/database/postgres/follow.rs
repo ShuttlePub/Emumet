@@ -283,8 +283,8 @@ mod test {
                 .unwrap();
             let follow = Follow::new(
                 FollowId::new(Uuid::now_v7()),
-                FollowTargetId::from(folloer_id),
-                FollowTargetId::from(followee_id),
+                FollowTargetId::from(folloer_id.clone()),
+                FollowTargetId::from(followee_id.clone()),
                 None,
             )
             .unwrap();
@@ -346,8 +346,8 @@ mod test {
                 .unwrap();
             let follow = Follow::new(
                 FollowId::new(Uuid::now_v7()),
-                FollowTargetId::from(follower_id),
-                FollowTargetId::from(followee_id),
+                FollowTargetId::from(follower_id.clone()),
+                FollowTargetId::from(followee_id.clone()),
                 None,
             )
             .unwrap();
@@ -381,20 +381,25 @@ mod test {
             AccountModifier, DependOnAccountModifier, DependOnFollowModifier, FollowModifier,
         };
         use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
-        use kernel::prelude::entity::{FollowApprovedAt, FollowTargetId};
+        use kernel::prelude::entity::{
+            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
+            CreatedAt, Follow, FollowApprovedAt, FollowId, FollowTargetId,
+        };
+        use time::OffsetDateTime;
+        use uuid::Uuid;
 
         #[tokio::test]
         async fn create() {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
-            let follower_id = kernel::prelude::entity::AccountId::new(uuid::Uuid::now_v7());
-            let follower_account = kernel::prelude::entity::Account::new(
+            let follower_id = AccountId::new(Uuid::now_v7());
+            let follower_account = Account::new(
                 follower_id.clone(),
-                kernel::prelude::entity::AccountName::new("follower".to_string()),
-                kernel::prelude::entity::AccountPrivateKey::new("key".to_string()),
-                kernel::prelude::entity::AccountPublicKey::new("key".to_string()),
-                kernel::prelude::entity::AccountIsBot::new(false),
-                kernel::prelude::entity::CreatedAt::new(time::OffsetDateTime::now_utc()),
+                AccountName::new("follower".to_string()),
+                AccountPrivateKey::new("key".to_string()),
+                AccountPublicKey::new("key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
                 None,
             );
             database
@@ -402,14 +407,14 @@ mod test {
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
-            let followee_id = kernel::prelude::entity::AccountId::new(uuid::Uuid::now_v7());
-            let followee_account = kernel::prelude::entity::Account::new(
+            let followee_id = AccountId::new(Uuid::now_v7());
+            let followee_account = Account::new(
                 followee_id.clone(),
-                kernel::prelude::entity::AccountName::new("followee".to_string()),
-                kernel::prelude::entity::AccountPrivateKey::new("key".to_string()),
-                kernel::prelude::entity::AccountPublicKey::new("key".to_string()),
-                kernel::prelude::entity::AccountIsBot::new(false),
-                kernel::prelude::entity::CreatedAt::new(time::OffsetDateTime::now_utc()),
+                AccountName::new("followee".to_string()),
+                AccountPrivateKey::new("key".to_string()),
+                AccountPublicKey::new("key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
                 None,
             );
             database
@@ -417,10 +422,10 @@ mod test {
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
-            let follow = kernel::prelude::entity::Follow::new(
-                kernel::prelude::entity::FollowId::new(uuid::Uuid::now_v7()),
-                kernel::prelude::entity::FollowTargetId::from(follower_id),
-                kernel::prelude::entity::FollowTargetId::from(followee_id),
+            let follow = Follow::new(
+                FollowId::new(Uuid::now_v7()),
+                FollowTargetId::from(follower_id),
+                FollowTargetId::from(followee_id),
                 Some(FollowApprovedAt::default()),
             )
             .unwrap();
@@ -437,14 +442,14 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let follower_id = kernel::prelude::entity::AccountId::new(uuid::Uuid::now_v7());
-            let follower_account = kernel::prelude::entity::Account::new(
+            let follower_id = AccountId::new(Uuid::now_v7());
+            let follower_account = Account::new(
                 follower_id.clone(),
-                kernel::prelude::entity::AccountName::new("follower".to_string()),
-                kernel::prelude::entity::AccountPrivateKey::new("key".to_string()),
-                kernel::prelude::entity::AccountPublicKey::new("key".to_string()),
-                kernel::prelude::entity::AccountIsBot::new(false),
-                kernel::prelude::entity::CreatedAt::new(time::OffsetDateTime::now_utc()),
+                AccountName::new("follower".to_string()),
+                AccountPrivateKey::new("key".to_string()),
+                AccountPublicKey::new("key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
                 None,
             );
             database
@@ -452,14 +457,14 @@ mod test {
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
-            let followee_id = kernel::prelude::entity::AccountId::new(uuid::Uuid::now_v7());
-            let followee_account = kernel::prelude::entity::Account::new(
+            let followee_id = AccountId::new(Uuid::now_v7());
+            let followee_account = Account::new(
                 followee_id.clone(),
-                kernel::prelude::entity::AccountName::new("followee".to_string()),
-                kernel::prelude::entity::AccountPrivateKey::new("key".to_string()),
-                kernel::prelude::entity::AccountPublicKey::new("key".to_string()),
-                kernel::prelude::entity::AccountIsBot::new(false),
-                kernel::prelude::entity::CreatedAt::new(time::OffsetDateTime::now_utc()),
+                AccountName::new("followee".to_string()),
+                AccountPrivateKey::new("key".to_string()),
+                AccountPublicKey::new("key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
                 None,
             );
             database
@@ -467,17 +472,17 @@ mod test {
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
-            let follow = kernel::prelude::entity::Follow::new(
-                kernel::prelude::entity::FollowId::new(uuid::Uuid::now_v7()),
-                kernel::prelude::entity::FollowTargetId::from(follower_id.clone()),
-                kernel::prelude::entity::FollowTargetId::from(followee_id.clone()),
+            let follow = Follow::new(
+                FollowId::new(Uuid::now_v7()),
+                FollowTargetId::from(follower_id.clone()),
+                FollowTargetId::from(followee_id.clone()),
                 None,
             )
             .unwrap();
 
             let following = database
                 .follow_query()
-                .find_followings(&mut transaction, &FollowTargetId::from(follower_id))
+                .find_followings(&mut transaction, &FollowTargetId::from(follower_id.clone()))
                 .await
                 .unwrap();
             assert!(following.is_empty());
@@ -488,10 +493,10 @@ mod test {
                 .await
                 .unwrap();
 
-            let follow = kernel::prelude::entity::Follow::new(
-                kernel::prelude::entity::FollowId::new(uuid::Uuid::now_v7()),
-                kernel::prelude::entity::FollowTargetId::from(follower_id),
-                kernel::prelude::entity::FollowTargetId::from(followee_id),
+            let follow = Follow::new(
+                FollowId::new(Uuid::now_v7()),
+                FollowTargetId::from(follower_id.clone()),
+                FollowTargetId::from(followee_id),
                 Some(FollowApprovedAt::default()),
             )
             .unwrap();
@@ -513,14 +518,14 @@ mod test {
         async fn delete() {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
-            let follower_id = kernel::prelude::entity::AccountId::new(uuid::Uuid::now_v7());
-            let follower_account = kernel::prelude::entity::Account::new(
+            let follower_id = AccountId::new(Uuid::now_v7());
+            let follower_account = Account::new(
                 follower_id.clone(),
-                kernel::prelude::entity::AccountName::new("follower".to_string()),
-                kernel::prelude::entity::AccountPrivateKey::new("key".to_string()),
-                kernel::prelude::entity::AccountPublicKey::new("key".to_string()),
-                kernel::prelude::entity::AccountIsBot::new(false),
-                kernel::prelude::entity::CreatedAt::new(time::OffsetDateTime::now_utc()),
+                AccountName::new("follower".to_string()),
+                AccountPrivateKey::new("key".to_string()),
+                AccountPublicKey::new("key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
                 None,
             );
             database
@@ -528,14 +533,14 @@ mod test {
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
-            let followee_id = kernel::prelude::entity::AccountId::new(uuid::Uuid::now_v7());
-            let followee_account = kernel::prelude::entity::Account::new(
+            let followee_id = AccountId::new(Uuid::now_v7());
+            let followee_account = Account::new(
                 followee_id.clone(),
-                kernel::prelude::entity::AccountName::new("followee".to_string()),
-                kernel::prelude::entity::AccountPrivateKey::new("key".to_string()),
-                kernel::prelude::entity::AccountPublicKey::new("key".to_string()),
-                kernel::prelude::entity::AccountIsBot::new(false),
-                kernel::prelude::entity::CreatedAt::new(time::OffsetDateTime::now_utc()),
+                AccountName::new("followee".to_string()),
+                AccountPrivateKey::new("key".to_string()),
+                AccountPublicKey::new("key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
                 None,
             );
             database
@@ -543,10 +548,10 @@ mod test {
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
-            let follow = kernel::prelude::entity::Follow::new(
-                kernel::prelude::entity::FollowId::new(uuid::Uuid::now_v7()),
-                kernel::prelude::entity::FollowTargetId::from(follower_id),
-                kernel::prelude::entity::FollowTargetId::from(followee_id),
+            let follow = Follow::new(
+                FollowId::new(Uuid::now_v7()),
+                FollowTargetId::from(follower_id.clone()),
+                FollowTargetId::from(followee_id),
                 None,
             )
             .unwrap();

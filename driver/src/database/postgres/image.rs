@@ -138,7 +138,7 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnImageModifier, ImageModifier};
         use kernel::interfaces::query::{DependOnImageQuery, ImageQuery};
-        use kernel::prelude::entity::{Image, ImageId, ImageUrl};
+        use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId, ImageUrl};
         use uuid::Uuid;
 
         #[tokio::test]
@@ -148,7 +148,12 @@ mod test {
 
             let id = ImageId::new(Uuid::new_v4());
             let url = ImageUrl::new("https://example.com/".to_string());
-            let image = Image::new(id, url, Default::default(), Default::default());
+            let image = Image::new(
+                id.clone(),
+                url,
+                ImageHash::new("hash".to_string()),
+                ImageBlurHash::new("blur_hash".to_string()),
+            );
 
             database
                 .image_modifier()
@@ -170,7 +175,12 @@ mod test {
 
             let id = ImageId::new(Uuid::new_v4());
             let url = ImageUrl::new(format!("https://example.com/{}", id.as_ref()));
-            let image = Image::new(id, url.clone(), Default::default(), Default::default());
+            let image = Image::new(
+                id,
+                url.clone(),
+                ImageHash::new("hash".to_string()),
+                ImageBlurHash::new("blur_hash".to_string()),
+            );
 
             database
                 .image_modifier()
@@ -190,7 +200,7 @@ mod test {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnImageModifier, ImageModifier};
-        use kernel::prelude::entity::{Image, ImageId, ImageUrl};
+        use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId, ImageUrl};
         use uuid::Uuid;
 
         #[tokio::test]
@@ -200,7 +210,12 @@ mod test {
 
             let id = ImageId::new(Uuid::new_v4());
             let url = ImageUrl::new("https://example.com/".to_string());
-            let image = Image::new(id, url, Default::default(), Default::default());
+            let image = Image::new(
+                id,
+                url,
+                ImageHash::new("hash".to_string()),
+                ImageBlurHash::new("blur_hash".to_string()),
+            );
 
             database
                 .image_modifier()
@@ -216,7 +231,12 @@ mod test {
 
             let id = ImageId::new(Uuid::new_v4());
             let url = ImageUrl::new("https://example.com/".to_string());
-            let image = Image::new(id, url, Default::default(), Default::default());
+            let image = Image::new(
+                id.clone(),
+                url,
+                ImageHash::new("hash".to_string()),
+                ImageBlurHash::new("blur_hash".to_string()),
+            );
 
             database
                 .image_modifier()

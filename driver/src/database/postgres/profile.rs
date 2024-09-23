@@ -166,7 +166,7 @@ mod test {
                 None,
             );
             let profile = Profile::new(
-                profile_id,
+                profile_id.clone(),
                 account_id,
                 Some(ProfileDisplayName::new("display name")),
                 Some(ProfileSummary::new("summary")),

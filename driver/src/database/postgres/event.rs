@@ -275,7 +275,7 @@ mod test {
                 .unwrap();
             assert_eq!(events.len(), 1);
             let event = &events[0];
-            assert_eq!(event.event(), &updated_account.event());
+            assert_eq!(&event.event(), &updated_account.event());
         }
     }
 
@@ -287,6 +287,7 @@ mod test {
         use kernel::interfaces::query::{DependOnEventQuery, EventQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
+            EventId,
         };
 
         use crate::database::PostgresDatabase;
@@ -309,7 +310,7 @@ mod test {
                 .unwrap();
             let events = db
                 .event_query()
-                .find_by_id(&mut transaction, &account_id, None)
+                .find_by_id(&mut transaction, &EventId::from(account_id), None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
