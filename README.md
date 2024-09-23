@@ -7,7 +7,7 @@
 Podman(docker)にて環境構築が可能です
 
 ```shell
-podman run --rm --name emumet-postgres -v ./migrations/20230707210300_init.sql:/docker-entrypoint-initdb.d/postgre.sql -e POSTGRES_PASSWORD=develop -p 5432:5432 docker.io/postgres
+podman run --rm --name emumet-postgres -e POSTGRES_PASSWORD=develop -p 5432:5432 docker.io/postgres
 ```
 
 > ユーザー名: postgres

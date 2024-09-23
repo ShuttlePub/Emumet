@@ -1,13 +1,13 @@
 -- SQL dump generated using DBML (dbml.dbdiagram.io)
 -- Database: PostgreSQL
--- Generated at: 2024-09-22T14:28:41.487Z
+-- Generated at: 2024-09-23T15:01:17.449Z
 
 CREATE TABLE "event_streams" (
   "version" UUID NOT NULL,
   "id" UUID NOT NULL,
   "event_name" TEXT NOT NULL,
   "data" JSON NOT NULL,
-  "created_at" TIMESTAMP NOT NULL,
+  "created_at" TIMESTAMPTZ NOT NULL,
   PRIMARY KEY ("id", "version")
 );
 
@@ -17,15 +17,15 @@ CREATE TABLE "accounts" (
   "private_key" TEXT NOT NULL,
   "public_key" TEXT NOT NULL,
   "is_bot" BOOLEAN NOT NULL,
-  "created_at" TIMESTAMP NOT NULL,
-  "deleted_at" TIMESTAMP
+  "created_at" TIMESTAMPTZ NOT NULL,
+  "deleted_at" TIMESTAMPTZ
 );
 
 CREATE TABLE "remote_accounts" (
   "id" UUID PRIMARY KEY NOT NULL,
   "acct" TEXT UNIQUE NOT NULL,
   "url" TEXT UNIQUE NOT NULL,
-  "icon_id" UUID NOT NULL
+  "icon_id" UUID
 );
 
 CREATE TABLE "profiles" (
@@ -42,7 +42,7 @@ CREATE TABLE "metadatas" (
   "account_id" UUID NOT NULL,
   "label" TEXT NOT NULL,
   "content" TEXT NOT NULL,
-  "created_at" TIMESTAMP NOT NULL
+  "created_at" TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE "stellar_hosts" (
@@ -70,7 +70,7 @@ CREATE TABLE "follows" (
   "follower_remote_id" UUID,
   "followee_local_id" UUID,
   "followee_remote_id" UUID,
-  "approved_at" TIMESTAMP
+  "approved_at" TIMESTAMPTZ
 );
 
 CREATE TABLE "images" (
@@ -80,26 +80,26 @@ CREATE TABLE "images" (
   "blurhash" TEXT NOT NULL
 );
 
-ALTER TABLE "remote_accounts" ADD FOREIGN KEY ("icon_id") REFERENCES "images" ("id");
+ALTER TABLE "remote_accounts" ADD FOREIGN KEY ("icon_id") REFERENCES "images" ("id") ON DELETE SET NULL;
 
-ALTER TABLE "profiles" ADD FOREIGN KEY ("account_id") REFERENCES "accounts" ("id");
+ALTER TABLE "profiles" ADD FOREIGN KEY ("account_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
 
-ALTER TABLE "profiles" ADD FOREIGN KEY ("icon_id") REFERENCES "images" ("id");
+ALTER TABLE "profiles" ADD FOREIGN KEY ("icon_id") REFERENCES "images" ("id") ON DELETE SET NULL;
 
-ALTER TABLE "profiles" ADD FOREIGN KEY ("banner_id") REFERENCES "images" ("id");
+ALTER TABLE "profiles" ADD FOREIGN KEY ("banner_id") REFERENCES "images" ("id") ON DELETE SET NULL;
 
-ALTER TABLE "metadatas" ADD FOREIGN KEY ("account_id") REFERENCES "accounts" ("id");
+ALTER TABLE "metadatas" ADD FOREIGN KEY ("account_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
 
-ALTER TABLE "stellar_accounts" ADD FOREIGN KEY ("host_id") REFERENCES "stellar_hosts" ("id");
-
-ALTER TABLE "stellar_emumet_accounts" ADD FOREIGN KEY ("emumet_id") REFERENCES "accounts" ("id");
+ALTER TABLE "stellar_accounts" ADD FOREIGN KEY ("host_id") REFERENCES "stellar_hosts" ("id") ON DELETE CASCADE;
 
 ALTER TABLE "stellar_emumet_accounts" ADD FOREIGN KEY ("stellar_id") REFERENCES "stellar_accounts" ("id");
 
-ALTER TABLE "follows" ADD FOREIGN KEY ("follower_local_id") REFERENCES "accounts" ("id");
+ALTER TABLE "stellar_emumet_accounts" ADD FOREIGN KEY ("emumet_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
 
-ALTER TABLE "follows" ADD FOREIGN KEY ("follower_remote_id") REFERENCES "remote_accounts" ("id");
+ALTER TABLE "follows" ADD FOREIGN KEY ("follower_local_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
 
-ALTER TABLE "follows" ADD FOREIGN KEY ("followee_local_id") REFERENCES "accounts" ("id");
+ALTER TABLE "follows" ADD FOREIGN KEY ("follower_remote_id") REFERENCES "remote_accounts" ("id") ON DELETE CASCADE;
 
-ALTER TABLE "follows" ADD FOREIGN KEY ("followee_remote_id") REFERENCES "remote_accounts" ("id");
+ALTER TABLE "follows" ADD FOREIGN KEY ("followee_local_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
+
+ALTER TABLE "follows" ADD FOREIGN KEY ("followee_remote_id") REFERENCES "remote_accounts" ("id") ON DELETE CASCADE;
