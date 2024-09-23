@@ -207,7 +207,7 @@ mod test {
         use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, DeletedAt, StellarAccountId,
+            CreatedAt, StellarAccountId,
         };
         use sqlx::types::time::OffsetDateTime;
         use sqlx::types::Uuid;
@@ -290,7 +290,7 @@ mod test {
         use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, DeletedAt, StellarAccountId,
+            CreatedAt, DeletedAt,
         };
         use sqlx::types::time::OffsetDateTime;
         use sqlx::types::Uuid;
