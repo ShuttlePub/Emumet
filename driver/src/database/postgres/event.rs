@@ -156,7 +156,7 @@ impl EventModifier for PostgresEventRepository {
         sqlx::query(
             //language=postgresql
             r#"
-                INSERT INTO account_events (version, account_id, event_name, data, created_at)
+                INSERT INTO event_streams (version, id, event_name, data, created_at)
                 VALUES ($1, $2, $3, $4, now())
                 "#,
         )

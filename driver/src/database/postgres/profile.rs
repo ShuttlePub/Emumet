@@ -79,11 +79,12 @@ impl ProfileModifier for PostgresProfileRepository {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO profiles (account_id, display, summary, icon_id, banner_id)
+            INSERT INTO profiles (id, account_id, display, summary, icon_id, banner_id)
             VALUES ($1, $2, $3, $4, $5)
             "#,
         )
         .bind(profile.id().as_ref())
+        .bind(profile.account_id().as_ref())
         .bind(
             profile
                 .display_name()

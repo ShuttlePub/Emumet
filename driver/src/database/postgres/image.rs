@@ -133,7 +133,19 @@ impl DependOnImageModifier for PostgresDatabase {
 
 #[cfg(test)]
 mod test {
+    use kernel::prelude::entity::ImageUrl;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn url() -> ImageUrl {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        ImageUrl::new(format!(
+            "https://example.com/{}",
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ))
+    }
+
     mod query {
+        use crate::database::postgres::image::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnImageModifier, ImageModifier};
@@ -147,7 +159,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let id = ImageId::new(Uuid::new_v4());
-            let url = ImageUrl::new("https://example.com/".to_string());
+            let url = url();
             let image = Image::new(
                 id.clone(),
                 url,
@@ -174,7 +186,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let id = ImageId::new(Uuid::new_v4());
-            let url = ImageUrl::new(format!("https://example.com/{}", id.as_ref()));
+            let url = url();
             let image = Image::new(
                 id,
                 url.clone(),
@@ -200,8 +212,9 @@ mod test {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnImageModifier, ImageModifier};
-        use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId, ImageUrl};
+        use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId};
         use uuid::Uuid;
+        use crate::database::postgres::image::test::url;
 
         #[tokio::test]
         async fn create() {
@@ -209,7 +222,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let id = ImageId::new(Uuid::new_v4());
-            let url = ImageUrl::new("https://example.com/".to_string());
+            let url = url();
             let image = Image::new(
                 id,
                 url,
@@ -230,7 +243,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let id = ImageId::new(Uuid::new_v4());
-            let url = ImageUrl::new("https://example.com/".to_string());
+            let url = url();
             let image = Image::new(
                 id.clone(),
                 url,

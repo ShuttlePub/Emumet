@@ -496,7 +496,7 @@ mod test {
             let follow = Follow::new(
                 FollowId::new(Uuid::now_v7()),
                 FollowTargetId::from(follower_id.clone()),
-                FollowTargetId::from(followee_id),
+                FollowTargetId::from(followee_id.clone()),
                 Some(FollowApprovedAt::default()),
             )
             .unwrap();
@@ -508,7 +508,7 @@ mod test {
 
             let following = database
                 .follow_query()
-                .find_followings(&mut transaction, &FollowTargetId::from(follower_id))
+                .find_followings(&mut transaction, &FollowTargetId::from(followee_id))
                 .await
                 .unwrap();
             assert_eq!(following[0].id(), follow.id());

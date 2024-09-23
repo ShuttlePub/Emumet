@@ -9,7 +9,7 @@ mod stellar_account;
 
 use crate::database::env;
 use crate::ConvertError;
-use error_stack::Report;
+use error_stack::{Report, ResultExt};
 use kernel::interfaces::database::{DatabaseConnection, Transaction};
 use kernel::KernelError;
 use sqlx::pool::PoolConnection;
@@ -17,7 +17,7 @@ use sqlx::{Error, PgConnection, Pool, Postgres};
 use std::ops::{Deref, DerefMut};
 use uuid::Uuid;
 
-const POSTGRESQL: &str = "postgresql";
+const POSTGRESQL: &str = "POSTGRESQL_URL";
 
 #[derive(Debug, Clone)]
 pub struct PostgresDatabase {
@@ -28,6 +28,10 @@ impl PostgresDatabase {
     pub async fn new() -> error_stack::Result<Self, KernelError> {
         let url = env(POSTGRESQL)?;
         let pool = Pool::connect(&url).await.convert_error()?;
+        sqlx::migrate!("../migrations")
+            .run(&pool)
+            .await
+            .change_context_lazy(|| KernelError::Internal)?;
         Ok(Self { pool })
     }
 }

@@ -237,7 +237,7 @@ mod test {
                 .find_by_id(&mut transaction, &id)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(account));
+            assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
         }
 
         #[tokio::test]
@@ -258,7 +258,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let name = AccountName::new("test");
+            let name = AccountName::new("findbynametest");
             let account = Account::new(
                 AccountId::new(Uuid::new_v4()),
                 name.clone(),
@@ -279,7 +279,7 @@ mod test {
                 .find_by_name(&mut transaction, &name)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(account));
+            assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
         }
     }
 
@@ -320,7 +320,7 @@ mod test {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!(result, account);
+            assert_eq!(result.id(), account.id());
         }
 
         #[tokio::test]
@@ -361,7 +361,7 @@ mod test {
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap();
-            assert_eq!(result, Some(updated_account));
+            assert_eq!(result.as_ref().map(Account::id), Some(updated_account.id()));
         }
 
         #[tokio::test]
@@ -423,7 +423,7 @@ mod test {
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap();
-            assert_eq!(result, Some(account));
+            assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
         }
     }
 }

@@ -172,10 +172,13 @@ mod test {
     mod query {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
+        use kernel::interfaces::modify::{
+            AccountModifier, DependOnAccountModifier, DependOnMetadataModifier, MetadataModifier,
+        };
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
         use kernel::prelude::entity::{
-            AccountId, CreatedAt, Metadata, MetadataContent, MetadataId, MetadataLabel,
+            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
+            CreatedAt, Metadata, MetadataContent, MetadataId, MetadataLabel,
         };
         use time::OffsetDateTime;
         use uuid::Uuid;
@@ -186,6 +189,22 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
+
+            let account = Account::new(
+                account_id.clone(),
+                AccountName::new("name".to_string()),
+                AccountPrivateKey::new("private_key".to_string()),
+                AccountPublicKey::new("public_key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
+                None,
+            );
+
+            database
+                .account_modifier()
+                .create(&mut transaction, &account)
+                .await
+                .unwrap();
             let metadata = Metadata::new(
                 MetadataId::new(Uuid::new_v4()),
                 account_id.clone(),
@@ -215,6 +234,21 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
+            let account = Account::new(
+                account_id.clone(),
+                AccountName::new("name".to_string()),
+                AccountPrivateKey::new("private_key".to_string()),
+                AccountPublicKey::new("public_key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
+                None,
+            );
+
+            database
+                .account_modifier()
+                .create(&mut transaction, &account)
+                .await
+                .unwrap();
             let metadata = Metadata::new(
                 MetadataId::new(Uuid::new_v4()),
                 account_id.clone(),
@@ -252,10 +286,13 @@ mod test {
     mod modify {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
+        use kernel::interfaces::modify::{
+            AccountModifier, DependOnAccountModifier, DependOnMetadataModifier, MetadataModifier,
+        };
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
         use kernel::prelude::entity::{
-            AccountId, CreatedAt, Metadata, MetadataContent, MetadataId, MetadataLabel,
+            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
+            CreatedAt, Metadata, MetadataContent, MetadataId, MetadataLabel,
         };
         use time::OffsetDateTime;
         use uuid::Uuid;
@@ -266,6 +303,21 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
+            let account = Account::new(
+                account_id.clone(),
+                AccountName::new("name".to_string()),
+                AccountPrivateKey::new("private_key".to_string()),
+                AccountPublicKey::new("public_key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
+                None,
+            );
+
+            database
+                .account_modifier()
+                .create(&mut transaction, &account)
+                .await
+                .unwrap();
             let metadata = Metadata::new(
                 MetadataId::new(Uuid::new_v4()),
                 account_id.clone(),
@@ -295,6 +347,21 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
+            let account = Account::new(
+                account_id.clone(),
+                AccountName::new("name".to_string()),
+                AccountPrivateKey::new("private_key".to_string()),
+                AccountPublicKey::new("public_key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
+                None,
+            );
+
+            database
+                .account_modifier()
+                .create(&mut transaction, &account)
+                .await
+                .unwrap();
             let metadata = Metadata::new(
                 MetadataId::new(Uuid::new_v4()),
                 account_id.clone(),
@@ -338,6 +405,21 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::new_v4());
+            let account = Account::new(
+                account_id.clone(),
+                AccountName::new("name".to_string()),
+                AccountPrivateKey::new("private_key".to_string()),
+                AccountPublicKey::new("public_key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
+                None,
+            );
+
+            database
+                .account_modifier()
+                .create(&mut transaction, &account)
+                .await
+                .unwrap();
             let metadata = Metadata::new(
                 MetadataId::new(Uuid::new_v4()),
                 account_id.clone(),
