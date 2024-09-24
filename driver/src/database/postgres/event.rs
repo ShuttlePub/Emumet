@@ -217,7 +217,7 @@ mod test {
             let deleted_account = Account::delete(account_id.clone());
 
             db.event_modifier()
-                .handle(&mut transaction, &deleted_account)
+                .handle(&mut transaction, &created_account)
                 .await
                 .unwrap();
             db.event_modifier()

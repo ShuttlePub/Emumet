@@ -233,6 +233,11 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account));
+            database
+                .remote_account_modifier()
+                .delete(&mut transaction, &id)
+                .await
+                .unwrap();
         }
 
         #[tokio::test]
@@ -257,7 +262,13 @@ mod test {
                 .find_by_acct(&mut transaction, &acct)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(remote_account));
+            assert_eq!(result, Some(remote_account.clone()));
+
+            database
+                .remote_account_modifier()
+                .delete(&mut transaction, remote_account.id())
+                .await
+                .unwrap();
         }
 
         #[tokio::test]
@@ -282,7 +293,12 @@ mod test {
                 .find_by_url(&mut transaction, &url)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(remote_account));
+            assert_eq!(result, Some(remote_account.clone()));
+            database
+                .remote_account_modifier()
+                .delete(&mut transaction, remote_account.id())
+                .await
+                .unwrap();
         }
     }
 
@@ -306,6 +322,11 @@ mod test {
             database
                 .remote_account_modifier()
                 .create(&mut transaction, &remote_account)
+                .await
+                .unwrap();
+            database
+                .remote_account_modifier()
+                .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
         }
@@ -336,7 +357,12 @@ mod test {
                 .find_by_id(&mut transaction, &id)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(remote_account));
+            assert_eq!(result, Some(remote_account.clone()));
+            database
+                .remote_account_modifier()
+                .delete(&mut transaction, remote_account.id())
+                .await
+                .unwrap();
         }
 
         #[tokio::test]

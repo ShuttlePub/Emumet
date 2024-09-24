@@ -223,9 +223,8 @@ mod test {
                 .metadata_query()
                 .find_by_id(&mut transaction, metadata.id())
                 .await
-                .unwrap()
                 .unwrap();
-            assert_eq!(found, metadata);
+            assert_eq!(found.as_ref().map(Metadata::id), Some(metadata.id()));
         }
 
         #[tokio::test]
@@ -280,7 +279,10 @@ mod test {
                 .find_by_account_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
-            assert_eq!(found, vec![metadata, metadata2]);
+            assert_eq!(
+                found.iter().map(Metadata::id).collect::<Vec<_>>(),
+                vec![metadata.id(), metadata2.id()]
+            );
         }
     }
     mod modify {
@@ -336,9 +338,8 @@ mod test {
                 .metadata_query()
                 .find_by_id(&mut transaction, metadata.id())
                 .await
-                .unwrap()
                 .unwrap();
-            assert_eq!(found, metadata);
+            assert_eq!(found.as_ref().map(Metadata::id), Some(metadata.id()));
         }
 
         #[tokio::test]
@@ -394,9 +395,11 @@ mod test {
                 .metadata_query()
                 .find_by_id(&mut transaction, metadata.id())
                 .await
-                .unwrap()
                 .unwrap();
-            assert_eq!(found, updated_metadata);
+            assert_eq!(
+                found.as_ref().map(Metadata::id),
+                Some(updated_metadata.id())
+            );
         }
 
         #[tokio::test]

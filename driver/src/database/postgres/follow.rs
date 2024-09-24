@@ -65,13 +65,13 @@ pub struct PostgresFollowRepository;
 impl FollowQuery for PostgresFollowRepository {
     type Transaction = PostgresConnection;
 
-    async fn find_followers(
+    async fn find_followings(
         &self,
         transaction: &mut Self::Transaction,
-        target_id: &FollowTargetId,
+        source_id: &FollowTargetId,
     ) -> error_stack::Result<Vec<Follow>, KernelError> {
         let con: &mut PgConnection = transaction;
-        match target_id {
+        match source_id {
             FollowTargetId::Local(account_id) => {
                 sqlx::query_as::<_, FollowRow>(
                     //language=postgresql
@@ -98,13 +98,13 @@ impl FollowQuery for PostgresFollowRepository {
             .and_then(|rows| rows.into_iter().map(Follow::try_from).collect::<Result<_, _>>())
     }
 
-    async fn find_followings(
+    async fn find_followers(
         &self,
         transaction: &mut Self::Transaction,
-        target_id: &FollowTargetId,
+        destination_id: &FollowTargetId,
     ) -> error_stack::Result<Vec<Follow>, KernelError> {
         let con: &mut PgConnection = transaction;
-        match target_id {
+        match destination_id {
             FollowTargetId::Local(account_id) => {
                 sqlx::query_as::<_, FollowRow>(
                     //language=postgresql
@@ -242,76 +242,13 @@ mod test {
         use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, Follow, FollowId, FollowTargetId,
+            CreatedAt, Follow, FollowApprovedAt, FollowId, FollowTargetId,
         };
         use time::OffsetDateTime;
         use uuid::Uuid;
 
         #[tokio::test]
         async fn find_followers() {
-            let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
-            let folloer_id = AccountId::new(Uuid::now_v7());
-            let follower_account = Account::new(
-                folloer_id.clone(),
-                AccountName::new("follower".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
-                None,
-            );
-            database
-                .account_modifier()
-                .create(&mut transaction, &follower_account)
-                .await
-                .unwrap();
-            let followee_id = AccountId::new(Uuid::now_v7());
-            let followee_account = Account::new(
-                followee_id.clone(),
-                AccountName::new("followee".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
-                None,
-            );
-            database
-                .account_modifier()
-                .create(&mut transaction, &followee_account)
-                .await
-                .unwrap();
-            let follow = Follow::new(
-                FollowId::new(Uuid::now_v7()),
-                FollowTargetId::from(folloer_id.clone()),
-                FollowTargetId::from(followee_id.clone()),
-                None,
-            )
-            .unwrap();
-
-            database
-                .follow_modifier()
-                .create(&mut transaction, &follow)
-                .await
-                .unwrap();
-
-            let followers = database
-                .follow_query()
-                .find_followers(&mut transaction, &FollowTargetId::from(followee_id))
-                .await
-                .unwrap();
-            assert_eq!(followers[0].id(), follow.id());
-
-            let followers = database
-                .follow_query()
-                .find_followers(&mut transaction, &FollowTargetId::from(folloer_id))
-                .await
-                .unwrap();
-            assert!(followers.is_empty())
-        }
-
-        #[tokio::test]
-        async fn find_followings() {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
             let follower_id = AccountId::new(Uuid::now_v7());
@@ -358,19 +295,112 @@ mod test {
                 .await
                 .unwrap();
 
-            let followings = database
+            let followers = database
                 .follow_query()
                 .find_followings(&mut transaction, &FollowTargetId::from(follower_id))
+                .await
+                .unwrap();
+            assert_eq!(followers[0].id(), follow.id());
+
+            let followers = database
+                .follow_query()
+                .find_followings(&mut transaction, &FollowTargetId::from(followee_id))
+                .await
+                .unwrap();
+            assert!(followers.is_empty());
+            database
+                .follow_modifier()
+                .delete(&mut transaction, follow.id())
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, follower_account.id())
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, followee_account.id())
+                .await
+                .unwrap();
+        }
+
+        #[tokio::test]
+        async fn find_followings() {
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
+            let follower_id = AccountId::new(Uuid::now_v7());
+            let follower_account = Account::new(
+                follower_id.clone(),
+                AccountName::new("follower".to_string()),
+                AccountPrivateKey::new("key".to_string()),
+                AccountPublicKey::new("key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
+                None,
+            );
+            database
+                .account_modifier()
+                .create(&mut transaction, &follower_account)
+                .await
+                .unwrap();
+            let followee_id = AccountId::new(Uuid::now_v7());
+            let followee_account = Account::new(
+                followee_id.clone(),
+                AccountName::new("followee".to_string()),
+                AccountPrivateKey::new("key".to_string()),
+                AccountPublicKey::new("key".to_string()),
+                AccountIsBot::new(false),
+                CreatedAt::new(OffsetDateTime::now_utc()),
+                None,
+            );
+            database
+                .account_modifier()
+                .create(&mut transaction, &followee_account)
+                .await
+                .unwrap();
+            let follow = Follow::new(
+                FollowId::new(Uuid::now_v7()),
+                FollowTargetId::from(follower_id.clone()),
+                FollowTargetId::from(followee_id.clone()),
+                Some(FollowApprovedAt::default()),
+            )
+            .unwrap();
+
+            database
+                .follow_modifier()
+                .create(&mut transaction, &follow)
+                .await
+                .unwrap();
+
+            let followings = database
+                .follow_query()
+                .find_followers(&mut transaction, &FollowTargetId::from(followee_id))
                 .await
                 .unwrap();
             assert_eq!(followings[0].id(), follow.id());
 
             let followings = database
                 .follow_query()
-                .find_followings(&mut transaction, &FollowTargetId::from(followee_id))
+                .find_followers(&mut transaction, &FollowTargetId::from(follower_id))
                 .await
                 .unwrap();
-            assert!(followings.is_empty())
+            assert!(followings.is_empty());
+            database
+                .follow_modifier()
+                .delete(&mut transaction, follow.id())
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, follower_account.id())
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, followee_account.id())
+                .await
+                .unwrap();
         }
     }
 
@@ -435,6 +465,21 @@ mod test {
                 .create(&mut transaction, &follow)
                 .await
                 .unwrap();
+            database
+                .follow_modifier()
+                .delete(&mut transaction, follow.id())
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, follower_account.id())
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, followee_account.id())
+                .await
+                .unwrap();
         }
 
         #[tokio::test]
@@ -494,7 +539,7 @@ mod test {
                 .unwrap();
 
             let follow = Follow::new(
-                FollowId::new(Uuid::now_v7()),
+                follow.id().clone(),
                 FollowTargetId::from(follower_id.clone()),
                 FollowTargetId::from(followee_id.clone()),
                 Some(FollowApprovedAt::default()),
@@ -508,10 +553,25 @@ mod test {
 
             let following = database
                 .follow_query()
-                .find_followings(&mut transaction, &FollowTargetId::from(followee_id))
+                .find_followers(&mut transaction, &FollowTargetId::from(followee_id))
                 .await
                 .unwrap();
             assert_eq!(following[0].id(), follow.id());
+            database
+                .follow_modifier()
+                .delete(&mut transaction, follow.id())
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, follower_account.id())
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, followee_account.id())
+                .await
+                .unwrap();
         }
 
         #[tokio::test]
@@ -570,10 +630,20 @@ mod test {
 
             let following = database
                 .follow_query()
-                .find_followings(&mut transaction, &FollowTargetId::from(follower_id))
+                .find_followers(&mut transaction, &FollowTargetId::from(follower_id))
                 .await
                 .unwrap();
             assert!(following.is_empty());
+            database
+                .account_modifier()
+                .delete(&mut transaction, follower_account.id())
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, followee_account.id())
+                .await
+                .unwrap();
         }
     }
 }

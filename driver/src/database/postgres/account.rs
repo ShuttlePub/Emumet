@@ -52,7 +52,7 @@ impl AccountQuery for PostgresAccountRepository {
             r#"
             SELECT id, name, private_key, public_key, is_bot, created_at, deleted_at
             FROM accounts
-            WHERE id = $1
+            WHERE id = $1 AND deleted_at IS NULL
             "#,
         )
         .bind(id.as_ref())
@@ -74,7 +74,7 @@ impl AccountQuery for PostgresAccountRepository {
             SELECT id, name, private_key, public_key, is_bot, created_at, deleted_at
             FROM accounts
             INNER JOIN stellar_emumet_accounts ON stellar_emumet_accounts.emumet_id = accounts.id
-            WHERE stellar_emumet_accounts.stellar_id = $1
+            WHERE stellar_emumet_accounts.stellar_id = $1 AND deleted_at IS NULL
             "#,
         )
         .bind(stellar_id.as_ref())
@@ -95,7 +95,7 @@ impl AccountQuery for PostgresAccountRepository {
             r#"
             SELECT id, name, private_key, public_key, is_bot, created_at, deleted_at
             FROM accounts
-            WHERE name = $1
+            WHERE name = $1 AND deleted_at IS NULL
             "#,
         )
         .bind(name.as_ref())
@@ -280,6 +280,11 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
+            database
+                .account_modifier()
+                .delete(&mut transaction, account.id())
+                .await
+                .unwrap();
         }
     }
 
@@ -393,9 +398,8 @@ mod test {
                 .account_query()
                 .find_by_id(&mut transaction, account.id())
                 .await
-                .unwrap()
                 .unwrap();
-            assert!(result.deleted_at().is_some());
+            assert!(result.is_none());
 
             // Ignore if the account is already deleted
             let account = Account::new(
@@ -423,7 +427,7 @@ mod test {
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap();
-            assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
+            assert!(result.is_none());
         }
     }
 }

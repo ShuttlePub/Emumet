@@ -15,10 +15,10 @@ use crate::ConvertError;
 struct ProfileRow {
     id: Uuid,
     account_id: Uuid,
-    display_name: Option<String>,
+    display: Option<String>,
     summary: Option<String>,
-    icon: Option<Uuid>,
-    banner: Option<Uuid>,
+    icon_id: Option<Uuid>,
+    banner_id: Option<Uuid>,
 }
 
 impl From<ProfileRow> for Profile {
@@ -26,10 +26,10 @@ impl From<ProfileRow> for Profile {
         Profile::new(
             ProfileId::new(value.id),
             AccountId::new(value.id),
-            value.display_name.map(ProfileDisplayName::new),
+            value.display.map(ProfileDisplayName::new),
             value.summary.map(ProfileSummary::new),
-            value.icon.map(ImageId::new),
-            value.banner.map(ImageId::new),
+            value.icon_id.map(ImageId::new),
+            value.banner_id.map(ImageId::new),
         )
     }
 }
@@ -80,7 +80,7 @@ impl ProfileModifier for PostgresProfileRepository {
             //language=postgresql
             r#"
             INSERT INTO profiles (id, account_id, display, summary, icon_id, banner_id)
-            VALUES ($1, $2, $3, $4, $5)
+            VALUES ($1, $2, $3, $4, $5, $6)
             "#,
         )
         .bind(profile.id().as_ref())
@@ -190,7 +190,12 @@ mod test {
                 .find_by_id(&mut transaction, &profile_id)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(profile));
+            assert_eq!(result.as_ref().map(Profile::id), Some(profile.id()));
+            database
+                .account_modifier()
+                .delete(&mut transaction, account.id())
+                .await
+                .unwrap();
         }
     }
 
@@ -242,6 +247,11 @@ mod test {
             database
                 .profile_modifier()
                 .create(&mut transaction, &profile)
+                .await
+                .unwrap();
+            database
+                .account_modifier()
+                .delete(&mut transaction, &account.id())
                 .await
                 .unwrap();
         }
@@ -300,7 +310,12 @@ mod test {
                 .find_by_id(&mut transaction, &profile_id)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(updated_profile));
+            assert_eq!(result.as_ref().map(Profile::id), Some(updated_profile.id()));
+            database
+                .account_modifier()
+                .delete(&mut transaction, &account.id())
+                .await
+                .unwrap();
         }
     }
 }

@@ -12,7 +12,7 @@ struct ImageRow {
     id: Uuid,
     url: String,
     hash: String,
-    blur_hash: String,
+    blurhash: String,
 }
 
 impl From<ImageRow> for Image {
@@ -21,7 +21,7 @@ impl From<ImageRow> for Image {
             ImageId::new(row.id),
             ImageUrl::new(row.url),
             ImageHash::new(row.hash),
-            ImageBlurHash::new(row.blur_hash),
+            ImageBlurHash::new(row.blurhash),
         )
     }
 }
@@ -150,7 +150,7 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnImageModifier, ImageModifier};
         use kernel::interfaces::query::{DependOnImageQuery, ImageQuery};
-        use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId, ImageUrl};
+        use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId};
         use uuid::Uuid;
 
         #[tokio::test]
@@ -178,6 +178,11 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(result, Some(image));
+            database
+                .image_modifier()
+                .delete(&mut transaction, &id)
+                .await
+                .unwrap();
         }
 
         #[tokio::test]
@@ -204,17 +209,22 @@ mod test {
                 .find_by_url(&mut transaction, &url)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(image));
+            assert_eq!(result, Some(image.clone()));
+            database
+                .image_modifier()
+                .delete(&mut transaction, image.id())
+                .await
+                .unwrap();
         }
     }
 
     mod modifier {
+        use crate::database::postgres::image::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnImageModifier, ImageModifier};
         use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId};
         use uuid::Uuid;
-        use crate::database::postgres::image::test::url;
 
         #[tokio::test]
         async fn create() {
@@ -233,6 +243,11 @@ mod test {
             database
                 .image_modifier()
                 .create(&mut transaction, &image)
+                .await
+                .unwrap();
+            database
+                .image_modifier()
+                .delete(&mut transaction, image.id())
                 .await
                 .unwrap();
         }

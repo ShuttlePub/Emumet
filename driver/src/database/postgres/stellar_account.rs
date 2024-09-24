@@ -144,7 +144,6 @@ impl DependOnStellarAccountModifier for PostgresDatabase {
 #[cfg(test)]
 mod test {
     mod query {
-        use crate::database::postgres::stellar_account::PostgresStellarAccountRepository;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnStellarAccountModifier, StellarAccountModifier};
@@ -153,7 +152,6 @@ mod test {
             StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountHost,
             StellarAccountId, StellarAccountRefreshToken,
         };
-        use kernel::KernelError;
         use uuid::Uuid;
 
         #[tokio::test]
@@ -180,12 +178,16 @@ mod test {
                 .find_by_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(stellar_account));
+            assert_eq!(result, Some(stellar_account.clone()));
+            database
+                .stellar_account_modifier()
+                .delete(&mut transaction, stellar_account.id())
+                .await
+                .unwrap();
         }
     }
 
     mod modify {
-        use crate::database::postgres::stellar_account::PostgresStellarAccountRepository;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::modify::{DependOnStellarAccountModifier, StellarAccountModifier};
@@ -194,7 +196,6 @@ mod test {
             StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountHost,
             StellarAccountId, StellarAccountRefreshToken,
         };
-        use kernel::KernelError;
         use uuid::Uuid;
 
         #[tokio::test]
@@ -202,10 +203,11 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
+            let host_id = StellarAccountHost::new(Uuid::new_v4());
             let account_id = StellarAccountId::new(Uuid::new_v4());
             let stellar_account = StellarAccount::new(
                 account_id.clone(),
-                StellarAccountHost::new("host_id".to_string()),
+                host_id,
                 StellarAccountClientId::new("client_id".to_string()),
                 StellarAccountAccessToken::new("access_token".to_string()),
                 StellarAccountRefreshToken::new("refresh_token".to_string()),
@@ -220,7 +222,12 @@ mod test {
                 .find_by_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(stellar_account));
+            assert_eq!(result, Some(stellar_account.clone()));
+            database
+                .stellar_account_modifier()
+                .delete(&mut transaction, stellar_account.id())
+                .await
+                .unwrap();
         }
 
         #[tokio::test]
@@ -228,10 +235,11 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
+            let host_id = StellarAccountHost::new(Uuid::new_v4());
             let account_id = StellarAccountId::new(Uuid::new_v4());
             let stellar_account = StellarAccount::new(
                 account_id.clone(),
-                StellarAccountHost::new("host_id".to_string()),
+                host_id.clone(),
                 StellarAccountClientId::new("client_id".to_string()),
                 StellarAccountAccessToken::new("access_token".to_string()),
                 StellarAccountRefreshToken::new("refresh_token".to_string()),
@@ -243,7 +251,7 @@ mod test {
                 .unwrap();
             let updated_stellar_account = StellarAccount::new(
                 account_id.clone(),
-                StellarAccountHost::new("updated_host_id".to_string()),
+                host_id,
                 StellarAccountClientId::new("updated_client_id".to_string()),
                 StellarAccountAccessToken::new("updated_access_token".to_string()),
                 StellarAccountRefreshToken::new("updated_refresh_token".to_string()),
@@ -259,6 +267,11 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(result, Some(updated_stellar_account));
+            database
+                .stellar_account_modifier()
+                .delete(&mut transaction, stellar_account.id())
+                .await
+                .unwrap();
         }
 
         #[tokio::test]
@@ -266,10 +279,11 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
+            let host_id = StellarAccountHost::new(Uuid::new_v4());
             let account_id = StellarAccountId::new(Uuid::new_v4());
             let stellar_account = StellarAccount::new(
                 account_id.clone(),
-                StellarAccountHost::new("host_id".to_string()),
+                host_id,
                 StellarAccountClientId::new("client_id".to_string()),
                 StellarAccountAccessToken::new("access_token".to_string()),
                 StellarAccountRefreshToken::new("refresh_token".to_string()),
@@ -290,6 +304,11 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(result, None);
+            database
+                .stellar_account_modifier()
+                .delete(&mut transaction, stellar_account.id())
+                .await
+                .unwrap();
         }
     }
 }
