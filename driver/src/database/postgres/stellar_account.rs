@@ -3,8 +3,8 @@ use crate::ConvertError;
 use kernel::interfaces::modify::{DependOnStellarAccountModifier, StellarAccountModifier};
 use kernel::interfaces::query::{DependOnStellarAccountQuery, StellarAccountQuery};
 use kernel::prelude::entity::{
-    StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountHost,
-    StellarAccountId, StellarAccountRefreshToken,
+    StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountId,
+    StellarAccountRefreshToken, StellarHostId,
 };
 use kernel::KernelError;
 use sqlx::PgConnection;
@@ -23,7 +23,7 @@ impl From<StellarAccountRow> for StellarAccount {
     fn from(value: StellarAccountRow) -> Self {
         StellarAccount::new(
             StellarAccountId::new(value.id),
-            StellarAccountHost::new(value.host_id),
+            StellarHostId::new(value.host_id),
             StellarAccountClientId::new(value.client_id),
             StellarAccountAccessToken::new(value.access_token),
             StellarAccountRefreshToken::new(value.refresh_token),
@@ -146,11 +146,14 @@ mod test {
     mod query {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnStellarAccountModifier, StellarAccountModifier};
+        use kernel::interfaces::modify::{
+            DependOnStellarAccountModifier, DependOnStellarHostModifier, StellarAccountModifier,
+            StellarHostModifier,
+        };
         use kernel::interfaces::query::{DependOnStellarAccountQuery, StellarAccountQuery};
         use kernel::prelude::entity::{
-            StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountHost,
-            StellarAccountId, StellarAccountRefreshToken,
+            StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountId,
+            StellarAccountRefreshToken, StellarHost, StellarHostId, StellarHostUrl,
         };
         use uuid::Uuid;
 
@@ -159,10 +162,18 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
+            let stellar_host_id = StellarHostId::new(Uuid::new_v4());
+            let stellar_host =
+                StellarHost::new(stellar_host_id.clone(), StellarHostUrl::new(Uuid::new_v4()));
+            database
+                .stellar_host_modifier()
+                .create(&mut transaction, &stellar_host)
+                .await
+                .unwrap();
             let account_id = StellarAccountId::new(Uuid::new_v4());
             let stellar_account = StellarAccount::new(
                 account_id.clone(),
-                StellarAccountHost::new(Uuid::new_v4()),
+                stellar_host_id,
                 StellarAccountClientId::new("client_id".to_string()),
                 StellarAccountAccessToken::new("access_token".to_string()),
                 StellarAccountRefreshToken::new("refresh_token".to_string()),
@@ -190,11 +201,14 @@ mod test {
     mod modify {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnStellarAccountModifier, StellarAccountModifier};
+        use kernel::interfaces::modify::{
+            DependOnStellarAccountModifier, DependOnStellarHostModifier, StellarAccountModifier,
+            StellarHostModifier,
+        };
         use kernel::interfaces::query::{DependOnStellarAccountQuery, StellarAccountQuery};
         use kernel::prelude::entity::{
-            StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountHost,
-            StellarAccountId, StellarAccountRefreshToken,
+            StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountId,
+            StellarAccountRefreshToken, StellarHost, StellarHostId, StellarHostUrl,
         };
         use uuid::Uuid;
 
@@ -203,8 +217,15 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let host_id = StellarAccountHost::new(Uuid::new_v4());
+            let host_id = StellarHostId::new(Uuid::new_v4());
             let account_id = StellarAccountId::new(Uuid::new_v4());
+            let stellar_host =
+                StellarHost::new(host_id.clone(), StellarHostUrl::new(Uuid::new_v4()));
+            database
+                .stellar_host_modifier()
+                .create(&mut transaction, &stellar_host)
+                .await
+                .unwrap();
             let stellar_account = StellarAccount::new(
                 account_id.clone(),
                 host_id,
@@ -235,8 +256,15 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let host_id = StellarAccountHost::new(Uuid::new_v4());
+            let host_id = StellarHostId::new(Uuid::new_v4());
             let account_id = StellarAccountId::new(Uuid::new_v4());
+            let stellar_host =
+                StellarHost::new(host_id.clone(), StellarHostUrl::new(Uuid::new_v4()));
+            database
+                .stellar_host_modifier()
+                .create(&mut transaction, &stellar_host)
+                .await
+                .unwrap();
             let stellar_account = StellarAccount::new(
                 account_id.clone(),
                 host_id.clone(),
@@ -279,7 +307,14 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let host_id = StellarAccountHost::new(Uuid::new_v4());
+            let host_id = StellarHostId::new(Uuid::new_v4());
+            let stellar_host =
+                StellarHost::new(host_id.clone(), StellarHostUrl::new(Uuid::new_v4()));
+            database
+                .stellar_host_modifier()
+                .create(&mut transaction, &stellar_host)
+                .await
+                .unwrap();
             let account_id = StellarAccountId::new(Uuid::new_v4());
             let stellar_account = StellarAccount::new(
                 account_id.clone(),

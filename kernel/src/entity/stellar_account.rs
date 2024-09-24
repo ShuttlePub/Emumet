@@ -1,10 +1,9 @@
 mod access_token;
 mod client_id;
-mod host;
 mod id;
 mod refresh_token;
 
-use crate::entity::{CommandEnvelope, EventId, KnownEventVersion};
+use crate::entity::{CommandEnvelope, EventId, KnownEventVersion, StellarHostId};
 use destructure::Destructure;
 use serde::Deserialize;
 use serde::Serialize;
@@ -12,7 +11,6 @@ use vodca::{Nameln, Newln, References};
 
 pub use self::access_token::*;
 pub use self::client_id::*;
-pub use self::host::*;
 pub use self::id::*;
 pub use self::refresh_token::*;
 
@@ -21,7 +19,7 @@ pub use self::refresh_token::*;
 )]
 pub struct StellarAccount {
     id: StellarAccountId,
-    host: StellarAccountHost,
+    host: StellarHostId,
     client_id: StellarAccountClientId,
     access_token: StellarAccountAccessToken,
     refresh_token: StellarAccountRefreshToken,
@@ -31,7 +29,7 @@ pub struct StellarAccount {
 #[serde(tag = "type", rename_all_fields = "snake_case")]
 pub enum StellarAccountEvent {
     Created {
-        host: StellarAccountHost,
+        host: StellarHostId,
         client_id: StellarAccountClientId,
         access_token: StellarAccountAccessToken,
         refresh_token: StellarAccountRefreshToken,
@@ -46,7 +44,7 @@ pub enum StellarAccountEvent {
 impl StellarAccount {
     pub fn create(
         id: StellarAccountId,
-        host: StellarAccountHost,
+        host: StellarHostId,
         client_id: StellarAccountClientId,
         access_token: StellarAccountAccessToken,
         refresh_token: StellarAccountRefreshToken,
