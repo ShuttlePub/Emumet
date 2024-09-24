@@ -162,15 +162,15 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let stellar_host_id = StellarHostId::new(Uuid::new_v4());
+            let stellar_host_id = StellarHostId::new(Uuid::now_v7());
             let stellar_host =
-                StellarHost::new(stellar_host_id.clone(), StellarHostUrl::new(Uuid::new_v4()));
+                StellarHost::new(stellar_host_id.clone(), StellarHostUrl::new(Uuid::now_v7()));
             database
                 .stellar_host_modifier()
                 .create(&mut transaction, &stellar_host)
                 .await
                 .unwrap();
-            let account_id = StellarAccountId::new(Uuid::new_v4());
+            let account_id = StellarAccountId::new(Uuid::now_v7());
             let stellar_account = StellarAccount::new(
                 account_id.clone(),
                 stellar_host_id,
@@ -217,10 +217,10 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let host_id = StellarHostId::new(Uuid::new_v4());
-            let account_id = StellarAccountId::new(Uuid::new_v4());
+            let host_id = StellarHostId::new(Uuid::now_v7());
+            let account_id = StellarAccountId::new(Uuid::now_v7());
             let stellar_host =
-                StellarHost::new(host_id.clone(), StellarHostUrl::new(Uuid::new_v4()));
+                StellarHost::new(host_id.clone(), StellarHostUrl::new(Uuid::now_v7()));
             database
                 .stellar_host_modifier()
                 .create(&mut transaction, &stellar_host)
@@ -256,10 +256,10 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let host_id = StellarHostId::new(Uuid::new_v4());
-            let account_id = StellarAccountId::new(Uuid::new_v4());
+            let host_id = StellarHostId::new(Uuid::now_v7());
+            let account_id = StellarAccountId::new(Uuid::now_v7());
             let stellar_host =
-                StellarHost::new(host_id.clone(), StellarHostUrl::new(Uuid::new_v4()));
+                StellarHost::new(host_id.clone(), StellarHostUrl::new(Uuid::now_v7()));
             database
                 .stellar_host_modifier()
                 .create(&mut transaction, &stellar_host)
@@ -307,15 +307,15 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let host_id = StellarHostId::new(Uuid::new_v4());
+            let host_id = StellarHostId::new(Uuid::now_v7());
             let stellar_host =
-                StellarHost::new(host_id.clone(), StellarHostUrl::new(Uuid::new_v4()));
+                StellarHost::new(host_id.clone(), StellarHostUrl::new(Uuid::now_v7()));
             database
                 .stellar_host_modifier()
                 .create(&mut transaction, &stellar_host)
                 .await
                 .unwrap();
-            let account_id = StellarAccountId::new(Uuid::new_v4());
+            let account_id = StellarAccountId::new(Uuid::now_v7());
             let stellar_account = StellarAccount::new(
                 account_id.clone(),
                 host_id,

@@ -198,7 +198,7 @@ mod test {
         async fn find_by_id() {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let account_id = AccountId::new(Uuid::new_v4());
+            let account_id = AccountId::new(Uuid::now_v7());
             let event_id = EventId::from(account_id.clone());
             let events = db
                 .event_query()
@@ -244,7 +244,7 @@ mod test {
         async fn find_by_id_with_version() {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let account_id = AccountId::new(Uuid::new_v4());
+            let account_id = AccountId::new(Uuid::now_v7());
             let event_id = EventId::from(account_id.clone());
             let created_account = Account::create(
                 account_id.clone(),
@@ -296,7 +296,7 @@ mod test {
         async fn basic_creation() {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let account_id = AccountId::new(Uuid::new_v4());
+            let account_id = AccountId::new(Uuid::now_v7());
             let created_account = Account::create(
                 account_id.clone(),
                 AccountName::new("test"),

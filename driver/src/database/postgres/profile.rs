@@ -155,8 +155,8 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let profile_id = ProfileId::new(Uuid::new_v4());
-            let account_id = AccountId::new(Uuid::new_v4());
+            let profile_id = ProfileId::new(Uuid::now_v7());
+            let account_id = AccountId::new(Uuid::now_v7());
             let account = Account::new(
                 account_id.clone(),
                 AccountName::new("test"),
@@ -220,8 +220,8 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let profile_id = ProfileId::new(Uuid::new_v4());
-            let account_id = AccountId::new(Uuid::new_v4());
+            let profile_id = ProfileId::new(Uuid::now_v7());
+            let account_id = AccountId::new(Uuid::now_v7());
             let account = Account::new(
                 account_id.clone(),
                 AccountName::new("test"),
@@ -261,8 +261,8 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let profile_id = ProfileId::new(Uuid::new_v4());
-            let account_id = AccountId::new(Uuid::new_v4());
+            let profile_id = ProfileId::new(Uuid::now_v7());
+            let account_id = AccountId::new(Uuid::now_v7());
             let account = Account::new(
                 account_id.clone(),
                 AccountName::new("test"),

@@ -217,7 +217,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = AccountId::new(Uuid::new_v4());
+            let id = AccountId::new(Uuid::now_v7());
             let account = Account::new(
                 id.clone(),
                 AccountName::new("test"),
@@ -247,7 +247,7 @@ mod test {
 
             let accounts = database
                 .account_query()
-                .find_by_stellar_id(&mut transaction, &StellarAccountId::new(Uuid::new_v4()))
+                .find_by_stellar_id(&mut transaction, &StellarAccountId::new(Uuid::now_v7()))
                 .await
                 .unwrap();
             assert!(accounts.is_empty());
@@ -260,7 +260,7 @@ mod test {
 
             let name = AccountName::new("findbynametest");
             let account = Account::new(
-                AccountId::new(Uuid::new_v4()),
+                AccountId::new(Uuid::now_v7()),
                 name.clone(),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
@@ -306,7 +306,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account = Account::new(
-                AccountId::new(Uuid::new_v4()),
+                AccountId::new(Uuid::now_v7()),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
@@ -334,7 +334,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account = Account::new(
-                AccountId::new(Uuid::new_v4()),
+                AccountId::new(Uuid::now_v7()),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
@@ -375,7 +375,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account = Account::new(
-                AccountId::new(Uuid::new_v4()),
+                AccountId::new(Uuid::now_v7()),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
@@ -403,7 +403,7 @@ mod test {
 
             // Ignore if the account is already deleted
             let account = Account::new(
-                AccountId::new(Uuid::new_v4()),
+                AccountId::new(Uuid::now_v7()),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),

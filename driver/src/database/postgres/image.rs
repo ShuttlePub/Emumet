@@ -158,7 +158,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(Uuid::new_v4());
+            let id = ImageId::new(Uuid::now_v7());
             let url = url();
             let image = Image::new(
                 id.clone(),
@@ -190,7 +190,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(Uuid::new_v4());
+            let id = ImageId::new(Uuid::now_v7());
             let url = url();
             let image = Image::new(
                 id,
@@ -231,7 +231,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(Uuid::new_v4());
+            let id = ImageId::new(Uuid::now_v7());
             let url = url();
             let image = Image::new(
                 id,
@@ -257,7 +257,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(Uuid::new_v4());
+            let id = ImageId::new(Uuid::now_v7());
             let url = url();
             let image = Image::new(
                 id.clone(),
