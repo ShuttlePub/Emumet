@@ -251,7 +251,7 @@ mod test {
                 .unwrap();
             database
                 .account_modifier()
-                .delete(&mut transaction, &account.id())
+                .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
@@ -313,7 +313,7 @@ mod test {
             assert_eq!(result.as_ref().map(Profile::id), Some(updated_profile.id()));
             database
                 .account_modifier()
-                .delete(&mut transaction, &account.id())
+                .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
