@@ -18,7 +18,13 @@ use sqlx::{Error, PgConnection, Pool, Postgres};
 use std::ops::{Deref, DerefMut};
 use uuid::Uuid;
 
-const POSTGRESQL: &str = "POSTGRESQL_URL";
+const POSTGRESQL: &str = "DATABASE_URL";
+
+const HOST: &str = "DATABASE_HOST";
+const PORT: &str = "DATABASE_PORT";
+const USER: &str = "DATABASE_USER";
+const PASSWORD: &str = "DATABASE_PASSWORD";
+const DATABASE: &str = "DATABASE_NAME";
 
 #[derive(Debug, Clone)]
 pub struct PostgresDatabase {
@@ -27,7 +33,19 @@ pub struct PostgresDatabase {
 
 impl PostgresDatabase {
     pub async fn new() -> error_stack::Result<Self, KernelError> {
-        let url = env(POSTGRESQL)?;
+        let url = if let Some(env) = env(POSTGRESQL)? {
+            env
+        } else {
+            let host = env(HOST)?.ok_or_else(|| Report::new(KernelError::Internal))?;
+            let port = env(PORT)?.ok_or_else(|| Report::new(KernelError::Internal))?;
+            let user = env(USER)?.ok_or_else(|| Report::new(KernelError::Internal))?;
+            let password = env(PASSWORD)?.ok_or_else(|| Report::new(KernelError::Internal))?;
+            let database = env(DATABASE)?.ok_or_else(|| Report::new(KernelError::Internal))?;
+            format!(
+                "postgresql://{}:{}@{}:{}/{}",
+                user, password, host, port, database
+            )
+        };
         let pool = Pool::connect(&url).await.convert_error()?;
         sqlx::migrate!("../migrations")
             .run(&pool)
