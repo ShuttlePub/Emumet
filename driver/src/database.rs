@@ -1,6 +1,6 @@
 mod postgres;
 
-use error_stack::{FutureExt, ResultExt};
+use error_stack::Report;
 use kernel::KernelError;
 pub use postgres::*;
 use std::env;
@@ -10,6 +10,6 @@ pub(crate) fn env(key: &str) -> error_stack::Result<Option<String>, KernelError>
     match result {
         Ok(var) => Ok(Some(var)),
         Err(dotenvy::Error::EnvVar(_)) => Ok(None),
-        Err(error) => error.change_context(KernelError::Internal),
+        Err(error) => Err(Report::new(error).change_context(KernelError::Internal)),
     }
 }
