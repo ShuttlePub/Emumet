@@ -10,7 +10,7 @@ members = [
 tokio = "1.39.2"
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1.4", features = ["serde", "v7"] }
-time = { version = "0.3", features = ["serde"] }
+time = { version = "0.3", features = ["serde", "local-offset"] }
 
 error-stack = "0.4.1"
 
