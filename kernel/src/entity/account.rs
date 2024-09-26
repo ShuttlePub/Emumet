@@ -103,7 +103,7 @@ impl EventApplier for Account {
                         .attach_printable(Self::already_exists(entity)));
                 }
                 *entity = Some(Account {
-                    id: AccountId::new(event.id.raw_id()),
+                    id: AccountId::new(event.id.into()),
                     name,
                     private_key,
                     public_key,

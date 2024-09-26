@@ -84,7 +84,7 @@ impl EventApplier for RemoteAccount {
                         .attach_printable(Self::already_exists(entity)));
                 }
                 *entity = Some(RemoteAccount {
-                    id: RemoteAccountId::new(event.id.raw_id()),
+                    id: RemoteAccountId::new(event.id.into()),
                     acct,
                     url,
                     icon_id,

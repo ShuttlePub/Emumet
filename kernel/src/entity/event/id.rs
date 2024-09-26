@@ -10,10 +10,6 @@ impl<Ev, En> EventId<Ev, En> {
     pub fn new(id: Uuid) -> Self {
         Self(id, PhantomData, PhantomData)
     }
-
-    pub fn raw_id(self) -> Uuid {
-        self.0
-    }
 }
 
 impl<Ev, En> Serialize for EventId<Ev, En> {

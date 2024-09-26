@@ -95,7 +95,7 @@ impl EventApplier for Metadata {
                         .attach_printable(Self::already_exists(entity)));
                 }
                 *entity = Some(Metadata {
-                    id: MetadataId::new(event.id.raw_id()),
+                    id: MetadataId::new(event.id),
                     account_id,
                     label,
                     content,
