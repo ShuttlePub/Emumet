@@ -7,12 +7,12 @@ mod version;
 
 pub use {id::*, version::*};
 
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, References, Newln, Destructure)]
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Newln, Destructure)]
 pub struct EventEnvelope<Event, Entity> {
-    id: EventId<Event, Entity>,
-    event: Event,
-    version: EventVersion<Entity>,
-    created_at: CreatedAt<Entity>,
+    pub id: EventId<Event, Entity>,
+    pub event: Event,
+    pub version: EventVersion<Entity>,
+    pub created_at: CreatedAt<Entity>,
 }
 
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, References, Newln, Destructure)]

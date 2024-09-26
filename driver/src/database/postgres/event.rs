@@ -234,9 +234,9 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(events.len(), 3);
-            assert_eq!(events[0].event(), created_account.event());
-            assert_eq!(events[1].event(), updated_account.event());
-            assert_eq!(events[2].event(), deleted_account.event());
+            assert_eq!(&events[0].event, created_account.event());
+            assert_eq!(&events[1].event, updated_account.event());
+            assert_eq!(&events[2].event, deleted_account.event());
         }
 
         #[tokio::test]
@@ -270,12 +270,12 @@ mod test {
                 .unwrap();
             let events = db
                 .event_query()
-                .find_by_id(&mut transaction, &event_id, Some(all_events[1].version()))
+                .find_by_id(&mut transaction, &event_id, Some(&all_events[1].version))
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
             let event = &events[0];
-            assert_eq!(&event.event(), &updated_account.event());
+            assert_eq!(&event.event, updated_account.event());
         }
     }
 
