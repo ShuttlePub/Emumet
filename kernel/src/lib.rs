@@ -1,6 +1,7 @@
 mod database;
 mod entity;
 mod error;
+mod event;
 mod modify;
 mod query;
 
@@ -23,5 +24,8 @@ pub mod interfaces {
     }
     pub mod modify {
         pub use crate::modify::*;
+    }
+    pub mod event {
+        pub use crate::event::*;
     }
 }
