@@ -244,7 +244,6 @@ mod test {
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, Follow, FollowApprovedAt, FollowId, FollowTargetId,
         };
-        use time::OffsetDateTime;
         use uuid::Uuid;
 
         #[tokio::test]
@@ -258,7 +257,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -273,7 +272,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -336,7 +335,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -351,7 +350,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -415,7 +414,6 @@ mod test {
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, Follow, FollowApprovedAt, FollowId, FollowTargetId,
         };
-        use time::OffsetDateTime;
         use uuid::Uuid;
 
         #[tokio::test]
@@ -429,7 +427,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -444,7 +442,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -494,7 +492,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -509,7 +507,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -585,7 +583,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -600,7 +598,7 @@ mod test {
                 AccountPrivateKey::new("key".to_string()),
                 AccountPublicKey::new("key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database

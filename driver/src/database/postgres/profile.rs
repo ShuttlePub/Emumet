@@ -135,7 +135,6 @@ impl DependOnProfileModifier for PostgresDatabase {
 #[cfg(test)]
 mod test {
     mod query {
-        use time::OffsetDateTime;
         use uuid::Uuid;
 
         use kernel::interfaces::database::DatabaseConnection;
@@ -163,7 +162,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             let profile = Profile::new(
@@ -200,7 +199,6 @@ mod test {
     }
 
     mod modify {
-        use time::OffsetDateTime;
         use uuid::Uuid;
 
         use kernel::interfaces::database::DatabaseConnection;
@@ -228,7 +226,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             let profile = Profile::new(
@@ -269,7 +267,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             let profile = Profile::new(

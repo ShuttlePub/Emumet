@@ -180,7 +180,6 @@ mod test {
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, Metadata, MetadataContent, MetadataId, MetadataLabel,
         };
-        use time::OffsetDateTime;
         use uuid::Uuid;
 
         #[tokio::test]
@@ -196,7 +195,7 @@ mod test {
                 AccountPrivateKey::new("private_key".to_string()),
                 AccountPublicKey::new("public_key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
 
@@ -210,7 +209,7 @@ mod test {
                 account_id.clone(),
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
             );
 
             database
@@ -239,7 +238,7 @@ mod test {
                 AccountPrivateKey::new("private_key".to_string()),
                 AccountPublicKey::new("public_key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
 
@@ -253,14 +252,14 @@ mod test {
                 account_id.clone(),
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
             );
             let metadata2 = Metadata::new(
                 MetadataId::new(Uuid::now_v7()),
                 account_id.clone(),
                 MetadataLabel::new("label2".to_string()),
                 MetadataContent::new("content2".to_string()),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
             );
 
             database
@@ -296,7 +295,6 @@ mod test {
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, Metadata, MetadataContent, MetadataId, MetadataLabel,
         };
-        use time::OffsetDateTime;
         use uuid::Uuid;
 
         #[tokio::test]
@@ -311,7 +309,7 @@ mod test {
                 AccountPrivateKey::new("private_key".to_string()),
                 AccountPublicKey::new("public_key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
 
@@ -325,7 +323,7 @@ mod test {
                 account_id.clone(),
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
             );
 
             database
@@ -354,7 +352,7 @@ mod test {
                 AccountPrivateKey::new("private_key".to_string()),
                 AccountPublicKey::new("public_key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
 
@@ -368,7 +366,7 @@ mod test {
                 account_id.clone(),
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
             );
 
             database
@@ -382,7 +380,7 @@ mod test {
                 account_id.clone(),
                 MetadataLabel::new("label2".to_string()),
                 MetadataContent::new("content2".to_string()),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
             );
 
             database
@@ -414,7 +412,7 @@ mod test {
                 AccountPrivateKey::new("private_key".to_string()),
                 AccountPublicKey::new("public_key".to_string()),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
 
@@ -428,7 +426,7 @@ mod test {
                 account_id.clone(),
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
             );
 
             database

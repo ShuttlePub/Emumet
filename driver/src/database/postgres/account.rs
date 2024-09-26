@@ -209,7 +209,6 @@ mod test {
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, StellarAccountId,
         };
-        use sqlx::types::time::OffsetDateTime;
         use sqlx::types::Uuid;
 
         #[tokio::test]
@@ -224,7 +223,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -265,7 +264,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -311,7 +310,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -339,7 +338,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -353,7 +352,7 @@ mod test {
                 AccountPrivateKey::new("test2"),
                 AccountPublicKey::new("test2"),
                 AccountIsBot::new(true),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -380,7 +379,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 None,
             );
             database
@@ -408,7 +407,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::new(OffsetDateTime::now_utc()),
+                CreatedAt::now(),
                 Some(DeletedAt::new(OffsetDateTime::now_utc())),
             );
             database
