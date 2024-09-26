@@ -108,7 +108,7 @@ impl EventApplier for Account {
                     private_key,
                     public_key,
                     is_bot,
-                    created_at: CreatedAt::now(),
+                    created_at: event.created_at,
                     deleted_at: None,
                 });
             }
