@@ -27,6 +27,7 @@ pub struct StellarAccount {
 
 #[derive(Debug, Clone, Eq, PartialEq, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all_fields = "snake_case")]
+#[vodca(prefix = "stellar_account", snake_case)]
 pub enum StellarAccountEvent {
     Created {
         host: StellarHostId,

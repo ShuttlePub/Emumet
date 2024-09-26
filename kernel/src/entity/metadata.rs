@@ -22,6 +22,7 @@ pub struct Metadata {
 
 #[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[vodca(prefix = "metadata", snake_case)]
 pub enum MetadataEvent {
     Created {
         account_id: AccountId,

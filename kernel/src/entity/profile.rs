@@ -26,6 +26,7 @@ pub struct Profile {
 
 #[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[vodca(prefix = "profile", snake_case)]
 pub enum ProfileEvent {
     Created {
         account_id: AccountId,

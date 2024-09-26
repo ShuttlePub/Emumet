@@ -20,6 +20,7 @@ pub struct RemoteAccount {
 
 #[derive(Debug, Clone, Eq, PartialEq, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all_fields = "snake_case")]
+#[vodca(prefix = "remote_account", snake_case)]
 pub enum RemoteAccountEvent {
     Created {
         acct: RemoteAccountAcct,

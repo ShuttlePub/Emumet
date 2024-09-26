@@ -36,6 +36,7 @@ pub struct Account {
 
 #[derive(Debug, Clone, Eq, PartialEq, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all_fields = "snake_case")]
+#[vodca(prefix = "account", snake_case)]
 pub enum AccountEvent {
     Created {
         name: AccountName,
