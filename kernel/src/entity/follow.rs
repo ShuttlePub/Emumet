@@ -140,8 +140,8 @@ impl EventApplier for Follow {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        AccountId, CreatedAt, EventEnvelope, EventVersion, Follow, FollowId,
-        FollowTargetId, RemoteAccountId,
+        AccountId, CreatedAt, EventEnvelope, EventVersion, Follow, FollowId, FollowTargetId,
+        RemoteAccountId,
     };
     use crate::event::EventApplier;
     use uuid::Uuid;
