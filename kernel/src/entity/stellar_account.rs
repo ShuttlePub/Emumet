@@ -162,7 +162,7 @@ mod test {
             refresh_token.clone(),
         );
         let envelope = EventEnvelope::new(
-            create_account.id().clone().into(),
+            create_account.id().clone(),
             create_account.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
@@ -200,7 +200,7 @@ mod test {
             new_refresh_token.clone(),
         );
         let envelope = EventEnvelope::new(
-            update_account.id().clone().into(),
+            update_account.id().clone(),
             update_account.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
@@ -232,7 +232,7 @@ mod test {
         );
         let delete_account = StellarAccount::delete(id.clone());
         let envelope = EventEnvelope::new(
-            delete_account.id().clone().into(),
+            delete_account.id().clone(),
             delete_account.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),

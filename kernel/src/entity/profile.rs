@@ -173,7 +173,7 @@ mod test {
         let id = ProfileId::new(Uuid::now_v7());
         let create_event = Profile::create(id.clone(), account_id.clone(), None, None, None, None);
         let envelope = EventEnvelope::new(
-            create_event.id().clone().into(),
+            create_event.id().clone(),
             create_event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
@@ -206,7 +206,7 @@ mod test {
             Some(banner.clone()),
         );
         let envelope = EventEnvelope::new(
-            update_event.id().clone().into(),
+            update_event.id().clone(),
             update_event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
@@ -230,7 +230,7 @@ mod test {
         let profile = Profile::new(id.clone(), account_id.clone(), None, None, None, None);
         let delete_event = Profile::delete(id.clone());
         let envelope = EventEnvelope::new(
-            delete_event.id().clone().into(),
+            delete_event.id().clone(),
             delete_event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),

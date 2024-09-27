@@ -157,7 +157,7 @@ mod test {
             is_bot.clone(),
         );
         let envelope = EventEnvelope::new(
-            event.id().clone().into(),
+            event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
@@ -198,7 +198,7 @@ mod test {
             is_bot.clone(),
         );
         let envelope = EventEnvelope::new(
-            event.id().clone().into(),
+            event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
@@ -225,7 +225,7 @@ mod test {
         );
         let event = Account::update(id.clone(), AccountIsBot::new(true));
         let envelope = EventEnvelope::new(
-            event.id().clone().into(),
+            event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
@@ -242,7 +242,7 @@ mod test {
         let id = AccountId::new(Uuid::now_v7());
         let event = Account::update(id.clone(), AccountIsBot::new(true));
         let envelope = EventEnvelope::new(
-            event.id().clone().into(),
+            event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
@@ -269,7 +269,7 @@ mod test {
         );
         let event = Account::delete(id.clone());
         let envelope = EventEnvelope::new(
-            event.id().clone().into(),
+            event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
@@ -286,7 +286,7 @@ mod test {
         let id = AccountId::new(Uuid::now_v7());
         let event = Account::delete(id.clone());
         let envelope = EventEnvelope::new(
-            event.id().clone().into(),
+            event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
             CreatedAt::now(),
