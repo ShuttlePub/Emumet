@@ -50,7 +50,6 @@ pub enum FollowEvent {
     Created {
         source: FollowTargetId,
         destination: FollowTargetId,
-        approved_at: Option<FollowApprovedAt>,
     },
     Approved,
     Deleted,
@@ -61,7 +60,6 @@ impl Follow {
         id: FollowId,
         source: FollowTargetId,
         destination: FollowTargetId,
-        approved_at: Option<FollowApprovedAt>,
     ) -> error_stack::Result<CommandEnvelope<FollowEvent, Follow>, KernelError> {
         match (source, destination) {
             (source @ FollowTargetId::Remote(_), destination @ FollowTargetId::Remote(_)) => {
@@ -74,7 +72,6 @@ impl Follow {
                 let event = FollowEvent::Created {
                     source,
                     destination,
-                    approved_at,
                 };
                 Ok(CommandEnvelope::new(
                     EventId::from(id),
@@ -112,18 +109,17 @@ impl EventApplier for Follow {
             FollowEvent::Created {
                 source,
                 destination,
-                approved_at,
             } => {
                 if let Some(entity) = entity {
                     return Err(KernelError::Internal)
                         .attach_printable(Self::already_exists(entity));
                 }
-                *entity = Some(Follow {
-                    id: FollowId::new(event.id),
+                *entity = Some(Follow::new(
+                    FollowId::new(event.id),
                     source,
                     destination,
-                    approved_at,
-                });
+                    None,
+                )?);
             }
             FollowEvent::Approved => {
                 if let Some(entity) = entity {
@@ -155,7 +151,7 @@ mod test {
         let id = FollowId::new(Uuid::now_v7());
         let source = FollowTargetId::from(AccountId::new(Uuid::now_v7()));
         let destination = FollowTargetId::from(RemoteAccountId::new(Uuid::now_v7()));
-        let event = Follow::create(id.clone(), source.clone(), destination.clone(), None).unwrap();
+        let event = Follow::create(id.clone(), source.clone(), destination.clone()).unwrap();
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),

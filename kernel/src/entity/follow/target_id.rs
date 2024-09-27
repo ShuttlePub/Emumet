@@ -2,6 +2,7 @@ use crate::entity::{AccountId, RemoteAccountId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum FollowTargetId {
     Local(AccountId),
     Remote(RemoteAccountId),
