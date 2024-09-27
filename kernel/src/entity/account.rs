@@ -1,5 +1,5 @@
 use destructure::Destructure;
-use error_stack::{Report, ResultExt};
+use error_stack::Report;
 use serde::Deserialize;
 use serde::Serialize;
 use vodca::{Nameln, Newln, References};
@@ -103,7 +103,7 @@ impl EventApplier for Account {
                         .attach_printable(Self::already_exists(entity)));
                 }
                 *entity = Some(Account {
-                    id: AccountId::new(event.id.into()),
+                    id: AccountId::new(event.id),
                     name,
                     private_key,
                     public_key,

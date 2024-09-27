@@ -107,7 +107,7 @@ impl EventApplier for StellarAccount {
                         .attach_printable(Self::already_exists(entity)));
                 }
                 *entity = Some(StellarAccount {
-                    id: StellarAccountId::new(event.id.into()),
+                    id: StellarAccountId::new(event.id),
                     host,
                     client_id,
                     access_token,

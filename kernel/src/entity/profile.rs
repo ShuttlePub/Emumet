@@ -114,7 +114,7 @@ impl EventApplier for Profile {
                         .attach_printable(Self::already_exists(entity)));
                 }
                 *entity = Some(Profile {
-                    id: ProfileId::new(event.id.into()),
+                    id: ProfileId::new(event.id),
                     account_id,
                     display_name,
                     summary,
