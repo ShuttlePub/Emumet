@@ -1,27 +1,28 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
 use crate::entity::{RemoteAccount, RemoteAccountAcct, RemoteAccountId, RemoteAccountUrl};
 use crate::KernelError;
+use std::future::Future;
 
 pub trait RemoteAccountQuery: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn find_by_id(
+    fn find_by_id(
         &self,
         transaction: &mut Self::Transaction,
         id: &RemoteAccountId,
-    ) -> error_stack::Result<Option<RemoteAccount>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Option<RemoteAccount>, KernelError>> + Send;
 
-    async fn find_by_acct(
+    fn find_by_acct(
         &self,
         transaction: &mut Self::Transaction,
         acct: &RemoteAccountAcct,
-    ) -> error_stack::Result<Option<RemoteAccount>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Option<RemoteAccount>, KernelError>> + Send;
 
-    async fn find_by_url(
+    fn find_by_url(
         &self,
         transaction: &mut Self::Transaction,
         url: &RemoteAccountUrl,
-    ) -> error_stack::Result<Option<RemoteAccount>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Option<RemoteAccount>, KernelError>> + Send;
 }
 
 pub trait DependOnRemoteAccountQuery: Sync + Send + DependOnDatabaseConnection {

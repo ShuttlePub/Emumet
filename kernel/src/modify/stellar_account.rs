@@ -1,27 +1,28 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
 use crate::entity::{StellarAccount, StellarAccountId};
 use crate::KernelError;
+use std::future::Future;
 
 pub trait StellarAccountModifier: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn create(
+    fn create(
         &self,
         transaction: &mut Self::Transaction,
         stellar_account: &StellarAccount,
-    ) -> error_stack::Result<(), KernelError>;
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
-    async fn update(
+    fn update(
         &self,
         transaction: &mut Self::Transaction,
         stellar_account: &StellarAccount,
-    ) -> error_stack::Result<(), KernelError>;
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
-    async fn delete(
+    fn delete(
         &self,
         transaction: &mut Self::Transaction,
         account_id: &StellarAccountId,
-    ) -> error_stack::Result<(), KernelError>;
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DependOnStellarAccountModifier: Sync + Send + DependOnDatabaseConnection {

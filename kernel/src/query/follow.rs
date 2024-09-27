@@ -1,21 +1,22 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
 use crate::entity::{Follow, FollowTargetId};
 use crate::KernelError;
+use std::future::Future;
 
 pub trait FollowQuery: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn find_followings(
+    fn find_followings(
         &self,
         transaction: &mut Self::Transaction,
         source: &FollowTargetId,
-    ) -> error_stack::Result<Vec<Follow>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Vec<Follow>, KernelError>> + Send;
 
-    async fn find_followers(
+    fn find_followers(
         &self,
         transaction: &mut Self::Transaction,
         destination: &FollowTargetId,
-    ) -> error_stack::Result<Vec<Follow>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Vec<Follow>, KernelError>> + Send;
 }
 
 pub trait DependOnFollowQuery: Sync + Send + DependOnDatabaseConnection {

@@ -1,27 +1,28 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
 use crate::entity::{Account, AccountId};
 use crate::KernelError;
+use std::future::Future;
 
 pub trait AccountModifier: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn create(
+    fn create(
         &self,
         transaction: &mut Self::Transaction,
         account: &Account,
-    ) -> error_stack::Result<(), KernelError>;
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
-    async fn update(
+    fn update(
         &self,
         transaction: &mut Self::Transaction,
         account: &Account,
-    ) -> error_stack::Result<(), KernelError>;
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
-    async fn delete(
+    fn delete(
         &self,
         transaction: &mut Self::Transaction,
         account_id: &AccountId,
-    ) -> error_stack::Result<(), KernelError>;
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DependOnAccountModifier: Sync + Send + DependOnDatabaseConnection {

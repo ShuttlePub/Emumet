@@ -1,21 +1,22 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
 use crate::entity::{StellarHost, StellarHostId, StellarHostUrl};
 use crate::KernelError;
+use std::future::Future;
 
 pub trait StellarHostQuery: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn find_by_id(
+    fn find_by_id(
         &self,
         transaction: &mut Self::Transaction,
         id: &StellarHostId,
-    ) -> error_stack::Result<Option<StellarHost>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Option<StellarHost>, KernelError>> + Send;
 
-    async fn find_by_url(
+    fn find_by_url(
         &self,
         transaction: &mut Self::Transaction,
         domain: &StellarHostUrl,
-    ) -> error_stack::Result<Option<StellarHost>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Option<StellarHost>, KernelError>> + Send;
 }
 
 pub trait DependOnStellarHostQuery: Sync + Send + DependOnDatabaseConnection {

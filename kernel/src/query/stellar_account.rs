@@ -1,15 +1,16 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
 use crate::entity::{StellarAccount, StellarAccountId};
 use crate::KernelError;
+use std::future::Future;
 
 pub trait StellarAccountQuery: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn find_by_id(
+    fn find_by_id(
         &self,
         transaction: &mut Self::Transaction,
         account_id: &StellarAccountId,
-    ) -> error_stack::Result<Option<StellarAccount>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Option<StellarAccount>, KernelError>> + Send;
 }
 
 pub trait DependOnStellarAccountQuery: Sync + Send + DependOnDatabaseConnection {

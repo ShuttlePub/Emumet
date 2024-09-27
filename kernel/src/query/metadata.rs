@@ -1,21 +1,22 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
 use crate::entity::{AccountId, Metadata, MetadataId};
 use crate::KernelError;
+use std::future::Future;
 
 pub trait MetadataQuery: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn find_by_id(
+    fn find_by_id(
         &self,
         transaction: &mut Self::Transaction,
         metadata_id: &MetadataId,
-    ) -> error_stack::Result<Option<Metadata>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Option<Metadata>, KernelError>> + Send;
 
-    async fn find_by_account_id(
+    fn find_by_account_id(
         &self,
         transaction: &mut Self::Transaction,
         account_id: &AccountId,
-    ) -> error_stack::Result<Vec<Metadata>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Vec<Metadata>, KernelError>> + Send;
 }
 
 pub trait DependOnMetadataQuery: Sync + Send + DependOnDatabaseConnection {

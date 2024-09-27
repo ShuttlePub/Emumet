@@ -1,4 +1,5 @@
 use crate::KernelError;
+use std::future::Future;
 
 /// Databaseのトランザクション処理を示すトレイト
 ///
@@ -7,7 +8,9 @@ pub trait Transaction {}
 
 pub trait DatabaseConnection: Sync + Send + 'static {
     type Transaction: Transaction;
-    async fn begin_transaction(&self) -> error_stack::Result<Self::Transaction, KernelError>;
+    fn begin_transaction(
+        &self,
+    ) -> impl Future<Output = error_stack::Result<Self::Transaction, KernelError>> + Send;
 }
 
 pub trait DependOnDatabaseConnection: Sync + Send {

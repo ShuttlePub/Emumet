@@ -2,16 +2,17 @@ use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transactio
 use crate::entity::{EventEnvelope, EventId, EventVersion};
 use crate::KernelError;
 use serde::Deserialize;
+use std::future::Future;
 
 pub trait EventQuery: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn find_by_id<Event: for<'de> Deserialize<'de>, Entity>(
+    fn find_by_id<Event: for<'de> Deserialize<'de> + Sync, Entity: Sync>(
         &self,
         transaction: &mut Self::Transaction,
         id: &EventId<Event, Entity>,
         since: Option<&EventVersion<Entity>>,
-    ) -> error_stack::Result<Vec<EventEnvelope<Event, Entity>>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Vec<EventEnvelope<Event, Entity>>, KernelError>> + Send;
 }
 
 pub trait DependOnEventQuery: Sync + Send + DependOnDatabaseConnection {

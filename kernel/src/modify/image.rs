@@ -1,21 +1,22 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
 use crate::entity::{Image, ImageId};
 use crate::KernelError;
+use std::future::Future;
 
 pub trait ImageModifier: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn create(
+    fn create(
         &self,
         transaction: &mut Self::Transaction,
         image: &Image,
-    ) -> error_stack::Result<(), KernelError>;
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
-    async fn delete(
+    fn delete(
         &self,
         transaction: &mut Self::Transaction,
         image_id: &ImageId,
-    ) -> error_stack::Result<(), KernelError>;
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DependOnImageModifier: Sync + Send + DependOnDatabaseConnection {

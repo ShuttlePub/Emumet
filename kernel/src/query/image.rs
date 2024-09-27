@@ -1,21 +1,22 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
 use crate::entity::{Image, ImageId, ImageUrl};
 use crate::KernelError;
+use std::future::Future;
 
 pub trait ImageQuery: Sync + Send + 'static {
     type Transaction: Transaction;
 
-    async fn find_by_id(
+    fn find_by_id(
         &self,
         transaction: &mut Self::Transaction,
         id: &ImageId,
-    ) -> error_stack::Result<Option<Image>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Option<Image>, KernelError>> + Send;
 
-    async fn find_by_url(
+    fn find_by_url(
         &self,
         transaction: &mut Self::Transaction,
         url: &ImageUrl,
-    ) -> error_stack::Result<Option<Image>, KernelError>;
+    ) -> impl Future<Output = error_stack::Result<Option<Image>, KernelError>> + Send;
 }
 
 pub trait DependOnImageQuery: Sync + Send + DependOnDatabaseConnection {
