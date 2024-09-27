@@ -1,0 +1,171 @@
+Table event_streams {
+    version UUID [not null]
+    id UUID [not null]
+    event_name TEXT [not null]
+    data JSON [not null]
+    created_at TIMESTAMPTZ [not null]
+    Indexes {
+        (id, version) [pk]
+    }
+}
+Table accounts {
+    id UUID [pk]
+    name TEXT [not null]
+    private_key TEXT [not null]
+    public_key TEXT [not null]
+    is_bot BOOLEAN [not null]
+    created_at TIMESTAMPTZ [not null]
+    deleted_at TIMESTAMPTZ
+}
+
+Table remote_accounts {
+    id UUID [not null, pk]
+    acct TEXT [not null, unique]
+    url TEXT [not null, unique]
+    icon_id UUID
+}
+
+Ref: remote_accounts.icon_id > images.id [delete: set null]
+
+Table profiles {
+    id UUID [not null, pk]
+    account_id UUID [not null]
+    display TEXT
+    summary TEXT
+    icon_id UUID
+    banner_id UUID 
+}
+
+Ref: accounts.id - profiles.account_id [delete: cascade]
+Ref: profiles.icon_id > images.id [delete: set null]
+Ref: profiles.banner_id > images.id [delete: set null]
+
+Table metadatas {
+    id UUID [not null, pk]
+    account_id UUID [not null]
+    label TEXT [not null]
+    content TEXT [not null]
+    created_at TIMESTAMPTZ [not null]
+}
+
+Ref: metadatas.account_id > accounts.id [delete: cascade]
+
+Table stellar_hosts {
+    id UUID [not null, pk]
+    url TEXT [not null, unique]
+}
+
+Table stellar_accounts {
+    id UUID [not null, pk]
+    host_id UUID [not null]
+    client_id TEXT [not null]
+    access_token TEXT [not null]
+    refresh_token TEXT [not null]
+}
+
+Ref: stellar_accounts.host_id > stellar_hosts.id [delete: cascade]
+
+Table stellar_emumet_accounts {
+    emumet_id UUID [not null]
+    stellar_id UUID [not null, ref: > stellar_accounts.id]
+    Indexes {
+        (emumet_id, stellar_id) [pk]
+    }
+}
+
+Ref: stellar_emumet_accounts.emumet_id > accounts.id [delete: cascade]
+
+Table follows {
+    id UUID [not null, pk]
+    follower_local_id UUID
+    follower_remote_id UUID
+    followee_local_id UUID
+    followee_remote_id UUID
+    approved_at TIMESTAMPTZ
+}
+
+Ref: follows.follower_local_id > accounts.id [delete: cascade]
+Ref: follows.follower_remote_id > remote_accounts.id [delete: cascade]
+Ref: follows.followee_local_id > accounts.id [delete: cascade]
+Ref: follows.followee_remote_id > remote_accounts.id [delete: cascade]
+
+Table images {
+    id UUID [not null,pk]
+    url TEXT [not null, unique]
+    hash TEXT [not null]
+    blurhash TEXT [not null]
+}
+
+
+// Table moderator_roles {
+//     id UUID [not null, pk]
+//     name TEXT [not null]
+// }
+// 
+// Table moderators {
+//     stellar_id UUID [not null, pk, ref: > stellar_accounts.id]
+//     role_id UUID [not null, pk, ref: > moderator_roles.id]
+// }
+// 
+// Table account_reports {
+//     id UUID [not null, pk]
+//     target_id UUID [not null, ref: > accounts.id]
+//     reported_id UUID [not null, ref: > stellar_accounts.id]
+//     type TEXT [not null]
+//     comment TEXT [not null]
+//     created_at TIMESTAMPTZ [not null]
+//     closed_at TIMESTAMPTZ
+//     close_reason TEXT
+// }
+// 
+// Table account_moderations {
+//     id UUID [not null, pk]
+//     target_id UUID [not null, ref: > accounts.id]
+//     moderator_id UUID [not null, ref: > stellar_accounts.id]
+//     type TEXT [not null]
+//     comment TEXT [not null]
+//     created_at TIMESTAMPTZ [not null]
+//     closed_at TIMESTAMPTZ
+// }
+// Table account_moderation_reports {
+//     moderation_id UUID [not null, ref: > account_moderations.id]
+//     report_id UUID [not null, ref: > account_reports.id]
+//     Indexes {
+//         (moderation_id, report_id) [pk]
+//     }
+// }
+// 
+// Table stellar_account_moderations {
+//     id UUID [not null, pk]
+//     target_id UUID [not null, ref: > stellar_accounts.id]
+//     moderator_id UUID [not null, ref: > stellar_accounts.id]
+//     type TEXT [not null]
+//     comment TEXT [not null]
+//     created_at TIMESTAMPTZ [not null]
+//     closed_at TIMESTAMPTZ
+// }
+// Table stellar_account_moderation_reports {
+//     moderation_id UUID [not null, ref: > stellar_account_moderations.id]
+//     report_id UUID [not null, ref: > account_reports.id]
+//     Indexes {
+//         (moderation_id, report_id) [pk]
+//     }
+// }
+// 
+// Table host_moderations {
+//     id UUID [not null, pk]
+//     host_id UUID [not null, ref: > stellar_hosts.id]
+//     moderator_id UUID [not null, ref: > stellar_accounts.id]
+//     type TEXT [not null]
+//     comment TEXT [not null]
+//     created_at TIMESTAMPTZ [not null]
+//     closed_at TIMESTAMPTZ
+// }
+// Table host_moderation_reports {
+//     moderation_id UUID [not null, ref: > host_moderations.id]
+//     report_id UUID [not null, ref: > account_reports.id]
+//     Indexes {
+//         (moderation_id, report_id) [pk]
+//     }
+// }
+// 

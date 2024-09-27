@@ -8,14 +8,18 @@ authors.workspace = true
 
 [dependencies]
 rand = "0.8"
-destructure = "0.1.2"
-serde = { version = "1", features = ["derive"] }
+destructure = "0.5.6"
+vodca = "0.1.6"
+serde = { workspace = true }
+uuid = { workspace = true }
+time = { workspace = true }
 
 async-trait = "0.1"
-anyhow = { workspace = true }
-thiserror = { workspace = true }
+error-stack = { workspace = true }
 
 [features]
-interface = []
+interfaces = []
 prelude = []
-default = ["prelude", "interface"]
+default = ["prelude", "interfaces"]
+uuid = []
+time = []
