@@ -45,7 +45,6 @@ pub enum ProfileEvent {
         icon: Option<ImageId>,
         banner: Option<ImageId>,
     },
-    Deleted,
 }
 
 impl Profile {
@@ -85,11 +84,6 @@ impl Profile {
             icon,
             banner,
         };
-        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
-    }
-
-    pub fn delete(id: ProfileId) -> CommandEnvelope<ProfileEvent, Profile> {
-        let event = ProfileEvent::Deleted;
         CommandEnvelope::new(EventId::from(id), event.name(), event, None)
     }
 }
@@ -148,13 +142,6 @@ impl EventApplier for Profile {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::not_exists(event.id.as_ref())));
                 }
-            }
-            ProfileEvent::Deleted => {
-                if entity.is_none() {
-                    return Err(Report::new(KernelError::Internal)
-                        .attach_printable(Self::not_exists(event.id.as_ref())));
-                }
-                *entity = None;
             }
         }
         Ok(())
@@ -234,30 +221,5 @@ mod test {
         assert_eq!(profile.icon().as_ref().unwrap(), &icon);
         assert_eq!(profile.banner().as_ref().unwrap(), &banner);
         assert_eq!(profile.version(), &version);
-    }
-
-    #[test]
-    fn delete_profile() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = ProfileId::new(Uuid::now_v7());
-        let profile = Profile::new(
-            id.clone(),
-            account_id.clone(),
-            None,
-            None,
-            None,
-            None,
-            EventVersion::new(Uuid::now_v7()),
-        );
-        let delete_event = Profile::delete(id.clone());
-        let envelope = EventEnvelope::new(
-            delete_event.id().clone(),
-            delete_event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
-        );
-        let mut profile = Some(profile);
-        Profile::apply(&mut profile, envelope).unwrap();
-        assert!(profile.is_none());
     }
 }
