@@ -16,6 +16,7 @@ Table accounts {
     is_bot BOOLEAN [not null]
     created_at TIMESTAMPTZ [not null]
     deleted_at TIMESTAMPTZ
+    version UUID [not null]
 }
 
 Table remote_accounts {
@@ -34,6 +35,7 @@ Table profiles {
     summary TEXT
     icon_id UUID
     banner_id UUID 
+    version UUID [not null]
 }
 
 Ref: accounts.id - profiles.account_id [delete: cascade]
@@ -46,6 +48,7 @@ Table metadatas {
     label TEXT [not null]
     content TEXT [not null]
     created_at TIMESTAMPTZ [not null]
+    version UUID [not null]
 }
 
 Ref: metadatas.account_id > accounts.id [delete: cascade]
@@ -61,6 +64,7 @@ Table stellar_accounts {
     client_id TEXT [not null]
     access_token TEXT [not null]
     refresh_token TEXT [not null]
+    version UUID [not null]
 }
 
 Ref: stellar_accounts.host_id > stellar_hosts.id [delete: cascade]
