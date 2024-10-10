@@ -3,7 +3,7 @@ use crate::ConvertError;
 use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
 use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
 use kernel::prelude::entity::{
-    AccountId, CreatedAt, Metadata, MetadataContent, MetadataId, MetadataLabel,
+    AccountId, CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel,
 };
 use kernel::KernelError;
 use sqlx::PgConnection;
@@ -17,6 +17,7 @@ struct MetadataRow {
     label: String,
     content: String,
     created_at: OffsetDateTime,
+    version: Uuid,
 }
 
 impl From<MetadataRow> for Metadata {
@@ -27,6 +28,7 @@ impl From<MetadataRow> for Metadata {
             MetadataLabel::new(row.label),
             MetadataContent::new(row.content),
             CreatedAt::new(row.created_at),
+            EventVersion::new(row.version),
         )
     }
 }
@@ -45,7 +47,7 @@ impl MetadataQuery for PostgresMetadataRepository {
         sqlx::query_as::<_, MetadataRow>(
             // language=postgresql
             r#"
-            SELECT id, account_id, label, content, created_at
+            SELECT id, account_id, label, content, created_at, version
             FROM metadatas
             WHERE id = $1
             "#,
@@ -66,7 +68,7 @@ impl MetadataQuery for PostgresMetadataRepository {
         sqlx::query_as::<_, MetadataRow>(
             // language=postgresql
             r#"
-            SELECT id, account_id, label, content, created_at
+            SELECT id, account_id, label, content, created_at, version
             FROM metadatas
             WHERE account_id = $1
             "#,
@@ -99,8 +101,8 @@ impl MetadataModifier for PostgresMetadataRepository {
         sqlx::query(
             // language=postgresql
             r#"
-            INSERT INTO metadatas (id, account_id, label, content, created_at)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO metadatas (id, account_id, label, content, created_at, version)
+            VALUES ($1, $2, $3, $4, $5, $6)
             "#,
         )
         .bind(metadata.id().as_ref())
@@ -108,6 +110,7 @@ impl MetadataModifier for PostgresMetadataRepository {
         .bind(metadata.label().as_ref())
         .bind(metadata.content().as_ref())
         .bind(metadata.created_at().as_ref())
+        .bind(metadata.version().as_ref())
         .execute(con)
         .await
         .convert_error()?;
@@ -124,12 +127,13 @@ impl MetadataModifier for PostgresMetadataRepository {
             // language=postgresql
             r#"
             UPDATE metadatas
-            SET label = $1, content = $2
-            WHERE id = $3
+            SET label = $1, content = $2, version = $3
+            WHERE id = $4
             "#,
         )
         .bind(metadata.label().as_ref())
         .bind(metadata.content().as_ref())
+        .bind(metadata.version().as_ref())
         .bind(metadata.id().as_ref())
         .execute(con)
         .await
@@ -178,7 +182,7 @@ mod test {
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, Metadata, MetadataContent, MetadataId, MetadataLabel,
+            CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel,
         };
         use uuid::Uuid;
 
@@ -197,6 +201,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -210,6 +215,7 @@ mod test {
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
                 CreatedAt::now(),
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -240,6 +246,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -253,6 +260,7 @@ mod test {
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
                 CreatedAt::now(),
+                EventVersion::new(Uuid::now_v7()),
             );
             let metadata2 = Metadata::new(
                 MetadataId::new(Uuid::now_v7()),
@@ -260,6 +268,7 @@ mod test {
                 MetadataLabel::new("label2".to_string()),
                 MetadataContent::new("content2".to_string()),
                 CreatedAt::now(),
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -293,7 +302,7 @@ mod test {
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, Metadata, MetadataContent, MetadataId, MetadataLabel,
+            CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel,
         };
         use uuid::Uuid;
 
@@ -311,6 +320,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -324,6 +334,7 @@ mod test {
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
                 CreatedAt::now(),
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -354,6 +365,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -367,6 +379,7 @@ mod test {
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
                 CreatedAt::now(),
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -381,6 +394,7 @@ mod test {
                 MetadataLabel::new("label2".to_string()),
                 MetadataContent::new("content2".to_string()),
                 CreatedAt::now(),
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -414,6 +428,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -427,6 +442,7 @@ mod test {
                 MetadataLabel::new("label".to_string()),
                 MetadataContent::new("content".to_string()),
                 CreatedAt::now(),
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database

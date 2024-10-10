@@ -3,8 +3,8 @@ use crate::ConvertError;
 use kernel::interfaces::modify::{DependOnStellarAccountModifier, StellarAccountModifier};
 use kernel::interfaces::query::{DependOnStellarAccountQuery, StellarAccountQuery};
 use kernel::prelude::entity::{
-    StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountId,
-    StellarAccountRefreshToken, StellarHostId,
+    EventVersion, StellarAccount, StellarAccountAccessToken, StellarAccountClientId,
+    StellarAccountId, StellarAccountRefreshToken, StellarHostId,
 };
 use kernel::KernelError;
 use sqlx::PgConnection;
@@ -17,6 +17,7 @@ struct StellarAccountRow {
     client_id: String,
     access_token: String,
     refresh_token: String,
+    version: Uuid,
 }
 
 impl From<StellarAccountRow> for StellarAccount {
@@ -27,6 +28,7 @@ impl From<StellarAccountRow> for StellarAccount {
             StellarAccountClientId::new(value.client_id),
             StellarAccountAccessToken::new(value.access_token),
             StellarAccountRefreshToken::new(value.refresh_token),
+            EventVersion::new(value.version),
         )
     }
 }
@@ -45,14 +47,16 @@ impl StellarAccountQuery for PostgresStellarAccountRepository {
         sqlx::query_as::<_, StellarAccountRow>(
             //language=postgresql
             r#"
-            SELECT id, host_id, client_id, access_token, refresh_token FROM stellar_accounts WHERE id = $1
-            "#
+            SELECT id, host_id, client_id, access_token, refresh_token, version
+            FROM stellar_accounts
+            WHERE id = $1
+            "#,
         )
-            .bind(account_id.as_ref())
-            .fetch_optional(con)
-            .await
-            .convert_error()
-            .map(|option| option.map(|row| row.into()))
+        .bind(account_id.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(|row| row.into()))
     }
 }
 
@@ -76,7 +80,7 @@ impl StellarAccountModifier for PostgresStellarAccountRepository {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO stellar_accounts (id, host_id, client_id, access_token, refresh_token) VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO stellar_accounts (id, host_id, client_id, access_token, refresh_token, version) VALUES ($1, $2, $3, $4, $5, $6)
             "#
         )
             .bind(stellar_account.id().as_ref())
@@ -84,6 +88,7 @@ impl StellarAccountModifier for PostgresStellarAccountRepository {
             .bind(stellar_account.client_id().as_ref())
             .bind(stellar_account.access_token().as_ref())
             .bind(stellar_account.refresh_token().as_ref())
+            .bind(stellar_account.version().as_ref())
             .execute(con)
             .await
             .convert_error()?;
@@ -99,7 +104,8 @@ impl StellarAccountModifier for PostgresStellarAccountRepository {
         sqlx::query(
             //language=postgresql
             r#"
-            UPDATE stellar_accounts SET host_id = $2, client_id = $3, access_token = $4, refresh_token = $5 WHERE id = $1
+            UPDATE stellar_accounts SET host_id = $2, client_id = $3, access_token = $4, refresh_token = $5, version = $6
+            WHERE id = $1
             "#
         )
             .bind(stellar_account.id().as_ref())
@@ -107,6 +113,7 @@ impl StellarAccountModifier for PostgresStellarAccountRepository {
             .bind(stellar_account.client_id().as_ref())
             .bind(stellar_account.access_token().as_ref())
             .bind(stellar_account.refresh_token().as_ref())
+            .bind(stellar_account.version().as_ref())
             .execute(con)
             .await
             .convert_error()?;
@@ -152,8 +159,9 @@ mod test {
         };
         use kernel::interfaces::query::{DependOnStellarAccountQuery, StellarAccountQuery};
         use kernel::prelude::entity::{
-            StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountId,
-            StellarAccountRefreshToken, StellarHost, StellarHostId, StellarHostUrl,
+            EventVersion, StellarAccount, StellarAccountAccessToken, StellarAccountClientId,
+            StellarAccountId, StellarAccountRefreshToken, StellarHost, StellarHostId,
+            StellarHostUrl,
         };
         use uuid::Uuid;
 
@@ -177,6 +185,7 @@ mod test {
                 StellarAccountClientId::new("client_id".to_string()),
                 StellarAccountAccessToken::new("access_token".to_string()),
                 StellarAccountRefreshToken::new("refresh_token".to_string()),
+                EventVersion::new(Uuid::now_v7()),
             );
 
             database
@@ -207,8 +216,9 @@ mod test {
         };
         use kernel::interfaces::query::{DependOnStellarAccountQuery, StellarAccountQuery};
         use kernel::prelude::entity::{
-            StellarAccount, StellarAccountAccessToken, StellarAccountClientId, StellarAccountId,
-            StellarAccountRefreshToken, StellarHost, StellarHostId, StellarHostUrl,
+            EventVersion, StellarAccount, StellarAccountAccessToken, StellarAccountClientId,
+            StellarAccountId, StellarAccountRefreshToken, StellarHost, StellarHostId,
+            StellarHostUrl,
         };
         use uuid::Uuid;
 
@@ -232,6 +242,7 @@ mod test {
                 StellarAccountClientId::new("client_id".to_string()),
                 StellarAccountAccessToken::new("access_token".to_string()),
                 StellarAccountRefreshToken::new("refresh_token".to_string()),
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .stellar_account_modifier()
@@ -271,6 +282,7 @@ mod test {
                 StellarAccountClientId::new("client_id".to_string()),
                 StellarAccountAccessToken::new("access_token".to_string()),
                 StellarAccountRefreshToken::new("refresh_token".to_string()),
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .stellar_account_modifier()
@@ -283,6 +295,7 @@ mod test {
                 StellarAccountClientId::new("updated_client_id".to_string()),
                 StellarAccountAccessToken::new("updated_access_token".to_string()),
                 StellarAccountRefreshToken::new("updated_refresh_token".to_string()),
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .stellar_account_modifier()
@@ -322,6 +335,7 @@ mod test {
                 StellarAccountClientId::new("client_id".to_string()),
                 StellarAccountAccessToken::new("access_token".to_string()),
                 StellarAccountRefreshToken::new("refresh_token".to_string()),
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .stellar_account_modifier()

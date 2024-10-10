@@ -5,7 +5,9 @@ use serde::Serialize;
 use vodca::{Nameln, Newln, References};
 
 use super::common::CreatedAt;
-use crate::entity::{CommandEnvelope, DeletedAt, EventEnvelope, EventId, KnownEventVersion};
+use crate::entity::{
+    CommandEnvelope, DeletedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion,
+};
 use crate::event::EventApplier;
 use crate::KernelError;
 
@@ -32,6 +34,7 @@ pub struct Account {
     is_bot: AccountIsBot,
     created_at: CreatedAt<Account>,
     deleted_at: Option<DeletedAt<Account>>,
+    version: EventVersion<Account>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Nameln, Serialize, Deserialize)]
@@ -110,11 +113,13 @@ impl EventApplier for Account {
                     is_bot,
                     created_at: event.created_at,
                     deleted_at: None,
+                    version: event.version,
                 });
             }
             AccountEvent::Updated { is_bot } => {
                 if let Some(entity) = entity {
                     entity.is_bot = is_bot;
+                    entity.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::not_exists(event.id.as_ref())));
@@ -123,6 +128,7 @@ impl EventApplier for Account {
             AccountEvent::Deleted => {
                 if let Some(entity) = entity {
                     entity.deleted_at = Some(DeletedAt::now());
+                    entity.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::not_exists(event.id.as_ref())));
@@ -189,6 +195,7 @@ mod test {
             is_bot.clone(),
             CreatedAt::now(),
             None,
+            EventVersion::new(Uuid::now_v7()),
         );
         let event = Account::create(
             id.clone(),
@@ -222,6 +229,7 @@ mod test {
             is_bot.clone(),
             CreatedAt::now(),
             None,
+            EventVersion::new(Uuid::now_v7()),
         );
         let event = Account::update(id.clone(), AccountIsBot::new(true));
         let envelope = EventEnvelope::new(
@@ -231,9 +239,10 @@ mod test {
             CreatedAt::now(),
         );
         let mut account = Some(account);
-        Account::apply(&mut account, envelope).unwrap();
+        Account::apply(&mut account, envelope.clone()).unwrap();
         let account = account.unwrap();
         assert_eq!(account.is_bot(), &AccountIsBot::new(true));
+        assert_eq!(account.version(), &envelope.version);
     }
 
     #[test]
@@ -266,6 +275,7 @@ mod test {
             is_bot.clone(),
             CreatedAt::now(),
             None,
+            EventVersion::new(Uuid::now_v7()),
         );
         let event = Account::delete(id.clone());
         let envelope = EventEnvelope::new(
@@ -275,9 +285,10 @@ mod test {
             CreatedAt::now(),
         );
         let mut account = Some(account);
-        Account::apply(&mut account, envelope).unwrap();
+        Account::apply(&mut account, envelope.clone()).unwrap();
         let account = account.unwrap();
         assert!(account.deleted_at().is_some());
+        assert_eq!(account.version(), &envelope.version);
     }
 
     #[test]

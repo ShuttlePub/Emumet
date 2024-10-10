@@ -5,7 +5,9 @@ mod label;
 pub use self::content::*;
 pub use self::id::*;
 pub use self::label::*;
-use super::{AccountId, CommandEnvelope, CreatedAt, EventEnvelope, EventId, KnownEventVersion};
+use super::{
+    AccountId, CommandEnvelope, CreatedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion,
+};
 use crate::event::EventApplier;
 use crate::KernelError;
 use destructure::Destructure;
@@ -20,6 +22,7 @@ pub struct Metadata {
     label: MetadataLabel,
     content: MetadataContent,
     created_at: CreatedAt<Metadata>,
+    version: EventVersion<Metadata>,
 }
 
 #[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
@@ -100,12 +103,14 @@ impl EventApplier for Metadata {
                     label,
                     content,
                     created_at: event.created_at,
+                    version: event.version,
                 });
             }
             MetadataEvent::Updated { label, content } => {
                 if let Some(entity) = entity {
                     entity.label = label;
                     entity.content = content;
+                    entity.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::not_exists(event.id.as_ref())));
@@ -172,14 +177,16 @@ mod test {
             label.clone(),
             content.clone(),
             CreatedAt::now(),
+            EventVersion::new(Uuid::now_v7()),
         );
         let label = MetadataLabel::new("new_label".to_string());
         let content = MetadataContent::new("new_content".to_string());
         let update_event = Metadata::update(id.clone(), label.clone(), content.clone());
+        let version = EventVersion::new(Uuid::now_v7());
         let envelope = EventEnvelope::new(
             update_event.id().clone(),
             update_event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            version.clone(),
             CreatedAt::now(),
         );
         let mut metadata = Some(metadata);
@@ -190,6 +197,7 @@ mod test {
         assert_eq!(metadata.account_id(), &account_id);
         assert_eq!(metadata.label(), &label);
         assert_eq!(metadata.content(), &content);
+        assert_eq!(metadata.version(), &version);
     }
 
     #[test]
@@ -204,6 +212,7 @@ mod test {
             label.clone(),
             content.clone(),
             CreatedAt::now(),
+            EventVersion::new(Uuid::now_v7()),
         );
         let delete_event = Metadata::delete(id.clone());
         let envelope = EventEnvelope::new(

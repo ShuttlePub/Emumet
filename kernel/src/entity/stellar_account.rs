@@ -7,7 +7,9 @@ pub use self::access_token::*;
 pub use self::client_id::*;
 pub use self::id::*;
 pub use self::refresh_token::*;
-use crate::entity::{CommandEnvelope, EventEnvelope, EventId, KnownEventVersion, StellarHostId};
+use crate::entity::{
+    CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion, StellarHostId,
+};
 use crate::event::EventApplier;
 use crate::KernelError;
 use destructure::Destructure;
@@ -25,6 +27,7 @@ pub struct StellarAccount {
     client_id: StellarAccountClientId,
     access_token: StellarAccountAccessToken,
     refresh_token: StellarAccountRefreshToken,
+    version: EventVersion<StellarAccount>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Nameln, Serialize, Deserialize)]
@@ -112,6 +115,7 @@ impl EventApplier for StellarAccount {
                     client_id,
                     access_token,
                     refresh_token,
+                    version: event.version,
                 });
             }
             StellarAccountEvent::Updated {
@@ -121,6 +125,7 @@ impl EventApplier for StellarAccount {
                 if let Some(entity) = entity {
                     entity.access_token = access_token;
                     entity.refresh_token = refresh_token;
+                    entity.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::not_exists(event.id.as_ref())));
@@ -191,6 +196,7 @@ mod test {
             client_id.clone(),
             access_token.clone(),
             refresh_token.clone(),
+            EventVersion::new(Uuid::now_v7()),
         );
         let new_access_token = StellarAccountAccessToken::new(Uuid::now_v7());
         let new_refresh_token = StellarAccountRefreshToken::new(Uuid::now_v7());
@@ -199,10 +205,11 @@ mod test {
             new_access_token.clone(),
             new_refresh_token.clone(),
         );
+        let version = EventVersion::new(Uuid::now_v7());
         let envelope = EventEnvelope::new(
             update_account.id().clone(),
             update_account.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            version.clone(),
             CreatedAt::now(),
         );
         let mut account = Some(account);
@@ -214,6 +221,7 @@ mod test {
         assert_eq!(account.client_id(), &client_id);
         assert_eq!(account.access_token(), &new_access_token);
         assert_eq!(account.refresh_token(), &new_refresh_token);
+        assert_eq!(account.version(), &version);
     }
 
     #[test]
@@ -229,6 +237,7 @@ mod test {
             client_id.clone(),
             access_token.clone(),
             refresh_token.clone(),
+            EventVersion::new(Uuid::now_v7()),
         );
         let delete_account = StellarAccount::delete(id.clone());
         let envelope = EventEnvelope::new(

@@ -242,7 +242,7 @@ mod test {
         use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, Follow, FollowApprovedAt, FollowId, FollowTargetId,
+            CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId,
         };
         use uuid::Uuid;
 
@@ -259,6 +259,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -274,6 +275,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -337,6 +339,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -352,6 +355,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -412,7 +416,7 @@ mod test {
         use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, Follow, FollowApprovedAt, FollowId, FollowTargetId,
+            CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId,
         };
         use uuid::Uuid;
 
@@ -429,6 +433,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -444,6 +449,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -494,6 +500,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -509,6 +516,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -585,6 +593,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -600,6 +609,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
