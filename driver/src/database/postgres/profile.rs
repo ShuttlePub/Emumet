@@ -4,7 +4,7 @@ use uuid::Uuid;
 use kernel::interfaces::modify::{DependOnProfileModifier, ProfileModifier};
 use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
 use kernel::prelude::entity::{
-    AccountId, ImageId, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+    AccountId, EventVersion, ImageId, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
 };
 use kernel::KernelError;
 
@@ -19,6 +19,7 @@ struct ProfileRow {
     summary: Option<String>,
     icon_id: Option<Uuid>,
     banner_id: Option<Uuid>,
+    version: Uuid,
 }
 
 impl From<ProfileRow> for Profile {
@@ -30,6 +31,7 @@ impl From<ProfileRow> for Profile {
             value.summary.map(ProfileSummary::new),
             value.icon_id.map(ImageId::new),
             value.banner_id.map(ImageId::new),
+            EventVersion::new(value.version),
         )
     }
 }
@@ -48,7 +50,8 @@ impl ProfileQuery for PostgresProfileRepository {
         sqlx::query_as::<_, ProfileRow>(
             //language=postgresql
             r#"
-            SELECT id, account_id, display, summary, icon_id, banner_id FROM profiles WHERE id = $1
+            SELECT id, account_id, display, summary, icon_id, banner_id, version
+            FROM profiles WHERE id = $1
             "#,
         )
         .bind(id.as_ref())
@@ -79,8 +82,8 @@ impl ProfileModifier for PostgresProfileRepository {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO profiles (id, account_id, display, summary, icon_id, banner_id)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO profiles (id, account_id, display, summary, icon_id, banner_id, version)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
         .bind(profile.id().as_ref())
@@ -94,6 +97,7 @@ impl ProfileModifier for PostgresProfileRepository {
         .bind(profile.summary().as_ref().map(ProfileSummary::as_ref))
         .bind(profile.icon().as_ref().map(ImageId::as_ref))
         .bind(profile.banner().as_ref().map(ImageId::as_ref))
+        .bind(profile.version().as_ref())
         .execute(con)
         .await
         .convert_error()?;
@@ -109,7 +113,8 @@ impl ProfileModifier for PostgresProfileRepository {
         sqlx::query(
             //language=postgresql
             r#"
-            UPDATE profiles SET display = $2, summary = $3, icon_id = $4, banner_id = $5 WHERE account_id = $1
+            UPDATE profiles SET display = $2, summary = $3, icon_id = $4, banner_id = $5, version = $6
+            WHERE account_id = $1
             "#
         )
             .bind(profile.id().as_ref())
@@ -117,6 +122,7 @@ impl ProfileModifier for PostgresProfileRepository {
             .bind(profile.summary().as_ref().map(ProfileSummary::as_ref))
             .bind(profile.icon().as_ref().map(ImageId::as_ref))
             .bind(profile.banner().as_ref().map(ImageId::as_ref))
+            .bind(profile.version().as_ref())
             .execute(con)
             .await
             .convert_error()?;
@@ -144,7 +150,7 @@ mod test {
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+            CreatedAt, EventVersion, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
         };
 
         use crate::database::PostgresDatabase;
@@ -164,6 +170,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             let profile = Profile::new(
                 profile_id.clone(),
@@ -172,6 +179,7 @@ mod test {
                 Some(ProfileSummary::new("summary")),
                 None,
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -208,7 +216,7 @@ mod test {
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+            CreatedAt, EventVersion, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
         };
 
         use crate::database::PostgresDatabase;
@@ -228,6 +236,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             let profile = Profile::new(
                 profile_id,
@@ -236,6 +245,7 @@ mod test {
                 Some(ProfileSummary::new("summary")),
                 None,
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -269,6 +279,7 @@ mod test {
                 AccountIsBot::new(false),
                 CreatedAt::now(),
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             let profile = Profile::new(
                 profile_id.clone(),
@@ -277,6 +288,7 @@ mod test {
                 Some(ProfileSummary::new("summary")),
                 None,
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .account_modifier()
@@ -296,6 +308,7 @@ mod test {
                 Some(ProfileSummary::new("updated summary")),
                 None,
                 None,
+                EventVersion::new(Uuid::now_v7()),
             );
             database
                 .profile_modifier()

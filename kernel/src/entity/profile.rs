@@ -6,7 +6,7 @@ pub use self::display_name::*;
 pub use self::id::*;
 pub use self::summary::*;
 
-use super::{AccountId, CommandEnvelope, EventEnvelope, EventId, KnownEventVersion};
+use super::{AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion};
 use crate::entity::image::ImageId;
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -25,6 +25,7 @@ pub struct Profile {
     summary: Option<ProfileSummary>,
     icon: Option<ImageId>,
     banner: Option<ImageId>,
+    version: EventVersion<Profile>,
 }
 
 #[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
@@ -44,7 +45,6 @@ pub enum ProfileEvent {
         icon: Option<ImageId>,
         banner: Option<ImageId>,
     },
-    Deleted,
 }
 
 impl Profile {
@@ -86,11 +86,6 @@ impl Profile {
         };
         CommandEnvelope::new(EventId::from(id), event.name(), event, None)
     }
-
-    pub fn delete(id: ProfileId) -> CommandEnvelope<ProfileEvent, Profile> {
-        let event = ProfileEvent::Deleted;
-        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
-    }
 }
 
 impl EventApplier for Profile {
@@ -120,6 +115,7 @@ impl EventApplier for Profile {
                     summary,
                     icon,
                     banner,
+                    version: event.version,
                 });
             }
             ProfileEvent::Updated {
@@ -141,17 +137,11 @@ impl EventApplier for Profile {
                     if let Some(banner) = banner {
                         profile.banner = Some(banner);
                     }
+                    profile.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::not_exists(event.id.as_ref())));
                 }
-            }
-            ProfileEvent::Deleted => {
-                if entity.is_none() {
-                    return Err(Report::new(KernelError::Internal)
-                        .attach_printable(Self::not_exists(event.id.as_ref())));
-                }
-                *entity = None;
             }
         }
         Ok(())
@@ -193,7 +183,15 @@ mod test {
     fn update_profile() {
         let account_id = AccountId::new(Uuid::now_v7());
         let id = ProfileId::new(Uuid::now_v7());
-        let profile = Profile::new(id.clone(), account_id.clone(), None, None, None, None);
+        let profile = Profile::new(
+            id.clone(),
+            account_id.clone(),
+            None,
+            None,
+            None,
+            None,
+            EventVersion::new(Uuid::now_v7()),
+        );
         let display_name = ProfileDisplayName::new("display_name".to_string());
         let summary = ProfileSummary::new("summary".to_string());
         let icon = ImageId::new(Uuid::now_v7());
@@ -205,10 +203,11 @@ mod test {
             Some(icon.clone()),
             Some(banner.clone()),
         );
+        let version = EventVersion::new(Uuid::now_v7());
         let envelope = EventEnvelope::new(
             update_event.id().clone(),
             update_event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            version.clone(),
             CreatedAt::now(),
         );
         let mut profile = Some(profile);
@@ -221,22 +220,6 @@ mod test {
         assert_eq!(profile.summary().as_ref().unwrap(), &summary);
         assert_eq!(profile.icon().as_ref().unwrap(), &icon);
         assert_eq!(profile.banner().as_ref().unwrap(), &banner);
-    }
-
-    #[test]
-    fn delete_profile() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = ProfileId::new(Uuid::now_v7());
-        let profile = Profile::new(id.clone(), account_id.clone(), None, None, None, None);
-        let delete_event = Profile::delete(id.clone());
-        let envelope = EventEnvelope::new(
-            delete_event.id().clone(),
-            delete_event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
-        );
-        let mut profile = Some(profile);
-        Profile::apply(&mut profile, envelope).unwrap();
-        assert!(profile.is_none());
+        assert_eq!(profile.version(), &version);
     }
 }

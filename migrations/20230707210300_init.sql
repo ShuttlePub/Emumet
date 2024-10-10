@@ -1,6 +1,6 @@
 -- SQL dump generated using DBML (dbml.dbdiagram.io)
 -- Database: PostgreSQL
--- Generated at: 2024-09-23T15:01:17.449Z
+-- Generated at: 2024-10-10T12:01:27.761Z
 
 CREATE TABLE "event_streams" (
   "version" UUID NOT NULL,
@@ -18,7 +18,8 @@ CREATE TABLE "accounts" (
   "public_key" TEXT NOT NULL,
   "is_bot" BOOLEAN NOT NULL,
   "created_at" TIMESTAMPTZ NOT NULL,
-  "deleted_at" TIMESTAMPTZ
+  "deleted_at" TIMESTAMPTZ,
+  "version" UUID NOT NULL
 );
 
 CREATE TABLE "remote_accounts" (
@@ -34,7 +35,8 @@ CREATE TABLE "profiles" (
   "display" TEXT,
   "summary" TEXT,
   "icon_id" UUID,
-  "banner_id" UUID
+  "banner_id" UUID,
+  "version" UUID NOT NULL
 );
 
 CREATE TABLE "metadatas" (
@@ -42,7 +44,8 @@ CREATE TABLE "metadatas" (
   "account_id" UUID NOT NULL,
   "label" TEXT NOT NULL,
   "content" TEXT NOT NULL,
-  "created_at" TIMESTAMPTZ NOT NULL
+  "created_at" TIMESTAMPTZ NOT NULL,
+  "version" UUID NOT NULL
 );
 
 CREATE TABLE "stellar_hosts" (
@@ -55,7 +58,8 @@ CREATE TABLE "stellar_accounts" (
   "host_id" UUID NOT NULL,
   "client_id" TEXT NOT NULL,
   "access_token" TEXT NOT NULL,
-  "refresh_token" TEXT NOT NULL
+  "refresh_token" TEXT NOT NULL,
+  "version" UUID NOT NULL
 );
 
 CREATE TABLE "stellar_emumet_accounts" (

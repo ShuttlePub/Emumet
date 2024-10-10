@@ -1784,9 +1784,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vodca"
-version = "0.1.6"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5909ec58f0edfbe5341abfc34a6bdf22200dcaf0e28160cbcbee648f34b4282"
+checksum = "1d74d8fdab2e45cc05fa4964e5ff7ee72499f9edfffb38455bb94e62d1e3bcaa"
 dependencies = [
  "proc-macro2",
  "quote",
