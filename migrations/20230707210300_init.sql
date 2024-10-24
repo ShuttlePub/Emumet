@@ -1,13 +1,12 @@
 -- SQL dump generated using DBML (dbml.dbdiagram.io)
 -- Database: PostgreSQL
--- Generated at: 2024-10-10T12:01:27.761Z
+-- Generated at: 2024-10-24T12:48:43.363Z
 
 CREATE TABLE "event_streams" (
   "version" UUID NOT NULL,
   "id" UUID NOT NULL,
   "event_name" TEXT NOT NULL,
   "data" JSON NOT NULL,
-  "created_at" TIMESTAMPTZ NOT NULL,
   PRIMARY KEY ("id", "version")
 );
 
@@ -17,9 +16,9 @@ CREATE TABLE "accounts" (
   "private_key" TEXT NOT NULL,
   "public_key" TEXT NOT NULL,
   "is_bot" BOOLEAN NOT NULL,
-  "created_at" TIMESTAMPTZ NOT NULL,
   "deleted_at" TIMESTAMPTZ,
-  "version" UUID NOT NULL
+  "version" UUID NOT NULL,
+  "nanoid" TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE "remote_accounts" (
@@ -36,7 +35,8 @@ CREATE TABLE "profiles" (
   "summary" TEXT,
   "icon_id" UUID,
   "banner_id" UUID,
-  "version" UUID NOT NULL
+  "version" UUID NOT NULL,
+  "nanoid" TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE "metadatas" (
@@ -44,8 +44,8 @@ CREATE TABLE "metadatas" (
   "account_id" UUID NOT NULL,
   "label" TEXT NOT NULL,
   "content" TEXT NOT NULL,
-  "created_at" TIMESTAMPTZ NOT NULL,
-  "version" UUID NOT NULL
+  "version" UUID NOT NULL,
+  "nanoid" TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE "stellar_hosts" (
