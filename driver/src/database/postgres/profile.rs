@@ -28,7 +28,7 @@ impl From<ProfileRow> for Profile {
     fn from(value: ProfileRow) -> Self {
         Profile::new(
             ProfileId::new(value.id),
-            AccountId::new(value.id),
+            AccountId::new(value.account_id),
             value.display.map(ProfileDisplayName::new),
             value.summary.map(ProfileSummary::new),
             value.icon_id.map(ImageId::new),
