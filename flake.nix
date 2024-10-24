@@ -18,7 +18,8 @@
         nativeBuildInputs = [ pkg-config ];
         buildInputs = [ openssl ];
         packages = [
-            nodePackages.pnpm
+          nodePackages.pnpm
+          sqlx-cli
         ];
       };
     });

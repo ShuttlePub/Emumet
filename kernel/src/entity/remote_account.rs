@@ -109,8 +109,8 @@ impl EventApplier for RemoteAccount {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        CreatedAt, EventEnvelope, EventVersion, ImageId, RemoteAccount, RemoteAccountAcct,
-        RemoteAccountId, RemoteAccountUrl,
+        EventEnvelope, EventVersion, ImageId, RemoteAccount, RemoteAccountAcct, RemoteAccountId,
+        RemoteAccountUrl,
     };
     use crate::event::EventApplier;
     use uuid::Uuid;
@@ -125,7 +125,6 @@ mod test {
             create.id().clone(),
             create.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut entity = None;
         RemoteAccount::apply(&mut entity, envelope).unwrap();
@@ -149,7 +148,6 @@ mod test {
             update.id().clone(),
             update.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut entity = Some(remote_account);
         RemoteAccount::apply(&mut entity, envelope).unwrap();
@@ -172,7 +170,6 @@ mod test {
             delete.id().clone(),
             delete.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut entity = Some(remote_account);
         RemoteAccount::apply(&mut entity, envelope).unwrap();

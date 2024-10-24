@@ -6,7 +6,7 @@ pub use self::content::*;
 pub use self::id::*;
 pub use self::label::*;
 use super::{
-    AccountId, CommandEnvelope, CreatedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion,
+    AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion, Nanoid,
 };
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -21,8 +21,8 @@ pub struct Metadata {
     account_id: AccountId,
     label: MetadataLabel,
     content: MetadataContent,
-    created_at: CreatedAt<Metadata>,
     version: EventVersion<Metadata>,
+    nanoid: Nanoid<Metadata>,
 }
 
 #[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
@@ -33,6 +33,7 @@ pub enum MetadataEvent {
         account_id: AccountId,
         label: MetadataLabel,
         content: MetadataContent,
+        nanoid: Nanoid<Metadata>,
     },
     Updated {
         label: MetadataLabel,
@@ -47,11 +48,13 @@ impl Metadata {
         account_id: AccountId,
         label: MetadataLabel,
         content: MetadataContent,
+        nano_id: Nanoid<Metadata>,
     ) -> CommandEnvelope<MetadataEvent, Metadata> {
         let event = MetadataEvent::Created {
             account_id,
             label,
             content,
+            nanoid: nano_id,
         };
         CommandEnvelope::new(
             EventId::from(id),
@@ -92,6 +95,7 @@ impl EventApplier for Metadata {
                 account_id,
                 label,
                 content,
+                nanoid: nano_id,
             } => {
                 if let Some(entity) = entity {
                     return Err(Report::new(KernelError::Internal)
@@ -102,8 +106,8 @@ impl EventApplier for Metadata {
                     account_id,
                     label,
                     content,
-                    created_at: event.created_at,
                     version: event.version,
+                    nanoid: nano_id,
                 });
             }
             MetadataEvent::Updated { label, content } => {
@@ -131,8 +135,8 @@ impl EventApplier for Metadata {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        AccountId, CreatedAt, EventEnvelope, EventVersion, Metadata, MetadataContent, MetadataId,
-        MetadataLabel,
+        AccountId, EventEnvelope, EventVersion, Metadata, MetadataContent, MetadataId,
+        MetadataLabel, Nanoid,
     };
     use crate::event::EventApplier;
     use uuid::Uuid;
@@ -143,17 +147,18 @@ mod test {
         let id = MetadataId::new(Uuid::now_v7());
         let label = MetadataLabel::new("label".to_string());
         let content = MetadataContent::new("content".to_string());
+        let nano_id = Nanoid::default();
         let create_event = Metadata::create(
             id.clone(),
             account_id.clone(),
             label.clone(),
             content.clone(),
+            nano_id.clone(),
         );
         let envelope = EventEnvelope::new(
             create_event.id().clone(),
             create_event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut metadata = None;
         Metadata::apply(&mut metadata, envelope).unwrap();
@@ -163,6 +168,7 @@ mod test {
         assert_eq!(metadata.account_id(), &account_id);
         assert_eq!(metadata.label(), &label);
         assert_eq!(metadata.content(), &content);
+        assert_eq!(metadata.nanoid(), &nano_id);
     }
 
     #[test]
@@ -171,13 +177,14 @@ mod test {
         let id = MetadataId::new(Uuid::now_v7());
         let label = MetadataLabel::new("label".to_string());
         let content = MetadataContent::new("content".to_string());
+        let nano_id = Nanoid::default();
         let metadata = Metadata::new(
             id.clone(),
             account_id.clone(),
             label.clone(),
             content.clone(),
-            CreatedAt::now(),
             EventVersion::new(Uuid::now_v7()),
+            nano_id.clone(),
         );
         let label = MetadataLabel::new("new_label".to_string());
         let content = MetadataContent::new("new_content".to_string());
@@ -187,7 +194,6 @@ mod test {
             update_event.id().clone(),
             update_event.event().clone(),
             version.clone(),
-            CreatedAt::now(),
         );
         let mut metadata = Some(metadata);
         Metadata::apply(&mut metadata, envelope).unwrap();
@@ -198,6 +204,7 @@ mod test {
         assert_eq!(metadata.label(), &label);
         assert_eq!(metadata.content(), &content);
         assert_eq!(metadata.version(), &version);
+        assert_eq!(metadata.nanoid(), &nano_id);
     }
 
     #[test]
@@ -206,20 +213,20 @@ mod test {
         let id = MetadataId::new(Uuid::now_v7());
         let label = MetadataLabel::new("label".to_string());
         let content = MetadataContent::new("content".to_string());
+        let nano_id = Nanoid::default();
         let metadata = Metadata::new(
             id.clone(),
             account_id.clone(),
             label.clone(),
             content.clone(),
-            CreatedAt::now(),
             EventVersion::new(Uuid::now_v7()),
+            nano_id.clone(),
         );
         let delete_event = Metadata::delete(id.clone());
         let envelope = EventEnvelope::new(
             delete_event.id().clone(),
             delete_event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut metadata = Some(metadata);
         Metadata::apply(&mut metadata, envelope).unwrap();

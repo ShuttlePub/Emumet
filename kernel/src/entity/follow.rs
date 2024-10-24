@@ -7,8 +7,9 @@ pub use self::{approved_at::*, id::*, target_id::*};
 use crate::entity::{CommandEnvelope, EventEnvelope, EventId};
 use crate::event::EventApplier;
 use crate::KernelError;
-use error_stack::ResultExt;
+use error_stack::{Report, ResultExt};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use vodca::{Nameln, References};
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, References, Serialize, Deserialize)]
@@ -123,7 +124,16 @@ impl EventApplier for Follow {
             }
             FollowEvent::Approved => {
                 if let Some(entity) = entity {
-                    entity.approved_at = Some(FollowApprovedAt::new(event.created_at));
+                    let timestamp = event.id.as_ref().get_timestamp().ok_or_else(|| {
+                        Report::new(KernelError::Internal)
+                            .attach_printable("Failed to get timestamp from uuid")
+                    })?;
+                    let (seconds, nanos) = timestamp.to_unix();
+                    let datetime = OffsetDateTime::from_unix_timestamp_nanos(
+                        i128::from(nanos) + i128::from(seconds * 1_000_000_000),
+                    )
+                    .change_context_lazy(|| KernelError::Internal)?;
+                    entity.approved_at = Some(FollowApprovedAt::new(datetime));
                 } else {
                     return Err(KernelError::Internal)
                         .attach_printable(Self::not_exists(event.id.as_ref()));
@@ -140,8 +150,7 @@ impl EventApplier for Follow {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        AccountId, CreatedAt, EventEnvelope, EventVersion, Follow, FollowId, FollowTargetId,
-        RemoteAccountId,
+        AccountId, EventEnvelope, EventVersion, Follow, FollowId, FollowTargetId, RemoteAccountId,
     };
     use crate::event::EventApplier;
     use uuid::Uuid;
@@ -156,7 +165,6 @@ mod test {
             event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut entity = None;
         Follow::apply(&mut entity, envelope).unwrap();
@@ -179,7 +187,6 @@ mod test {
             event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut entity = Some(follow);
         Follow::apply(&mut entity, envelope).unwrap();
@@ -202,7 +209,6 @@ mod test {
             event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut entity = Some(follow);
         Follow::apply(&mut entity, envelope).unwrap();

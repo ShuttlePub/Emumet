@@ -3,7 +3,6 @@ Table event_streams {
     id UUID [not null]
     event_name TEXT [not null]
     data JSON [not null]
-    created_at TIMESTAMPTZ [not null]
     Indexes {
         (id, version) [pk]
     }
@@ -14,9 +13,9 @@ Table accounts {
     private_key TEXT [not null]
     public_key TEXT [not null]
     is_bot BOOLEAN [not null]
-    created_at TIMESTAMPTZ [not null]
     deleted_at TIMESTAMPTZ
     version UUID [not null]
+    nanoid TEXT [not null, unique]
 }
 
 Table remote_accounts {
@@ -36,6 +35,7 @@ Table profiles {
     icon_id UUID
     banner_id UUID 
     version UUID [not null]
+    nanoid TEXT [not null, unique]
 }
 
 Ref: accounts.id - profiles.account_id [delete: cascade]
@@ -47,8 +47,8 @@ Table metadatas {
     account_id UUID [not null]
     label TEXT [not null]
     content TEXT [not null]
-    created_at TIMESTAMPTZ [not null]
     version UUID [not null]
+    nanoid TEXT [not null, unique]
 }
 
 Ref: metadatas.account_id > accounts.id [delete: cascade]

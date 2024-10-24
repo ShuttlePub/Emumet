@@ -4,9 +4,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use vodca::{Nameln, Newln, References};
 
-use super::common::CreatedAt;
 use crate::entity::{
-    CommandEnvelope, DeletedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion,
+    CommandEnvelope, DeletedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion, Nanoid,
 };
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -32,9 +31,9 @@ pub struct Account {
     private_key: AccountPrivateKey,
     public_key: AccountPublicKey,
     is_bot: AccountIsBot,
-    created_at: CreatedAt<Account>,
     deleted_at: Option<DeletedAt<Account>>,
     version: EventVersion<Account>,
+    nanoid: Nanoid<Account>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Nameln, Serialize, Deserialize)]
@@ -46,6 +45,7 @@ pub enum AccountEvent {
         private_key: AccountPrivateKey,
         public_key: AccountPublicKey,
         is_bot: AccountIsBot,
+        nanoid: Nanoid<Account>,
     },
     Updated {
         is_bot: AccountIsBot,
@@ -60,12 +60,14 @@ impl Account {
         private_key: AccountPrivateKey,
         public_key: AccountPublicKey,
         is_bot: AccountIsBot,
+        nano_id: Nanoid<Account>,
     ) -> CommandEnvelope<AccountEvent, Account> {
         let event = AccountEvent::Created {
             name,
             private_key,
             public_key,
             is_bot,
+            nanoid: nano_id,
         };
         CommandEnvelope::new(
             EventId::from(id),
@@ -100,6 +102,7 @@ impl EventApplier for Account {
                 private_key,
                 public_key,
                 is_bot,
+                nanoid: nano_id,
             } => {
                 if let Some(entity) = entity {
                     return Err(Report::new(KernelError::Internal)
@@ -111,9 +114,9 @@ impl EventApplier for Account {
                     private_key,
                     public_key,
                     is_bot,
-                    created_at: event.created_at,
                     deleted_at: None,
                     version: event.version,
+                    nanoid: nano_id,
                 });
             }
             AccountEvent::Updated { is_bot } => {
@@ -143,7 +146,7 @@ impl EventApplier for Account {
 mod test {
     use crate::entity::{
         Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-        CreatedAt, EventEnvelope, EventVersion,
+        EventEnvelope, EventVersion, Nanoid,
     };
     use crate::event::EventApplier;
     use uuid::Uuid;
@@ -155,18 +158,19 @@ mod test {
         let private_key = AccountPrivateKey::new("private_key".to_string());
         let public_key = AccountPublicKey::new("public_key".to_string());
         let is_bot = AccountIsBot::new(false);
+        let nano_id = Nanoid::default();
         let event = Account::create(
             id.clone(),
             name.clone(),
             private_key.clone(),
             public_key.clone(),
             is_bot.clone(),
+            nano_id.clone(),
         );
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut account = None;
         Account::apply(&mut account, envelope).unwrap();
@@ -177,6 +181,7 @@ mod test {
         assert_eq!(account.private_key(), &private_key);
         assert_eq!(account.public_key(), &public_key);
         assert_eq!(account.is_bot(), &is_bot);
+        assert_eq!(account.nanoid(), &nano_id);
     }
 
     #[test]
@@ -187,15 +192,16 @@ mod test {
         let private_key = AccountPrivateKey::new("private_key".to_string());
         let public_key = AccountPublicKey::new("public_key".to_string());
         let is_bot = AccountIsBot::new(false);
+        let nano_id = Nanoid::default();
         let account = Account::new(
             id.clone(),
             name.clone(),
             private_key.clone(),
             public_key.clone(),
             is_bot.clone(),
-            CreatedAt::now(),
             None,
             EventVersion::new(Uuid::now_v7()),
+            nano_id.clone(),
         );
         let event = Account::create(
             id.clone(),
@@ -203,12 +209,12 @@ mod test {
             private_key.clone(),
             public_key.clone(),
             is_bot.clone(),
+            nano_id.clone(),
         );
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope).unwrap();
@@ -221,28 +227,29 @@ mod test {
         let private_key = AccountPrivateKey::new("private_key".to_string());
         let public_key = AccountPublicKey::new("public_key".to_string());
         let is_bot = AccountIsBot::new(false);
+        let nano_id = Nanoid::default();
         let account = Account::new(
             id.clone(),
             name.clone(),
             private_key.clone(),
             public_key.clone(),
             is_bot.clone(),
-            CreatedAt::now(),
             None,
             EventVersion::new(Uuid::now_v7()),
+            nano_id.clone(),
         );
         let event = Account::update(id.clone(), AccountIsBot::new(true));
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope.clone()).unwrap();
         let account = account.unwrap();
         assert_eq!(account.is_bot(), &AccountIsBot::new(true));
         assert_eq!(account.version(), &envelope.version);
+        assert_eq!(account.nanoid(), &nano_id);
     }
 
     #[test]
@@ -254,7 +261,6 @@ mod test {
             event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut account = None;
         Account::apply(&mut account, envelope).unwrap();
@@ -267,28 +273,29 @@ mod test {
         let private_key = AccountPrivateKey::new("private_key".to_string());
         let public_key = AccountPublicKey::new("public_key".to_string());
         let is_bot = AccountIsBot::new(false);
+        let nano_id = Nanoid::default();
         let account = Account::new(
             id.clone(),
             name.clone(),
             private_key.clone(),
             public_key.clone(),
             is_bot.clone(),
-            CreatedAt::now(),
             None,
             EventVersion::new(Uuid::now_v7()),
+            nano_id.clone(),
         );
         let event = Account::delete(id.clone());
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope.clone()).unwrap();
         let account = account.unwrap();
         assert!(account.deleted_at().is_some());
         assert_eq!(account.version(), &envelope.version);
+        assert_eq!(account.nanoid(), &nano_id);
     }
 
     #[test]
@@ -300,7 +307,6 @@ mod test {
             event.id().clone(),
             event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut account = None;
         Account::apply(&mut account, envelope).unwrap();

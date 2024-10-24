@@ -1,4 +1,3 @@
-use crate::entity::CreatedAt;
 use destructure::Destructure;
 use vodca::{Newln, References};
 
@@ -12,7 +11,6 @@ pub struct EventEnvelope<Event, Entity> {
     pub id: EventId<Event, Entity>,
     pub event: Event,
     pub version: EventVersion<Entity>,
-    pub created_at: CreatedAt<Entity>,
 }
 
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, References, Newln, Destructure)]

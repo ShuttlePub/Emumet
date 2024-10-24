@@ -4,7 +4,8 @@ use uuid::Uuid;
 use kernel::interfaces::modify::{DependOnProfileModifier, ProfileModifier};
 use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
 use kernel::prelude::entity::{
-    AccountId, EventVersion, ImageId, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+    AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
+    ProfileSummary,
 };
 use kernel::KernelError;
 
@@ -20,18 +21,20 @@ struct ProfileRow {
     icon_id: Option<Uuid>,
     banner_id: Option<Uuid>,
     version: Uuid,
+    nanoid: String,
 }
 
 impl From<ProfileRow> for Profile {
     fn from(value: ProfileRow) -> Self {
         Profile::new(
             ProfileId::new(value.id),
-            AccountId::new(value.id),
+            AccountId::new(value.account_id),
             value.display.map(ProfileDisplayName::new),
             value.summary.map(ProfileSummary::new),
             value.icon_id.map(ImageId::new),
             value.banner_id.map(ImageId::new),
             EventVersion::new(value.version),
+            Nanoid::new(value.nanoid),
         )
     }
 }
@@ -50,7 +53,7 @@ impl ProfileQuery for PostgresProfileRepository {
         sqlx::query_as::<_, ProfileRow>(
             //language=postgresql
             r#"
-            SELECT id, account_id, display, summary, icon_id, banner_id, version
+            SELECT id, account_id, display, summary, icon_id, banner_id, version, nanoid
             FROM profiles WHERE id = $1
             "#,
         )
@@ -82,8 +85,8 @@ impl ProfileModifier for PostgresProfileRepository {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO profiles (id, account_id, display, summary, icon_id, banner_id, version)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO profiles (id, account_id, display, summary, icon_id, banner_id, version, nanoid)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(profile.id().as_ref())
@@ -98,6 +101,7 @@ impl ProfileModifier for PostgresProfileRepository {
         .bind(profile.icon().as_ref().map(ImageId::as_ref))
         .bind(profile.banner().as_ref().map(ImageId::as_ref))
         .bind(profile.version().as_ref())
+        .bind(profile.nanoid().as_ref())
         .execute(con)
         .await
         .convert_error()?;
@@ -150,7 +154,7 @@ mod test {
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventVersion, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+            EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
         };
 
         use crate::database::PostgresDatabase;
@@ -168,9 +172,9 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::now(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             let profile = Profile::new(
                 profile_id.clone(),
@@ -180,6 +184,7 @@ mod test {
                 None,
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
@@ -216,7 +221,7 @@ mod test {
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventVersion, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+            EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
         };
 
         use crate::database::PostgresDatabase;
@@ -234,9 +239,9 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::now(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             let profile = Profile::new(
                 profile_id,
@@ -246,6 +251,7 @@ mod test {
                 None,
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
@@ -277,9 +283,9 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::now(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             let profile = Profile::new(
                 profile_id.clone(),
@@ -289,6 +295,7 @@ mod test {
                 None,
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
@@ -309,6 +316,7 @@ mod test {
                 None,
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .profile_modifier()

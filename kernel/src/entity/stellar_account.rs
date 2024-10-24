@@ -146,7 +146,7 @@ impl EventApplier for StellarAccount {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        CreatedAt, EventEnvelope, EventVersion, StellarAccount, StellarAccountAccessToken,
+        EventEnvelope, EventVersion, StellarAccount, StellarAccountAccessToken,
         StellarAccountClientId, StellarAccountId, StellarAccountRefreshToken, StellarHostId,
     };
     use crate::event::EventApplier;
@@ -170,7 +170,6 @@ mod test {
             create_account.id().clone(),
             create_account.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut account = None;
         StellarAccount::apply(&mut account, envelope).unwrap();
@@ -210,7 +209,6 @@ mod test {
             update_account.id().clone(),
             update_account.event().clone(),
             version.clone(),
-            CreatedAt::now(),
         );
         let mut account = Some(account);
         StellarAccount::apply(&mut account, envelope).unwrap();
@@ -244,7 +242,6 @@ mod test {
             delete_account.id().clone(),
             delete_account.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut account = Some(account);
         StellarAccount::apply(&mut account, envelope).unwrap();

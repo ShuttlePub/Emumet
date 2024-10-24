@@ -3,8 +3,8 @@ use crate::ConvertError;
 use kernel::interfaces::modify::{AccountModifier, DependOnAccountModifier};
 use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
 use kernel::prelude::entity::{
-    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey, CreatedAt,
-    DeletedAt, EventVersion, StellarAccountId,
+    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey, DeletedAt,
+    EventVersion, Nanoid, StellarAccountId,
 };
 use kernel::KernelError;
 use sqlx::types::time::OffsetDateTime;
@@ -18,9 +18,9 @@ struct AccountRow {
     private_key: String,
     public_key: String,
     is_bot: bool,
-    created_at: OffsetDateTime,
     deleted_at: Option<OffsetDateTime>,
     version: Uuid,
+    nanoid: String,
 }
 
 impl From<AccountRow> for Account {
@@ -31,9 +31,9 @@ impl From<AccountRow> for Account {
             AccountPrivateKey::new(value.private_key),
             AccountPublicKey::new(value.public_key),
             AccountIsBot::new(value.is_bot),
-            CreatedAt::new(value.created_at),
             value.deleted_at.map(DeletedAt::new),
             EventVersion::new(value.version),
+            Nanoid::new(value.nanoid),
         )
     }
 }
@@ -52,7 +52,7 @@ impl AccountQuery for PostgresAccountRepository {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, created_at, deleted_at, version
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid
             FROM accounts
             WHERE id = $1 AND deleted_at IS NULL
             "#,
@@ -73,7 +73,7 @@ impl AccountQuery for PostgresAccountRepository {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, created_at, deleted_at, version
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid
             FROM accounts
             INNER JOIN stellar_emumet_accounts ON stellar_emumet_accounts.emumet_id = accounts.id
             WHERE stellar_emumet_accounts.stellar_id = $1 AND deleted_at IS NULL
@@ -95,7 +95,7 @@ impl AccountQuery for PostgresAccountRepository {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, created_at, deleted_at, version
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid
             FROM accounts
             WHERE name = $1 AND deleted_at IS NULL
             "#,
@@ -128,7 +128,7 @@ impl AccountModifier for PostgresAccountRepository {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO accounts (id, name, private_key, public_key, is_bot, created_at, version)
+            INSERT INTO accounts (id, name, private_key, public_key, is_bot, version, nanoid)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
@@ -137,8 +137,8 @@ impl AccountModifier for PostgresAccountRepository {
         .bind(account.private_key().as_ref())
         .bind(account.public_key().as_ref())
         .bind(account.is_bot().as_ref())
-        .bind(account.created_at().as_ref())
         .bind(account.version().as_ref())
+        .bind(account.nanoid().as_ref())
         .execute(con)
         .await
         .convert_error()?;
@@ -155,7 +155,7 @@ impl AccountModifier for PostgresAccountRepository {
             //language=postgresql
             r#"
             UPDATE accounts
-            SET name = $2, private_key = $3, public_key = $4, is_bot = $5, created_at = $6, version = $7
+            SET name = $2, private_key = $3, public_key = $4, is_bot = $5, version = $6
             WHERE id = $1
             "#,
         )
@@ -164,7 +164,6 @@ impl AccountModifier for PostgresAccountRepository {
         .bind(account.private_key().as_ref())
         .bind(account.public_key().as_ref())
         .bind(account.is_bot().as_ref())
-        .bind(account.created_at().as_ref())
         .bind(account.version().as_ref())
         .execute(con)
         .await
@@ -211,7 +210,7 @@ mod test {
         use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventVersion, StellarAccountId,
+            EventVersion, Nanoid, StellarAccountId,
         };
         use sqlx::types::Uuid;
 
@@ -227,9 +226,9 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::now(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
@@ -269,9 +268,9 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::now(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
@@ -300,7 +299,7 @@ mod test {
         use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, DeletedAt, EventVersion,
+            DeletedAt, EventVersion, Nanoid,
         };
         use sqlx::types::time::OffsetDateTime;
         use sqlx::types::Uuid;
@@ -316,9 +315,9 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::now(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
@@ -345,9 +344,9 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::now(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
@@ -360,9 +359,9 @@ mod test {
                 AccountPrivateKey::new("test2"),
                 AccountPublicKey::new("test2"),
                 AccountIsBot::new(true),
-                CreatedAt::now(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
@@ -388,9 +387,9 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::now(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
@@ -417,9 +416,9 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
-                CreatedAt::now(),
                 Some(DeletedAt::new(OffsetDateTime::now_utc())),
                 EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
             );
             database
                 .account_modifier()
