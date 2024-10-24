@@ -6,7 +6,9 @@ pub use self::display_name::*;
 pub use self::id::*;
 pub use self::summary::*;
 
-use super::{AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion};
+use super::{
+    AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion, Nanoid,
+};
 use crate::entity::image::ImageId;
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -26,6 +28,7 @@ pub struct Profile {
     icon: Option<ImageId>,
     banner: Option<ImageId>,
     version: EventVersion<Profile>,
+    nanoid: Nanoid<Profile>,
 }
 
 #[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
@@ -38,6 +41,7 @@ pub enum ProfileEvent {
         summary: Option<ProfileSummary>,
         icon: Option<ImageId>,
         banner: Option<ImageId>,
+        nanoid: Nanoid<Profile>,
     },
     Updated {
         display_name: Option<ProfileDisplayName>,
@@ -55,6 +59,7 @@ impl Profile {
         summary: Option<ProfileSummary>,
         icon: Option<ImageId>,
         banner: Option<ImageId>,
+        nano_id: Nanoid<Profile>,
     ) -> CommandEnvelope<ProfileEvent, Profile> {
         let event = ProfileEvent::Created {
             account_id,
@@ -62,6 +67,7 @@ impl Profile {
             summary,
             icon,
             banner,
+            nanoid: nano_id,
         };
         CommandEnvelope::new(
             EventId::from(id),
@@ -103,6 +109,7 @@ impl EventApplier for Profile {
                 summary,
                 icon,
                 banner,
+                nanoid: nano_id,
             } => {
                 if let Some(entity) = entity {
                     return Err(Report::new(KernelError::Internal)
@@ -116,6 +123,7 @@ impl EventApplier for Profile {
                     icon,
                     banner,
                     version: event.version,
+                    nanoid: nano_id,
                 });
             }
             ProfileEvent::Updated {
@@ -151,7 +159,7 @@ impl EventApplier for Profile {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        AccountId, CreatedAt, EventEnvelope, EventVersion, ImageId, Profile, ProfileDisplayName,
+        AccountId, EventEnvelope, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName,
         ProfileId, ProfileSummary,
     };
     use crate::event::EventApplier;
@@ -161,12 +169,20 @@ mod test {
     fn create_profile() {
         let account_id = AccountId::new(Uuid::now_v7());
         let id = ProfileId::new(Uuid::now_v7());
-        let create_event = Profile::create(id.clone(), account_id.clone(), None, None, None, None);
+        let nano_id = Nanoid::default();
+        let create_event = Profile::create(
+            id.clone(),
+            account_id.clone(),
+            None,
+            None,
+            None,
+            None,
+            nano_id.clone(),
+        );
         let envelope = EventEnvelope::new(
             create_event.id().clone(),
             create_event.event().clone(),
             EventVersion::new(Uuid::now_v7()),
-            CreatedAt::now(),
         );
         let mut profile = None;
         Profile::apply(&mut profile, envelope).unwrap();
@@ -177,12 +193,15 @@ mod test {
         assert!(profile.display_name().is_none());
         assert!(profile.summary().is_none());
         assert!(profile.icon().is_none());
+        assert!(profile.banner().is_none());
+        assert_eq!(profile.nanoid(), &nano_id);
     }
 
     #[test]
     fn update_profile() {
         let account_id = AccountId::new(Uuid::now_v7());
         let id = ProfileId::new(Uuid::now_v7());
+        let nano_id = Nanoid::default();
         let profile = Profile::new(
             id.clone(),
             account_id.clone(),
@@ -191,6 +210,7 @@ mod test {
             None,
             None,
             EventVersion::new(Uuid::now_v7()),
+            nano_id.clone(),
         );
         let display_name = ProfileDisplayName::new("display_name".to_string());
         let summary = ProfileSummary::new("summary".to_string());
@@ -208,7 +228,6 @@ mod test {
             update_event.id().clone(),
             update_event.event().clone(),
             version.clone(),
-            CreatedAt::now(),
         );
         let mut profile = Some(profile);
         Profile::apply(&mut profile, envelope).unwrap();
@@ -221,5 +240,6 @@ mod test {
         assert_eq!(profile.icon().as_ref().unwrap(), &icon);
         assert_eq!(profile.banner().as_ref().unwrap(), &banner);
         assert_eq!(profile.version(), &version);
+        assert_eq!(profile.nanoid(), &nano_id);
     }
 }

@@ -13,6 +13,7 @@ vodca = "0.1.8"
 serde = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
+nanoid = { workspace = true }
 
 async-trait = "0.1"
 error-stack = { workspace = true }

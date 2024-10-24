@@ -5,12 +5,11 @@ use error_stack::Report;
 use kernel::interfaces::modify::{DependOnEventModifier, EventModifier};
 use kernel::interfaces::query::{DependOnEventQuery, EventQuery};
 use kernel::prelude::entity::{
-    CommandEnvelope, CreatedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion,
+    CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion,
 };
 use kernel::KernelError;
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
-use time::OffsetDateTime;
 use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
@@ -19,7 +18,6 @@ struct EventRow {
     id: Uuid,
     event_name: String,
     data: serde_json::Value,
-    created_at: OffsetDateTime,
 }
 
 impl<Event: for<'a> Deserialize<'a>, Entity> TryFrom<EventRow> for EventEnvelope<Event, Entity> {
@@ -30,7 +28,6 @@ impl<Event: for<'a> Deserialize<'a>, Entity> TryFrom<EventRow> for EventEnvelope
             EventId::new(value.id),
             event,
             EventVersion::new(value.version),
-            CreatedAt::new(value.created_at),
         ))
     }
 }
@@ -51,7 +48,7 @@ impl EventQuery for PostgresEventRepository {
             sqlx::query_as::<_, EventRow>(
                 //language=postgresql
                 r#"
-                SELECT version, id, event_name, data, created_at
+                SELECT version, id, event_name, data
                 FROM event_streams
                 WHERE id = $2 AND version > $1
                 ORDER BY version
@@ -62,7 +59,7 @@ impl EventQuery for PostgresEventRepository {
             sqlx::query_as::<_, EventRow>(
                 //language=postgresql
                 r#"
-                SELECT version, id, event_name, data, created_at
+                SELECT version, id, event_name, data
                 FROM event_streams
                 WHERE id = $1
                 ORDER BY version
@@ -156,8 +153,8 @@ impl EventModifier for PostgresEventRepository {
         sqlx::query(
             //language=postgresql
             r#"
-                INSERT INTO event_streams (version, id, event_name, data, created_at)
-                VALUES ($1, $2, $3, $4, now())
+                INSERT INTO event_streams (version, id, event_name, data)
+                VALUES ($1, $2, $3, $4)
                 "#,
         )
         .bind(Uuid::now_v7())
@@ -189,7 +186,7 @@ mod test {
         use kernel::interfaces::query::{DependOnEventQuery, EventQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventId,
+            EventId, Nanoid,
         };
 
         use crate::database::PostgresDatabase;
@@ -212,6 +209,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
+                Nanoid::default(),
             );
             let updated_account = Account::update(account_id.clone(), AccountIsBot::new(true));
             let deleted_account = Account::delete(account_id.clone());
@@ -252,6 +250,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
+                Nanoid::default(),
             );
             let updated_account = Account::update(account_id.clone(), AccountIsBot::new(true));
             db.event_modifier()
@@ -287,7 +286,7 @@ mod test {
         use kernel::interfaces::query::{DependOnEventQuery, EventQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventId,
+            EventId, Nanoid,
         };
 
         use crate::database::PostgresDatabase;
@@ -303,6 +302,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
+                Nanoid::default(),
             );
             db.event_modifier()
                 .handle(&mut transaction, &created_account)
