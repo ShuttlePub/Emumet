@@ -2,3 +2,4 @@
 .idea
 .direnv
 /migrations/dbml-error.log
+.env
