@@ -1,6 +1,5 @@
 use driver::database::PostgresDatabase;
 use kernel::KernelError;
-use rikka_mq::define::redis::mq::RedisMessageQueue;
 use std::sync::Arc;
 use vodca::References;
 
@@ -40,6 +39,6 @@ impl Worker {
     pub fn new(handler: &Arc<Handler>) -> Self {
         // let command = init_command_worker(handler);
         // Self { command }
-        Self
+        Self {}
     }
 }

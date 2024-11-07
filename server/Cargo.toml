@@ -7,7 +7,7 @@ authors.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-uuid = { workspace = true }
+time = { workspace = true }
 
 tracing = { workspace = true }
 tracing-appender = "0.2.3"
@@ -22,6 +22,7 @@ rikka-mq = { version = "0.1.1", features = ["redis", "tracing"] }
 error-stack = { workspace = true }
 
 vodca = { workspace = true }
+serde = { workspace = true }
 
 application = { path = "../application" }
 driver = { path = "../driver" }

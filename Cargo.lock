@@ -60,6 +60,7 @@ dependencies = [
  "kernel",
  "time",
  "uuid",
+ "vodca",
 ]
 
 [[package]]
@@ -1628,12 +1629,13 @@ dependencies = [
  "error-stack",
  "kernel",
  "rikka-mq",
+ "serde",
+ "time",
  "tokio",
  "tower-http",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "uuid",
  "vodca",
 ]
 

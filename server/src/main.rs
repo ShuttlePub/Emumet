@@ -1,8 +1,10 @@
 mod error;
 mod handler;
+mod route;
 
 use crate::error::StackTrace;
 use crate::handler::AppModule;
+use crate::route::account::AccountRouter;
 use axum::ServiceExt;
 use error_stack::ResultExt;
 use kernel::KernelError;
@@ -38,7 +40,7 @@ async fn main() -> Result<(), StackTrace> {
     let app = AppModule::new().await?;
 
     let router = axum::Router::new()
-        // TODO
+        .route_account()
         .layer(CorsLayer::new())
         .with_state(app);
 
