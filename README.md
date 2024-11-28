@@ -3,6 +3,13 @@
  <img src="https://codecov.io/gh/ShuttlePub/Emumet/branch/main/graph/badge.svg?token=NY4FA3YZPS"/> 
  </a>
 
+# Keycloak
+
+```shell
+podman run --rm -p 18080:8080 -e KEYCLOAK_USER=admin -e KEYCLOAK_PASSWORD=admin --name emumet-keycloak docker.io/keycloak/keycloak start-dev
+```
+> Url: http://localhost:18080
+
 # DB
 Podman(docker)にて環境構築が可能です
 
