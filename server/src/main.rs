@@ -1,6 +1,7 @@
 mod error;
 mod handler;
 mod route;
+mod permission;
 
 use crate::error::StackTrace;
 use crate::handler::AppModule;
