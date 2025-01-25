@@ -1,17 +1,23 @@
 use crate::error::ErrorStatus;
+use crate::expect_role;
 use crate::handler::AppModule;
 use crate::route::DirectionConverter;
 use application::service::account::GetAccountService;
-use axum::extract::{Query, State};
+use application::transfer::pagination::Pagination;
+use axum::extract::{Query, Request, State};
 use axum::http::StatusCode;
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use axum_keycloak_auth::decode::KeycloakToken;
+use axum_keycloak_auth::instance::KeycloakAuthInstance;
+use axum_keycloak_auth::layer::KeycloakAuthLayer;
+use axum_keycloak_auth::PassthroughMode;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 #[derive(Debug, Deserialize)]
 struct GetAllAccountQuery {
-    limit: Option<i32>,
+    limit: Option<u32>,
     cursor: Option<String>,
     direction: Option<String>,
 }
@@ -33,25 +39,29 @@ struct AccountsResponse {
 }
 
 pub trait AccountRouter {
-    fn route_account(self) -> Self;
+    fn route_account(self, instance: KeycloakAuthInstance) -> Self;
 }
 
 impl AccountRouter for Router<AppModule> {
-    fn route_account(self) -> Self {
+    fn route_account(self, instance: KeycloakAuthInstance) -> Self {
         self.route(
             "/accounts",
             get(
-                |State(module): State<AppModule>,
+                |Extension(token): Extension<KeycloakToken<String>>,
+                 State(module): State<AppModule>,
                  Query(GetAllAccountQuery {
                      direction,
                      limit,
                      cursor,
-                 }): Query<GetAllAccountQuery>| async move {
+                 }): Query<GetAllAccountQuery>,
+                 req: Request| async move {
+                    expect_role!(&token, req);
                     let direction = direction.convert_to_direction()?;
+                    let pagination = Pagination::new(limit, cursor, direction);
                     let result = module
                         .handler()
                         .pgpool()
-                        .get_all_accounts(limit, cursor, direction)
+                        .get_all_accounts(token.subject, pagination)
                         .await
                         .map_err(ErrorStatus::from)?;
                     if result.is_empty() {
@@ -77,6 +87,13 @@ impl AccountRouter for Router<AppModule> {
                     Ok(Json(response))
                 },
             ),
+        )
+        .layer(
+            KeycloakAuthLayer::<String>::builder()
+                .instance(instance)
+                .passthrough_mode(PassthroughMode::Block)
+                .expected_audiences(vec![String::from("account")])
+                .build(),
         )
     }
 }

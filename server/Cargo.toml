@@ -20,6 +20,7 @@ tracing-subscriber = { workspace = true }
 
 axum = { version = "0.7.4", features = ["json", "tracing"] }
 axum-extra = { version = "0.9.2", features = ["typed-header", "query"] }
+axum-keycloak-auth = "0.6.0"
 tower-http = { version = "0.5.1", features = ["tokio", "cors"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 
@@ -33,3 +34,4 @@ serde = { workspace = true }
 application = { path = "../application" }
 driver = { path = "../driver" }
 kernel = { path = "../kernel" }
+log = "0.4.22"

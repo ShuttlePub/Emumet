@@ -1,12 +1,13 @@
 mod error;
 mod handler;
-mod route;
+mod keycloak;
 mod permission;
+mod route;
 
 use crate::error::StackTrace;
 use crate::handler::AppModule;
+use crate::keycloak::create_keycloak_instance;
 use crate::route::account::AccountRouter;
-use axum::ServiceExt;
 use error_stack::ResultExt;
 use kernel::KernelError;
 use std::net::SocketAddr;
@@ -38,10 +39,11 @@ async fn main() -> Result<(), StackTrace> {
         )
         .init();
 
+    let keycloak_auth_instance = create_keycloak_instance();
     let app = AppModule::new().await?;
 
     let router = axum::Router::new()
-        .route_account()
+        .route_account(keycloak_auth_instance)
         .layer(CorsLayer::new())
         .with_state(app);
 
