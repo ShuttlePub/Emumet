@@ -53,6 +53,27 @@ impl AuthAccountQuery for PostgresAuthAccountRepository {
         .convert_error()
         .map(|option| option.map(|row| row.into()))
     }
+
+    async fn find_by_client_id(
+        &self,
+        transaction: &mut Self::Transaction,
+        client_id: &AuthAccountClientId,
+    ) -> error_stack::Result<Option<AuthAccount>, KernelError> {
+        let con: &mut PgConnection = transaction;
+        sqlx::query_as::<_, AuthAccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, host_id, client_id, version
+            FROM auth_accounts
+            WHERE client_id = $1
+            "#,
+        )
+        .bind(client_id.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(|row| row.into()))
+    }
 }
 
 impl DependOnAuthAccountQuery for PostgresDatabase {

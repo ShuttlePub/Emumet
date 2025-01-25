@@ -106,6 +106,27 @@ impl AccountQuery for PostgresAccountRepository {
         .convert_error()
         .map(|option| option.map(Account::from))
     }
+
+    async fn find_by_nanoid(
+        &self,
+        transaction: &mut Self::Transaction,
+        nanoid: &Nanoid<Account>,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        let con: &mut PgConnection = transaction;
+        sqlx::query_as::<_, AccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid
+            FROM accounts
+            WHERE nanoid = $1 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(nanoid.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(Account::from))
+    }
 }
 
 impl DependOnAccountQuery for PostgresDatabase {

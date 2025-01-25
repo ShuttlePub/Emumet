@@ -1,5 +1,5 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
-use crate::entity::{Account, AccountId, AccountName, AuthAccountId};
+use crate::entity::{Account, AccountId, AccountName, AuthAccountId, Nanoid};
 use crate::KernelError;
 use std::future::Future;
 
@@ -22,6 +22,12 @@ pub trait AccountQuery: Sync + Send + 'static {
         &self,
         transaction: &mut Self::Transaction,
         name: &AccountName,
+    ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
+
+    fn find_by_nanoid(
+        &self,
+        transaction: &mut Self::Transaction,
+        nanoid: &Nanoid<Account>,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
 }
 

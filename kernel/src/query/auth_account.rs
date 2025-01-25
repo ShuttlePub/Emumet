@@ -1,5 +1,5 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
-use crate::entity::{AuthAccount, AuthAccountId};
+use crate::entity::{AuthAccount, AuthAccountClientId, AuthAccountId};
 use crate::KernelError;
 use std::future::Future;
 
@@ -10,6 +10,12 @@ pub trait AuthAccountQuery: Sync + Send + 'static {
         &self,
         transaction: &mut Self::Transaction,
         account_id: &AuthAccountId,
+    ) -> impl Future<Output = error_stack::Result<Option<AuthAccount>, KernelError>> + Send;
+
+    fn find_by_client_id(
+        &self,
+        transaction: &mut Self::Transaction,
+        client_id: &AuthAccountClientId,
     ) -> impl Future<Output = error_stack::Result<Option<AuthAccount>, KernelError>> + Send;
 }
 

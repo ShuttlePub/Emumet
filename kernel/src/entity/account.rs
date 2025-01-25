@@ -88,6 +88,18 @@ impl Account {
     }
 }
 
+impl PartialOrd for Account {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Account {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
 impl EventApplier for Account {
     type Event = AccountEvent;
     const ENTITY_NAME: &'static str = "Account";
