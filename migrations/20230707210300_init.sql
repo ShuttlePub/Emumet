@@ -1,6 +1,6 @@
 -- SQL dump generated using DBML (dbml.dbdiagram.io)
 -- Database: PostgreSQL
--- Generated at: 2024-10-24T12:48:43.363Z
+-- Generated at: 2025-01-25T03:59:23.453Z
 
 CREATE TABLE "event_streams" (
   "version" UUID NOT NULL,
@@ -48,24 +48,22 @@ CREATE TABLE "metadatas" (
   "nanoid" TEXT UNIQUE NOT NULL
 );
 
-CREATE TABLE "stellar_hosts" (
+CREATE TABLE "auth_hosts" (
   "id" UUID PRIMARY KEY NOT NULL,
   "url" TEXT UNIQUE NOT NULL
 );
 
-CREATE TABLE "stellar_accounts" (
+CREATE TABLE "auth_accounts" (
   "id" UUID PRIMARY KEY NOT NULL,
   "host_id" UUID NOT NULL,
   "client_id" TEXT NOT NULL,
-  "access_token" TEXT NOT NULL,
-  "refresh_token" TEXT NOT NULL,
   "version" UUID NOT NULL
 );
 
-CREATE TABLE "stellar_emumet_accounts" (
+CREATE TABLE "auth_emumet_accounts" (
   "emumet_id" UUID NOT NULL,
-  "stellar_id" UUID NOT NULL,
-  PRIMARY KEY ("emumet_id", "stellar_id")
+  "auth_id" UUID NOT NULL,
+  PRIMARY KEY ("emumet_id", "auth_id")
 );
 
 CREATE TABLE "follows" (
@@ -94,11 +92,11 @@ ALTER TABLE "profiles" ADD FOREIGN KEY ("banner_id") REFERENCES "images" ("id") 
 
 ALTER TABLE "metadatas" ADD FOREIGN KEY ("account_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
 
-ALTER TABLE "stellar_accounts" ADD FOREIGN KEY ("host_id") REFERENCES "stellar_hosts" ("id") ON DELETE CASCADE;
+ALTER TABLE "auth_accounts" ADD FOREIGN KEY ("host_id") REFERENCES "auth_hosts" ("id") ON DELETE CASCADE;
 
-ALTER TABLE "stellar_emumet_accounts" ADD FOREIGN KEY ("stellar_id") REFERENCES "stellar_accounts" ("id");
+ALTER TABLE "auth_emumet_accounts" ADD FOREIGN KEY ("auth_id") REFERENCES "auth_accounts" ("id");
 
-ALTER TABLE "stellar_emumet_accounts" ADD FOREIGN KEY ("emumet_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
+ALTER TABLE "auth_emumet_accounts" ADD FOREIGN KEY ("emumet_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
 
 ALTER TABLE "follows" ADD FOREIGN KEY ("follower_local_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
 

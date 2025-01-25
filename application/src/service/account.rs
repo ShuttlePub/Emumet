@@ -12,8 +12,8 @@ pub trait GetAccountService: 'static + Sync + Send + DependOnAccountQuery {
         direction: Option<Direction>, //TODO error_stackやめてResponseに載せれる情報を返す
     ) -> impl Future<Output = error_stack::Result<Vec<AccountDto>, KernelError>> {
         async {
-            todo!("get stellar id")
-            // self.account_query().find_by_stellar_id(stellar_id).await
+            todo!("get auth id")
+            // self.account_query().find_by_auth_id(auth_id).await
         }
     }
 }

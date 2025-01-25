@@ -1,34 +1,34 @@
 use crate::database::{DependOnDatabaseConnection, Transaction};
-use crate::entity::{StellarAccount, StellarAccountId};
+use crate::entity::{AuthAccount, AuthAccountId};
 use crate::KernelError;
 use std::future::Future;
 
-pub trait StellarAccountModifier: Sync + Send + 'static {
+pub trait AuthAccountModifier: Sync + Send + 'static {
     type Transaction: Transaction;
 
     fn create(
         &self,
         transaction: &mut Self::Transaction,
-        stellar_account: &StellarAccount,
+        auth_account: &AuthAccount,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn update(
         &self,
         transaction: &mut Self::Transaction,
-        stellar_account: &StellarAccount,
+        auth_account: &AuthAccount,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn delete(
         &self,
         transaction: &mut Self::Transaction,
-        account_id: &StellarAccountId,
+        account_id: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
-pub trait DependOnStellarAccountModifier: Sync + Send + DependOnDatabaseConnection {
-    type StellarAccountModifier: StellarAccountModifier<
+pub trait DependOnAuthAccountModifier: Sync + Send + DependOnDatabaseConnection {
+    type AuthAccountModifier: AuthAccountModifier<
         Transaction = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Transaction,
     >;
 
-    fn stellar_account_modifier(&self) -> &Self::StellarAccountModifier;
+    fn auth_account_modifier(&self) -> &Self::AuthAccountModifier;
 }

@@ -1,28 +1,28 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
-use crate::entity::StellarHost;
+use crate::entity::AuthHost;
 use crate::KernelError;
 use std::future::Future;
 
-pub trait StellarHostModifier: Sync + Send + 'static {
+pub trait AuthHostModifier: Sync + Send + 'static {
     type Transaction: Transaction;
 
     fn create(
         &self,
         transaction: &mut Self::Transaction,
-        stellar_host: &StellarHost,
+        auth_host: &AuthHost,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn update(
         &self,
         transaction: &mut Self::Transaction,
-        stellar_host: &StellarHost,
+        auth_host: &AuthHost,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
-pub trait DependOnStellarHostModifier: Sync + Send + DependOnDatabaseConnection {
-    type StellarHostModifier: StellarHostModifier<
+pub trait DependOnAuthHostModifier: Sync + Send + DependOnDatabaseConnection {
+    type AuthHostModifier: AuthHostModifier<
         Transaction = <Self::DatabaseConnection as DatabaseConnection>::Transaction,
     >;
 
-    fn stellar_host_modifier(&self) -> &Self::StellarHostModifier;
+    fn auth_host_modifier(&self) -> &Self::AuthHostModifier;
 }

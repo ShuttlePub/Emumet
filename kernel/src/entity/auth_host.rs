@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use vodca::{Newln, References};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, References, Newln, Serialize, Deserialize)]
-pub struct StellarHost {
-    id: StellarHostId,
-    url: StellarHostUrl,
+pub struct AuthHost {
+    id: AuthHostId,
+    url: AuthHostUrl,
 }

@@ -3,8 +3,8 @@ use crate::ConvertError;
 use kernel::interfaces::modify::{AccountModifier, DependOnAccountModifier};
 use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
 use kernel::prelude::entity::{
-    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey, DeletedAt,
-    EventVersion, Nanoid, StellarAccountId,
+    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
+    AuthAccountId, DeletedAt, EventVersion, Nanoid,
 };
 use kernel::KernelError;
 use sqlx::types::time::OffsetDateTime;
@@ -64,10 +64,10 @@ impl AccountQuery for PostgresAccountRepository {
         .map(|option| option.map(Account::from))
     }
 
-    async fn find_by_stellar_id(
+    async fn find_by_auth_id(
         &self,
         transaction: &mut Self::Transaction,
-        stellar_id: &StellarAccountId,
+        auth_id: &AuthAccountId,
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         let con: &mut PgConnection = transaction;
         sqlx::query_as::<_, AccountRow>(
@@ -75,11 +75,11 @@ impl AccountQuery for PostgresAccountRepository {
             r#"
             SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid
             FROM accounts
-            INNER JOIN stellar_emumet_accounts ON stellar_emumet_accounts.emumet_id = accounts.id
-            WHERE stellar_emumet_accounts.stellar_id = $1 AND deleted_at IS NULL
+            INNER JOIN auth_emumet_accounts ON auth_emumet_accounts.emumet_id = accounts.id
+            WHERE auth_emumet_accounts.auth_id = $1 AND deleted_at IS NULL
             "#,
         )
-        .bind(stellar_id.as_ref())
+        .bind(auth_id.as_ref())
         .fetch_all(con)
         .await
         .convert_error()
@@ -210,7 +210,7 @@ mod test {
         use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Nanoid, StellarAccountId,
+            AuthAccountId, EventVersion, Nanoid,
         };
         use sqlx::types::Uuid;
 
@@ -244,13 +244,13 @@ mod test {
         }
 
         #[tokio::test]
-        async fn find_by_stellar_id() {
+        async fn find_by_auth_id() {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let accounts = database
                 .account_query()
-                .find_by_stellar_id(&mut transaction, &StellarAccountId::new(Uuid::now_v7()))
+                .find_by_auth_id(&mut transaction, &AuthAccountId::new(Uuid::now_v7()))
                 .await
                 .unwrap();
             assert!(accounts.is_empty());

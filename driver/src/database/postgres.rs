@@ -1,12 +1,12 @@
 mod account;
+mod auth_account;
+mod auth_host;
 mod event;
 mod follow;
 mod image;
 mod metadata;
 mod profile;
 mod remote_account;
-mod stellar_account;
-mod stellar_host;
 
 use crate::database::env;
 use crate::ConvertError;

@@ -53,31 +53,29 @@ Table metadatas {
 
 Ref: metadatas.account_id > accounts.id [delete: cascade]
 
-Table stellar_hosts {
+Table auth_hosts {
     id UUID [not null, pk]
     url TEXT [not null, unique]
 }
 
-Table stellar_accounts {
+Table auth_accounts {
     id UUID [not null, pk]
     host_id UUID [not null]
     client_id TEXT [not null]
-    access_token TEXT [not null]
-    refresh_token TEXT [not null]
     version UUID [not null]
 }
 
-Ref: stellar_accounts.host_id > stellar_hosts.id [delete: cascade]
+Ref: auth_accounts.host_id > auth_hosts.id [delete: cascade]
 
-Table stellar_emumet_accounts {
+Table auth_emumet_accounts {
     emumet_id UUID [not null]
-    stellar_id UUID [not null, ref: > stellar_accounts.id]
+    auth_id UUID [not null, ref: > auth_accounts.id]
     Indexes {
-        (emumet_id, stellar_id) [pk]
+        (emumet_id, auth_id) [pk]
     }
 }
 
-Ref: stellar_emumet_accounts.emumet_id > accounts.id [delete: cascade]
+Ref: auth_emumet_accounts.emumet_id > accounts.id [delete: cascade]
 
 Table follows {
     id UUID [not null, pk]
@@ -107,14 +105,14 @@ Table images {
 // }
 // 
 // Table moderators {
-//     stellar_id UUID [not null, pk, ref: > stellar_accounts.id]
+//     auth_id UUID [not null, pk, ref: > auth_accounts.id]
 //     role_id UUID [not null, pk, ref: > moderator_roles.id]
 // }
 // 
 // Table account_reports {
 //     id UUID [not null, pk]
 //     target_id UUID [not null, ref: > accounts.id]
-//     reported_id UUID [not null, ref: > stellar_accounts.id]
+//     reported_id UUID [not null, ref: > auth_accounts.id]
 //     type TEXT [not null]
 //     comment TEXT [not null]
 //     created_at TIMESTAMPTZ [not null]
@@ -125,7 +123,7 @@ Table images {
 // Table account_moderations {
 //     id UUID [not null, pk]
 //     target_id UUID [not null, ref: > accounts.id]
-//     moderator_id UUID [not null, ref: > stellar_accounts.id]
+//     moderator_id UUID [not null, ref: > auth_accounts.id]
 //     type TEXT [not null]
 //     comment TEXT [not null]
 //     created_at TIMESTAMPTZ [not null]
@@ -139,17 +137,17 @@ Table images {
 //     }
 // }
 // 
-// Table stellar_account_moderations {
+// Table auth_account_moderations {
 //     id UUID [not null, pk]
-//     target_id UUID [not null, ref: > stellar_accounts.id]
-//     moderator_id UUID [not null, ref: > stellar_accounts.id]
+//     target_id UUID [not null, ref: > auth_accounts.id]
+//     moderator_id UUID [not null, ref: > auth_accounts.id]
 //     type TEXT [not null]
 //     comment TEXT [not null]
 //     created_at TIMESTAMPTZ [not null]
 //     closed_at TIMESTAMPTZ
 // }
-// Table stellar_account_moderation_reports {
-//     moderation_id UUID [not null, ref: > stellar_account_moderations.id]
+// Table auth_account_moderation_reports {
+//     moderation_id UUID [not null, ref: > auth_account_moderations.id]
 //     report_id UUID [not null, ref: > account_reports.id]
 //     Indexes {
 //         (moderation_id, report_id) [pk]
@@ -158,8 +156,8 @@ Table images {
 // 
 // Table host_moderations {
 //     id UUID [not null, pk]
-//     host_id UUID [not null, ref: > stellar_hosts.id]
-//     moderator_id UUID [not null, ref: > stellar_accounts.id]
+//     host_id UUID [not null, ref: > auth_hosts.id]
+//     moderator_id UUID [not null, ref: > auth_accounts.id]
 //     type TEXT [not null]
 //     comment TEXT [not null]
 //     created_at TIMESTAMPTZ [not null]
