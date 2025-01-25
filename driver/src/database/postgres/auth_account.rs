@@ -118,7 +118,7 @@ impl AuthAccountModifier for PostgresAuthAccountRepository {
         sqlx::query(
             //language=postgresql
             r#"
-            UPDATE auth_accounts SET host_id = $2, client_id = $3, version = $6
+            UPDATE auth_accounts SET host_id = $2, client_id = $3, version = $4
             WHERE id = $1
             "#,
         )
