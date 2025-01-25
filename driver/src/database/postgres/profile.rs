@@ -154,7 +154,8 @@ mod test {
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+            CreatedAt, EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId,
+            ProfileSummary,
         };
 
         use crate::database::PostgresDatabase;
@@ -175,6 +176,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             let profile = Profile::new(
                 profile_id.clone(),
@@ -221,7 +223,8 @@ mod test {
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+            CreatedAt, EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId,
+            ProfileSummary,
         };
 
         use crate::database::PostgresDatabase;
@@ -242,6 +245,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             let profile = Profile::new(
                 profile_id,
@@ -286,6 +290,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             let profile = Profile::new(
                 profile_id.clone(),

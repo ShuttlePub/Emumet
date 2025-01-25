@@ -1,7 +1,7 @@
 use error_stack::Context;
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum KernelError {
     Concurrency,
     Timeout,

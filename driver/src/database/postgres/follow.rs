@@ -242,7 +242,7 @@ mod test {
         use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
+            CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
         };
         use uuid::Uuid;
 
@@ -260,6 +260,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()
@@ -276,6 +277,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()
@@ -340,6 +342,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()
@@ -356,6 +359,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()
@@ -416,7 +420,7 @@ mod test {
         use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
+            CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
         };
         use uuid::Uuid;
 
@@ -434,6 +438,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()
@@ -450,6 +455,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()
@@ -501,6 +507,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()
@@ -517,6 +524,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()
@@ -594,6 +602,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()
@@ -610,6 +619,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
             database
                 .account_modifier()

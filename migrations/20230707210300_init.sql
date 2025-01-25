@@ -1,6 +1,6 @@
 -- SQL dump generated using DBML (dbml.dbdiagram.io)
 -- Database: PostgreSQL
--- Generated at: 2025-01-25T03:59:23.453Z
+-- Generated at: 2025-01-25T10:07:34.134Z
 
 CREATE TABLE "event_streams" (
   "version" UUID NOT NULL,
@@ -18,7 +18,8 @@ CREATE TABLE "accounts" (
   "is_bot" BOOLEAN NOT NULL,
   "deleted_at" TIMESTAMPTZ,
   "version" UUID NOT NULL,
-  "nanoid" TEXT UNIQUE NOT NULL
+  "nanoid" TEXT UNIQUE NOT NULL,
+  "created_at" TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE "remote_accounts" (

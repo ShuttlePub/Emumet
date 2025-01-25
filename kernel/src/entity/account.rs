@@ -5,7 +5,8 @@ use serde::Serialize;
 use vodca::{Nameln, Newln, References};
 
 use crate::entity::{
-    CommandEnvelope, DeletedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion, Nanoid,
+    CommandEnvelope, CreatedAt, DeletedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion,
+    Nanoid,
 };
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -34,6 +35,7 @@ pub struct Account {
     deleted_at: Option<DeletedAt<Account>>,
     version: EventVersion<Account>,
     nanoid: Nanoid<Account>,
+    created_at: CreatedAt<Account>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Nameln, Serialize, Deserialize)]
@@ -120,6 +122,11 @@ impl EventApplier for Account {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::already_exists(entity)));
                 }
+                let created_at = if let Some(timestamp) = event.id.as_ref().get_timestamp() {
+                    CreatedAt::try_from(timestamp)?
+                } else {
+                    CreatedAt::now()
+                };
                 *entity = Some(Account {
                     id: AccountId::new(event.id),
                     name,
@@ -129,6 +136,7 @@ impl EventApplier for Account {
                     deleted_at: None,
                     version: event.version,
                     nanoid: nano_id,
+                    created_at,
                 });
             }
             AccountEvent::Updated { is_bot } => {
@@ -158,9 +166,10 @@ impl EventApplier for Account {
 mod test {
     use crate::entity::{
         Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-        EventEnvelope, EventVersion, Nanoid,
+        CreatedAt, EventEnvelope, EventVersion, Nanoid,
     };
     use crate::event::EventApplier;
+    use crate::KernelError;
     use uuid::Uuid;
 
     #[test]
@@ -197,7 +206,6 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn create_exist_account() {
         let id = AccountId::new(Uuid::now_v7());
         let name = AccountName::new("test");
@@ -214,6 +222,7 @@ mod test {
             None,
             EventVersion::new(Uuid::now_v7()),
             nano_id.clone(),
+            CreatedAt::now(),
         );
         let event = Account::create(
             id.clone(),
@@ -229,7 +238,8 @@ mod test {
             EventVersion::new(Uuid::now_v7()),
         );
         let mut account = Some(account);
-        Account::apply(&mut account, envelope).unwrap();
+        assert!(Account::apply(&mut account, envelope)
+            .is_err_and(|e| e.current_context() == &KernelError::Internal));
     }
 
     #[test]
@@ -249,6 +259,7 @@ mod test {
             None,
             EventVersion::new(Uuid::now_v7()),
             nano_id.clone(),
+            CreatedAt::now(),
         );
         let event = Account::update(id.clone(), AccountIsBot::new(true));
         let envelope = EventEnvelope::new(
@@ -265,7 +276,6 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn update_not_exist_account() {
         let id = AccountId::new(Uuid::now_v7());
         let event = Account::update(id.clone(), AccountIsBot::new(true));
@@ -275,7 +285,8 @@ mod test {
             EventVersion::new(Uuid::now_v7()),
         );
         let mut account = None;
-        Account::apply(&mut account, envelope).unwrap();
+        assert!(Account::apply(&mut account, envelope)
+            .is_err_and(|e| e.current_context() == &KernelError::Internal));
     }
 
     #[test]
@@ -295,6 +306,7 @@ mod test {
             None,
             EventVersion::new(Uuid::now_v7()),
             nano_id.clone(),
+            CreatedAt::now(),
         );
         let event = Account::delete(id.clone());
         let envelope = EventEnvelope::new(
@@ -311,7 +323,6 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn delete_not_exist_account() {
         let id = AccountId::new(Uuid::now_v7());
         let event = Account::delete(id.clone());
@@ -321,6 +332,7 @@ mod test {
             EventVersion::new(Uuid::now_v7()),
         );
         let mut account = None;
-        Account::apply(&mut account, envelope).unwrap();
+        assert!(Account::apply(&mut account, envelope)
+            .is_err_and(|e| e.current_context() == &KernelError::Internal));
     }
 }

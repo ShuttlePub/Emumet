@@ -16,6 +16,7 @@ Table accounts {
     deleted_at TIMESTAMPTZ
     version UUID [not null]
     nanoid TEXT [not null, unique]
+    created_at TIMESTAMPTZ [not null]
 }
 
 Table remote_accounts {

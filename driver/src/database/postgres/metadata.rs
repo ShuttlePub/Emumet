@@ -181,7 +181,7 @@ mod test {
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
+            CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
         };
         use uuid::Uuid;
 
@@ -201,6 +201,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
 
             database
@@ -246,6 +247,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
 
             database
@@ -301,7 +303,7 @@ mod test {
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
+            CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
         };
         use uuid::Uuid;
 
@@ -320,6 +322,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
 
             database
@@ -365,6 +368,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
 
             database
@@ -428,6 +432,7 @@ mod test {
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
+                CreatedAt::now(),
             );
 
             database
