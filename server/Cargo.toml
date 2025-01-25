@@ -8,6 +8,11 @@ authors.workspace = true
 
 [dependencies]
 time = { workspace = true }
+rand = "0.8"
+rand_chacha = "0.3"
+sha2 = "0.10"
+url = { version = "2.5.4", features = [] }
+dotenvy = { workspace = true}
 
 tracing = { workspace = true }
 tracing-appender = "0.2.3"
@@ -22,6 +27,7 @@ rikka-mq = { version = "0.1.1", features = ["redis", "tracing"] }
 error-stack = { workspace = true }
 
 vodca = { workspace = true }
+destructure = { workspace = true }
 serde = { workspace = true }
 
 application = { path = "../application" }

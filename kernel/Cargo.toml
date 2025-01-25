@@ -8,7 +8,7 @@ authors.workspace = true
 
 [dependencies]
 rand = "0.8"
-destructure = "0.5.6"
+destructure = { workspace = true }
 vodca = { workspace = true }
 serde = { workspace = true }
 uuid = { workspace = true }
