@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::hash::Hash;
-use std::ops::{Add, BitAnd};
+use std::ops::Add;
 
 struct Request<O>(HashSet<O>);
 
@@ -64,12 +64,10 @@ mod test {
 
     impl ToRequest<User, Role> for RoleManager {
         fn to_request(&self, target: &User) -> Request<Role> {
-            Request(
-                self.0.get(&target.id).map_or_else(
-                    || HashSet::new(),
-                    |role| vec![role.clone()].into_iter().collect::<HashSet<Role>>(),
-                ),
-            )
+            Request(self.0.get(&target.id).map_or_else(
+                HashSet::new,
+                |role| vec![role.clone()].into_iter().collect::<HashSet<Role>>(),
+            ))
         }
     }
 
@@ -96,16 +94,29 @@ mod test {
     fn test() {
         let mut role_manager = RoleManager(HashMap::new());
         let mut action_roles = ActionRoles(HashMap::new());
-        action_roles.0.insert(Action::Read, vec![Role::Admin, Role::User, Role::Guest].into_iter().collect::<HashSet<Role>>());
-        action_roles.0.insert(Action::Write, vec![Role::Admin, Role::User].into_iter().collect::<HashSet<Role>>());
-        action_roles.0.insert(Action::Delete, vec![Role::Admin].into_iter().collect::<HashSet<Role>>());
+        action_roles.0.insert(
+            Action::Read,
+            vec![Role::Admin, Role::User, Role::Guest]
+                .into_iter()
+                .collect::<HashSet<Role>>(),
+        );
+        action_roles.0.insert(
+            Action::Write,
+            vec![Role::Admin, Role::User]
+                .into_iter()
+                .collect::<HashSet<Role>>(),
+        );
+        action_roles.0.insert(
+            Action::Delete,
+            vec![Role::Admin].into_iter().collect::<HashSet<Role>>(),
+        );
 
         let user = User { id: 1 };
         role_manager.0.insert(user.id, Role::User);
 
         let request = role_manager.to_request(&user);
         let read = action_roles.to_permission(Action::Read);
-        let write = action_roles.to_permission(Action::Delete);
+        let write = action_roles.to_permission(Action::Write);
 
         let new_perm = read + write;
 
