@@ -20,10 +20,9 @@ impl DirectionConverter for Option<String> {
     }
 }
 
-/// ("/a/b/c", GET) -> `["/a:GET", "/a/b:GET", "/a/b/c:GET"]`
+/// ("/a/b/c", "GET") -> `["/:GET", "/a:GET", "/a/b:GET", "/a/b/c:GET"]`
 pub(super) fn to_permission_strings(path: &str, method: &str) -> Vec<String> {
     path.split('/')
-        .filter(|s| !s.is_empty())
         .scan(String::new(), |state, part| {
             if !state.is_empty() {
                 state.push('/');
@@ -43,7 +42,7 @@ mod test {
         let path = "/a/b/c";
         let method = "GET";
         let result = to_permission_strings(path, method);
-        let expected = vec!["/a:GET", "/a/b:GET", "/a/b/c:GET"];
+        let expected = vec!["/:GET", "/a:GET", "/a/b:GET", "/a/b/c:GET"];
         assert_eq!(result, expected);
     }
 }
