@@ -64,10 +64,9 @@ mod test {
 
     impl ToRequest<User, Role> for RoleManager {
         fn to_request(&self, target: &User) -> Request<Role> {
-            Request(self.0.get(&target.id).map_or_else(
-                HashSet::new,
-                |role| vec![role.clone()].into_iter().collect::<HashSet<Role>>(),
-            ))
+            Request(self.0.get(&target.id).map_or_else(HashSet::new, |role| {
+                vec![role.clone()].into_iter().collect::<HashSet<Role>>()
+            }))
         }
     }
 
