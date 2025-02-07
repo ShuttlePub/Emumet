@@ -5,3 +5,4 @@
 .env
 keycloak-data/*
 !keycloak-data/import
+logs
