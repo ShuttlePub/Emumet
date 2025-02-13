@@ -14,7 +14,11 @@ podman run --rm -it -v ./keycloak-data/h2:/opt/keycloak/data/h2:Z,U -v ./keycloa
 > - Url: http://localhost:18080
 > - ユーザー名: admin
 > - パスワード: admin
-> - realm: emumet
+> - Realm: emumet
+> - Client: myclient
+> - User: testuser
+> - UserPass: testuser
+> - RealmLoginTest: https://www.keycloak.org/app/
 
 ### Update realm data
 

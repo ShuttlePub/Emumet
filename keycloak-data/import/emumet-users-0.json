@@ -3,6 +3,8 @@
   "users" : [ {
     "id" : "0e2cb7da-8a19-4343-87e3-082b9032a652",
     "username" : "testuser",
+    "firstName" : "test",
+    "lastName" : "user",
     "email" : "testuser@example.com",
     "emailVerified" : false,
     "createdTimestamp" : 1738895015441,
