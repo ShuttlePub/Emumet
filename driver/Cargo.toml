@@ -22,3 +22,4 @@ kernel = { path = "../kernel" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "test-util"] }
+test-with.workspace = true

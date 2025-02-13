@@ -238,6 +238,7 @@ mod test {
         };
         use sqlx::types::Uuid;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -268,6 +269,7 @@ mod test {
             assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_auth_id() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -281,6 +283,7 @@ mod test {
             assert!(accounts.is_empty());
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_name() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -317,6 +320,7 @@ mod test {
                 .unwrap();
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_nanoid() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -366,6 +370,7 @@ mod test {
         use sqlx::types::time::OffsetDateTime;
         use sqlx::types::Uuid;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -396,6 +401,7 @@ mod test {
             assert_eq!(result.id(), account.id());
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -441,6 +447,7 @@ mod test {
             assert_eq!(result.as_ref().map(Account::id), Some(updated_account.id()));
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn delete() {
             let database = PostgresDatabase::new().await.unwrap();

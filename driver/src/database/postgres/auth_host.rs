@@ -146,6 +146,7 @@ mod test {
         use kernel::prelude::entity::{AuthHost, AuthHostId};
         use uuid::Uuid;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -167,6 +168,7 @@ mod test {
             assert_eq!(auth_host, found_auth_host);
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_url() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -198,6 +200,7 @@ mod test {
         use kernel::prelude::entity::{AuthHost, AuthHostId};
         use uuid::Uuid;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -219,6 +222,7 @@ mod test {
             assert_eq!(auth_host, found_auth_host);
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
             let database = PostgresDatabase::new().await.unwrap();

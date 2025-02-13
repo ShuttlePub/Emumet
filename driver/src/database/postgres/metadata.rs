@@ -185,6 +185,7 @@ mod test {
         };
         use uuid::Uuid;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -232,6 +233,7 @@ mod test {
             assert_eq!(found.as_ref().map(Metadata::id), Some(metadata.id()));
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_account_id() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -307,6 +309,7 @@ mod test {
         };
         use uuid::Uuid;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -353,6 +356,7 @@ mod test {
             assert_eq!(found.as_ref().map(Metadata::id), Some(metadata.id()));
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
             let database = PostgresDatabase::new().await.unwrap();
@@ -417,6 +421,7 @@ mod test {
             );
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn delete() {
             let database = PostgresDatabase::new().await.unwrap();

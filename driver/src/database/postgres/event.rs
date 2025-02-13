@@ -191,6 +191,7 @@ mod test {
 
         use crate::database::PostgresDatabase;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
             let db = PostgresDatabase::new().await.unwrap();
@@ -237,6 +238,7 @@ mod test {
             assert_eq!(&events[2].event, deleted_account.event());
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         #[should_panic]
         async fn find_by_id_with_version() {
@@ -291,6 +293,7 @@ mod test {
 
         use crate::database::PostgresDatabase;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn basic_creation() {
             let db = PostgresDatabase::new().await.unwrap();
