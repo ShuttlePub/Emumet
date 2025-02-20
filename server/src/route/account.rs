@@ -33,8 +33,8 @@ struct AccountResponse {
 
 #[derive(Debug, Serialize)]
 struct AccountsResponse {
-    first: String,
-    last: String,
+    first: Option<String>,
+    last: Option<String>,
     items: Vec<AccountResponse>,
 }
 
@@ -42,53 +42,49 @@ pub trait AccountRouter {
     fn route_account(self, instance: KeycloakAuthInstance) -> Self;
 }
 
+async fn get_accounts(
+    Extension(token): Extension<KeycloakToken<String>>,
+    State(module): State<AppModule>,
+    Query(GetAllAccountQuery {
+        direction,
+        limit,
+        cursor,
+    }): Query<GetAllAccountQuery>,
+    req: Request,
+) -> Result<Json<AccountsResponse>, ErrorStatus> {
+    expect_role!(&token, req);
+    let direction = direction.convert_to_direction()?;
+    let pagination = Pagination::new(limit, cursor, direction);
+    let result = module
+        .handler()
+        .pgpool()
+        .get_all_accounts(token.subject, pagination)
+        .await
+        .map_err(ErrorStatus::from)?
+        .ok_or(ErrorStatus::from(StatusCode::NOT_FOUND))?;
+    if result.is_empty() {
+        return Err(ErrorStatus::from(StatusCode::NOT_FOUND));
+    }
+    let response = AccountsResponse {
+        first: result.first().map(|account| account.nanoid.clone()),
+        last: result.last().map(|account| account.nanoid.clone()),
+        items: result
+            .into_iter()
+            .map(|account| AccountResponse {
+                id: account.nanoid,
+                name: account.name,
+                public_key: account.public_key,
+                is_bot: account.is_bot,
+                created_at: account.created_at,
+            })
+            .collect(),
+    };
+    Ok(Json(response))
+}
+
 impl AccountRouter for Router<AppModule> {
     fn route_account(self, instance: KeycloakAuthInstance) -> Self {
-        self.route(
-            "/accounts",
-            get(
-                |Extension(token): Extension<KeycloakToken<String>>,
-                 State(module): State<AppModule>,
-                 Query(GetAllAccountQuery {
-                     direction,
-                     limit,
-                     cursor,
-                 }): Query<GetAllAccountQuery>,
-                 req: Request| async move {
-                    expect_role!(&token, req);
-                    let direction = direction.convert_to_direction()?;
-                    let pagination = Pagination::new(limit, cursor, direction);
-                    let result = module
-                        .handler()
-                        .pgpool()
-                        .get_all_accounts(token.subject, pagination)
-                        .await
-                        .map_err(ErrorStatus::from)?;
-                    if result.is_empty() {
-                        return Err(ErrorStatus::from(StatusCode::NOT_FOUND));
-                    }
-                    let response = AccountsResponse {
-                        first: result
-                            .first()
-                            .map(|account| account.nanoid.clone())
-                            .unwrap(),
-                        last: result.last().map(|account| account.nanoid.clone()).unwrap(),
-                        items: result
-                            .into_iter()
-                            .map(|account| AccountResponse {
-                                id: account.nanoid,
-                                name: account.name,
-                                public_key: account.public_key,
-                                is_bot: account.is_bot,
-                                created_at: account.created_at,
-                            })
-                            .collect(),
-                    };
-                    Ok(Json(response))
-                },
-            ),
-        )
-        .layer(
+        self.route("/accounts", get(get_accounts)).layer(
             KeycloakAuthLayer::<String>::builder()
                 .instance(instance)
                 .passthrough_mode(PassthroughMode::Block)

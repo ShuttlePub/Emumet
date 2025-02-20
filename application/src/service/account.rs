@@ -18,12 +18,12 @@ pub trait GetAccountService:
             cursor,
             limit,
         }: Pagination<String>,
-    ) -> impl Future<Output = error_stack::Result<Vec<AccountDto>, KernelError>> {
+    ) -> impl Future<Output = error_stack::Result<Option<Vec<AccountDto>>, KernelError>> {
         async move {
             let auth_account = if let Some(auth_account) = get_auth_account(self, subject).await? {
                 auth_account
             } else {
-                return Ok(vec![]);
+                return Ok(None);
             };
             let mut transaction = self.database_connection().begin_transaction().await?;
             let accounts = self
@@ -39,7 +39,7 @@ pub trait GetAccountService:
                 None
             };
             let accounts = apply_pagination(accounts, limit, cursor, direction);
-            Ok(accounts.into_iter().map(AccountDto::from).collect())
+            Ok(Some(accounts.into_iter().map(AccountDto::from).collect()))
         }
     }
 }

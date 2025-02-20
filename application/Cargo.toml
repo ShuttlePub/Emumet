@@ -13,3 +13,10 @@ vodca = { workspace = true }
 error-stack = { workspace = true }
 
 kernel = { path = "../kernel" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "test-util"] }
+
+uuid.workspace = true
+
+driver.path = "../driver"
