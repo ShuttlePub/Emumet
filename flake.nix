@@ -21,16 +21,20 @@
         PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
       };
     in
-    with pkgs; rec {
+    with pkgs; {
       formatter = nixpkgs-fmt;
       packages.default = emumet;
-      devShells.default = mkShell {
+      devShells.default = mkShell rec {
         nativeBuildInputs = [ pkg-config ];
         buildInputs = [ openssl ];
         packages = [
           nodePackages.pnpm
           sqlx-cli
         ];
+        shellHook = ''
+          #export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="${pkgs.clang}/bin/clang"
+          #export CARGO_TARGET_X86_64-UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=${pkgs.mold-wrapped.override(old: { extraPackages = nativeBuildInputs ++ buildInputs; })}/bin/mold"
+        '';
       };
     });
 }
