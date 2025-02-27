@@ -1,18 +1,29 @@
 use crate::service::auth_account::get_auth_account;
 use crate::transfer::account::AccountDto;
+use crate::transfer::auth_account::AuthAccountInfo;
 use crate::transfer::pagination::{apply_pagination, Pagination};
 use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery, DependOnAuthAccountQuery};
+use kernel::interfaces::modify::{DependOnAuthAccountModifier, DependOnAuthHostModifier};
+use kernel::interfaces::query::{
+    AccountQuery, DependOnAccountQuery, DependOnAuthAccountQuery, DependOnAuthHostQuery,
+};
 use kernel::prelude::entity::{Account, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
 
 pub trait GetAccountService:
-    'static + Sync + Send + DependOnAccountQuery + DependOnAuthAccountQuery
+    'static
+    + Sync
+    + Send
+    + DependOnAccountQuery
+    + DependOnAuthAccountQuery
+    + DependOnAuthAccountModifier
+    + DependOnAuthHostQuery
+    + DependOnAuthHostModifier
 {
     fn get_all_accounts(
         &self,
-        subject: String,
+        account: AuthAccountInfo,
         Pagination {
             direction,
             cursor,
@@ -20,11 +31,7 @@ pub trait GetAccountService:
         }: Pagination<String>,
     ) -> impl Future<Output = error_stack::Result<Option<Vec<AccountDto>>, KernelError>> {
         async move {
-            let auth_account = if let Some(auth_account) = get_auth_account(self, subject).await? {
-                auth_account
-            } else {
-                return Ok(None);
-            };
+            let auth_account = get_auth_account(self, account).await?;
             let mut transaction = self.database_connection().begin_transaction().await?;
             let accounts = self
                 .account_query()
@@ -44,4 +51,12 @@ pub trait GetAccountService:
     }
 }
 
-impl<T> GetAccountService for T where T: 'static + DependOnAccountQuery + DependOnAuthAccountQuery {}
+impl<T> GetAccountService for T where
+    T: 'static
+        + DependOnAccountQuery
+        + DependOnAuthAccountQuery
+        + DependOnAuthAccountModifier
+        + DependOnAuthHostQuery
+        + DependOnAuthHostModifier
+{
+}

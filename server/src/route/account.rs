@@ -6,7 +6,7 @@ use application::service::account::GetAccountService;
 use application::transfer::pagination::Pagination;
 use axum::extract::{Query, Request, State};
 use axum::http::StatusCode;
-use axum::routing::get;
+use axum::routing::{delete, get, post};
 use axum::{Extension, Json, Router};
 use axum_keycloak_auth::decode::KeycloakToken;
 use axum_keycloak_auth::instance::KeycloakAuthInstance;
@@ -14,6 +14,7 @@ use axum_keycloak_auth::layer::KeycloakAuthLayer;
 use axum_keycloak_auth::PassthroughMode;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use crate::keycloak::KeycloakAuthAccount;
 
 #[derive(Debug, Deserialize)]
 struct GetAllAccountQuery {
@@ -53,12 +54,13 @@ async fn get_accounts(
     req: Request,
 ) -> Result<Json<AccountsResponse>, ErrorStatus> {
     expect_role!(&token, req);
+    let auth_info = KeycloakAuthAccount::from(token);
     let direction = direction.convert_to_direction()?;
     let pagination = Pagination::new(limit, cursor, direction);
     let result = module
         .handler()
         .pgpool()
-        .get_all_accounts(token.subject, pagination)
+        .get_all_accounts(auth_info.into(), pagination)
         .await
         .map_err(ErrorStatus::from)?
         .ok_or(ErrorStatus::from(StatusCode::NOT_FOUND))?;
@@ -84,12 +86,16 @@ async fn get_accounts(
 
 impl AccountRouter for Router<AppModule> {
     fn route_account(self, instance: KeycloakAuthInstance) -> Self {
-        self.route("/accounts", get(get_accounts)).layer(
-            KeycloakAuthLayer::<String>::builder()
-                .instance(instance)
-                .passthrough_mode(PassthroughMode::Block)
-                .expected_audiences(vec![String::from("account")])
-                .build(),
-        )
+        self.route("/accounts", get(get_accounts))
+            // .route("/accounts", post(todo!()))
+            // .route("/accounts/:id", get(todo!()))
+            // .route("/accounts/:id", delete(todo!()))
+            .layer(
+                KeycloakAuthLayer::<String>::builder()
+                    .instance(instance)
+                    .passthrough_mode(PassthroughMode::Block)
+                    .expected_audiences(vec![String::from("account")])
+                    .build(),
+            )
     }
 }

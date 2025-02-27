@@ -1,11 +1,18 @@
+use application::transfer::auth_account::AuthAccountInfo;
+use axum_keycloak_auth::decode::KeycloakToken;
 use axum_keycloak_auth::instance::{KeycloakAuthInstance, KeycloakConfig};
+use std::sync::LazyLock;
+use axum_keycloak_auth::role::Role;
 
 const KEYCLOAK_SERVER_KEY: &str = "KEYCLOAK_SERVER";
+static SERVER_URL: LazyLock<String> = LazyLock::new(|| {
+    dotenvy::var(KEYCLOAK_SERVER_KEY).unwrap_or_else(|_| "http://localhost:18080/".to_string())
+});
+
 const KEYCLOAK_REALM_KEY: &str = "KEYCLOAK_REALM";
 
 pub fn create_keycloak_instance() -> KeycloakAuthInstance {
-    let server =
-        dotenvy::var(KEYCLOAK_SERVER_KEY).unwrap_or_else(|_| "http://localhost:18080/".to_string());
+    let server = &*SERVER_URL;
     let realm = dotenvy::var(KEYCLOAK_REALM_KEY).unwrap_or_else(|_| "MyRealm".to_string());
     log::info!("Keycloak info: server={server}, realm={realm}");
     KeycloakAuthInstance::new(
@@ -14,6 +21,30 @@ pub fn create_keycloak_instance() -> KeycloakAuthInstance {
             .realm(realm)
             .build(),
     )
+}
+
+#[derive(Debug)]
+pub struct KeycloakAuthAccount {
+    host_url: String,
+    client_id: String,
+}
+
+impl<T: Role> From<KeycloakToken<T>> for KeycloakAuthAccount {
+    fn from(token: KeycloakToken<T>) -> Self {
+        Self {
+            host_url: SERVER_URL.clone(),
+            client_id: token.subject,
+        }
+    }
+}
+
+impl Into<AuthAccountInfo> for KeycloakAuthAccount {
+    fn into(self) -> AuthAccountInfo {
+        AuthAccountInfo {
+            host_url: self.host_url,
+            client_id: self.client_id,
+        }
+    }
 }
 
 #[macro_export]
