@@ -3,9 +3,12 @@ use crate::transfer::account::AccountDto;
 use crate::transfer::auth_account::AuthAccountInfo;
 use crate::transfer::pagination::{apply_pagination, Pagination};
 use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::modify::{DependOnAuthAccountModifier, DependOnAuthHostModifier};
+use kernel::interfaces::modify::{
+    DependOnAuthAccountModifier, DependOnAuthHostModifier, DependOnEventModifier,
+};
 use kernel::interfaces::query::{
     AccountQuery, DependOnAccountQuery, DependOnAuthAccountQuery, DependOnAuthHostQuery,
+    DependOnEventQuery,
 };
 use kernel::prelude::entity::{Account, Nanoid};
 use kernel::KernelError;
@@ -20,6 +23,8 @@ pub trait GetAccountService:
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
     + DependOnAuthHostModifier
+    + DependOnEventModifier
+    + DependOnEventQuery
 {
     fn get_all_accounts(
         &self,
@@ -58,5 +63,7 @@ impl<T> GetAccountService for T where
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery
         + DependOnAuthHostModifier
+        + DependOnEventModifier
+        + DependOnEventQuery
 {
 }

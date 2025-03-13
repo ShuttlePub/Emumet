@@ -1,16 +1,22 @@
 use crate::transfer::auth_account::AuthAccountInfo;
+use error_stack::Report;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::modify::{
-    AuthHostModifier, DependOnAuthAccountModifier, DependOnAuthHostModifier,
+    AuthAccountModifier, AuthHostModifier, DependOnAuthAccountModifier, DependOnAuthHostModifier,
+    DependOnEventModifier, EventModifier,
 };
 use kernel::interfaces::query::{
     AuthAccountQuery, AuthHostQuery, DependOnAuthAccountQuery, DependOnAuthHostQuery,
+    DependOnEventQuery, EventQuery,
 };
 use kernel::prelude::entity::{
-    AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
+    AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl, EventId,
 };
 use kernel::KernelError;
 
+/// Get an auth account by the host URL and client ID.
+/// If the auth account does not exist, it will be created.
 pub(crate) async fn get_auth_account<
     S: 'static
         + DependOnDatabaseConnection
@@ -18,6 +24,8 @@ pub(crate) async fn get_auth_account<
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery
         + DependOnAuthHostModifier
+        + DependOnEventModifier
+        + DependOnEventQuery
         + ?Sized,
 >(
     service: &S,
@@ -33,7 +41,34 @@ pub(crate) async fn get_auth_account<
         .find_by_client_id(&mut transaction, &client_id)
         .await?;
     let auth_account = if let Some(auth_account) = auth_account {
-        auth_account
+        // この辺の処理を共通化してUpdateAndGetを実装できるかもしれない
+        let event_id = EventId::from(auth_account.id().clone());
+        let events = service
+            .event_query()
+            .find_by_id(&mut transaction, &event_id, Some(auth_account.version()))
+            .await?;
+        if events
+            .last()
+            .map(|event| &event.version != auth_account.version())
+            .unwrap_or_else(|| false)
+        {
+            let mut auth_account = Some(auth_account);
+            for event in events {
+                AuthAccount::apply(&mut auth_account, event)?;
+            }
+            if let Some(auth_account) = auth_account {
+                service
+                    .auth_account_modifier()
+                    .update(&mut transaction, &auth_account)
+                    .await?;
+                auth_account
+            } else {
+                return Err(Report::new(KernelError::Internal)
+                    .attach_printable("Failed to get auth account"));
+            }
+        } else {
+            auth_account
+        }
     } else {
         let url = AuthHostUrl::new(host);
         let auth_host = service
@@ -51,8 +86,30 @@ pub(crate) async fn get_auth_account<
             auth_host
         };
         let host_id = auth_host.into_destruct().id;
-        let auth_account = AuthAccount::create(AuthAccountId::default(), host_id, client_id);
-        todo!()
+        let create_command = AuthAccount::create(AuthAccountId::default(), host_id, client_id);
+        service
+            .event_modifier()
+            .handle(&mut transaction, &create_command)
+            .await?;
+        let event_id = create_command.id();
+        let events = service
+            .event_query()
+            .find_by_id(&mut transaction, event_id, None)
+            .await?;
+        let mut auth_account = None;
+        for event in events {
+            AuthAccount::apply(&mut auth_account, event)?;
+        }
+        if let Some(auth_account) = auth_account {
+            service
+                .auth_account_modifier()
+                .create(&mut transaction, &auth_account)
+                .await?;
+            auth_account
+        } else {
+            return Err(Report::new(KernelError::Internal)
+                .attach_printable("Failed to create auth account"));
+        }
     };
     Ok(auth_account)
 }
