@@ -1,8 +1,8 @@
 use application::transfer::auth_account::AuthAccountInfo;
 use axum_keycloak_auth::decode::KeycloakToken;
 use axum_keycloak_auth::instance::{KeycloakAuthInstance, KeycloakConfig};
-use std::sync::LazyLock;
 use axum_keycloak_auth::role::Role;
+use std::sync::LazyLock;
 
 const KEYCLOAK_SERVER_KEY: &str = "KEYCLOAK_SERVER";
 static SERVER_URL: LazyLock<String> = LazyLock::new(|| {
@@ -38,11 +38,11 @@ impl<T: Role> From<KeycloakToken<T>> for KeycloakAuthAccount {
     }
 }
 
-impl Into<AuthAccountInfo> for KeycloakAuthAccount {
-    fn into(self) -> AuthAccountInfo {
+impl From<KeycloakAuthAccount> for AuthAccountInfo {
+    fn from(val: KeycloakAuthAccount) -> Self {
         AuthAccountInfo {
-            host_url: self.host_url,
-            client_id: self.client_id,
+            host_url: val.host_url,
+            client_id: val.client_id,
         }
     }
 }
