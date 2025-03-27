@@ -16,6 +16,7 @@ uuid = { workspace = true }
 time = { workspace = true }
 async-trait = "0.1"
 
+vodca.workspace = true
 error-stack = { workspace = true }
 
 kernel = { path = "../kernel" }
