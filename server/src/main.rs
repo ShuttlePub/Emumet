@@ -1,3 +1,4 @@
+mod applier;
 mod error;
 mod handler;
 mod keycloak;

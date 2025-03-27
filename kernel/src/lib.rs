@@ -4,6 +4,7 @@ mod error;
 mod event;
 mod modify;
 mod query;
+mod signal;
 
 pub use self::error::*;
 
@@ -27,5 +28,9 @@ pub mod interfaces {
     }
     pub mod event {
         pub use crate::event::*;
+    }
+
+    pub mod signal {
+        pub use crate::signal::*;
     }
 }

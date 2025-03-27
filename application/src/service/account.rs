@@ -3,14 +3,16 @@ use crate::transfer::account::AccountDto;
 use crate::transfer::auth_account::AuthAccountInfo;
 use crate::transfer::pagination::{apply_pagination, Pagination};
 use kernel::interfaces::database::DatabaseConnection;
+use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::modify::{
-    DependOnAuthAccountModifier, DependOnAuthHostModifier, DependOnEventModifier,
+    AccountModifier, DependOnAccountModifier, DependOnAuthAccountModifier,
+    DependOnAuthHostModifier, DependOnEventModifier,
 };
 use kernel::interfaces::query::{
     AccountQuery, DependOnAccountQuery, DependOnAuthAccountQuery, DependOnAuthHostQuery,
-    DependOnEventQuery,
+    DependOnEventQuery, EventQuery,
 };
-use kernel::prelude::entity::{Account, Nanoid};
+use kernel::prelude::entity::{Account, AccountId, EventId, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
 
@@ -65,5 +67,62 @@ impl<T> GetAccountService for T where
         + DependOnAuthHostModifier
         + DependOnEventModifier
         + DependOnEventQuery
+{
+}
+
+pub trait UpdateAccountService:
+    'static
+    + DependOnAccountQuery
+    + DependOnAccountModifier
+    + DependOnEventQuery
+    + DependOnEventModifier
+{
+    fn update_account(
+        &self,
+        account_id: AccountId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> {
+        async move {
+            let mut transaction = self.database_connection().begin_transaction().await?;
+            let account = self
+                .account_query()
+                .find_by_id(&mut transaction, &account_id)
+                .await?;
+            if let Some(account) = account {
+                let event_id = EventId::from(account_id.clone());
+                let events = self
+                    .event_query()
+                    .find_by_id(&mut transaction, &event_id, Some(account.version()))
+                    .await?;
+                if events.is_empty() {
+                    return Ok(());
+                }
+                let mut account = Some(account);
+                for event in events {
+                    Account::apply(&mut account, event)?;
+                }
+                if let Some(account) = account {
+                    self.account_modifier()
+                        .update(&mut transaction, &account)
+                        .await?;
+                } else {
+                    self.account_modifier()
+                        .delete(&mut transaction, &account_id)
+                        .await?;
+                }
+                Ok(())
+            } else {
+                Err(error_stack::Report::new(KernelError::Internal)
+                    .attach_printable(format!("Failed to get target account: {account_id:?}")))
+            }
+        }
+    }
+}
+
+impl<T> UpdateAccountService for T where
+    T: 'static
+        + DependOnAccountQuery
+        + DependOnAccountModifier
+        + DependOnEventQuery
+        + DependOnEventModifier
 {
 }
