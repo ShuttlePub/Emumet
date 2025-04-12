@@ -1,4 +1,4 @@
-use crate::handler::AppModule;
+use crate::handler::Handler;
 use application::service::account::UpdateAccountService;
 use error_stack::ResultExt;
 use kernel::interfaces::signal::Signal;
@@ -9,21 +9,21 @@ use rikka_mq::define::redis::mq::RedisMessageQueue;
 use rikka_mq::error::ErrorOperation;
 use rikka_mq::info::QueueInfo;
 use rikka_mq::mq::MessageQueue;
+use std::sync::Arc;
 use uuid::Uuid;
 
-struct AccountApplier(RedisMessageQueue<AppModule, Uuid, AccountId>);
+pub(crate) struct AccountApplier(RedisMessageQueue<Arc<Handler>, Uuid, AccountId>);
 
 impl AccountApplier {
-    fn new(module: AppModule) -> Self {
+    pub fn new(handler: Arc<Handler>) -> Self {
         let queue = RedisMessageQueue::new(
-            module.handler().redis().pool().clone(),
-            module.clone(),
+            handler.redis().pool().clone(),
+            handler,
             "account_applier".to_string(),
             MQConfig::default(),
             Uuid::new_v4,
-            |module: AppModule, id: AccountId| async move {
-                module
-                    .handler()
+            |handler: Arc<Handler>, id: AccountId| async move {
+                handler
                     .pgpool()
                     .update_account(id)
                     .await

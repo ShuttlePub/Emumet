@@ -14,6 +14,7 @@ use axum_keycloak_auth::instance::KeycloakAuthInstance;
 use axum_keycloak_auth::layer::KeycloakAuthLayer;
 use axum_keycloak_auth::PassthroughMode;
 use serde::{Deserialize, Serialize};
+use std::ops::Deref;
 use time::OffsetDateTime;
 
 #[derive(Debug, Deserialize)]
@@ -60,7 +61,11 @@ async fn get_accounts(
     let result = module
         .handler()
         .pgpool()
-        .get_all_accounts(auth_info.into(), pagination)
+        .get_all_accounts(
+            module.applier_container().deref(),
+            auth_info.into(),
+            pagination,
+        )
         .await
         .map_err(ErrorStatus::from)?
         .ok_or(ErrorStatus::from(StatusCode::NOT_FOUND))?;

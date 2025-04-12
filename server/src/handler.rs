@@ -1,3 +1,4 @@
+use crate::applier::ApplierContainer;
 use driver::database::{PostgresDatabase, RedisDatabase};
 use kernel::KernelError;
 use std::sync::Arc;
@@ -6,12 +7,17 @@ use vodca::References;
 #[derive(Clone, References)]
 pub struct AppModule {
     handler: Arc<Handler>,
+    applier_container: Arc<ApplierContainer>,
 }
 
 impl AppModule {
     pub async fn new() -> error_stack::Result<Self, KernelError> {
         let handler = Arc::new(Handler::init().await?);
-        Ok(Self { handler })
+        let applier_container = Arc::new(ApplierContainer::new(handler.clone()));
+        Ok(Self {
+            handler,
+            applier_container,
+        })
     }
 }
 

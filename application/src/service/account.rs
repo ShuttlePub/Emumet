@@ -12,7 +12,8 @@ use kernel::interfaces::query::{
     AccountQuery, DependOnAccountQuery, DependOnAuthAccountQuery, DependOnAuthHostQuery,
     DependOnEventQuery, EventQuery,
 };
-use kernel::prelude::entity::{Account, AccountId, EventId, Nanoid};
+use kernel::interfaces::signal::Signal;
+use kernel::prelude::entity::{Account, AccountId, AuthAccountId, EventId, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
 
@@ -30,6 +31,7 @@ pub trait GetAccountService:
 {
     fn get_all_accounts(
         &self,
+        signal: &impl Signal<AuthAccountId>,
         account: AuthAccountInfo,
         Pagination {
             direction,
@@ -38,7 +40,7 @@ pub trait GetAccountService:
         }: Pagination<String>,
     ) -> impl Future<Output = error_stack::Result<Option<Vec<AccountDto>>, KernelError>> {
         async move {
-            let auth_account = get_auth_account(self, account).await?;
+            let auth_account = get_auth_account(self, signal, account).await?;
             let mut transaction = self.database_connection().begin_transaction().await?;
             let accounts = self
                 .account_query()
