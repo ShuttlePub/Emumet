@@ -90,16 +90,48 @@ impl DependOnEventQuery for PostgresDatabase {
 impl EventModifier for PostgresEventRepository {
     type Transaction = PostgresConnection;
 
-    async fn handle<Event: Serialize, Entity>(
+    async fn persist<Event: Serialize, Entity>(
         &self,
         transaction: &mut Self::Transaction,
-        event: &CommandEnvelope<Event, Entity>,
+        command: &CommandEnvelope<Event, Entity>,
+    ) -> error_stack::Result<(), KernelError> {
+        self.persist_internal(transaction, command, Uuid::now_v7())
+            .await?;
+        Ok(())
+    }
+
+    async fn persist_and_transform<Event: Serialize + Send, Entity: Send>(
+        &self,
+        transaction: &mut Self::Transaction,
+        command: CommandEnvelope<Event, Entity>,
+    ) -> error_stack::Result<EventEnvelope<Event, Entity>, KernelError> {
+        let version = Uuid::now_v7();
+
+        self.persist_internal(transaction, &command, version)
+            .await?;
+
+        let command = command.into_destruct();
+        Ok(EventEnvelope::new(
+            command.id,
+            command.event,
+            EventVersion::new(version),
+        ))
+    }
+}
+
+impl PostgresEventRepository {
+    async fn persist_internal<Event: Serialize, Entity>(
+        &self,
+        transaction: &mut PostgresConnection,
+        command: &CommandEnvelope<Event, Entity>,
+        version: Uuid,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = transaction;
 
-        let event_name = event.event_name();
-        let version = event.prev_version().as_ref();
-        if let Some(prev_version) = version {
+        // Validation logic
+        let event_name = command.event_name();
+        let prev_version = command.prev_version().as_ref();
+        if let Some(prev_version) = prev_version {
             match prev_version {
                 KnownEventVersion::Nothing => {
                     let amount = sqlx::query_as::<_, CountRow>(
@@ -110,13 +142,13 @@ impl EventModifier for PostgresEventRepository {
                     WHERE id = $1
                     "#,
                     )
-                    .bind(event.id().as_ref())
+                    .bind(command.id().as_ref())
                     .fetch_one(&mut *con)
                     .await
                     .convert_error()?;
                     if amount.count != 0 {
                         return Err(Report::new(KernelError::Concurrency).attach_printable(
-                            format!("Event {} already exists", event.id().as_ref()),
+                            format!("Event {} already exists", command.id().as_ref()),
                         ));
                     }
                 }
@@ -131,7 +163,7 @@ impl EventModifier for PostgresEventRepository {
                         LIMIT 1
                         "#,
                     )
-                    .bind(event.id().as_ref())
+                    .bind(command.id().as_ref())
                     .fetch_optional(&mut *con)
                     .await
                     .convert_error()?;
@@ -142,7 +174,7 @@ impl EventModifier for PostgresEventRepository {
                         return Err(Report::new(KernelError::Concurrency).attach_printable(
                             format!(
                                 "Event {} version {} already exists",
-                                event.id().as_ref(),
+                                command.id().as_ref(),
                                 prev_version.as_ref()
                             ),
                         ));
@@ -150,6 +182,8 @@ impl EventModifier for PostgresEventRepository {
                 }
             };
         }
+
+        // Insertion logic
         sqlx::query(
             //language=postgresql
             r#"
@@ -157,13 +191,14 @@ impl EventModifier for PostgresEventRepository {
                 VALUES ($1, $2, $3, $4)
                 "#,
         )
-        .bind(Uuid::now_v7())
-        .bind(event.id().as_ref())
+        .bind(version)
+        .bind(command.id().as_ref())
         .bind(event_name)
-        .bind(serde_json::to_value(event.event()).convert_error()?)
+        .bind(serde_json::to_value(command.event()).convert_error()?)
         .execute(con)
         .await
         .convert_error()?;
+
         Ok(())
     }
 }
@@ -216,15 +251,15 @@ mod test {
             let deleted_account = Account::delete(account_id.clone());
 
             db.event_modifier()
-                .handle(&mut transaction, &created_account)
+                .persist(&mut transaction, &created_account)
                 .await
                 .unwrap();
             db.event_modifier()
-                .handle(&mut transaction, &updated_account)
+                .persist(&mut transaction, &updated_account)
                 .await
                 .unwrap();
             db.event_modifier()
-                .handle(&mut transaction, &deleted_account)
+                .persist(&mut transaction, &deleted_account)
                 .await
                 .unwrap();
             let events = db
@@ -256,11 +291,11 @@ mod test {
             );
             let updated_account = Account::update(account_id.clone(), AccountIsBot::new(true));
             db.event_modifier()
-                .handle(&mut transaction, &created_account)
+                .persist(&mut transaction, &created_account)
                 .await
                 .unwrap();
             db.event_modifier()
-                .handle(&mut transaction, &updated_account)
+                .persist(&mut transaction, &updated_account)
                 .await
                 .unwrap();
 
@@ -308,7 +343,7 @@ mod test {
                 Nanoid::default(),
             );
             db.event_modifier()
-                .handle(&mut transaction, &created_account)
+                .persist(&mut transaction, &created_account)
                 .await
                 .unwrap();
             let events = db
@@ -317,6 +352,42 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn persist_and_transform_test() {
+            let db = PostgresDatabase::new().await.unwrap();
+            let mut transaction = db.begin_transaction().await.unwrap();
+            let account_id = AccountId::new(Uuid::now_v7());
+            let created_account = Account::create(
+                account_id.clone(),
+                AccountName::new("test"),
+                AccountPrivateKey::new("test"),
+                AccountPublicKey::new("test"),
+                AccountIsBot::new(false),
+                Nanoid::default(),
+            );
+
+            // Test persist_and_transform
+            let event_envelope = db
+                .event_modifier()
+                .persist_and_transform(&mut transaction, created_account.clone())
+                .await
+                .unwrap();
+
+            // Verify the returned envelope
+            assert_eq!(event_envelope.id, EventId::from(account_id.clone()));
+            assert_eq!(&event_envelope.event, created_account.event());
+
+            // Verify it was persisted
+            let events = db
+                .event_query()
+                .find_by_id(&mut transaction, &EventId::from(account_id), None)
+                .await
+                .unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(&events[0].event, created_account.event());
         }
     }
 }

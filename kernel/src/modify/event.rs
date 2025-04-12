@@ -1,5 +1,5 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
-use crate::entity::CommandEnvelope;
+use crate::entity::{CommandEnvelope, EventEnvelope};
 use crate::KernelError;
 use serde::Serialize;
 use std::future::Future;
@@ -7,11 +7,17 @@ use std::future::Future;
 pub trait EventModifier: 'static + Sync + Send {
     type Transaction: Transaction;
 
-    fn handle<Event: Serialize + Sync, Entity: Sync>(
+    fn persist<Event: Serialize + Sync, Entity: Sync>(
         &self,
         transaction: &mut Self::Transaction,
-        event: &CommandEnvelope<Event, Entity>,
+        command: &CommandEnvelope<Event, Entity>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn persist_and_transform<Event: Serialize + Sync + Send, Entity: Sync + Send>(
+        &self,
+        transaction: &mut Self::Transaction,
+        command: CommandEnvelope<Event, Entity>,
+    ) -> impl Future<Output = error_stack::Result<EventEnvelope<Event, Entity>, KernelError>> + Send;
 }
 
 pub trait DependOnEventModifier: Sync + Send + DependOnDatabaseConnection {

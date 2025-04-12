@@ -87,19 +87,12 @@ pub(crate) async fn get_auth_account<
         };
         let host_id = auth_host.into_destruct().id;
         let create_command = AuthAccount::create(AuthAccountId::default(), host_id, client_id);
-        service
+        let create_event = service
             .event_modifier()
-            .handle(&mut transaction, &create_command)
-            .await?;
-        let event_id = create_command.id();
-        let events = service
-            .event_query()
-            .find_by_id(&mut transaction, event_id, None)
+            .persist_and_transform(&mut transaction, create_command)
             .await?;
         let mut auth_account = None;
-        for event in events {
-            AuthAccount::apply(&mut auth_account, event)?;
-        }
+        AuthAccount::apply(&mut auth_account, create_event)?;
         if let Some(auth_account) = auth_account {
             service
                 .auth_account_modifier()
