@@ -1,20 +1,26 @@
+use crate::crypto::{FilePasswordProvider, KeyPairGenerator, PasswordProvider, Rsa2048Generator};
 use crate::service::auth_account::get_auth_account;
 use crate::transfer::account::AccountDto;
 use crate::transfer::auth_account::AuthAccountInfo;
 use crate::transfer::pagination::{apply_pagination, Pagination};
+use error_stack::Report;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::modify::{
     AccountModifier, DependOnAccountModifier, DependOnAuthAccountModifier,
-    DependOnAuthHostModifier, DependOnEventModifier,
+    DependOnAuthHostModifier, DependOnEventModifier, EventModifier,
 };
 use kernel::interfaces::query::{
     AccountQuery, DependOnAccountQuery, DependOnAuthAccountQuery, DependOnAuthHostQuery,
     DependOnEventQuery, EventQuery,
 };
 use kernel::interfaces::signal::Signal;
-use kernel::prelude::entity::{Account, AccountId, AuthAccountId, EventId, Nanoid};
+use kernel::prelude::entity::{
+    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
+    AuthAccountId, EventId, Nanoid,
+};
 use kernel::KernelError;
+use serde_json;
 use std::future::Future;
 
 pub trait GetAccountService:
@@ -58,9 +64,145 @@ pub trait GetAccountService:
             Ok(Some(accounts.into_iter().map(AccountDto::from).collect()))
         }
     }
+
+    fn get_account_by_id(
+        &self,
+        signal: &impl Signal<AuthAccountId>,
+        auth_info: AuthAccountInfo,
+        account_id: String,
+    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> {
+        async move {
+            let auth_account = get_auth_account(self, signal, auth_info).await?;
+            let mut transaction = self.database_connection().begin_transaction().await?;
+
+            // Nanoidからアカウントを検索
+            let nanoid = Nanoid::<Account>::new(account_id);
+            let account = self
+                .account_query()
+                .find_by_nanoid(&mut transaction, &nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Account not found with nanoid: {}",
+                        nanoid.as_ref()
+                    ))
+                })?;
+
+            // 権限チェック (認証アカウントに紐づくアカウントのみアクセス可能)
+            let auth_account_id = auth_account.id();
+            let accounts = self
+                .account_query()
+                .find_by_auth_id(&mut transaction, auth_account_id)
+                .await?;
+
+            let found = accounts.iter().any(|a| a.id() == account.id());
+            if !found {
+                return Err(Report::new(KernelError::PermissionDenied)
+                    .attach_printable("This account does not belong to the authenticated user"));
+            }
+
+            Ok(AccountDto::from(account))
+        }
+    }
 }
 
 impl<T> GetAccountService for T where
+    T: 'static
+        + DependOnAccountQuery
+        + DependOnAuthAccountQuery
+        + DependOnAuthAccountModifier
+        + DependOnAuthHostQuery
+        + DependOnAuthHostModifier
+        + DependOnEventModifier
+        + DependOnEventQuery
+{
+}
+
+pub trait CreateAccountService:
+    'static
+    + Sync
+    + Send
+    + DependOnAccountQuery
+    + DependOnAuthAccountQuery
+    + DependOnAuthAccountModifier
+    + DependOnAuthHostQuery
+    + DependOnAuthHostModifier
+    + DependOnEventModifier
+    + DependOnEventQuery
+{
+    fn create_account<S>(
+        &self,
+        signal: &S,
+        auth_info: AuthAccountInfo,
+        name: String,
+        is_bot: bool,
+    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>>
+    where
+        S: Signal<AuthAccountId> + Signal<AccountId> + Send + Sync + 'static,
+    {
+        async move {
+            // 認証アカウントを確認
+            let _auth_account = get_auth_account(self, signal, auth_info).await?;
+            let mut transaction = self.database_connection().begin_transaction().await?;
+
+            // アカウントID生成
+            let account_id = AccountId::default();
+
+            // 鍵ペア生成 (RSA-2048, Argon2id + AES-GCM暗号化)
+            let password_provider = FilePasswordProvider::new();
+            let master_password = password_provider.get_password()?;
+
+            let generator = Rsa2048Generator::new();
+            let key_pair = generator.generate(&master_password)?;
+
+            // 暗号化された秘密鍵をJSON文字列として保存
+            let encrypted_private_key_json =
+                serde_json::to_string(&key_pair.encrypted_private_key).map_err(|e| {
+                    Report::new(KernelError::Internal)
+                        .attach_printable(format!("Failed to serialize encrypted private key: {e}"))
+                })?;
+
+            let private_key = AccountPrivateKey::new(encrypted_private_key_json);
+            let public_key = AccountPublicKey::new(key_pair.public_key_pem);
+
+            // アカウント名とbot状態設定
+            let account_name = AccountName::new(name);
+            let account_is_bot = AccountIsBot::new(is_bot);
+
+            // NanoIDの生成
+            let nanoid = Nanoid::<Account>::default();
+
+            // アカウント作成イベントの生成と保存
+            let create_command = Account::create(
+                account_id.clone(),
+                account_name,
+                private_key,
+                public_key,
+                account_is_bot,
+                nanoid,
+            );
+
+            let create_event = self
+                .event_modifier()
+                .persist_and_transform(&mut transaction, create_command)
+                .await?;
+            signal.emit(account_id).await?;
+
+            // イベントの適用
+            let mut account = None;
+            Account::apply(&mut account, create_event)?;
+
+            let account = account.ok_or_else(|| {
+                Report::new(KernelError::Internal)
+                    .attach_printable("Failed to apply account creation event")
+            })?;
+
+            Ok(AccountDto::from(account))
+        }
+    }
+}
+
+impl<T> CreateAccountService for T where
     T: 'static
         + DependOnAccountQuery
         + DependOnAuthAccountQuery
@@ -113,7 +255,7 @@ pub trait UpdateAccountService:
                 }
                 Ok(())
             } else {
-                Err(error_stack::Report::new(KernelError::Internal)
+                Err(Report::new(KernelError::Internal)
                     .attach_printable(format!("Failed to get target account: {account_id:?}")))
             }
         }
@@ -126,5 +268,84 @@ impl<T> UpdateAccountService for T where
         + DependOnAccountModifier
         + DependOnEventQuery
         + DependOnEventModifier
+{
+}
+
+pub trait DeleteAccountService:
+    'static
+    + Sync
+    + Send
+    + DependOnAccountQuery
+    + DependOnAuthAccountQuery
+    + DependOnAuthAccountModifier
+    + DependOnAuthHostQuery
+    + DependOnAuthHostModifier
+    + DependOnEventModifier
+    + DependOnEventQuery
+{
+    fn delete_account<S>(
+        &self,
+        signal: &S,
+        auth_info: AuthAccountInfo,
+        account_id: String,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>>
+    where
+        S: Signal<AuthAccountId> + Signal<AccountId> + Send + Sync + 'static,
+    {
+        async move {
+            // 認証アカウントを確認
+            let auth_account = get_auth_account(self, signal, auth_info).await?;
+            let mut transaction = self.database_connection().begin_transaction().await?;
+
+            // Nanoidからアカウントを検索
+            let nanoid = Nanoid::<Account>::new(account_id);
+            let account = self
+                .account_query()
+                .find_by_nanoid(&mut transaction, &nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Account not found with nanoid: {}",
+                        nanoid.as_ref()
+                    ))
+                })?;
+
+            // 権限チェック (認証アカウントに紐づくアカウントのみ削除可能)
+            let auth_account_id = auth_account.id().clone();
+            let accounts = self
+                .account_query()
+                .find_by_auth_id(&mut transaction, &auth_account_id)
+                .await?;
+
+            let found = accounts.iter().any(|a| a.id() == account.id());
+            if !found {
+                return Err(Report::new(KernelError::PermissionDenied)
+                    .attach_printable("This account does not belong to the authenticated user"));
+            }
+
+            // 削除イベントの生成と保存
+            let account_id = account.id().clone();
+            let delete_command = Account::delete(account_id.clone());
+
+            self.event_modifier()
+                .persist_and_transform(&mut transaction, delete_command)
+                .await?;
+            signal.emit(account_id).await?;
+
+            Ok(())
+        }
+    }
+}
+
+impl<T> DeleteAccountService for T where
+    T: 'static
+        + DependOnAccountQuery
+        + DependOnAuthAccountQuery
+        + DependOnAuthAccountModifier
+        + DependOnAuthHostQuery
+        + DependOnAuthHostModifier
+        + DependOnEventModifier
+        + DependOnEventQuery
+        + UpdateAccountService
 {
 }

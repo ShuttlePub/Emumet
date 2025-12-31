@@ -6,6 +6,8 @@ pub enum KernelError {
     Concurrency,
     Timeout,
     Internal,
+    PermissionDenied,
+    NotFound,
 }
 
 impl Display for KernelError {
@@ -14,6 +16,8 @@ impl Display for KernelError {
             KernelError::Concurrency => write!(f, "Concurrency error"),
             KernelError::Timeout => write!(f, "Process Timed out"),
             KernelError::Internal => write!(f, "Internal kernel error"),
+            KernelError::PermissionDenied => write!(f, "Permission denied"),
+            KernelError::NotFound => write!(f, "Resource not found"),
         }
     }
 }

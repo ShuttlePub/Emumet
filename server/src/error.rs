@@ -51,6 +51,8 @@ impl IntoResponse for ErrorStatus {
                 KernelError::Concurrency => StatusCode::CONFLICT,
                 KernelError::Timeout => StatusCode::REQUEST_TIMEOUT,
                 KernelError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+                KernelError::PermissionDenied => StatusCode::FORBIDDEN,
+                KernelError::NotFound => StatusCode::NOT_FOUND,
             }
             .into_response(),
             ErrorStatus::StatusCode(code) => code.into_response(),
