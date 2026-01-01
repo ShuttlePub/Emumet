@@ -19,6 +19,12 @@ use vodca::{AsRefln, Fromln, Newln};
 )]
 pub struct AccountId(Uuid);
 
+impl Default for AccountId {
+    fn default() -> Self {
+        AccountId(Uuid::now_v7())
+    }
+}
+
 impl From<AccountId> for EventId<AccountEvent, Account> {
     fn from(account_id: AccountId) -> Self {
         EventId::new(account_id.0)
