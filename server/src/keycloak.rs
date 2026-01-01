@@ -49,16 +49,16 @@ impl From<KeycloakAuthAccount> for AuthAccountInfo {
 
 #[macro_export]
 macro_rules! expect_role {
-    ($token: expr, $req: expr) => {
+    ($token: expr, $uri: expr, $method: expr) => {
         let expected_roles =
-            $crate::route::to_permission_strings(&$req.uri().to_string(), $req.method().as_str());
+            $crate::route::to_permission_strings(&$uri.to_string(), $method.as_str());
         let role_result = expected_roles
             .iter()
             .map(|role| axum_keycloak_auth::role::ExpectRoles::expect_roles($token, &[role]))
             .collect::<Vec<Result<_, _>>>();
         if !role_result.iter().any(|r| r.is_ok()) {
             return Err($crate::error::ErrorStatus::from((
-                StatusCode::FORBIDDEN,
+                axum::http::StatusCode::FORBIDDEN,
                 format!(
                     "Permission denied: required roles(any) = {:?}",
                     expected_roles
