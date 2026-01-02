@@ -19,8 +19,17 @@ async-trait = "0.1"
 vodca.workspace = true
 error-stack = { workspace = true }
 
+# Cryptography (moved from application)
+rsa = { version = "0.9", features = ["sha2", "pem"] }
+argon2 = "0.5"
+aes-gcm = "0.10"
+base64 = "0.22"
+rand = "0.8"
+zeroize = "1.7"
+
 kernel = { path = "../kernel" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "test-util"] }
 test-with.workspace = true
+tempfile = "3"

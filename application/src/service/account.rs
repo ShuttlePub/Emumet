@@ -1,9 +1,10 @@
-use crate::crypto::{FilePasswordProvider, KeyPairGenerator, PasswordProvider, Rsa2048Generator};
 use crate::service::auth_account::get_auth_account;
 use crate::transfer::account::AccountDto;
 use crate::transfer::auth_account::AuthAccountInfo;
 use crate::transfer::pagination::{apply_pagination, Pagination};
+use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
 use error_stack::Report;
+use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::modify::{
@@ -129,6 +130,8 @@ pub trait CreateAccountService:
     + DependOnAuthHostModifier
     + DependOnEventModifier
     + DependOnEventQuery
+    + DependOnPasswordProvider
+    + DependOnSigningKeyGenerator
 {
     fn create_account<S>(
         &self,
@@ -148,16 +151,13 @@ pub trait CreateAccountService:
             // アカウントID生成
             let account_id = AccountId::default();
 
-            // 鍵ペア生成 (RSA-2048, Argon2id + AES-GCM暗号化)
-            let password_provider = FilePasswordProvider::new();
-            let master_password = password_provider.get_password()?;
-
-            let generator = Rsa2048Generator::new();
-            let key_pair = generator.generate(&master_password)?;
+            // 鍵ペア生成 (DI経由で取得したPasswordProviderとSigningKeyGeneratorを使用)
+            let master_password = self.password_provider().get_password()?;
+            let key_pair = self.signing_key_generator().generate(&master_password)?;
 
             // 暗号化された秘密鍵をJSON文字列として保存
-            let encrypted_private_key_json =
-                serde_json::to_string(&key_pair.encrypted_private_key).map_err(|e| {
+            let encrypted_private_key_json = serde_json::to_string(&key_pair.encrypted_private_key)
+                .map_err(|e| {
                     Report::new(KernelError::Internal)
                         .attach_printable(format!("Failed to serialize encrypted private key: {e}"))
                 })?;
@@ -211,6 +211,8 @@ impl<T> CreateAccountService for T where
         + DependOnAuthHostModifier
         + DependOnEventModifier
         + DependOnEventQuery
+        + DependOnPasswordProvider
+        + DependOnSigningKeyGenerator
 {
 }
 

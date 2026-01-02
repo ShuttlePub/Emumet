@@ -32,6 +32,7 @@ vodca = { workspace = true }
 destructure = { workspace = true }
 serde = { workspace = true }
 
+adapter = { path = "../adapter" }
 application = { path = "../application" }
 driver = { path = "../driver" }
 kernel = { path = "../kernel" }

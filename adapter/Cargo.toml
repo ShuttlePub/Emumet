@@ -1,0 +1,10 @@
+[package]
+name = "adapter"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+kernel = { path = "../kernel" }
+error-stack = { workspace = true }
+zeroize = "1.7"

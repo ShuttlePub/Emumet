@@ -1,6 +1,8 @@
 use error_stack::{Report, Result};
+use kernel::interfaces::crypto::PasswordProvider;
 use kernel::KernelError;
 use std::path::Path;
+use zeroize::Zeroizing;
 
 const SECRETS_PATH: &str = "/run/secrets/master-key-password";
 const FALLBACK_PATH: &str = "./master-key-password";
@@ -12,8 +14,10 @@ fn validate_file_permissions(path: &str) -> Result<(), KernelError> {
     use std::os::unix::fs::PermissionsExt;
 
     let metadata = std::fs::metadata(path).map_err(|e| {
-        Report::new(KernelError::Internal)
-            .attach_printable(format!("Failed to read file metadata for '{}': {}", path, e))
+        Report::new(KernelError::Internal).attach_printable(format!(
+            "Failed to read file metadata for '{}': {}",
+            path, e
+        ))
     })?;
 
     let mode = metadata.permissions().mode();
@@ -34,17 +38,13 @@ fn validate_file_permissions(_path: &str) -> Result<(), KernelError> {
     Ok(())
 }
 
-/// Trait for providing master password (allows mocking in tests)
-pub trait PasswordProvider: Send + Sync {
-    fn get_password(&self) -> Result<Vec<u8>, KernelError>;
-}
-
 /// File-based password provider with fallback support
 ///
 /// Tries to read from `/run/secrets/master-key-password` first,
 /// then falls back to `./master-key-password` if not found.
 ///
 /// On Unix systems, validates that the file has secure permissions (0o600 or 0o400).
+#[derive(Clone)]
 pub struct FilePasswordProvider {
     secrets_path: String,
     fallback_path: String,
@@ -60,7 +60,10 @@ impl FilePasswordProvider {
     }
 
     /// Create a provider with custom paths (useful for testing)
-    pub fn with_paths<P1: AsRef<Path>, P2: AsRef<Path>>(secrets_path: P1, fallback_path: P2) -> Self {
+    pub fn with_paths<P1: AsRef<Path>, P2: AsRef<Path>>(
+        secrets_path: P1,
+        fallback_path: P2,
+    ) -> Self {
         Self {
             secrets_path: secrets_path.as_ref().to_string_lossy().into_owned(),
             fallback_path: fallback_path.as_ref().to_string_lossy().into_owned(),
@@ -75,7 +78,7 @@ impl Default for FilePasswordProvider {
 }
 
 impl PasswordProvider for FilePasswordProvider {
-    fn get_password(&self) -> Result<Vec<u8>, KernelError> {
+    fn get_password(&self) -> Result<Zeroizing<Vec<u8>>, KernelError> {
         // Try secrets path first
         if Path::new(&self.secrets_path).exists() {
             validate_file_permissions(&self.secrets_path)?;
@@ -89,7 +92,7 @@ impl PasswordProvider for FilePasswordProvider {
                 return Err(Report::new(KernelError::Internal)
                     .attach_printable("Master password file is empty"));
             }
-            return Ok(password);
+            return Ok(Zeroizing::new(password));
         }
 
         // Fall back to local path
@@ -105,7 +108,7 @@ impl PasswordProvider for FilePasswordProvider {
                 return Err(Report::new(KernelError::Internal)
                     .attach_printable("Master password file is empty"));
             }
-            return Ok(password);
+            return Ok(Zeroizing::new(password));
         }
 
         Err(Report::new(KernelError::Internal).attach_printable(format!(
@@ -132,8 +135,8 @@ impl InMemoryPasswordProvider {
 
 #[cfg(test)]
 impl PasswordProvider for InMemoryPasswordProvider {
-    fn get_password(&self) -> Result<Vec<u8>, KernelError> {
-        Ok(self.password.clone())
+    fn get_password(&self) -> Result<Zeroizing<Vec<u8>>, KernelError> {
+        Ok(Zeroizing::new(self.password.clone()))
     }
 }
 
@@ -147,7 +150,7 @@ mod tests {
     fn test_in_memory_provider() {
         let provider = InMemoryPasswordProvider::new(b"test-password".to_vec());
         let password = provider.get_password().unwrap();
-        assert_eq!(password, b"test-password");
+        assert_eq!(password.as_slice(), b"test-password");
     }
 
     #[test]
@@ -155,21 +158,16 @@ mod tests {
         let mut temp_file = NamedTempFile::new().unwrap();
         temp_file.write_all(b"file-password").unwrap();
 
-        let provider = FilePasswordProvider::with_paths(
-            "/nonexistent/path",
-            temp_file.path(),
-        );
+        let provider = FilePasswordProvider::with_paths("/nonexistent/path", temp_file.path());
 
         let password = provider.get_password().unwrap();
-        assert_eq!(password, b"file-password");
+        assert_eq!(password.as_slice(), b"file-password");
     }
 
     #[test]
     fn test_file_provider_no_file() {
-        let provider = FilePasswordProvider::with_paths(
-            "/nonexistent/secrets",
-            "/nonexistent/fallback",
-        );
+        let provider =
+            FilePasswordProvider::with_paths("/nonexistent/secrets", "/nonexistent/fallback");
 
         let result = provider.get_password();
         assert!(result.is_err());

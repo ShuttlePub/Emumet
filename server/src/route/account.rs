@@ -70,7 +70,6 @@ async fn get_accounts(
     let pagination = Pagination::new(limit, cursor, direction);
     let result = module
         .handler()
-        .pgpool()
         .get_all_accounts(
             module.applier_container().deref(),
             auth_info.into(),
@@ -120,7 +119,6 @@ async fn create_account(
     // サービス層でのアカウント作成処理の呼び出し
     let account = module
         .handler()
-        .pgpool()
         .create_account(
             module.applier_container().deref(),
             auth_info.into(),
@@ -162,7 +160,6 @@ async fn get_account_by_id(
     // サービス層での特定アカウント取得処理
     let account = module
         .handler()
-        .pgpool()
         .get_account_by_id(module.applier_container().deref(), auth_info.into(), id)
         .await
         .map_err(ErrorStatus::from)?;
@@ -199,7 +196,6 @@ async fn delete_account_by_id(
     // サービス層でのアカウント削除処理
     module
         .handler()
-        .pgpool()
         .delete_account(module.applier_container().deref(), auth_info.into(), id)
         .await
         .map_err(ErrorStatus::from)?;

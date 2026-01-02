@@ -31,6 +31,9 @@
           nodePackages.pnpm
           sqlx-cli
         ];
+        env = {
+            LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
+        };
         shellHook = ''
           #export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="${pkgs.clang}/bin/clang"
           #export CARGO_TARGET_X86_64-UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=${pkgs.mold-wrapped.override(old: { extraPackages = nativeBuildInputs ++ buildInputs; })}/bin/mold"
