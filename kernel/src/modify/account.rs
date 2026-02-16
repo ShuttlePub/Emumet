@@ -1,5 +1,5 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Transaction};
-use crate::entity::{Account, AccountId};
+use crate::entity::{Account, AccountId, AuthAccountId};
 use crate::KernelError;
 use std::future::Future;
 
@@ -22,6 +22,13 @@ pub trait AccountModifier: Sync + Send + 'static {
         &self,
         transaction: &mut Self::Transaction,
         account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn link_auth_account(
+        &self,
+        transaction: &mut Self::Transaction,
+        account_id: &AccountId,
+        auth_account_id: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 

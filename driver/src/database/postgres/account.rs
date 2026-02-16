@@ -215,6 +215,27 @@ impl AccountModifier for PostgresAccountRepository {
         .convert_error()?;
         Ok(())
     }
+
+    async fn link_auth_account(
+        &self,
+        transaction: &mut Self::Transaction,
+        account_id: &AccountId,
+        auth_account_id: &AuthAccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = transaction;
+        sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO auth_emumet_accounts (emumet_id, auth_id) VALUES ($1, $2)
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .bind(auth_account_id.as_ref())
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
 }
 
 impl DependOnAccountModifier for PostgresDatabase {

@@ -18,7 +18,7 @@ use kernel::interfaces::query::{
 use kernel::interfaces::signal::Signal;
 use kernel::prelude::entity::{
     Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-    AuthAccountId, EventId, Nanoid,
+    AuthAccountId, CreatedAt, EventId, EventVersion, Nanoid,
 };
 use kernel::KernelError;
 use serde_json;
@@ -124,6 +124,7 @@ pub trait CreateAccountService:
     + Sync
     + Send
     + DependOnAccountQuery
+    + DependOnAccountModifier
     + DependOnAuthAccountQuery
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
@@ -133,19 +134,16 @@ pub trait CreateAccountService:
     + DependOnPasswordProvider
     + DependOnSigningKeyGenerator
 {
-    fn create_account<S>(
+    fn create_account(
         &self,
-        signal: &S,
+        signal: &impl Signal<AuthAccountId>,
         auth_info: AuthAccountInfo,
         name: String,
         is_bot: bool,
-    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>>
-    where
-        S: Signal<AuthAccountId> + Signal<AccountId> + Send + Sync + 'static,
-    {
+    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> {
         async move {
             // 認証アカウントを確認
-            let _auth_account = get_auth_account(self, signal, auth_info).await?;
+            let auth_account = get_auth_account(self, signal, auth_info).await?;
             let mut transaction = self.database_connection().begin_transaction().await?;
 
             // アカウントID生成
@@ -172,30 +170,30 @@ pub trait CreateAccountService:
             // NanoIDの生成
             let nanoid = Nanoid::<Account>::default();
 
-            // アカウント作成イベントの生成と保存
-            let create_command = Account::create(
+            // 直接エンティティ構築
+            let created_at = CreatedAt::now();
+            let version = EventVersion::default();
+            let account = Account::new(
                 account_id.clone(),
                 account_name,
                 private_key,
                 public_key,
                 account_is_bot,
+                None,
+                version,
                 nanoid,
+                created_at,
             );
 
-            let create_event = self
-                .event_modifier()
-                .persist_and_transform(&mut transaction, create_command)
+            // accountsテーブルにINSERT
+            self.account_modifier()
+                .create(&mut transaction, &account)
                 .await?;
-            signal.emit(account_id).await?;
 
-            // イベントの適用
-            let mut account = None;
-            Account::apply(&mut account, create_event)?;
-
-            let account = account.ok_or_else(|| {
-                Report::new(KernelError::Internal)
-                    .attach_printable("Failed to apply account creation event")
-            })?;
+            // auth_emumet_accountsにINSERT
+            self.account_modifier()
+                .link_auth_account(&mut transaction, &account_id, auth_account.id())
+                .await?;
 
             Ok(AccountDto::from(account))
         }
@@ -205,6 +203,7 @@ pub trait CreateAccountService:
 impl<T> CreateAccountService for T where
     T: 'static
         + DependOnAccountQuery
+        + DependOnAccountModifier
         + DependOnAuthAccountQuery
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery

@@ -12,6 +12,12 @@ impl<T> EventVersion<T> {
     }
 }
 
+impl<T> Default for EventVersion<T> {
+    fn default() -> Self {
+        Self(Uuid::now_v7(), PhantomData)
+    }
+}
+
 impl<T> Serialize for EventVersion<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
