@@ -4,13 +4,13 @@ use crate::handler::AppModule;
 use crate::keycloak::KeycloakAuthAccount;
 use crate::route::DirectionConverter;
 use application::service::account::{
-    CreateAccountService, DeleteAccountService, GetAccountService,
+    CreateAccountService, DeleteAccountService, EditAccountService, GetAccountService,
 };
 use application::transfer::pagination::Pagination;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::{Method, Uri};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
 use axum_keycloak_auth::decode::KeycloakToken;
 use axum_keycloak_auth::instance::KeycloakAuthInstance;
@@ -30,6 +30,11 @@ struct GetAllAccountQuery {
 #[derive(Debug, Deserialize)]
 struct CreateAccountRequest {
     name: String,
+    is_bot: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAccountRequest {
     is_bot: bool,
 }
 
@@ -175,6 +180,48 @@ async fn get_account_by_id(
     Ok(Json(response))
 }
 
+async fn update_account_by_id(
+    Extension(token): Extension<KeycloakToken<String>>,
+    State(module): State<AppModule>,
+    method: Method,
+    uri: Uri,
+    Path(id): Path<String>,
+    Json(request): Json<UpdateAccountRequest>,
+) -> Result<Json<AccountResponse>, ErrorStatus> {
+    expect_role!(&token, uri, method);
+    let auth_info = KeycloakAuthAccount::from(token);
+
+    // IDの検証
+    if id.trim().is_empty() {
+        return Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            "Account ID cannot be empty".to_string(),
+        )));
+    }
+
+    // サービス層でのアカウント更新処理
+    let account = module
+        .handler()
+        .edit_account(
+            module.applier_container().deref(),
+            auth_info.into(),
+            id,
+            request.is_bot,
+        )
+        .await
+        .map_err(ErrorStatus::from)?;
+
+    let response = AccountResponse {
+        id: account.nanoid,
+        name: account.name,
+        public_key: account.public_key,
+        is_bot: account.is_bot,
+        created_at: account.created_at,
+    };
+
+    Ok(Json(response))
+}
+
 async fn delete_account_by_id(
     Extension(token): Extension<KeycloakToken<String>>,
     State(module): State<AppModule>,
@@ -208,6 +255,7 @@ impl AccountRouter for Router<AppModule> {
         self.route("/accounts", get(get_accounts))
             .route("/accounts", post(create_account))
             .route("/accounts/:id", get(get_account_by_id))
+            .route("/accounts/:id", put(update_account_by_id))
             .route("/accounts/:id", delete(delete_account_by_id))
             .layer(
                 KeycloakAuthLayer::<String>::builder()

@@ -350,3 +350,93 @@ impl<T> DeleteAccountService for T where
         + UpdateAccountService
 {
 }
+
+pub trait EditAccountService:
+    'static
+    + Sync
+    + Send
+    + DependOnAccountQuery
+    + DependOnAuthAccountQuery
+    + DependOnAuthAccountModifier
+    + DependOnAuthHostQuery
+    + DependOnAuthHostModifier
+    + DependOnEventModifier
+    + DependOnEventQuery
+{
+    fn edit_account<S>(
+        &self,
+        signal: &S,
+        auth_info: AuthAccountInfo,
+        account_id: String,
+        is_bot: bool,
+    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>>
+    where
+        S: Signal<AuthAccountId> + Signal<AccountId> + Send + Sync + 'static,
+    {
+        async move {
+            // 認証アカウントを確認
+            let auth_account = get_auth_account(self, signal, auth_info).await?;
+            let mut transaction = self.database_connection().begin_transaction().await?;
+
+            // Nanoidからアカウントを検索
+            let nanoid = Nanoid::<Account>::new(account_id);
+            let account = self
+                .account_query()
+                .find_by_nanoid(&mut transaction, &nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Account not found with nanoid: {}",
+                        nanoid.as_ref()
+                    ))
+                })?;
+
+            // 権限チェック (認証アカウントに紐づくアカウントのみ更新可能)
+            let auth_account_id = auth_account.id().clone();
+            let accounts = self
+                .account_query()
+                .find_by_auth_id(&mut transaction, &auth_account_id)
+                .await?;
+
+            let found = accounts.iter().any(|a| a.id() == account.id());
+            if !found {
+                return Err(Report::new(KernelError::PermissionDenied)
+                    .attach_printable("This account does not belong to the authenticated user"));
+            }
+
+            // 更新イベントの生成と保存
+            let account_id = account.id().clone();
+            let update_command = Account::update(account_id.clone(), AccountIsBot::new(is_bot));
+
+            self.event_modifier()
+                .persist_and_transform(&mut transaction, update_command)
+                .await?;
+            signal.emit(account_id).await?;
+
+            // 更新後のアカウント情報を取得して返却
+            let updated_account = self
+                .account_query()
+                .find_by_nanoid(&mut transaction, &nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::Internal)
+                        .attach_printable("Account disappeared after update")
+                })?;
+
+            Ok(AccountDto::from(updated_account))
+        }
+    }
+}
+
+impl<T> EditAccountService for T where
+    T: 'static
+        + DependOnAccountQuery
+        + DependOnAuthAccountQuery
+        + DependOnAuthAccountModifier
+        + DependOnAuthHostQuery
+        + DependOnAuthHostModifier
+        + DependOnEventModifier
+        + DependOnEventQuery
+        + UpdateAccountService
+{
+}
