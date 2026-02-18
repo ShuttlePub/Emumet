@@ -369,7 +369,7 @@ pub trait EditAccountService:
         auth_info: AuthAccountInfo,
         account_id: String,
         is_bot: bool,
-    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>>
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>>
     where
         S: Signal<AuthAccountId> + Signal<AccountId> + Send + Sync + 'static,
     {
@@ -413,17 +413,7 @@ pub trait EditAccountService:
                 .await?;
             signal.emit(account_id).await?;
 
-            // 更新後のアカウント情報を取得して返却
-            let updated_account = self
-                .account_query()
-                .find_by_nanoid(&mut transaction, &nanoid)
-                .await?
-                .ok_or_else(|| {
-                    Report::new(KernelError::Internal)
-                        .attach_printable("Account disappeared after update")
-                })?;
-
-            Ok(AccountDto::from(updated_account))
+            Ok(())
         }
     }
 }

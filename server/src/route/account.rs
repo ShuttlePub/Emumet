@@ -187,7 +187,7 @@ async fn update_account_by_id(
     uri: Uri,
     Path(id): Path<String>,
     Json(request): Json<UpdateAccountRequest>,
-) -> Result<Json<AccountResponse>, ErrorStatus> {
+) -> Result<StatusCode, ErrorStatus> {
     expect_role!(&token, uri, method);
     let auth_info = KeycloakAuthAccount::from(token);
 
@@ -200,7 +200,7 @@ async fn update_account_by_id(
     }
 
     // サービス層でのアカウント更新処理
-    let account = module
+    module
         .handler()
         .edit_account(
             module.applier_container().deref(),
@@ -211,15 +211,7 @@ async fn update_account_by_id(
         .await
         .map_err(ErrorStatus::from)?;
 
-    let response = AccountResponse {
-        id: account.nanoid,
-        name: account.name,
-        public_key: account.public_key,
-        is_bot: account.is_bot,
-        created_at: account.created_at,
-    };
-
-    Ok(Json(response))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_account_by_id(
