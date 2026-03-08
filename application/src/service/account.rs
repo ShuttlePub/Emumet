@@ -2,18 +2,17 @@ use crate::service::auth_account::get_auth_account;
 use crate::transfer::account::AccountDto;
 use crate::transfer::auth_account::AuthAccountInfo;
 use crate::transfer::pagination::{apply_pagination, Pagination};
+use adapter::account::{AccountRepository, DependOnAccountRepository};
 use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
 use error_stack::Report;
 use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::modify::{
-    AccountModifier, DependOnAccountModifier, DependOnAuthAccountModifier,
-    DependOnAuthHostModifier, DependOnEventModifier, EventModifier,
+    DependOnAuthAccountModifier, DependOnAuthHostModifier, DependOnEventModifier, EventModifier,
 };
 use kernel::interfaces::query::{
-    AccountQuery, DependOnAccountQuery, DependOnAuthAccountQuery, DependOnAuthHostQuery,
-    DependOnEventQuery, EventQuery,
+    DependOnAuthAccountQuery, DependOnAuthHostQuery, DependOnEventQuery, EventQuery,
 };
 use kernel::interfaces::signal::Signal;
 use kernel::prelude::entity::{
@@ -28,7 +27,7 @@ pub trait GetAccountService:
     'static
     + Sync
     + Send
-    + DependOnAccountQuery
+    + DependOnAccountRepository
     + DependOnAuthAccountQuery
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
@@ -50,12 +49,12 @@ pub trait GetAccountService:
             let auth_account = get_auth_account(self, signal, account).await?;
             let mut transaction = self.database_connection().begin_transaction().await?;
             let accounts = self
-                .account_query()
+                .account_repository()
                 .find_by_auth_id(&mut transaction, auth_account.id())
                 .await?;
             let cursor = if let Some(cursor) = cursor {
                 let id: Nanoid<Account> = Nanoid::new(cursor);
-                self.account_query()
+                self.account_repository()
                     .find_by_nanoid(&mut transaction, &id)
                     .await?
             } else {
@@ -79,7 +78,7 @@ pub trait GetAccountService:
             // Nanoidからアカウントを検索
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self
-                .account_query()
+                .account_repository()
                 .find_by_nanoid(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -92,7 +91,7 @@ pub trait GetAccountService:
             // 権限チェック (認証アカウントに紐づくアカウントのみアクセス可能)
             let auth_account_id = auth_account.id();
             let accounts = self
-                .account_query()
+                .account_repository()
                 .find_by_auth_id(&mut transaction, auth_account_id)
                 .await?;
 
@@ -109,7 +108,7 @@ pub trait GetAccountService:
 
 impl<T> GetAccountService for T where
     T: 'static
-        + DependOnAccountQuery
+        + DependOnAccountRepository
         + DependOnAuthAccountQuery
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery
@@ -123,8 +122,7 @@ pub trait CreateAccountService:
     'static
     + Sync
     + Send
-    + DependOnAccountQuery
-    + DependOnAccountModifier
+    + DependOnAccountRepository
     + DependOnAuthAccountQuery
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
@@ -186,12 +184,12 @@ pub trait CreateAccountService:
             );
 
             // accountsテーブルにINSERT
-            self.account_modifier()
+            self.account_repository()
                 .create(&mut transaction, &account)
                 .await?;
 
             // auth_emumet_accountsにINSERT
-            self.account_modifier()
+            self.account_repository()
                 .link_auth_account(&mut transaction, &account_id, auth_account.id())
                 .await?;
 
@@ -202,8 +200,7 @@ pub trait CreateAccountService:
 
 impl<T> CreateAccountService for T where
     T: 'static
-        + DependOnAccountQuery
-        + DependOnAccountModifier
+        + DependOnAccountRepository
         + DependOnAuthAccountQuery
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery
@@ -216,11 +213,7 @@ impl<T> CreateAccountService for T where
 }
 
 pub trait UpdateAccountService:
-    'static
-    + DependOnAccountQuery
-    + DependOnAccountModifier
-    + DependOnEventQuery
-    + DependOnEventModifier
+    'static + DependOnAccountRepository + DependOnEventQuery + DependOnEventModifier
 {
     fn update_account(
         &self,
@@ -229,7 +222,7 @@ pub trait UpdateAccountService:
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
             let account = self
-                .account_query()
+                .account_repository()
                 .find_by_id(&mut transaction, &account_id)
                 .await?;
             if let Some(account) = account {
@@ -246,11 +239,11 @@ pub trait UpdateAccountService:
                     Account::apply(&mut account, event)?;
                 }
                 if let Some(account) = account {
-                    self.account_modifier()
+                    self.account_repository()
                         .update(&mut transaction, &account)
                         .await?;
                 } else {
-                    self.account_modifier()
+                    self.account_repository()
                         .delete(&mut transaction, &account_id)
                         .await?;
                 }
@@ -264,11 +257,7 @@ pub trait UpdateAccountService:
 }
 
 impl<T> UpdateAccountService for T where
-    T: 'static
-        + DependOnAccountQuery
-        + DependOnAccountModifier
-        + DependOnEventQuery
-        + DependOnEventModifier
+    T: 'static + DependOnAccountRepository + DependOnEventQuery + DependOnEventModifier
 {
 }
 
@@ -276,7 +265,7 @@ pub trait DeleteAccountService:
     'static
     + Sync
     + Send
-    + DependOnAccountQuery
+    + DependOnAccountRepository
     + DependOnAuthAccountQuery
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
@@ -301,7 +290,7 @@ pub trait DeleteAccountService:
             // Nanoidからアカウントを検索
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self
-                .account_query()
+                .account_repository()
                 .find_by_nanoid(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -314,7 +303,7 @@ pub trait DeleteAccountService:
             // 権限チェック (認証アカウントに紐づくアカウントのみ削除可能)
             let auth_account_id = auth_account.id().clone();
             let accounts = self
-                .account_query()
+                .account_repository()
                 .find_by_auth_id(&mut transaction, &auth_account_id)
                 .await?;
 
@@ -340,7 +329,7 @@ pub trait DeleteAccountService:
 
 impl<T> DeleteAccountService for T where
     T: 'static
-        + DependOnAccountQuery
+        + DependOnAccountRepository
         + DependOnAuthAccountQuery
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery
@@ -355,7 +344,7 @@ pub trait EditAccountService:
     'static
     + Sync
     + Send
-    + DependOnAccountQuery
+    + DependOnAccountRepository
     + DependOnAuthAccountQuery
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
@@ -381,7 +370,7 @@ pub trait EditAccountService:
             // Nanoidからアカウントを検索
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self
-                .account_query()
+                .account_repository()
                 .find_by_nanoid(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -394,7 +383,7 @@ pub trait EditAccountService:
             // 権限チェック (認証アカウントに紐づくアカウントのみ更新可能)
             let auth_account_id = auth_account.id().clone();
             let accounts = self
-                .account_query()
+                .account_repository()
                 .find_by_auth_id(&mut transaction, &auth_account_id)
                 .await?;
 
@@ -420,7 +409,7 @@ pub trait EditAccountService:
 
 impl<T> EditAccountService for T where
     T: 'static
-        + DependOnAccountQuery
+        + DependOnAccountRepository
         + DependOnAuthAccountQuery
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery
