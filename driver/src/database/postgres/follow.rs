@@ -63,14 +63,14 @@ impl TryFrom<FollowRow> for Follow {
 pub struct PostgresFollowRepository;
 
 impl FollowQuery for PostgresFollowRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn find_followings(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         source_id: &FollowTargetId,
     ) -> error_stack::Result<Vec<Follow>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         match source_id {
             FollowTargetId::Local(account_id) => {
                 sqlx::query_as::<_, FollowRow>(
@@ -100,10 +100,10 @@ impl FollowQuery for PostgresFollowRepository {
 
     async fn find_followers(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         destination_id: &FollowTargetId,
     ) -> error_stack::Result<Vec<Follow>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         match destination_id {
             FollowTargetId::Local(account_id) => {
                 sqlx::query_as::<_, FollowRow>(
@@ -148,14 +148,14 @@ fn split_follow_target_id(target_id: &FollowTargetId) -> (Option<&Uuid>, Option<
 }
 
 impl FollowModifier for PostgresFollowRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         follow: &Follow,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         let (follower_local_id, follower_remote_id) = split_follow_target_id(follow.source());
         let (followee_local_id, followee_remote_id) = split_follow_target_id(follow.destination());
         sqlx::query(
@@ -178,10 +178,10 @@ impl FollowModifier for PostgresFollowRepository {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         follow: &Follow,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         let (follower_local_id, follower_remote_id) = split_follow_target_id(follow.source());
         let (followee_local_id, followee_remote_id) = split_follow_target_id(follow.destination());
         sqlx::query(
@@ -205,10 +205,10 @@ impl FollowModifier for PostgresFollowRepository {
 
     async fn delete(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         follow_id: &FollowId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"

@@ -1,33 +1,33 @@
-use crate::database::{DependOnDatabaseConnection, Transaction};
+use crate::database::{DependOnDatabaseConnection, Executor};
 use crate::entity::{Metadata, MetadataId};
 use crate::KernelError;
 use std::future::Future;
 
 pub trait MetadataModifier: Sync + Send + 'static {
-    type Transaction: Transaction;
+    type Executor: Executor;
 
     fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata: &Metadata,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata: &Metadata,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn delete(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata_id: &MetadataId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DependOnMetadataModifier: Sync + Send + DependOnDatabaseConnection {
     type MetadataModifier: MetadataModifier<
-        Transaction = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Transaction,
+        Executor = <Self::DatabaseConnection as crate::database::DatabaseConnection>::Executor,
     >;
 
     fn metadata_modifier(&self) -> &Self::MetadataModifier;

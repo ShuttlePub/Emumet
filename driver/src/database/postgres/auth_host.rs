@@ -22,13 +22,13 @@ impl From<AuthHostRow> for AuthHost {
 pub struct PostgresAuthHostRepository;
 
 impl AuthHostQuery for PostgresAuthHostRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         id: &AuthHostId,
     ) -> error_stack::Result<Option<AuthHost>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AuthHostRow>(
             // language=postgresql
             r#"
@@ -46,10 +46,10 @@ impl AuthHostQuery for PostgresAuthHostRepository {
 
     async fn find_by_url(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         domain: &AuthHostUrl,
     ) -> error_stack::Result<Option<AuthHost>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AuthHostRow>(
             // language=postgresql
             r#"
@@ -75,13 +75,13 @@ impl DependOnAuthHostQuery for PostgresDatabase {
 }
 
 impl AuthHostModifier for PostgresAuthHostRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         auth_host: &AuthHost,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"
@@ -99,10 +99,10 @@ impl AuthHostModifier for PostgresAuthHostRepository {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         auth_host: &AuthHost,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"

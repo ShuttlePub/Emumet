@@ -42,14 +42,14 @@ impl From<AccountRow> for Account {
 pub struct PostgresAccountReadModel;
 
 impl AccountReadModel for PostgresAccountReadModel {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         id: &AccountId,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
@@ -67,10 +67,10 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_auth_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         auth_id: &AuthAccountId,
     ) -> error_stack::Result<Vec<Account>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
@@ -89,10 +89,10 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_name(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         name: &AccountName,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
@@ -110,10 +110,10 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_nanoid(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         nanoid: &Nanoid<Account>,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
@@ -131,10 +131,10 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account: &Account,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"
@@ -158,10 +158,10 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account: &Account,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"
@@ -184,10 +184,10 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn delete(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account_id: &AccountId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"
@@ -205,11 +205,11 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn link_auth_account(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account_id: &AccountId,
         auth_account_id: &AuthAccountId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"

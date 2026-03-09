@@ -35,15 +35,15 @@ impl TryFrom<EventRow> for EventEnvelope<AccountEvent, Account> {
 pub struct PostgresAccountEventStore;
 
 impl AccountEventStore for PostgresAccountEventStore {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         id: &EventId<AccountEvent, Account>,
         since: Option<&EventVersion<Account>>,
     ) -> error_stack::Result<Vec<EventEnvelope<AccountEvent, Account>>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         let rows = if let Some(version) = since {
             sqlx::query_as::<_, EventRow>(
                 //language=postgresql
@@ -81,21 +81,20 @@ impl AccountEventStore for PostgresAccountEventStore {
 
     async fn persist(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         command: &CommandEnvelope<AccountEvent, Account>,
     ) -> error_stack::Result<(), KernelError> {
-        self.persist_internal(transaction, command, Uuid::now_v7())
+        self.persist_internal(executor, command, Uuid::now_v7())
             .await
     }
 
     async fn persist_and_transform(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         command: CommandEnvelope<AccountEvent, Account>,
     ) -> error_stack::Result<EventEnvelope<AccountEvent, Account>, KernelError> {
         let version = Uuid::now_v7();
-        self.persist_internal(transaction, &command, version)
-            .await?;
+        self.persist_internal(executor, &command, version).await?;
 
         let command = command.into_destruct();
         Ok(EventEnvelope::new(
@@ -109,11 +108,11 @@ impl AccountEventStore for PostgresAccountEventStore {
 impl PostgresAccountEventStore {
     async fn persist_internal(
         &self,
-        transaction: &mut PostgresConnection,
+        executor: &mut PostgresConnection,
         command: &CommandEnvelope<AccountEvent, Account>,
         version: Uuid,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
 
         let event_name = command.event_name();
         let prev_version = command.prev_version().as_ref();

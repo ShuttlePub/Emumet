@@ -31,14 +31,14 @@ impl From<RemoteAccountRow> for RemoteAccount {
 pub struct PostgresRemoteAccountRepository;
 
 impl RemoteAccountQuery for PostgresRemoteAccountRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         id: &RemoteAccountId,
     ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, RemoteAccountRow>(
             // language=postgresql
             r#"
@@ -56,10 +56,10 @@ impl RemoteAccountQuery for PostgresRemoteAccountRepository {
 
     async fn find_by_acct(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         acct: &RemoteAccountAcct,
     ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, RemoteAccountRow>(
             // language=postgresql
             r#"
@@ -77,10 +77,10 @@ impl RemoteAccountQuery for PostgresRemoteAccountRepository {
 
     async fn find_by_url(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         url: &RemoteAccountUrl,
     ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, RemoteAccountRow>(
             // language=postgresql
             r#"
@@ -106,14 +106,14 @@ impl DependOnRemoteAccountQuery for PostgresDatabase {
 }
 
 impl RemoteAccountModifier for PostgresRemoteAccountRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account: &RemoteAccount,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"
@@ -133,10 +133,10 @@ impl RemoteAccountModifier for PostgresRemoteAccountRepository {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account: &RemoteAccount,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"
@@ -157,10 +157,10 @@ impl RemoteAccountModifier for PostgresRemoteAccountRepository {
 
     async fn delete(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account_id: &RemoteAccountId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"

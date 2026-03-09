@@ -42,14 +42,14 @@ impl From<ProfileRow> for Profile {
 pub struct PostgresProfileRepository;
 
 impl ProfileQuery for PostgresProfileRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         id: &ProfileId,
     ) -> error_stack::Result<Option<Profile>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, ProfileRow>(
             //language=postgresql
             r#"
@@ -74,14 +74,14 @@ impl DependOnProfileQuery for PostgresDatabase {
 }
 
 impl ProfileModifier for PostgresProfileRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"
@@ -110,10 +110,10 @@ impl ProfileModifier for PostgresProfileRepository {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"

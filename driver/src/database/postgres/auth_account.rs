@@ -31,14 +31,14 @@ impl From<AuthAccountRow> for AuthAccount {
 pub struct PostgresAuthAccountRepository;
 
 impl AuthAccountQuery for PostgresAuthAccountRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account_id: &AuthAccountId,
     ) -> error_stack::Result<Option<AuthAccount>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AuthAccountRow>(
             //language=postgresql
             r#"
@@ -56,10 +56,10 @@ impl AuthAccountQuery for PostgresAuthAccountRepository {
 
     async fn find_by_client_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         client_id: &AuthAccountClientId,
     ) -> error_stack::Result<Option<AuthAccount>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AuthAccountRow>(
             //language=postgresql
             r#"
@@ -85,14 +85,14 @@ impl DependOnAuthAccountQuery for PostgresDatabase {
 }
 
 impl AuthAccountModifier for PostgresAuthAccountRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         auth_account: &AuthAccount,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"
@@ -111,10 +111,10 @@ impl AuthAccountModifier for PostgresAuthAccountRepository {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         auth_account: &AuthAccount,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"
@@ -134,10 +134,10 @@ impl AuthAccountModifier for PostgresAuthAccountRepository {
 
     async fn delete(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account_id: &AuthAccountId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"

@@ -1,7 +1,7 @@
 use crate::database::env;
 use deadpool_redis::{Config, Pool, Runtime};
 use error_stack::{Report, ResultExt};
-use kernel::interfaces::database::{DatabaseConnection, Transaction};
+use kernel::interfaces::database::{DatabaseConnection, Executor};
 use kernel::KernelError;
 use std::ops::Deref;
 use vodca::References;
@@ -38,7 +38,7 @@ impl RedisDatabase {
 
 pub struct RedisConnection(deadpool_redis::Connection);
 
-impl Transaction for RedisConnection {}
+impl Executor for RedisConnection {}
 
 impl Deref for RedisConnection {
     type Target = deadpool_redis::Connection;
@@ -49,9 +49,9 @@ impl Deref for RedisConnection {
 }
 
 impl DatabaseConnection for RedisDatabase {
-    type Transaction = RedisConnection;
+    type Executor = RedisConnection;
 
-    async fn begin_transaction(&self) -> error_stack::Result<Self::Transaction, KernelError> {
+    async fn begin_transaction(&self) -> error_stack::Result<Self::Executor, KernelError> {
         let pool = self
             .pool
             .get()

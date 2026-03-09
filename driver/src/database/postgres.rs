@@ -12,7 +12,7 @@ mod remote_account;
 use crate::database::env;
 use crate::ConvertError;
 use error_stack::{Report, ResultExt};
-use kernel::interfaces::database::{DatabaseConnection, Transaction};
+use kernel::interfaces::database::{DatabaseConnection, Executor};
 use kernel::KernelError;
 use sqlx::pool::PoolConnection;
 use sqlx::{Error, PgConnection, Pool, Postgres};
@@ -68,7 +68,7 @@ pub(in crate::database::postgres) struct CountRow {
 
 pub struct PostgresConnection(PoolConnection<Postgres>);
 
-impl Transaction for PostgresConnection {}
+impl Executor for PostgresConnection {}
 
 impl Deref for PostgresConnection {
     type Target = PgConnection;
@@ -84,8 +84,8 @@ impl DerefMut for PostgresConnection {
 }
 
 impl DatabaseConnection for PostgresDatabase {
-    type Transaction = PostgresConnection;
-    async fn begin_transaction(&self) -> error_stack::Result<Self::Transaction, KernelError> {
+    type Executor = PostgresConnection;
+    async fn begin_transaction(&self) -> error_stack::Result<Self::Executor, KernelError> {
         let connection = self.pool.acquire().await.convert_error()?;
         Ok(PostgresConnection(connection))
     }

@@ -35,15 +35,15 @@ impl<Event: for<'a> Deserialize<'a>, Entity> TryFrom<EventRow> for EventEnvelope
 pub struct PostgresEventRepository;
 
 impl EventQuery for PostgresEventRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn find_by_id<Event: for<'de> Deserialize<'de>, Entity>(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         id: &EventId<Event, Entity>,
         since: Option<&EventVersion<Entity>>,
     ) -> error_stack::Result<Vec<EventEnvelope<Event, Entity>>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         if let Some(version) = since {
             sqlx::query_as::<_, EventRow>(
                 //language=postgresql
@@ -88,27 +88,26 @@ impl DependOnEventQuery for PostgresDatabase {
 }
 
 impl EventModifier for PostgresEventRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn persist<Event: Serialize, Entity>(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         command: &CommandEnvelope<Event, Entity>,
     ) -> error_stack::Result<(), KernelError> {
-        self.persist_internal(transaction, command, Uuid::now_v7())
+        self.persist_internal(executor, command, Uuid::now_v7())
             .await?;
         Ok(())
     }
 
     async fn persist_and_transform<Event: Serialize + Send, Entity: Send>(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         command: CommandEnvelope<Event, Entity>,
     ) -> error_stack::Result<EventEnvelope<Event, Entity>, KernelError> {
         let version = Uuid::now_v7();
 
-        self.persist_internal(transaction, &command, version)
-            .await?;
+        self.persist_internal(executor, &command, version).await?;
 
         let command = command.into_destruct();
         Ok(EventEnvelope::new(
@@ -122,11 +121,11 @@ impl EventModifier for PostgresEventRepository {
 impl PostgresEventRepository {
     async fn persist_internal<Event: Serialize, Entity>(
         &self,
-        transaction: &mut PostgresConnection,
+        executor: &mut PostgresConnection,
         command: &CommandEnvelope<Event, Entity>,
         version: Uuid,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
 
         // Validation logic
         let event_name = command.event_name();

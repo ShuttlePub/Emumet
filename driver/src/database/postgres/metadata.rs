@@ -35,14 +35,14 @@ impl From<MetadataRow> for Metadata {
 pub struct PostgresMetadataRepository;
 
 impl MetadataQuery for PostgresMetadataRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata_id: &MetadataId,
     ) -> error_stack::Result<Option<Metadata>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, MetadataRow>(
             // language=postgresql
             r#"
@@ -60,10 +60,10 @@ impl MetadataQuery for PostgresMetadataRepository {
 
     async fn find_by_account_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account_id: &AccountId,
     ) -> error_stack::Result<Vec<Metadata>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, MetadataRow>(
             // language=postgresql
             r#"
@@ -89,14 +89,14 @@ impl DependOnMetadataQuery for PostgresDatabase {
 }
 
 impl MetadataModifier for PostgresMetadataRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata: &Metadata,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"
@@ -118,10 +118,10 @@ impl MetadataModifier for PostgresMetadataRepository {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata: &Metadata,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"
@@ -142,10 +142,10 @@ impl MetadataModifier for PostgresMetadataRepository {
 
     async fn delete(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata_id: &MetadataId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"

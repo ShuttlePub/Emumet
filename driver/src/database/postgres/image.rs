@@ -29,14 +29,14 @@ impl From<ImageRow> for Image {
 pub struct PostgresImageRepository;
 
 impl ImageQuery for PostgresImageRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         id: &ImageId,
     ) -> error_stack::Result<Option<Image>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, ImageRow>(
             // language=postgresql
             r#"
@@ -52,10 +52,10 @@ impl ImageQuery for PostgresImageRepository {
 
     async fn find_by_url(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         url: &ImageUrl,
     ) -> error_stack::Result<Option<Image>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, ImageRow>(
             // language=postgresql
             r#"
@@ -79,14 +79,14 @@ impl DependOnImageQuery for PostgresDatabase {
 }
 
 impl ImageModifier for PostgresImageRepository {
-    type Transaction = PostgresConnection;
+    type Executor = PostgresConnection;
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         image: &Image,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"
@@ -105,10 +105,10 @@ impl ImageModifier for PostgresImageRepository {
 
     async fn delete(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         image_id: &ImageId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"
