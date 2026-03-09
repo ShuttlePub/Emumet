@@ -223,7 +223,7 @@ impl<T> CreateAccountService for T where
 }
 
 pub trait UpdateAccountService:
-    'static + DependOnAccountReadModel + DependOnAccountEventStore
+    'static + Sync + Send + DependOnAccountReadModel + DependOnAccountEventStore
 {
     fn update_account(
         &self,
@@ -322,7 +322,8 @@ pub trait DeleteAccountService:
             }
 
             let account_id = account.id().clone();
-            let delete_command = Account::delete(account_id.clone());
+            let current_version = account.version().clone();
+            let delete_command = Account::delete(account_id.clone(), current_version);
 
             self.account_event_store()
                 .persist_and_transform(&mut transaction, delete_command)
@@ -400,7 +401,12 @@ pub trait EditAccountService:
             }
 
             let account_id = account.id().clone();
-            let update_command = Account::update(account_id.clone(), AccountIsBot::new(is_bot));
+            let current_version = account.version().clone();
+            let update_command = Account::update(
+                account_id.clone(),
+                AccountIsBot::new(is_bot),
+                current_version,
+            );
 
             self.account_event_store()
                 .persist_and_transform(&mut transaction, update_command)

@@ -5,7 +5,8 @@ use serde::Serialize;
 use vodca::{Nameln, Newln, References};
 
 use crate::entity::{
-    CommandEnvelope, CreatedAt, DeletedAt, EventEnvelope, EventId, EventVersion, Nanoid,
+    CommandEnvelope, CreatedAt, DeletedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion,
+    Nanoid,
 };
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -55,14 +56,31 @@ pub enum AccountEvent {
 }
 
 impl Account {
-    pub fn update(id: AccountId, is_bot: AccountIsBot) -> CommandEnvelope<AccountEvent, Account> {
+    pub fn update(
+        id: AccountId,
+        is_bot: AccountIsBot,
+        current_version: EventVersion<Account>,
+    ) -> CommandEnvelope<AccountEvent, Account> {
         let event = AccountEvent::Updated { is_bot };
-        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Prev(current_version)),
+        )
     }
 
-    pub fn delete(id: AccountId) -> CommandEnvelope<AccountEvent, Account> {
+    pub fn delete(
+        id: AccountId,
+        current_version: EventVersion<Account>,
+    ) -> CommandEnvelope<AccountEvent, Account> {
         let event = AccountEvent::Deleted;
-        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Prev(current_version)),
+        )
     }
 }
 
@@ -125,9 +143,8 @@ impl EventApplier for Account {
                 }
             }
             AccountEvent::Deleted => {
-                if let Some(entity) = entity {
-                    entity.deleted_at = Some(DeletedAt::now());
-                    entity.version = event.version;
+                if entity.is_some() {
+                    *entity = None;
                 } else {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::not_exists(event.id.as_ref())));
@@ -235,7 +252,8 @@ mod test {
             nano_id.clone(),
             CreatedAt::now(),
         );
-        let event = Account::update(id.clone(), AccountIsBot::new(true));
+        let version = account.version().clone();
+        let event = Account::update(id.clone(), AccountIsBot::new(true), version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
@@ -252,7 +270,8 @@ mod test {
     #[test]
     fn update_not_exist_account() {
         let id = AccountId::new(Uuid::now_v7());
-        let event = Account::update(id.clone(), AccountIsBot::new(true));
+        let version = EventVersion::new(Uuid::now_v7());
+        let event = Account::update(id.clone(), AccountIsBot::new(true), version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
@@ -282,7 +301,8 @@ mod test {
             nano_id.clone(),
             CreatedAt::now(),
         );
-        let event = Account::delete(id.clone());
+        let version = account.version().clone();
+        let event = Account::delete(id.clone(), version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
@@ -290,16 +310,14 @@ mod test {
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope.clone()).unwrap();
-        let account = account.unwrap();
-        assert!(account.deleted_at().is_some());
-        assert_eq!(account.version(), &envelope.version);
-        assert_eq!(account.nanoid(), &nano_id);
+        assert!(account.is_none());
     }
 
     #[test]
     fn delete_not_exist_account() {
         let id = AccountId::new(Uuid::now_v7());
-        let event = Account::delete(id.clone());
+        let version = EventVersion::new(Uuid::now_v7());
+        let event = Account::delete(id.clone(), version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),

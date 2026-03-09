@@ -44,17 +44,21 @@ impl AccountEventStore for PostgresAccountEventStore {
         since: Option<&EventVersion<Account>>,
     ) -> error_stack::Result<Vec<EventEnvelope<AccountEvent, Account>>, KernelError> {
         let con: &mut PgConnection = transaction;
-        if let Some(version) = since {
+        let rows = if let Some(version) = since {
             sqlx::query_as::<_, EventRow>(
                 //language=postgresql
                 r#"
                 SELECT version, id, event_name, data
                 FROM account_events
-                WHERE id = $2 AND version > $1
+                WHERE id = $1 AND version > $2
                 ORDER BY version
                 "#,
             )
+            .bind(id.as_ref())
             .bind(version.as_ref())
+            .fetch_all(con)
+            .await
+            .convert_error()?
         } else {
             sqlx::query_as::<_, EventRow>(
                 //language=postgresql
@@ -65,16 +69,14 @@ impl AccountEventStore for PostgresAccountEventStore {
                 ORDER BY version
                 "#,
             )
-        }
-        .bind(id.as_ref())
-        .fetch_all(con)
-        .await
-        .convert_error()
-        .and_then(|rows| {
-            rows.into_iter()
-                .map(|row| row.try_into())
-                .collect::<error_stack::Result<Vec<_>, KernelError>>()
-        })
+            .bind(id.as_ref())
+            .fetch_all(con)
+            .await
+            .convert_error()?
+        };
+        rows.into_iter()
+            .map(|row| row.try_into())
+            .collect::<error_stack::Result<Vec<_>, KernelError>>()
     }
 
     async fn persist(
@@ -236,8 +238,22 @@ mod test {
                 .unwrap();
             assert_eq!(events.len(), 0);
             let created_account = create_account_command(account_id.clone());
-            let updated_account = Account::update(account_id.clone(), AccountIsBot::new(true));
-            let deleted_account = Account::delete(account_id.clone());
+            let update_event = AccountEvent::Updated {
+                is_bot: AccountIsBot::new(true),
+            };
+            let updated_account = CommandEnvelope::new(
+                EventId::from(account_id.clone()),
+                update_event.name(),
+                update_event,
+                None,
+            );
+            let delete_event = AccountEvent::Deleted;
+            let deleted_account = CommandEnvelope::new(
+                EventId::from(account_id.clone()),
+                delete_event.name(),
+                delete_event,
+                None,
+            );
 
             db.account_event_store()
                 .persist(&mut transaction, &created_account)
@@ -260,6 +276,72 @@ mod test {
             assert_eq!(&events[0].event, created_account.event());
             assert_eq!(&events[1].event, updated_account.event());
             assert_eq!(&events[2].event, deleted_account.event());
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn find_by_id_since_version() {
+            let db = PostgresDatabase::new().await.unwrap();
+            let mut transaction = db.begin_transaction().await.unwrap();
+            let account_id = AccountId::new(Uuid::now_v7());
+            let event_id = EventId::from(account_id.clone());
+
+            let created_account = create_account_command(account_id.clone());
+            let update_event = AccountEvent::Updated {
+                is_bot: AccountIsBot::new(true),
+            };
+            let updated_account = CommandEnvelope::new(
+                EventId::from(account_id.clone()),
+                update_event.name(),
+                update_event,
+                None,
+            );
+            let delete_event = AccountEvent::Deleted;
+            let deleted_account = CommandEnvelope::new(
+                EventId::from(account_id.clone()),
+                delete_event.name(),
+                delete_event,
+                None,
+            );
+
+            db.account_event_store()
+                .persist(&mut transaction, &created_account)
+                .await
+                .unwrap();
+            db.account_event_store()
+                .persist(&mut transaction, &updated_account)
+                .await
+                .unwrap();
+            db.account_event_store()
+                .persist(&mut transaction, &deleted_account)
+                .await
+                .unwrap();
+
+            // Get all events to obtain the first version
+            let all_events = db
+                .account_event_store()
+                .find_by_id(&mut transaction, &event_id, None)
+                .await
+                .unwrap();
+            assert_eq!(all_events.len(), 3);
+
+            // Query since the first event's version — should return the 2nd and 3rd events
+            let since_events = db
+                .account_event_store()
+                .find_by_id(&mut transaction, &event_id, Some(&all_events[0].version))
+                .await
+                .unwrap();
+            assert_eq!(since_events.len(), 2);
+            assert_eq!(&since_events[0].event, updated_account.event());
+            assert_eq!(&since_events[1].event, deleted_account.event());
+
+            // Query since the last event's version — should return no events
+            let no_events = db
+                .account_event_store()
+                .find_by_id(&mut transaction, &event_id, Some(&all_events[2].version))
+                .await
+                .unwrap();
+            assert_eq!(no_events.len(), 0);
         }
     }
 
