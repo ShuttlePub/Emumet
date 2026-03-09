@@ -1,4 +1,5 @@
 mod account;
+mod account_event_store;
 mod auth_account;
 mod auth_host;
 mod event;

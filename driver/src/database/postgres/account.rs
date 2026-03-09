@@ -1,7 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
-use kernel::interfaces::modify::{AccountModifier, DependOnAccountModifier};
-use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
+use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
 use kernel::prelude::entity::{
     Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
     AuthAccountId, CreatedAt, DeletedAt, EventVersion, Nanoid,
@@ -40,9 +39,9 @@ impl From<AccountRow> for Account {
     }
 }
 
-pub struct PostgresAccountRepository;
+pub struct PostgresAccountReadModel;
 
-impl AccountQuery for PostgresAccountRepository {
+impl AccountReadModel for PostgresAccountReadModel {
     type Transaction = PostgresConnection;
 
     async fn find_by_id(
@@ -129,18 +128,6 @@ impl AccountQuery for PostgresAccountRepository {
         .convert_error()
         .map(|option| option.map(Account::from))
     }
-}
-
-impl DependOnAccountQuery for PostgresDatabase {
-    type AccountQuery = PostgresAccountRepository;
-
-    fn account_query(&self) -> &Self::AccountQuery {
-        &PostgresAccountRepository
-    }
-}
-
-impl AccountModifier for PostgresAccountRepository {
-    type Transaction = PostgresConnection;
 
     async fn create(
         &self,
@@ -238,25 +225,25 @@ impl AccountModifier for PostgresAccountRepository {
     }
 }
 
-impl DependOnAccountModifier for PostgresDatabase {
-    type AccountModifier = PostgresAccountRepository;
+impl DependOnAccountReadModel for PostgresDatabase {
+    type AccountReadModel = PostgresAccountReadModel;
 
-    fn account_modifier(&self) -> &Self::AccountModifier {
-        &PostgresAccountRepository
+    fn account_read_model(&self) -> &Self::AccountReadModel {
+        &PostgresAccountReadModel
     }
 }
 
 #[cfg(test)]
 mod test {
-    mod query {
+    mod read_model {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{AccountModifier, DependOnAccountModifier};
-        use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
+        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            AuthAccountId, CreatedAt, EventVersion, Nanoid,
+            AuthAccountId, CreatedAt, DeletedAt, EventVersion, Nanoid,
         };
+        use sqlx::types::time::OffsetDateTime;
         use sqlx::types::Uuid;
 
         #[test_with::env(DATABASE_URL)]
@@ -278,12 +265,12 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, &id)
                 .await
                 .unwrap();
@@ -297,7 +284,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let accounts = database
-                .account_query()
+                .account_read_model()
                 .find_by_auth_id(&mut transaction, &AuthAccountId::new(Uuid::now_v7()))
                 .await
                 .unwrap();
@@ -323,19 +310,19 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
 
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_name(&mut transaction, &name)
                 .await
                 .unwrap();
             assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
@@ -360,36 +347,23 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
 
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_nanoid(&mut transaction, &nanoid)
                 .await
                 .unwrap();
             assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
-    }
-
-    mod modify {
-        use crate::database::PostgresDatabase;
-        use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{AccountModifier, DependOnAccountModifier};
-        use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, DeletedAt, EventVersion, Nanoid,
-        };
-        use sqlx::types::time::OffsetDateTime;
-        use sqlx::types::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -409,12 +383,12 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap()
@@ -440,7 +414,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
@@ -456,12 +430,12 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .update(&mut transaction, &updated_account)
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap();
@@ -486,18 +460,18 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
 
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap();
@@ -516,18 +490,18 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
 
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap();

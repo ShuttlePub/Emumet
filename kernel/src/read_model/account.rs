@@ -3,9 +3,10 @@ use crate::entity::{Account, AccountId, AccountName, AuthAccountId, Nanoid};
 use crate::KernelError;
 use std::future::Future;
 
-pub trait AccountQuery: Sync + Send + 'static {
+pub trait AccountReadModel: Sync + Send + 'static {
     type Transaction: Transaction;
 
+    // Query operations (projection reads)
     fn find_by_id(
         &self,
         transaction: &mut Self::Transaction,
@@ -29,12 +30,38 @@ pub trait AccountQuery: Sync + Send + 'static {
         transaction: &mut Self::Transaction,
         nanoid: &Nanoid<Account>,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
+
+    // Projection update operations (called by EventApplier pipeline)
+    fn create(
+        &self,
+        transaction: &mut Self::Transaction,
+        account: &Account,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn update(
+        &self,
+        transaction: &mut Self::Transaction,
+        account: &Account,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn delete(
+        &self,
+        transaction: &mut Self::Transaction,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn link_auth_account(
+        &self,
+        transaction: &mut Self::Transaction,
+        account_id: &AccountId,
+        auth_account_id: &AuthAccountId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
-pub trait DependOnAccountQuery: Sync + Send + DependOnDatabaseConnection {
-    type AccountQuery: AccountQuery<
+pub trait DependOnAccountReadModel: Sync + Send + DependOnDatabaseConnection {
+    type AccountReadModel: AccountReadModel<
         Transaction = <Self::DatabaseConnection as DatabaseConnection>::Transaction,
     >;
 
-    fn account_query(&self) -> &Self::AccountQuery;
+    fn account_read_model(&self) -> &Self::AccountReadModel;
 }

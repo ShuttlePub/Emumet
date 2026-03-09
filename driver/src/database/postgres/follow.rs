@@ -236,10 +236,9 @@ mod test {
     mod query {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountModifier, DependOnAccountModifier, DependOnFollowModifier, FollowModifier,
-        };
+        use kernel::interfaces::modify::{DependOnFollowModifier, FollowModifier};
         use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
+        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
@@ -264,7 +263,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
@@ -281,7 +280,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
@@ -318,12 +317,12 @@ mod test {
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, followee_account.id())
                 .await
                 .unwrap();
@@ -347,7 +346,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
@@ -364,7 +363,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
@@ -401,12 +400,12 @@ mod test {
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, followee_account.id())
                 .await
                 .unwrap();
@@ -416,10 +415,9 @@ mod test {
     mod modify {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountModifier, DependOnAccountModifier, DependOnFollowModifier, FollowModifier,
-        };
+        use kernel::interfaces::modify::{DependOnFollowModifier, FollowModifier};
         use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
+        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
@@ -444,7 +442,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
@@ -461,7 +459,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
@@ -484,12 +482,12 @@ mod test {
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, followee_account.id())
                 .await
                 .unwrap();
@@ -514,7 +512,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
@@ -531,7 +529,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
@@ -581,12 +579,12 @@ mod test {
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, followee_account.id())
                 .await
                 .unwrap();
@@ -610,7 +608,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
@@ -627,7 +625,7 @@ mod test {
                 CreatedAt::now(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
@@ -658,12 +656,12 @@ mod test {
                 .unwrap();
             assert!(following.is_empty());
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, followee_account.id())
                 .await
                 .unwrap();

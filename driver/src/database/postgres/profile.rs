@@ -148,10 +148,9 @@ mod test {
         use uuid::Uuid;
 
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountModifier, DependOnAccountModifier, DependOnProfileModifier, ProfileModifier,
-        };
+        use kernel::interfaces::modify::{DependOnProfileModifier, ProfileModifier};
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
+        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId,
@@ -190,7 +189,7 @@ mod test {
                 Nanoid::default(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
@@ -207,7 +206,7 @@ mod test {
                 .unwrap();
             assert_eq!(result.as_ref().map(Profile::id), Some(profile.id()));
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
@@ -218,10 +217,9 @@ mod test {
         use uuid::Uuid;
 
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountModifier, DependOnAccountModifier, DependOnProfileModifier, ProfileModifier,
-        };
+        use kernel::interfaces::modify::{DependOnProfileModifier, ProfileModifier};
         use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
+        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId,
@@ -260,7 +258,7 @@ mod test {
                 Nanoid::default(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
@@ -270,7 +268,7 @@ mod test {
                 .await
                 .unwrap();
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
@@ -306,7 +304,7 @@ mod test {
                 Nanoid::default(),
             );
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
@@ -339,7 +337,7 @@ mod test {
                 .unwrap();
             assert_eq!(result.as_ref().map(Profile::id), Some(updated_profile.id()));
             database
-                .account_modifier()
+                .account_read_model()
                 .delete(&mut transaction, account.id())
                 .await
                 .unwrap();

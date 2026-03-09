@@ -175,10 +175,9 @@ mod test {
     mod query {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountModifier, DependOnAccountModifier, DependOnMetadataModifier, MetadataModifier,
-        };
+        use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
+        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
@@ -206,7 +205,7 @@ mod test {
             );
 
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
@@ -253,7 +252,7 @@ mod test {
             );
 
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
@@ -299,10 +298,9 @@ mod test {
     mod modify {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountModifier, DependOnAccountModifier, DependOnMetadataModifier, MetadataModifier,
-        };
+        use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
         use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
+        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
@@ -329,7 +327,7 @@ mod test {
             );
 
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
@@ -376,7 +374,7 @@ mod test {
             );
 
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
@@ -441,7 +439,7 @@ mod test {
             );
 
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();

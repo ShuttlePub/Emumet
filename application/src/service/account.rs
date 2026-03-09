@@ -2,22 +2,23 @@ use crate::service::auth_account::get_auth_account;
 use crate::transfer::account::AccountDto;
 use crate::transfer::auth_account::AuthAccountInfo;
 use crate::transfer::pagination::{apply_pagination, Pagination};
-use adapter::account::{AccountRepository, DependOnAccountRepository};
 use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
 use error_stack::Report;
 use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::event::EventApplier;
+use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
 use kernel::interfaces::modify::{
-    DependOnAuthAccountModifier, DependOnAuthHostModifier, DependOnEventModifier, EventModifier,
+    DependOnAuthAccountModifier, DependOnAuthHostModifier, DependOnEventModifier,
 };
 use kernel::interfaces::query::{
-    DependOnAuthAccountQuery, DependOnAuthHostQuery, DependOnEventQuery, EventQuery,
+    DependOnAuthAccountQuery, DependOnAuthHostQuery, DependOnEventQuery,
 };
+use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
 use kernel::interfaces::signal::Signal;
 use kernel::prelude::entity::{
-    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-    AuthAccountId, CreatedAt, EventId, EventVersion, Nanoid,
+    Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
+    AccountPublicKey, AuthAccountId, CommandEnvelope, EventId, Nanoid,
 };
 use kernel::KernelError;
 use serde_json;
@@ -27,7 +28,7 @@ pub trait GetAccountService:
     'static
     + Sync
     + Send
-    + DependOnAccountRepository
+    + DependOnAccountReadModel
     + DependOnAuthAccountQuery
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
@@ -49,12 +50,12 @@ pub trait GetAccountService:
             let auth_account = get_auth_account(self, signal, account).await?;
             let mut transaction = self.database_connection().begin_transaction().await?;
             let accounts = self
-                .account_repository()
+                .account_read_model()
                 .find_by_auth_id(&mut transaction, auth_account.id())
                 .await?;
             let cursor = if let Some(cursor) = cursor {
                 let id: Nanoid<Account> = Nanoid::new(cursor);
-                self.account_repository()
+                self.account_read_model()
                     .find_by_nanoid(&mut transaction, &id)
                     .await?
             } else {
@@ -75,10 +76,9 @@ pub trait GetAccountService:
             let auth_account = get_auth_account(self, signal, auth_info).await?;
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            // Nanoidからアカウントを検索
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self
-                .account_repository()
+                .account_read_model()
                 .find_by_nanoid(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -88,10 +88,9 @@ pub trait GetAccountService:
                     ))
                 })?;
 
-            // 権限チェック (認証アカウントに紐づくアカウントのみアクセス可能)
             let auth_account_id = auth_account.id();
             let accounts = self
-                .account_repository()
+                .account_read_model()
                 .find_by_auth_id(&mut transaction, auth_account_id)
                 .await?;
 
@@ -108,7 +107,7 @@ pub trait GetAccountService:
 
 impl<T> GetAccountService for T where
     T: 'static
-        + DependOnAccountRepository
+        + DependOnAccountReadModel
         + DependOnAuthAccountQuery
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery
@@ -122,7 +121,8 @@ pub trait CreateAccountService:
     'static
     + Sync
     + Send
-    + DependOnAccountRepository
+    + DependOnAccountReadModel
+    + DependOnAccountEventStore
     + DependOnAuthAccountQuery
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
@@ -132,26 +132,26 @@ pub trait CreateAccountService:
     + DependOnPasswordProvider
     + DependOnSigningKeyGenerator
 {
-    fn create_account(
+    fn create_account<S>(
         &self,
-        signal: &impl Signal<AuthAccountId>,
+        signal: &S,
         auth_info: AuthAccountInfo,
         name: String,
         is_bot: bool,
-    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> {
+    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>>
+    where
+        S: Signal<AuthAccountId> + Signal<AccountId> + Send + Sync + 'static,
+    {
         async move {
-            // 認証アカウントを確認
             let auth_account = get_auth_account(self, signal, auth_info).await?;
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            // アカウントID生成
             let account_id = AccountId::default();
 
-            // 鍵ペア生成 (DI経由で取得したPasswordProviderとSigningKeyGeneratorを使用)
+            // Generate key pair
             let master_password = self.password_provider().get_password()?;
             let key_pair = self.signing_key_generator().generate(&master_password)?;
 
-            // 暗号化された秘密鍵をJSON文字列として保存
             let encrypted_private_key_json = serde_json::to_string(&key_pair.encrypted_private_key)
                 .map_err(|e| {
                     Report::new(KernelError::Internal)
@@ -160,36 +160,45 @@ pub trait CreateAccountService:
 
             let private_key = AccountPrivateKey::new(encrypted_private_key_json);
             let public_key = AccountPublicKey::new(key_pair.public_key_pem);
-
-            // アカウント名とbot状態設定
             let account_name = AccountName::new(name);
             let account_is_bot = AccountIsBot::new(is_bot);
-
-            // NanoIDの生成
             let nanoid = Nanoid::<Account>::default();
 
-            // 直接エンティティ構築
-            let created_at = CreatedAt::now();
-            let version = EventVersion::default();
-            let account = Account::new(
-                account_id.clone(),
-                account_name,
+            // Create command and persist event
+            let event = AccountEvent::Created {
+                name: account_name,
                 private_key,
                 public_key,
-                account_is_bot,
-                None,
-                version,
+                is_bot: account_is_bot,
                 nanoid,
-                created_at,
+            };
+            let command = CommandEnvelope::new(
+                EventId::from(account_id.clone()),
+                event.name(),
+                event,
+                Some(kernel::prelude::entity::KnownEventVersion::Nothing),
             );
 
-            // accountsテーブルにINSERT
-            self.account_repository()
+            let event_envelope = self
+                .account_event_store()
+                .persist_and_transform(&mut transaction, command)
+                .await?;
+
+            // Apply event to build entity
+            let mut account = None;
+            Account::apply(&mut account, event_envelope)?;
+            let account = account.ok_or_else(|| {
+                Report::new(KernelError::Internal)
+                    .attach_printable("Failed to construct account from created event")
+            })?;
+
+            // Update projection
+            self.account_read_model()
                 .create(&mut transaction, &account)
                 .await?;
 
-            // auth_emumet_accountsにINSERT
-            self.account_repository()
+            // Link auth account
+            self.account_read_model()
                 .link_auth_account(&mut transaction, &account_id, auth_account.id())
                 .await?;
 
@@ -200,7 +209,8 @@ pub trait CreateAccountService:
 
 impl<T> CreateAccountService for T where
     T: 'static
-        + DependOnAccountRepository
+        + DependOnAccountReadModel
+        + DependOnAccountEventStore
         + DependOnAuthAccountQuery
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery
@@ -213,7 +223,7 @@ impl<T> CreateAccountService for T where
 }
 
 pub trait UpdateAccountService:
-    'static + DependOnAccountRepository + DependOnEventQuery + DependOnEventModifier
+    'static + DependOnAccountReadModel + DependOnAccountEventStore
 {
     fn update_account(
         &self,
@@ -222,13 +232,13 @@ pub trait UpdateAccountService:
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
             let account = self
-                .account_repository()
+                .account_read_model()
                 .find_by_id(&mut transaction, &account_id)
                 .await?;
             if let Some(account) = account {
                 let event_id = EventId::from(account_id.clone());
                 let events = self
-                    .event_query()
+                    .account_event_store()
                     .find_by_id(&mut transaction, &event_id, Some(account.version()))
                     .await?;
                 if events.is_empty() {
@@ -239,11 +249,11 @@ pub trait UpdateAccountService:
                     Account::apply(&mut account, event)?;
                 }
                 if let Some(account) = account {
-                    self.account_repository()
+                    self.account_read_model()
                         .update(&mut transaction, &account)
                         .await?;
                 } else {
-                    self.account_repository()
+                    self.account_read_model()
                         .delete(&mut transaction, &account_id)
                         .await?;
                 }
@@ -257,7 +267,7 @@ pub trait UpdateAccountService:
 }
 
 impl<T> UpdateAccountService for T where
-    T: 'static + DependOnAccountRepository + DependOnEventQuery + DependOnEventModifier
+    T: 'static + DependOnAccountReadModel + DependOnAccountEventStore
 {
 }
 
@@ -265,7 +275,8 @@ pub trait DeleteAccountService:
     'static
     + Sync
     + Send
-    + DependOnAccountRepository
+    + DependOnAccountReadModel
+    + DependOnAccountEventStore
     + DependOnAuthAccountQuery
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
@@ -283,14 +294,12 @@ pub trait DeleteAccountService:
         S: Signal<AuthAccountId> + Signal<AccountId> + Send + Sync + 'static,
     {
         async move {
-            // 認証アカウントを確認
             let auth_account = get_auth_account(self, signal, auth_info).await?;
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            // Nanoidからアカウントを検索
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self
-                .account_repository()
+                .account_read_model()
                 .find_by_nanoid(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -300,10 +309,9 @@ pub trait DeleteAccountService:
                     ))
                 })?;
 
-            // 権限チェック (認証アカウントに紐づくアカウントのみ削除可能)
             let auth_account_id = auth_account.id().clone();
             let accounts = self
-                .account_repository()
+                .account_read_model()
                 .find_by_auth_id(&mut transaction, &auth_account_id)
                 .await?;
 
@@ -313,11 +321,10 @@ pub trait DeleteAccountService:
                     .attach_printable("This account does not belong to the authenticated user"));
             }
 
-            // 削除イベントの生成と保存
             let account_id = account.id().clone();
             let delete_command = Account::delete(account_id.clone());
 
-            self.event_modifier()
+            self.account_event_store()
                 .persist_and_transform(&mut transaction, delete_command)
                 .await?;
             signal.emit(account_id).await?;
@@ -329,7 +336,8 @@ pub trait DeleteAccountService:
 
 impl<T> DeleteAccountService for T where
     T: 'static
-        + DependOnAccountRepository
+        + DependOnAccountReadModel
+        + DependOnAccountEventStore
         + DependOnAuthAccountQuery
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery
@@ -344,7 +352,8 @@ pub trait EditAccountService:
     'static
     + Sync
     + Send
-    + DependOnAccountRepository
+    + DependOnAccountReadModel
+    + DependOnAccountEventStore
     + DependOnAuthAccountQuery
     + DependOnAuthAccountModifier
     + DependOnAuthHostQuery
@@ -363,14 +372,12 @@ pub trait EditAccountService:
         S: Signal<AuthAccountId> + Signal<AccountId> + Send + Sync + 'static,
     {
         async move {
-            // 認証アカウントを確認
             let auth_account = get_auth_account(self, signal, auth_info).await?;
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            // Nanoidからアカウントを検索
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self
-                .account_repository()
+                .account_read_model()
                 .find_by_nanoid(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -380,10 +387,9 @@ pub trait EditAccountService:
                     ))
                 })?;
 
-            // 権限チェック (認証アカウントに紐づくアカウントのみ更新可能)
             let auth_account_id = auth_account.id().clone();
             let accounts = self
-                .account_repository()
+                .account_read_model()
                 .find_by_auth_id(&mut transaction, &auth_account_id)
                 .await?;
 
@@ -393,11 +399,10 @@ pub trait EditAccountService:
                     .attach_printable("This account does not belong to the authenticated user"));
             }
 
-            // 更新イベントの生成と保存
             let account_id = account.id().clone();
             let update_command = Account::update(account_id.clone(), AccountIsBot::new(is_bot));
 
-            self.event_modifier()
+            self.account_event_store()
                 .persist_and_transform(&mut transaction, update_command)
                 .await?;
             signal.emit(account_id).await?;
@@ -409,7 +414,8 @@ pub trait EditAccountService:
 
 impl<T> EditAccountService for T where
     T: 'static
-        + DependOnAccountRepository
+        + DependOnAccountReadModel
+        + DependOnAccountEventStore
         + DependOnAuthAccountQuery
         + DependOnAuthAccountModifier
         + DependOnAuthHostQuery

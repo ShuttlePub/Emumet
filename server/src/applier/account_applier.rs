@@ -24,7 +24,7 @@ impl AccountApplier {
             Uuid::new_v4,
             |handler: Arc<Handler>, id: AccountId| async move {
                 handler
-                    .pgpool()
+                    .as_ref()
                     .update_account(id)
                     .await
                     .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))

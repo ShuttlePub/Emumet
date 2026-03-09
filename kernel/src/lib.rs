@@ -3,8 +3,10 @@ mod database;
 mod entity;
 mod error;
 mod event;
+mod event_store;
 mod modify;
 mod query;
+mod read_model;
 mod signal;
 
 pub use self::error::*;
@@ -33,7 +35,12 @@ pub mod interfaces {
     pub mod event {
         pub use crate::event::*;
     }
-
+    pub mod event_store {
+        pub use crate::event_store::*;
+    }
+    pub mod read_model {
+        pub use crate::read_model::*;
+    }
     pub mod signal {
         pub use crate::signal::*;
     }
@@ -43,8 +50,9 @@ pub mod interfaces {
 ///
 /// This macro generates implementations for:
 /// - DependOnDatabaseConnection
-/// - DependOnAccountQuery, DependOnAuthAccountQuery, DependOnAuthHostQuery, DependOnEventQuery
-/// - DependOnAccountModifier, DependOnAuthAccountModifier, DependOnAuthHostModifier, DependOnEventModifier
+/// - DependOnAccountReadModel, DependOnAccountEventStore
+/// - DependOnAuthAccountQuery, DependOnAuthHostQuery, DependOnEventQuery
+/// - DependOnAuthAccountModifier, DependOnAuthHostModifier, DependOnEventModifier
 ///
 /// # Usage
 /// ```ignore
@@ -65,10 +73,17 @@ macro_rules! impl_database_delegation {
             }
         }
 
-        impl $crate::interfaces::query::DependOnAccountQuery for $impl_type {
-            type AccountQuery = <$db_type as $crate::interfaces::query::DependOnAccountQuery>::AccountQuery;
-            fn account_query(&self) -> &Self::AccountQuery {
-                $crate::interfaces::query::DependOnAccountQuery::account_query(&self.$field)
+        impl $crate::interfaces::read_model::DependOnAccountReadModel for $impl_type {
+            type AccountReadModel = <$db_type as $crate::interfaces::read_model::DependOnAccountReadModel>::AccountReadModel;
+            fn account_read_model(&self) -> &Self::AccountReadModel {
+                $crate::interfaces::read_model::DependOnAccountReadModel::account_read_model(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::event_store::DependOnAccountEventStore for $impl_type {
+            type AccountEventStore = <$db_type as $crate::interfaces::event_store::DependOnAccountEventStore>::AccountEventStore;
+            fn account_event_store(&self) -> &Self::AccountEventStore {
+                $crate::interfaces::event_store::DependOnAccountEventStore::account_event_store(&self.$field)
             }
         }
 
@@ -90,13 +105,6 @@ macro_rules! impl_database_delegation {
             type EventQuery = <$db_type as $crate::interfaces::query::DependOnEventQuery>::EventQuery;
             fn event_query(&self) -> &Self::EventQuery {
                 $crate::interfaces::query::DependOnEventQuery::event_query(&self.$field)
-            }
-        }
-
-        impl $crate::interfaces::modify::DependOnAccountModifier for $impl_type {
-            type AccountModifier = <$db_type as $crate::interfaces::modify::DependOnAccountModifier>::AccountModifier;
-            fn account_modifier(&self) -> &Self::AccountModifier {
-                $crate::interfaces::modify::DependOnAccountModifier::account_modifier(&self.$field)
             }
         }
 
