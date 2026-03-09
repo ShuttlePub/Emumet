@@ -198,27 +198,27 @@ impl DependOnAuthAccountEventStore for PostgresDatabase {
 
 #[cfg(test)]
 mod test {
-    mod query {
-        use crate::database::PostgresDatabase;
-        use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::event_store::{
-            AuthAccountEventStore, DependOnAuthAccountEventStore,
-        };
-        use kernel::prelude::entity::{
-            AuthAccount, AuthAccountClientId, AuthAccountEvent, AuthAccountId, AuthHostId,
-            CommandEnvelope, EventId,
-        };
-        use uuid::Uuid;
+    use crate::database::PostgresDatabase;
+    use kernel::interfaces::database::DatabaseConnection;
+    use kernel::interfaces::event_store::{AuthAccountEventStore, DependOnAuthAccountEventStore};
+    use kernel::prelude::entity::{
+        AuthAccount, AuthAccountClientId, AuthAccountEvent, AuthAccountId, AuthHostId,
+        CommandEnvelope, EventId,
+    };
+    use uuid::Uuid;
 
-        fn create_auth_account_command(
-            id: AuthAccountId,
-        ) -> CommandEnvelope<AuthAccountEvent, AuthAccount> {
-            AuthAccount::create(
-                id,
-                AuthHostId::new(Uuid::now_v7()),
-                AuthAccountClientId::new("test_client"),
-            )
-        }
+    fn create_auth_account_command(
+        id: AuthAccountId,
+    ) -> CommandEnvelope<AuthAccountEvent, AuthAccount> {
+        AuthAccount::create(
+            id,
+            AuthHostId::new(Uuid::now_v7()),
+            AuthAccountClientId::new("test_client"),
+        )
+    }
+
+    mod query {
+        use super::*;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -235,12 +235,12 @@ mod test {
             assert_eq!(events.len(), 0);
 
             let created = create_auth_account_command(id.clone());
-            let deleted = AuthAccount::delete(id.clone());
-
-            db.auth_account_event_store()
-                .persist(&mut transaction, &created)
+            let create_envelope = db
+                .auth_account_event_store()
+                .persist_and_transform(&mut transaction, created.clone())
                 .await
                 .unwrap();
+            let deleted = AuthAccount::delete(id.clone(), create_envelope.version);
             db.auth_account_event_store()
                 .persist(&mut transaction, &deleted)
                 .await
@@ -265,12 +265,12 @@ mod test {
             let event_id = EventId::from(id.clone());
 
             let created = create_auth_account_command(id.clone());
-            let deleted = AuthAccount::delete(id.clone());
-
-            db.auth_account_event_store()
-                .persist(&mut transaction, &created)
+            let create_envelope = db
+                .auth_account_event_store()
+                .persist_and_transform(&mut transaction, created.clone())
                 .await
                 .unwrap();
+            let deleted = AuthAccount::delete(id.clone(), create_envelope.version);
             db.auth_account_event_store()
                 .persist(&mut transaction, &deleted)
                 .await
@@ -301,26 +301,7 @@ mod test {
     }
 
     mod persist {
-        use crate::database::PostgresDatabase;
-        use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::event_store::{
-            AuthAccountEventStore, DependOnAuthAccountEventStore,
-        };
-        use kernel::prelude::entity::{
-            AuthAccount, AuthAccountClientId, AuthAccountEvent, AuthAccountId, AuthHostId,
-            CommandEnvelope, EventId,
-        };
-        use uuid::Uuid;
-
-        fn create_auth_account_command(
-            id: AuthAccountId,
-        ) -> CommandEnvelope<AuthAccountEvent, AuthAccount> {
-            AuthAccount::create(
-                id,
-                AuthHostId::new(Uuid::now_v7()),
-                AuthAccountClientId::new("test_client"),
-            )
-        }
+        use super::*;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]

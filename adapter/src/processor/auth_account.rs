@@ -31,6 +31,7 @@ pub trait AuthAccountCommandProcessor: Send + Sync + 'static {
         &self,
         executor: &mut Self::Executor,
         auth_account_id: AuthAccountId,
+        current_version: kernel::prelude::entity::EventVersion<AuthAccount>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
@@ -81,8 +82,9 @@ where
         &self,
         executor: &mut Self::Executor,
         auth_account_id: AuthAccountId,
+        current_version: kernel::prelude::entity::EventVersion<AuthAccount>,
     ) -> error_stack::Result<(), KernelError> {
-        let command = AuthAccount::delete(auth_account_id.clone());
+        let command = AuthAccount::delete(auth_account_id.clone(), current_version);
 
         self.auth_account_event_store()
             .persist_and_transform(executor, command)

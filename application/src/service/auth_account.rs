@@ -1,4 +1,3 @@
-use error_stack::Report;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AuthAccountEventStore, DependOnAuthAccountEventStore};
@@ -16,12 +15,13 @@ pub trait UpdateAuthAccount:
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
-            let auth_account = self
+            let existing = self
                 .auth_account_read_model()
                 .find_by_id(&mut transaction, &auth_account_id)
                 .await?;
-            if let Some(auth_account) = auth_account {
-                let event_id = EventId::from(auth_account.id().clone());
+            let event_id = EventId::from(auth_account_id.clone());
+
+            if let Some(auth_account) = existing {
                 let events = self
                     .auth_account_event_store()
                     .find_by_id(&mut transaction, &event_id, Some(auth_account.version()))
@@ -29,7 +29,7 @@ pub trait UpdateAuthAccount:
                 if events
                     .last()
                     .map(|event| &event.version != auth_account.version())
-                    .unwrap_or_else(|| false)
+                    .unwrap_or(false)
                 {
                     let mut auth_account = Some(auth_account);
                     for event in events {
@@ -40,16 +40,29 @@ pub trait UpdateAuthAccount:
                             .update(&mut transaction, &auth_account)
                             .await?;
                     } else {
-                        return Err(Report::new(KernelError::Internal)
-                            .attach_printable("Failed to get auth account"));
+                        self.auth_account_read_model()
+                            .delete(&mut transaction, &auth_account_id)
+                            .await?;
                     }
                 }
-                Ok(())
             } else {
-                Err(Report::new(KernelError::Internal).attach_printable(format!(
-                    "Failed to get target auth account: {auth_account_id:?}"
-                )))
+                let events = self
+                    .auth_account_event_store()
+                    .find_by_id(&mut transaction, &event_id, None)
+                    .await?;
+                if !events.is_empty() {
+                    let mut auth_account = None;
+                    for event in events {
+                        AuthAccount::apply(&mut auth_account, event)?;
+                    }
+                    if let Some(auth_account) = auth_account {
+                        self.auth_account_read_model()
+                            .create(&mut transaction, &auth_account)
+                            .await?;
+                    }
+                }
             }
+            Ok(())
         }
     }
 }

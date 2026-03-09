@@ -50,9 +50,17 @@ impl AuthAccount {
         )
     }
 
-    pub fn delete(id: AuthAccountId) -> CommandEnvelope<AuthAccountEvent, AuthAccount> {
+    pub fn delete(
+        id: AuthAccountId,
+        current_version: EventVersion<AuthAccount>,
+    ) -> CommandEnvelope<AuthAccountEvent, AuthAccount> {
         let event = AuthAccountEvent::Deleted;
-        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Prev(current_version)),
+        )
     }
 }
 
@@ -131,7 +139,7 @@ mod test {
             client_id.clone(),
             EventVersion::new(Uuid::now_v7()),
         );
-        let delete_account = AuthAccount::delete(id.clone());
+        let delete_account = AuthAccount::delete(id.clone(), account.version().clone());
         let envelope = EventEnvelope::new(
             delete_account.id().clone(),
             delete_account.event().clone(),
