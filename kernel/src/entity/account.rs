@@ -5,8 +5,8 @@ use serde::Serialize;
 use vodca::{Nameln, Newln, References};
 
 use crate::entity::{
-    CommandEnvelope, CreatedAt, DeletedAt, EventEnvelope, EventId, EventVersion, KnownEventVersion,
-    Nanoid,
+    AuthAccountId, CommandEnvelope, CreatedAt, DeletedAt, EventEnvelope, EventId, EventVersion,
+    KnownEventVersion, Nanoid,
 };
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -48,6 +48,7 @@ pub enum AccountEvent {
         public_key: AccountPublicKey,
         is_bot: AccountIsBot,
         nanoid: Nanoid<Account>,
+        auth_account_id: AuthAccountId,
     },
     Updated {
         is_bot: AccountIsBot,
@@ -56,6 +57,31 @@ pub enum AccountEvent {
 }
 
 impl Account {
+    pub fn create(
+        id: AccountId,
+        name: AccountName,
+        private_key: AccountPrivateKey,
+        public_key: AccountPublicKey,
+        is_bot: AccountIsBot,
+        nanoid: Nanoid<Account>,
+        auth_account_id: AuthAccountId,
+    ) -> CommandEnvelope<AccountEvent, Account> {
+        let event = AccountEvent::Created {
+            name,
+            private_key,
+            public_key,
+            is_bot,
+            nanoid,
+            auth_account_id,
+        };
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Nothing),
+        )
+    }
+
     pub fn update(
         id: AccountId,
         is_bot: AccountIsBot,
@@ -111,6 +137,7 @@ impl EventApplier for Account {
                 public_key,
                 is_bot,
                 nanoid: nano_id,
+                auth_account_id: _,
             } => {
                 if let Some(entity) = entity {
                     return Err(Report::new(KernelError::Internal)
@@ -159,7 +186,7 @@ impl EventApplier for Account {
 mod test {
     use crate::entity::{
         Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
-        AccountPublicKey, CreatedAt, EventEnvelope, EventId, EventVersion, Nanoid,
+        AccountPublicKey, AuthAccountId, CreatedAt, EventEnvelope, EventId, EventVersion, Nanoid,
     };
     use crate::event::EventApplier;
     use crate::KernelError;
@@ -179,6 +206,7 @@ mod test {
             public_key: public_key.clone(),
             is_bot: is_bot.clone(),
             nanoid: nano_id.clone(),
+            auth_account_id: AuthAccountId::new(Uuid::now_v7()),
         };
         let envelope = EventEnvelope::new(
             EventId::from(id.clone()),
@@ -222,6 +250,7 @@ mod test {
             public_key: public_key.clone(),
             is_bot: is_bot.clone(),
             nanoid: nano_id.clone(),
+            auth_account_id: AuthAccountId::new(Uuid::now_v7()),
         };
         let envelope = EventEnvelope::new(
             EventId::from(id.clone()),

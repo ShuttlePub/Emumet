@@ -7,4 +7,5 @@ authors.workspace = true
 [dependencies]
 kernel = { path = "../kernel" }
 error-stack = { workspace = true }
+tracing = { workspace = true }
 zeroize = "1.7"

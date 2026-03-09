@@ -1,4 +1,5 @@
 use crate::applier::ApplierContainer;
+use adapter::processor::account::DependOnAccountSignal;
 use driver::crypto::{
     Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
 };
@@ -7,6 +8,7 @@ use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
     DependOnSignatureVerifier, DependOnSigner,
 };
+use kernel::interfaces::database::DependOnDatabaseConnection;
 use kernel::KernelError;
 use std::sync::Arc;
 use vodca::References;
@@ -27,6 +29,65 @@ impl AppModule {
         })
     }
 }
+
+// --- DependOn* implementations for AppModule (delegate to handler/applier_container) ---
+
+impl kernel::interfaces::database::DependOnDatabaseConnection for AppModule {
+    type DatabaseConnection = PostgresDatabase;
+    fn database_connection(&self) -> &Self::DatabaseConnection {
+        self.handler.as_ref().database_connection()
+    }
+}
+
+impl kernel::interfaces::read_model::DependOnAccountReadModel for AppModule {
+    type AccountReadModel = <PostgresDatabase as kernel::interfaces::read_model::DependOnAccountReadModel>::AccountReadModel;
+    fn account_read_model(&self) -> &Self::AccountReadModel {
+        kernel::interfaces::read_model::DependOnAccountReadModel::account_read_model(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::event_store::DependOnAccountEventStore for AppModule {
+    type AccountEventStore = <PostgresDatabase as kernel::interfaces::event_store::DependOnAccountEventStore>::AccountEventStore;
+    fn account_event_store(&self) -> &Self::AccountEventStore {
+        kernel::interfaces::event_store::DependOnAccountEventStore::account_event_store(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl DependOnPasswordProvider for AppModule {
+    type PasswordProvider = FilePasswordProvider;
+    fn password_provider(&self) -> &Self::PasswordProvider {
+        self.handler.as_ref().password_provider()
+    }
+}
+
+impl DependOnRawKeyGenerator for AppModule {
+    type RawKeyGenerator = Rsa2048RawGenerator;
+    fn raw_key_generator(&self) -> &Self::RawKeyGenerator {
+        self.handler.as_ref().raw_key_generator()
+    }
+}
+
+impl DependOnKeyEncryptor for AppModule {
+    type KeyEncryptor = Argon2Encryptor;
+    fn key_encryptor(&self) -> &Self::KeyEncryptor {
+        self.handler.as_ref().key_encryptor()
+    }
+}
+
+impl DependOnAccountSignal for AppModule {
+    type AccountSignal = ApplierContainer;
+    fn account_signal(&self) -> &Self::AccountSignal {
+        &self.applier_container
+    }
+}
+
+// Note: DependOnSigningKeyGenerator, DependOnAccountCommandProcessor,
+// DependOnAccountQueryProcessor, and all UseCase traits are provided
+// automatically via blanket impls in adapter.
 
 #[derive(References)]
 pub struct Handler {
@@ -83,9 +144,6 @@ impl DependOnKeyEncryptor for Handler {
         &self.key_encryptor
     }
 }
-
-// Note: DependOnSigningKeyGenerator is provided automatically via blanket impl in adapter
-// when Handler implements DependOnRawKeyGenerator + DependOnKeyEncryptor
 
 impl DependOnSigner for Handler {
     type Signer = Rsa2048Signer;

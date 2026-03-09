@@ -4,7 +4,7 @@ use std::future::Future;
 /// Databaseのトランザクション処理を示すトレイト
 ///
 /// 現状は何もないが、将来的にトランザクション時に使える機能を示す可能性を考えて用意している
-pub trait Executor {}
+pub trait Executor: Send {}
 
 pub trait DatabaseConnection: Sync + Send + 'static {
     type Executor: Executor;

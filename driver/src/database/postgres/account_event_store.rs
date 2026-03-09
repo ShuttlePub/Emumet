@@ -203,7 +203,7 @@ mod test {
         use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
         use kernel::prelude::entity::{
             Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
-            AccountPublicKey, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
+            AccountPublicKey, AuthAccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
         };
         use uuid::Uuid;
 
@@ -214,6 +214,7 @@ mod test {
                 public_key: AccountPublicKey::new("test"),
                 is_bot: AccountIsBot::new(false),
                 nanoid: Nanoid::default(),
+                auth_account_id: AuthAccountId::new(uuid::Uuid::now_v7()),
             };
             CommandEnvelope::new(
                 EventId::from(account_id),
@@ -350,7 +351,7 @@ mod test {
         use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
         use kernel::prelude::entity::{
             Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
-            AccountPublicKey, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
+            AccountPublicKey, AuthAccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
         };
         use uuid::Uuid;
 
@@ -361,6 +362,7 @@ mod test {
                 public_key: AccountPublicKey::new("test"),
                 is_bot: AccountIsBot::new(false),
                 nanoid: Nanoid::default(),
+                auth_account_id: AuthAccountId::new(uuid::Uuid::now_v7()),
             };
             CommandEnvelope::new(
                 EventId::from(account_id),

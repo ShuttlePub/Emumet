@@ -221,7 +221,7 @@ mod test {
         use kernel::interfaces::query::{DependOnEventQuery, EventQuery};
         use kernel::prelude::entity::{
             Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
-            AccountPublicKey, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
+            AccountPublicKey, AuthAccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
         };
 
         fn create_account_command(account_id: AccountId) -> CommandEnvelope<AccountEvent, Account> {
@@ -231,6 +231,7 @@ mod test {
                 public_key: AccountPublicKey::new("test"),
                 is_bot: AccountIsBot::new(false),
                 nanoid: Nanoid::default(),
+                auth_account_id: AuthAccountId::new(uuid::Uuid::now_v7()),
             };
             CommandEnvelope::new(
                 EventId::from(account_id),
@@ -367,7 +368,7 @@ mod test {
         use kernel::interfaces::query::{DependOnEventQuery, EventQuery};
         use kernel::prelude::entity::{
             Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
-            AccountPublicKey, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
+            AccountPublicKey, AuthAccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
         };
 
         fn create_account_command(account_id: AccountId) -> CommandEnvelope<AccountEvent, Account> {
@@ -377,6 +378,7 @@ mod test {
                 public_key: AccountPublicKey::new("test"),
                 is_bot: AccountIsBot::new(false),
                 nanoid: Nanoid::default(),
+                auth_account_id: AuthAccountId::new(uuid::Uuid::now_v7()),
             };
             CommandEnvelope::new(
                 EventId::from(account_id),

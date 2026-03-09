@@ -1,10 +1,10 @@
 use crate::error::ErrorStatus;
 use crate::expect_role;
 use crate::handler::AppModule;
-use crate::keycloak::KeycloakAuthAccount;
+use crate::keycloak::{resolve_auth_account_id, KeycloakAuthAccount};
 use crate::route::DirectionConverter;
 use application::service::account::{
-    CreateAccountService, DeleteAccountService, EditAccountService, GetAccountService,
+    CreateAccountUseCase, DeleteAccountUseCase, EditAccountUseCase, GetAccountUseCase,
 };
 use application::transfer::pagination::Pagination;
 use axum::extract::{Path, Query, State};
@@ -71,15 +71,18 @@ async fn get_accounts(
 ) -> Result<Json<AccountsResponse>, ErrorStatus> {
     expect_role!(&token, uri, method);
     let auth_info = KeycloakAuthAccount::from(token);
+    let auth_account_id = resolve_auth_account_id(
+        module.handler(),
+        module.applier_container().deref(),
+        auth_info,
+    )
+    .await
+    .map_err(ErrorStatus::from)?;
+
     let direction = direction.convert_to_direction()?;
     let pagination = Pagination::new(limit, cursor, direction);
     let result = module
-        .handler()
-        .get_all_accounts(
-            module.applier_container().deref(),
-            auth_info.into(),
-            pagination,
-        )
+        .get_all_accounts(&auth_account_id, pagination)
         .await
         .map_err(ErrorStatus::from)?
         .ok_or(ErrorStatus::from(StatusCode::NOT_FOUND))?;
@@ -121,15 +124,16 @@ async fn create_account(
         )));
     }
 
-    // サービス層でのアカウント作成処理の呼び出し
+    let auth_account_id = resolve_auth_account_id(
+        module.handler(),
+        module.applier_container().deref(),
+        auth_info,
+    )
+    .await
+    .map_err(ErrorStatus::from)?;
+
     let account = module
-        .handler()
-        .create_account(
-            module.applier_container().deref(),
-            auth_info.into(),
-            request.name,
-            request.is_bot,
-        )
+        .create_account(auth_account_id, request.name, request.is_bot)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -154,7 +158,6 @@ async fn get_account_by_id(
     expect_role!(&token, uri, method);
     let auth_info = KeycloakAuthAccount::from(token);
 
-    // IDの検証
     if id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
@@ -162,10 +165,16 @@ async fn get_account_by_id(
         )));
     }
 
-    // サービス層での特定アカウント取得処理
+    let auth_account_id = resolve_auth_account_id(
+        module.handler(),
+        module.applier_container().deref(),
+        auth_info,
+    )
+    .await
+    .map_err(ErrorStatus::from)?;
+
     let account = module
-        .handler()
-        .get_account_by_id(module.applier_container().deref(), auth_info.into(), id)
+        .get_account_by_id(&auth_account_id, id)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -191,7 +200,6 @@ async fn update_account_by_id(
     expect_role!(&token, uri, method);
     let auth_info = KeycloakAuthAccount::from(token);
 
-    // IDの検証
     if id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
@@ -199,15 +207,16 @@ async fn update_account_by_id(
         )));
     }
 
-    // サービス層でのアカウント更新処理
+    let auth_account_id = resolve_auth_account_id(
+        module.handler(),
+        module.applier_container().deref(),
+        auth_info,
+    )
+    .await
+    .map_err(ErrorStatus::from)?;
+
     module
-        .handler()
-        .edit_account(
-            module.applier_container().deref(),
-            auth_info.into(),
-            id,
-            request.is_bot,
-        )
+        .edit_account(&auth_account_id, id, request.is_bot)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -224,7 +233,6 @@ async fn delete_account_by_id(
     expect_role!(&token, uri, method);
     let auth_info = KeycloakAuthAccount::from(token);
 
-    // IDの検証
     if id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
@@ -232,10 +240,16 @@ async fn delete_account_by_id(
         )));
     }
 
-    // サービス層でのアカウント削除処理
+    let auth_account_id = resolve_auth_account_id(
+        module.handler(),
+        module.applier_container().deref(),
+        auth_info,
+    )
+    .await
+    .map_err(ErrorStatus::from)?;
+
     module
-        .handler()
-        .delete_account(module.applier_container().deref(), auth_info.into(), id)
+        .delete_account(&auth_account_id, id)
         .await
         .map_err(ErrorStatus::from)?;
 

@@ -8,7 +8,7 @@ use std::sync::Arc;
 mod account_applier;
 mod auth_account_applier;
 
-pub(crate) struct ApplierContainer {
+pub struct ApplierContainer {
     account_applier: AccountApplier,
     auth_account_applier: AuthAccountApplier,
 }
