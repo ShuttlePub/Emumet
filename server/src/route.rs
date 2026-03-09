@@ -3,6 +3,8 @@ use application::transfer::pagination::Direction;
 use axum::http::StatusCode;
 
 pub mod account;
+pub mod metadata;
+pub mod profile;
 
 trait DirectionConverter {
     fn convert_to_direction(self) -> Result<Direction, ErrorStatus>;

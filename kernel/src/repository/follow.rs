@@ -1,10 +1,22 @@
 use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
-use crate::entity::{Follow, FollowId};
+use crate::entity::{Follow, FollowId, FollowTargetId};
 use crate::KernelError;
 use std::future::Future;
 
-pub trait FollowModifier: Sync + Send + 'static {
+pub trait FollowRepository: Sync + Send + 'static {
     type Executor: Executor;
+
+    fn find_followings(
+        &self,
+        executor: &mut Self::Executor,
+        source: &FollowTargetId,
+    ) -> impl Future<Output = error_stack::Result<Vec<Follow>, KernelError>> + Send;
+
+    fn find_followers(
+        &self,
+        executor: &mut Self::Executor,
+        destination: &FollowTargetId,
+    ) -> impl Future<Output = error_stack::Result<Vec<Follow>, KernelError>> + Send;
 
     fn create(
         &self,
@@ -25,10 +37,10 @@ pub trait FollowModifier: Sync + Send + 'static {
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
-pub trait DependOnFollowModifier: Sync + Send + DependOnDatabaseConnection {
-    type FollowModifier: FollowModifier<
+pub trait DependOnFollowRepository: Sync + Send + DependOnDatabaseConnection {
+    type FollowRepository: FollowRepository<
         Executor = <Self::DatabaseConnection as DatabaseConnection>::Executor,
     >;
 
-    fn follow_modifier(&self) -> &Self::FollowModifier;
+    fn follow_repository(&self) -> &Self::FollowRepository;
 }

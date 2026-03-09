@@ -1,8 +1,7 @@
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use kernel::interfaces::modify::{DependOnProfileModifier, ProfileModifier};
-use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
+use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::prelude::entity::{
     AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
     ProfileSummary,
@@ -39,9 +38,9 @@ impl From<ProfileRow> for Profile {
     }
 }
 
-pub struct PostgresProfileRepository;
+pub struct PostgresProfileReadModel;
 
-impl ProfileQuery for PostgresProfileRepository {
+impl ProfileReadModel for PostgresProfileReadModel {
     type Executor = PostgresConnection;
 
     async fn find_by_id(
@@ -61,20 +60,28 @@ impl ProfileQuery for PostgresProfileRepository {
         .fetch_optional(con)
         .await
         .convert_error()
-        .map(|option| option.map(|row| row.into()))
+        .map(|option| option.map(Profile::from))
     }
-}
 
-impl DependOnProfileQuery for PostgresDatabase {
-    type ProfileQuery = PostgresProfileRepository;
-
-    fn profile_query(&self) -> &Self::ProfileQuery {
-        &PostgresProfileRepository
+    async fn find_by_account_id(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+    ) -> error_stack::Result<Option<Profile>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, ProfileRow>(
+            //language=postgresql
+            r#"
+            SELECT id, account_id, display, summary, icon_id, banner_id, version, nanoid
+            FROM profiles WHERE account_id = $1
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(Profile::from))
     }
-}
-
-impl ProfileModifier for PostgresProfileRepository {
-    type Executor = PostgresConnection;
 
     async fn create(
         &self,
@@ -118,39 +125,63 @@ impl ProfileModifier for PostgresProfileRepository {
             //language=postgresql
             r#"
             UPDATE profiles SET display = $2, summary = $3, icon_id = $4, banner_id = $5, version = $6
-            WHERE account_id = $1
-            "#
+            WHERE id = $1
+            "#,
         )
-            .bind(profile.id().as_ref())
-            .bind(profile.display_name().as_ref().map(ProfileDisplayName::as_ref))
-            .bind(profile.summary().as_ref().map(ProfileSummary::as_ref))
-            .bind(profile.icon().as_ref().map(ImageId::as_ref))
-            .bind(profile.banner().as_ref().map(ImageId::as_ref))
-            .bind(profile.version().as_ref())
-            .execute(con)
-            .await
-            .convert_error()?;
+        .bind(profile.id().as_ref())
+        .bind(
+            profile
+                .display_name()
+                .as_ref()
+                .map(ProfileDisplayName::as_ref),
+        )
+        .bind(profile.summary().as_ref().map(ProfileSummary::as_ref))
+        .bind(profile.icon().as_ref().map(ImageId::as_ref))
+        .bind(profile.banner().as_ref().map(ImageId::as_ref))
+        .bind(profile.version().as_ref())
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
+
+    async fn delete(
+        &self,
+        executor: &mut Self::Executor,
+        profile_id: &ProfileId,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query(
+            //language=postgresql
+            r#"
+            DELETE FROM profiles WHERE id = $1
+            "#,
+        )
+        .bind(profile_id.as_ref())
+        .execute(con)
+        .await
+        .convert_error()?;
         Ok(())
     }
 }
 
-impl DependOnProfileModifier for PostgresDatabase {
-    type ProfileModifier = PostgresProfileRepository;
+impl DependOnProfileReadModel for PostgresDatabase {
+    type ProfileReadModel = PostgresProfileReadModel;
 
-    fn profile_modifier(&self) -> &Self::ProfileModifier {
-        &PostgresProfileRepository
+    fn profile_read_model(&self) -> &Self::ProfileReadModel {
+        &PostgresProfileReadModel
     }
 }
 
 #[cfg(test)]
 mod test {
-    mod query {
+    mod read_model {
         use uuid::Uuid;
 
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnProfileModifier, ProfileModifier};
-        use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
-        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
+        use kernel::interfaces::read_model::{
+            AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
+        };
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId,
@@ -158,6 +189,33 @@ mod test {
         };
 
         use crate::database::PostgresDatabase;
+
+        fn make_account(account_id: AccountId) -> Account {
+            Account::new(
+                account_id,
+                AccountName::new("test"),
+                AccountPrivateKey::new("test"),
+                AccountPublicKey::new("test"),
+                AccountIsBot::new(false),
+                None,
+                EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
+                CreatedAt::now(),
+            )
+        }
+
+        fn make_profile(profile_id: ProfileId, account_id: AccountId) -> Profile {
+            Profile::new(
+                profile_id,
+                account_id,
+                Some(ProfileDisplayName::new("display name")),
+                Some(ProfileSummary::new("summary")),
+                None,
+                None,
+                EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
+            )
+        }
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -167,66 +225,77 @@ mod test {
 
             let profile_id = ProfileId::new(Uuid::now_v7());
             let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
-            let profile = Profile::new(
-                profile_id.clone(),
-                account_id,
-                Some(ProfileDisplayName::new("display name")),
-                Some(ProfileSummary::new("summary")),
-                None,
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let account = make_account(account_id.clone());
+            let profile = make_profile(profile_id.clone(), account_id.clone());
+
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
             database
-                .profile_modifier()
+                .profile_read_model()
                 .create(&mut transaction, &profile)
                 .await
                 .unwrap();
 
             let result = database
-                .profile_query()
+                .profile_read_model()
                 .find_by_id(&mut transaction, &profile_id)
                 .await
                 .unwrap();
             assert_eq!(result.as_ref().map(Profile::id), Some(profile.id()));
+
             database
                 .account_read_model()
                 .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
-    }
 
-    mod modify {
-        use uuid::Uuid;
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn find_by_account_id() {
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
 
-        use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnProfileModifier, ProfileModifier};
-        use kernel::interfaces::query::{DependOnProfileQuery, ProfileQuery};
-        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId,
-            ProfileSummary,
-        };
+            let profile_id = ProfileId::new(Uuid::now_v7());
+            let account_id = AccountId::new(Uuid::now_v7());
+            let account = make_account(account_id.clone());
+            let profile = make_profile(profile_id.clone(), account_id.clone());
 
-        use crate::database::PostgresDatabase;
+            database
+                .account_read_model()
+                .create(&mut transaction, &account)
+                .await
+                .unwrap();
+            database
+                .profile_read_model()
+                .create(&mut transaction, &profile)
+                .await
+                .unwrap();
+
+            let result = database
+                .profile_read_model()
+                .find_by_account_id(&mut transaction, &account_id)
+                .await
+                .unwrap();
+            assert_eq!(result.as_ref().map(Profile::id), Some(profile.id()));
+
+            // Non-existent account_id returns None
+            let not_found = database
+                .profile_read_model()
+                .find_by_account_id(&mut transaction, &AccountId::new(Uuid::now_v7()))
+                .await
+                .unwrap();
+            assert!(not_found.is_none());
+
+            database
+                .account_read_model()
+                .delete(&mut transaction, account.id())
+                .await
+                .unwrap();
+        }
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -236,37 +305,28 @@ mod test {
 
             let profile_id = ProfileId::new(Uuid::now_v7());
             let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
-            let profile = Profile::new(
-                profile_id,
-                account_id,
-                Some(ProfileDisplayName::new("display name")),
-                Some(ProfileSummary::new("summary")),
-                None,
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let account = make_account(account_id.clone());
+            let profile = make_profile(profile_id.clone(), account_id.clone());
+
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
             database
-                .profile_modifier()
+                .profile_read_model()
                 .create(&mut transaction, &profile)
                 .await
                 .unwrap();
+
+            let result = database
+                .profile_read_model()
+                .find_by_id(&mut transaction, &profile_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.id(), profile.id());
+
             database
                 .account_read_model()
                 .delete(&mut transaction, account.id())
@@ -282,41 +342,23 @@ mod test {
 
             let profile_id = ProfileId::new(Uuid::now_v7());
             let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
-            let profile = Profile::new(
-                profile_id.clone(),
-                account_id.clone(),
-                Some(ProfileDisplayName::new("display name")),
-                Some(ProfileSummary::new("summary")),
-                None,
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let account = make_account(account_id.clone());
+            let profile = make_profile(profile_id.clone(), account_id.clone());
+
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
             database
-                .profile_modifier()
+                .profile_read_model()
                 .create(&mut transaction, &profile)
                 .await
                 .unwrap();
 
             let updated_profile = Profile::new(
                 profile_id.clone(),
-                account_id,
+                account_id.clone(),
                 Some(ProfileDisplayName::new("updated display name")),
                 Some(ProfileSummary::new("updated summary")),
                 None,
@@ -325,17 +367,63 @@ mod test {
                 Nanoid::default(),
             );
             database
-                .profile_modifier()
+                .profile_read_model()
                 .update(&mut transaction, &updated_profile)
                 .await
                 .unwrap();
 
             let result = database
-                .profile_query()
+                .profile_read_model()
+                .find_by_id(&mut transaction, &profile_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.id(), updated_profile.id());
+            assert_eq!(result.display_name(), updated_profile.display_name());
+            assert_eq!(result.summary(), updated_profile.summary());
+
+            database
+                .account_read_model()
+                .delete(&mut transaction, account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn delete() {
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
+
+            let profile_id = ProfileId::new(Uuid::now_v7());
+            let account_id = AccountId::new(Uuid::now_v7());
+            let account = make_account(account_id.clone());
+            let profile = make_profile(profile_id.clone(), account_id.clone());
+
+            database
+                .account_read_model()
+                .create(&mut transaction, &account)
+                .await
+                .unwrap();
+            database
+                .profile_read_model()
+                .create(&mut transaction, &profile)
+                .await
+                .unwrap();
+
+            database
+                .profile_read_model()
+                .delete(&mut transaction, &profile_id)
+                .await
+                .unwrap();
+
+            let result = database
+                .profile_read_model()
                 .find_by_id(&mut transaction, &profile_id)
                 .await
                 .unwrap();
-            assert_eq!(result.as_ref().map(Profile::id), Some(updated_profile.id()));
+            assert!(result.is_none());
+
             database
                 .account_read_model()
                 .delete(&mut transaction, account.id())

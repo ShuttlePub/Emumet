@@ -17,6 +17,7 @@ use axum_keycloak_auth::instance::KeycloakAuthInstance;
 use axum_keycloak_auth::layer::KeycloakAuthLayer;
 use axum_keycloak_auth::PassthroughMode;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use time::OffsetDateTime;
 
 #[derive(Debug, Deserialize)]
@@ -54,7 +55,7 @@ struct AccountsResponse {
 }
 
 pub trait AccountRouter {
-    fn route_account(self, instance: KeycloakAuthInstance) -> Self;
+    fn route_account(self, instance: Arc<KeycloakAuthInstance>) -> Self;
 }
 
 async fn get_accounts(
@@ -236,7 +237,7 @@ async fn delete_account_by_id(
 }
 
 impl AccountRouter for Router<AppModule> {
-    fn route_account(self, instance: KeycloakAuthInstance) -> Self {
+    fn route_account(self, instance: Arc<KeycloakAuthInstance>) -> Self {
         self.route("/accounts", get(get_accounts))
             .route("/accounts", post(create_account))
             .route("/accounts/:id", get(get_account_by_id))

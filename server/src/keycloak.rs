@@ -7,8 +7,7 @@ use axum_keycloak_auth::decode::KeycloakToken;
 use axum_keycloak_auth::instance::{KeycloakAuthInstance, KeycloakConfig};
 use axum_keycloak_auth::role::Role;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
-use kernel::interfaces::modify::{AuthHostModifier, DependOnAuthHostModifier};
-use kernel::interfaces::query::{AuthHostQuery, DependOnAuthHostQuery};
+use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
 use kernel::prelude::entity::{
     AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
 };
@@ -64,14 +63,14 @@ pub async fn resolve_auth_account_id(
     } else {
         let url = AuthHostUrl::new(auth_info.host_url);
         let auth_host = app
-            .auth_host_query()
+            .auth_host_repository()
             .find_by_url(&mut executor, &url)
             .await?;
         let auth_host = if let Some(auth_host) = auth_host {
             auth_host
         } else {
             let auth_host = AuthHost::new(AuthHostId::default(), url);
-            app.auth_host_modifier()
+            app.auth_host_repository()
                 .create(&mut executor, &auth_host)
                 .await?;
             auth_host

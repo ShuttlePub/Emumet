@@ -1,7 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
-use kernel::interfaces::modify::{AuthHostModifier, DependOnAuthHostModifier};
-use kernel::interfaces::query::{AuthHostQuery, DependOnAuthHostQuery};
+use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
 use kernel::prelude::entity::{AuthHost, AuthHostId, AuthHostUrl};
 use kernel::KernelError;
 use sqlx::PgConnection;
@@ -21,7 +20,7 @@ impl From<AuthHostRow> for AuthHost {
 
 pub struct PostgresAuthHostRepository;
 
-impl AuthHostQuery for PostgresAuthHostRepository {
+impl AuthHostRepository for PostgresAuthHostRepository {
     type Executor = PostgresConnection;
     async fn find_by_id(
         &self,
@@ -64,18 +63,7 @@ impl AuthHostQuery for PostgresAuthHostRepository {
         .convert_error()
         .map(|row| row.map(AuthHost::from))
     }
-}
 
-impl DependOnAuthHostQuery for PostgresDatabase {
-    type AuthHostQuery = PostgresAuthHostRepository;
-
-    fn auth_host_query(&self) -> &Self::AuthHostQuery {
-        &PostgresAuthHostRepository
-    }
-}
-
-impl AuthHostModifier for PostgresAuthHostRepository {
-    type Executor = PostgresConnection;
     async fn create(
         &self,
         executor: &mut Self::Executor,
@@ -120,10 +108,10 @@ impl AuthHostModifier for PostgresAuthHostRepository {
     }
 }
 
-impl DependOnAuthHostModifier for PostgresDatabase {
-    type AuthHostModifier = PostgresAuthHostRepository;
+impl DependOnAuthHostRepository for PostgresDatabase {
+    type AuthHostRepository = PostgresAuthHostRepository;
 
-    fn auth_host_modifier(&self) -> &Self::AuthHostModifier {
+    fn auth_host_repository(&self) -> &Self::AuthHostRepository {
         &PostgresAuthHostRepository
     }
 }
@@ -141,8 +129,7 @@ mod test {
         use crate::database::postgres::auth_host::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{AuthHostModifier, DependOnAuthHostModifier};
-        use kernel::interfaces::query::{AuthHostQuery, DependOnAuthHostQuery};
+        use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
         use kernel::prelude::entity::{AuthHost, AuthHostId};
         use uuid::Uuid;
 
@@ -154,13 +141,13 @@ mod test {
 
             let auth_host = AuthHost::new(AuthHostId::new(Uuid::now_v7()), url());
             database
-                .auth_host_modifier()
+                .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
 
             let found_auth_host = database
-                .auth_host_query()
+                .auth_host_repository()
                 .find_by_id(&mut transaction, auth_host.id())
                 .await
                 .unwrap()
@@ -176,13 +163,13 @@ mod test {
 
             let auth_host = AuthHost::new(AuthHostId::new(Uuid::now_v7()), url());
             database
-                .auth_host_modifier()
+                .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
 
             let found_auth_host = database
-                .auth_host_query()
+                .auth_host_repository()
                 .find_by_url(&mut transaction, auth_host.url())
                 .await
                 .unwrap()
@@ -195,8 +182,7 @@ mod test {
         use crate::database::postgres::auth_host::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{AuthHostModifier, DependOnAuthHostModifier};
-        use kernel::interfaces::query::{AuthHostQuery, DependOnAuthHostQuery};
+        use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
         use kernel::prelude::entity::{AuthHost, AuthHostId};
         use uuid::Uuid;
 
@@ -208,13 +194,13 @@ mod test {
 
             let auth_host = AuthHost::new(AuthHostId::new(Uuid::now_v7()), url());
             database
-                .auth_host_modifier()
+                .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
 
             let found_auth_host = database
-                .auth_host_query()
+                .auth_host_repository()
                 .find_by_id(&mut transaction, auth_host.id())
                 .await
                 .unwrap()
@@ -230,20 +216,20 @@ mod test {
 
             let auth_host = AuthHost::new(AuthHostId::new(Uuid::now_v7()), url());
             database
-                .auth_host_modifier()
+                .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
 
             let updated_auth_host = AuthHost::new(auth_host.id().clone(), url());
             database
-                .auth_host_modifier()
+                .auth_host_repository()
                 .update(&mut transaction, &updated_auth_host)
                 .await
                 .unwrap();
 
             let found_auth_host = database
-                .auth_host_query()
+                .auth_host_repository()
                 .find_by_id(&mut transaction, auth_host.id())
                 .await
                 .unwrap()

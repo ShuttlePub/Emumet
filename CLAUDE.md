@@ -57,7 +57,7 @@ kernel → adapter → application → server
 kernel → driver                → server
 ```
 
-- **kernel**: Domain entities, interface traits (EventStore, ReadModel, Query, Modify), Event Sourcing core. Traits are exposed via logical `pub mod interfaces {}` block in `lib.rs` (not a physical directory).
+- **kernel**: Domain entities, interface traits (EventStore, ReadModel, Repository), Event Sourcing core. Traits are exposed via logical `pub mod interfaces {}` block in `lib.rs` (not a physical directory).
 - **adapter**: CQRS processors (CommandProcessor/QueryProcessor) that compose kernel traits, crypto trait composition (SigningKeyGenerator)
 - **application**: Use case services (Account CRUD use cases), event appliers (projection update), DTOs
 - **driver**: PostgreSQL/Redis implementations of kernel interfaces
@@ -67,7 +67,7 @@ kernel → driver                → server
 
 Two entity types exist in the codebase: **CQRS-migrated** and **legacy (Query/Modifier)**.
 
-#### CQRS-migrated entities (Account, AuthAccount)
+#### CQRS-migrated entities (Account, AuthAccount, Profile, Metadata)
 
 Each CQRS entity has these components across layers:
 
@@ -85,32 +85,37 @@ Query Flow:
 ```
 
 **kernel** defines per-entity interface traits:
-- `AccountEventStore` / `AuthAccountEventStore` — event persistence + retrieval per entity-specific table
-- `AccountReadModel` / `AuthAccountReadModel` — projection reads + writes (replaces old Query + Modifier)
+- `AccountEventStore` / `AuthAccountEventStore` / `ProfileEventStore` / `MetadataEventStore` — event persistence + retrieval per entity-specific table
+- `AccountReadModel` / `AuthAccountReadModel` / `ProfileReadModel` / `MetadataReadModel` — projection reads + writes
 
 **adapter** provides processors with blanket impls:
-- `AccountCommandProcessor` — EventStore + EventApplier + Signal (projection via async applier)
+- `AccountCommandProcessor` / `ProfileCommandProcessor` / `MetadataCommandProcessor` — EventStore + EventApplier + Signal (projection via async applier)
 - `AuthAccountCommandProcessor` — EventStore + EventApplier + ReadModel.create() + Signal (synchronous projection for find-or-create pattern)
 - `*QueryProcessor` — ReadModel facade
 
 **driver** implements per-entity stores:
 - `PostgresAccountEventStore` → `account_events` table
 - `PostgresAuthAccountEventStore` → `auth_account_events` table
+- `PostgresProfileEventStore` → `profile_events` table
+- `PostgresMetadataEventStore` → `metadata_events` table
 - `PostgresAccountReadModel` → `accounts` table
 - `PostgresAuthAccountReadModel` → `auth_accounts` table
+- `PostgresProfileReadModel` → `profiles` table
+- `PostgresMetadataReadModel` → `metadatas` table
 
 **application** provides use case services and event appliers:
 - `GetAccountUseCase` / `CreateAccountUseCase` / `EditAccountUseCase` / `DeleteAccountUseCase` — Account CRUD orchestration via CommandProcessor/QueryProcessor
-- `UpdateAuthAccount` — event applier that replays events from EventStore, updates/creates/deletes ReadModel projection
+- `GetProfileUseCase` / `CreateProfileUseCase` / `EditProfileUseCase` / `DeleteProfileUseCase` — Profile CRUD
+- `GetMetadataUseCase` / `CreateMetadataUseCase` / `EditMetadataUseCase` / `DeleteMetadataUseCase` — Metadata CRUD
+- `UpdateAuthAccount` / `UpdateProfile` / `UpdateMetadata` — event appliers that replay events from EventStore, update ReadModel projections
 
-#### Legacy entities (Profile, Metadata, Follow, RemoteAccount — with EventApplier) and (AuthHost, Image — pure CRUD)
+#### Repository entities (Follow, RemoteAccount, Image, AuthHost)
 
-These still use the older Query/Modifier pattern directly:
-- `*Query` traits in `kernel/src/query/` — read operations
-- `*Modifier` traits in `kernel/src/modify/` — write operations (direct INSERT/UPDATE/DELETE)
-- Profile, Metadata, Follow, RemoteAccount have Event enums + EventApplier (ready for CQRS migration)
-- AuthHost, Image have no Event enum or EventApplier (pure CRUD entities)
-- No per-entity EventStore or ReadModel yet
+These use the Repository pattern — a single trait combining read and write operations:
+- `*Repository` traits in `kernel/src/repository/` — unified CRUD interface
+- `Postgres*Repository` driver implementations in `driver/src/database/postgres/`
+- Follow and RemoteAccount are pure CRUD (Event Sourcing removed)
+- AuthHost and Image are pure CRUD (never had Event Sourcing)
 
 ### Key Patterns
 
@@ -128,20 +133,21 @@ These still use the older Query/Modifier pattern directly:
 
 Entities use vodca macros (`References`, `Newln`, `Nameln`) and `destructure::Destructure` for field access.
 
-Event Sourcing対象エンティティ (Account, AuthAccount, Profile, Metadata, Follow, RemoteAccount):
+Event Sourcing対象エンティティ (Account, AuthAccount, Profile, Metadata):
 - ID type (UUIDv7-based, provides temporal ordering)
 - Event enum with variants (Created, Updated, Deleted) + `Nameln` for event name serialization
 - `EventApplier` implementation
 - `CommandEnvelope` factory methods (e.g., `Account::create()`, `Account::delete()`)
 
-純粋CRUDエンティティ (AuthHost, Image):
+純粋CRUDエンティティ (Follow, RemoteAccount, AuthHost, Image):
 - ID type のみ。Event enum / EventApplier なし
+- Repository パターンで直接 CRUD 操作
 
 ### Server DI Architecture
 
 `Handler` — owns PostgresDatabase + RedisDatabase + crypto providers. `impl_database_delegation!` wires kernel traits.
 
-`AppModule` — wraps `Arc<Handler>` + `Arc<ApplierContainer>`. Manually implements `DependOn*` for adapter-layer traits (Signal, ReadModel, EventStore). Blanket impls provide CommandProcessor/QueryProcessor automatically.
+`AppModule` — wraps `Arc<Handler>` + `Arc<ApplierContainer>`. Manually implements `DependOn*` for adapter-layer traits (Signal, ReadModel, EventStore, Repository). Blanket impls provide CommandProcessor/QueryProcessor automatically.
 
 ### Testing
 

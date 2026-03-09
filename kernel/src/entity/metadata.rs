@@ -25,7 +25,7 @@ pub struct Metadata {
     nanoid: Nanoid<Metadata>,
 }
 
-#[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[vodca(prefix = "metadata", snake_case)]
 pub enum MetadataEvent {
@@ -68,14 +68,28 @@ impl Metadata {
         id: MetadataId,
         label: MetadataLabel,
         content: MetadataContent,
+        current_version: EventVersion<Metadata>,
     ) -> CommandEnvelope<MetadataEvent, Metadata> {
         let event = MetadataEvent::Updated { label, content };
-        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Prev(current_version)),
+        )
     }
 
-    pub fn delete(id: MetadataId) -> CommandEnvelope<MetadataEvent, Metadata> {
+    pub fn delete(
+        id: MetadataId,
+        current_version: EventVersion<Metadata>,
+    ) -> CommandEnvelope<MetadataEvent, Metadata> {
         let event = MetadataEvent::Deleted;
-        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Prev(current_version)),
+        )
     }
 }
 
@@ -188,7 +202,9 @@ mod test {
         );
         let label = MetadataLabel::new("new_label".to_string());
         let content = MetadataContent::new("new_content".to_string());
-        let update_event = Metadata::update(id.clone(), label.clone(), content.clone());
+        let current_version = metadata.version().clone();
+        let update_event =
+            Metadata::update(id.clone(), label.clone(), content.clone(), current_version);
         let version = EventVersion::new(Uuid::now_v7());
         let envelope = EventEnvelope::new(
             update_event.id().clone(),
@@ -222,7 +238,8 @@ mod test {
             EventVersion::new(Uuid::now_v7()),
             nano_id.clone(),
         );
-        let delete_event = Metadata::delete(id.clone());
+        let current_version = metadata.version().clone();
+        let delete_event = Metadata::delete(id.clone(), current_version);
         let envelope = EventEnvelope::new(
             delete_event.id().clone(),
             delete_event.event().clone(),

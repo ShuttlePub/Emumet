@@ -1,7 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
-use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
-use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
+use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
 use kernel::prelude::entity::{
     AccountId, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
 };
@@ -32,15 +31,15 @@ impl From<MetadataRow> for Metadata {
     }
 }
 
-pub struct PostgresMetadataRepository;
+pub struct PostgresMetadataReadModel;
 
-impl MetadataQuery for PostgresMetadataRepository {
+impl MetadataReadModel for PostgresMetadataReadModel {
     type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
         executor: &mut Self::Executor,
-        metadata_id: &MetadataId,
+        id: &MetadataId,
     ) -> error_stack::Result<Option<Metadata>, KernelError> {
         let con: &mut PgConnection = executor;
         sqlx::query_as::<_, MetadataRow>(
@@ -51,7 +50,7 @@ impl MetadataQuery for PostgresMetadataRepository {
             WHERE id = $1
             "#,
         )
-        .bind(metadata_id.as_ref())
+        .bind(id.as_ref())
         .fetch_optional(con)
         .await
         .convert_error()
@@ -78,18 +77,6 @@ impl MetadataQuery for PostgresMetadataRepository {
         .convert_error()
         .map(|rows| rows.into_iter().map(|row| row.into()).collect())
     }
-}
-
-impl DependOnMetadataQuery for PostgresDatabase {
-    type MetadataQuery = PostgresMetadataRepository;
-
-    fn metadata_query(&self) -> &Self::MetadataQuery {
-        &PostgresMetadataRepository
-    }
-}
-
-impl MetadataModifier for PostgresMetadataRepository {
-    type Executor = PostgresConnection;
 
     async fn create(
         &self,
@@ -161,28 +148,53 @@ impl MetadataModifier for PostgresMetadataRepository {
     }
 }
 
-impl DependOnMetadataModifier for PostgresDatabase {
-    type MetadataModifier = PostgresMetadataRepository;
+impl DependOnMetadataReadModel for PostgresDatabase {
+    type MetadataReadModel = PostgresMetadataReadModel;
 
-    fn metadata_modifier(&self) -> &Self::MetadataModifier {
-        &PostgresMetadataRepository
+    fn metadata_read_model(&self) -> &Self::MetadataReadModel {
+        &PostgresMetadataReadModel
     }
 }
 
 #[cfg(test)]
 mod test {
-
-    mod query {
+    mod read_model {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
-        use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
-        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
+        use kernel::interfaces::read_model::{
+            AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
+            MetadataReadModel,
+        };
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
         };
         use uuid::Uuid;
+
+        fn make_account(account_id: AccountId) -> Account {
+            Account::new(
+                account_id,
+                AccountName::new("name"),
+                AccountPrivateKey::new("private_key"),
+                AccountPublicKey::new("public_key"),
+                AccountIsBot::new(false),
+                None,
+                EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
+                CreatedAt::now(),
+            )
+        }
+
+        fn make_metadata(metadata_id: MetadataId, account_id: AccountId) -> Metadata {
+            Metadata::new(
+                metadata_id,
+                account_id,
+                MetadataLabel::new("label"),
+                MetadataContent::new("content"),
+                EventVersion::new(Uuid::now_v7()),
+                Nanoid::default(),
+            )
+        }
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -191,45 +203,41 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::now_v7());
-
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let account = make_account(account_id.clone());
+            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata = make_metadata(metadata_id.clone(), account_id.clone());
 
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
-                .find_by_id(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &metadata_id)
                 .await
                 .unwrap();
             assert_eq!(found.as_ref().map(Metadata::id), Some(metadata.id()));
+
+            // Non-existent id returns None
+            let not_found = database
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &MetadataId::new(Uuid::now_v7()))
+                .await
+                .unwrap();
+            assert!(not_found.is_none());
+
+            database
+                .account_read_model()
+                .delete(&mut transaction, account.id())
+                .await
+                .unwrap();
         }
 
         #[test_with::env(DATABASE_URL)]
@@ -239,16 +247,16 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
+            let account = make_account(account_id.clone());
+
+            let metadata1 = make_metadata(MetadataId::new(Uuid::now_v7()), account_id.clone());
+            let metadata2 = Metadata::new(
+                MetadataId::new(Uuid::now_v7()),
                 account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
+                MetadataLabel::new("label2"),
+                MetadataContent::new("content2"),
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
-                CreatedAt::now(),
             );
 
             database
@@ -256,56 +264,41 @@ mod test {
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-            let metadata2 = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label2".to_string()),
-                MetadataContent::new("content2".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
-                .create(&mut transaction, &metadata)
+                .metadata_read_model()
+                .create(&mut transaction, &metadata1)
                 .await
                 .unwrap();
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata2)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
+                .metadata_read_model()
                 .find_by_account_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
-            assert_eq!(
-                found.iter().map(Metadata::id).collect::<Vec<_>>(),
-                vec![metadata.id(), metadata2.id()]
-            );
+            assert_eq!(found.len(), 2);
+            let ids: Vec<_> = found.iter().map(Metadata::id).collect();
+            assert!(ids.contains(&metadata1.id()));
+            assert!(ids.contains(&metadata2.id()));
+
+            // Non-existent account_id returns empty vec
+            let not_found = database
+                .metadata_read_model()
+                .find_by_account_id(&mut transaction, &AccountId::new(Uuid::now_v7()))
+                .await
+                .unwrap();
+            assert!(not_found.is_empty());
+
+            database
+                .account_read_model()
+                .delete(&mut transaction, account.id())
+                .await
+                .unwrap();
         }
-    }
-    mod modify {
-        use crate::database::PostgresDatabase;
-        use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
-        use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
-        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
-        };
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -314,44 +307,36 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let account = make_account(account_id.clone());
+            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata = make_metadata(metadata_id.clone(), account_id.clone());
 
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
-                .find_by_id(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &metadata_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.id(), metadata.id());
+            assert_eq!(found.label(), metadata.label());
+            assert_eq!(found.content(), metadata.content());
+
+            database
+                .account_read_model()
+                .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
-            assert_eq!(found.as_ref().map(Metadata::id), Some(metadata.id()));
         }
 
         #[test_with::env(DATABASE_URL)]
@@ -361,62 +346,50 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let account = make_account(account_id.clone());
+            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata = make_metadata(metadata_id.clone(), account_id.clone());
 
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata)
                 .await
                 .unwrap();
 
             let updated_metadata = Metadata::new(
-                metadata.id().clone(),
+                metadata_id.clone(),
                 account_id.clone(),
-                MetadataLabel::new("label2".to_string()),
-                MetadataContent::new("content2".to_string()),
+                MetadataLabel::new("updated_label"),
+                MetadataContent::new("updated_content"),
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),
             );
-
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .update(&mut transaction, &updated_metadata)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
-                .find_by_id(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &metadata_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.id(), updated_metadata.id());
+            assert_eq!(found.label(), updated_metadata.label());
+            assert_eq!(found.content(), updated_metadata.content());
+
+            database
+                .account_read_model()
+                .delete(&mut transaction, account.id())
                 .await
                 .unwrap();
-            assert_eq!(
-                found.as_ref().map(Metadata::id),
-                Some(updated_metadata.id())
-            );
         }
 
         #[test_with::env(DATABASE_URL)]
@@ -426,49 +399,39 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let account = make_account(account_id.clone());
+            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata = make_metadata(metadata_id.clone(), account_id.clone());
 
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata)
                 .await
                 .unwrap();
+
             database
-                .metadata_modifier()
-                .delete(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .delete(&mut transaction, &metadata_id)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
-                .find_by_id(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &metadata_id)
                 .await
                 .unwrap();
             assert!(found.is_none());
+
+            database
+                .account_read_model()
+                .delete(&mut transaction, account.id())
+                .await
+                .unwrap();
         }
     }
 }

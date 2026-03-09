@@ -9,9 +9,12 @@ use crate::error::StackTrace;
 use crate::handler::AppModule;
 use crate::keycloak::create_keycloak_instance;
 use crate::route::account::AccountRouter;
+use crate::route::metadata::MetadataRouter;
+use crate::route::profile::ProfileRouter;
 use error_stack::ResultExt;
 use kernel::KernelError;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::layer::SubscriberExt;
@@ -40,11 +43,13 @@ async fn main() -> Result<(), StackTrace> {
         )
         .init();
 
-    let keycloak_auth_instance = create_keycloak_instance();
+    let keycloak_auth_instance = Arc::new(create_keycloak_instance());
     let app = AppModule::new().await?;
 
     let router = axum::Router::new()
-        .route_account(keycloak_auth_instance)
+        .route_account(keycloak_auth_instance.clone())
+        .route_profile(keycloak_auth_instance.clone())
+        .route_metadata(keycloak_auth_instance)
         .layer(CorsLayer::new())
         .with_state(app);
 

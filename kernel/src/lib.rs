@@ -4,9 +4,8 @@ mod entity;
 mod error;
 mod event;
 mod event_store;
-mod modify;
-mod query;
 mod read_model;
+mod repository;
 mod signal;
 
 pub use self::error::*;
@@ -26,12 +25,6 @@ pub mod interfaces {
     pub mod database {
         pub use crate::database::*;
     }
-    pub mod query {
-        pub use crate::query::*;
-    }
-    pub mod modify {
-        pub use crate::modify::*;
-    }
     pub mod event {
         pub use crate::event::*;
     }
@@ -40,6 +33,9 @@ pub mod interfaces {
     }
     pub mod read_model {
         pub use crate::read_model::*;
+    }
+    pub mod repository {
+        pub use crate::repository::*;
     }
     pub mod signal {
         pub use crate::signal::*;
@@ -52,8 +48,12 @@ pub mod interfaces {
 /// - DependOnDatabaseConnection
 /// - DependOnAccountReadModel, DependOnAccountEventStore
 /// - DependOnAuthAccountReadModel, DependOnAuthAccountEventStore
-/// - DependOnAuthHostQuery
-/// - DependOnAuthHostModifier
+/// - DependOnProfileReadModel, DependOnProfileEventStore
+/// - DependOnMetadataReadModel, DependOnMetadataEventStore
+/// - DependOnAuthHostRepository
+/// - DependOnFollowRepository
+/// - DependOnRemoteAccountRepository
+/// - DependOnImageRepository
 ///
 /// # Usage
 /// ```ignore
@@ -102,17 +102,59 @@ macro_rules! impl_database_delegation {
             }
         }
 
-        impl $crate::interfaces::query::DependOnAuthHostQuery for $impl_type {
-            type AuthHostQuery = <$db_type as $crate::interfaces::query::DependOnAuthHostQuery>::AuthHostQuery;
-            fn auth_host_query(&self) -> &Self::AuthHostQuery {
-                $crate::interfaces::query::DependOnAuthHostQuery::auth_host_query(&self.$field)
+        impl $crate::interfaces::read_model::DependOnProfileReadModel for $impl_type {
+            type ProfileReadModel = <$db_type as $crate::interfaces::read_model::DependOnProfileReadModel>::ProfileReadModel;
+            fn profile_read_model(&self) -> &Self::ProfileReadModel {
+                $crate::interfaces::read_model::DependOnProfileReadModel::profile_read_model(&self.$field)
             }
         }
 
-        impl $crate::interfaces::modify::DependOnAuthHostModifier for $impl_type {
-            type AuthHostModifier = <$db_type as $crate::interfaces::modify::DependOnAuthHostModifier>::AuthHostModifier;
-            fn auth_host_modifier(&self) -> &Self::AuthHostModifier {
-                $crate::interfaces::modify::DependOnAuthHostModifier::auth_host_modifier(&self.$field)
+        impl $crate::interfaces::event_store::DependOnProfileEventStore for $impl_type {
+            type ProfileEventStore = <$db_type as $crate::interfaces::event_store::DependOnProfileEventStore>::ProfileEventStore;
+            fn profile_event_store(&self) -> &Self::ProfileEventStore {
+                $crate::interfaces::event_store::DependOnProfileEventStore::profile_event_store(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::read_model::DependOnMetadataReadModel for $impl_type {
+            type MetadataReadModel = <$db_type as $crate::interfaces::read_model::DependOnMetadataReadModel>::MetadataReadModel;
+            fn metadata_read_model(&self) -> &Self::MetadataReadModel {
+                $crate::interfaces::read_model::DependOnMetadataReadModel::metadata_read_model(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::event_store::DependOnMetadataEventStore for $impl_type {
+            type MetadataEventStore = <$db_type as $crate::interfaces::event_store::DependOnMetadataEventStore>::MetadataEventStore;
+            fn metadata_event_store(&self) -> &Self::MetadataEventStore {
+                $crate::interfaces::event_store::DependOnMetadataEventStore::metadata_event_store(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnAuthHostRepository for $impl_type {
+            type AuthHostRepository = <$db_type as $crate::interfaces::repository::DependOnAuthHostRepository>::AuthHostRepository;
+            fn auth_host_repository(&self) -> &Self::AuthHostRepository {
+                $crate::interfaces::repository::DependOnAuthHostRepository::auth_host_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnFollowRepository for $impl_type {
+            type FollowRepository = <$db_type as $crate::interfaces::repository::DependOnFollowRepository>::FollowRepository;
+            fn follow_repository(&self) -> &Self::FollowRepository {
+                $crate::interfaces::repository::DependOnFollowRepository::follow_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnRemoteAccountRepository for $impl_type {
+            type RemoteAccountRepository = <$db_type as $crate::interfaces::repository::DependOnRemoteAccountRepository>::RemoteAccountRepository;
+            fn remote_account_repository(&self) -> &Self::RemoteAccountRepository {
+                $crate::interfaces::repository::DependOnRemoteAccountRepository::remote_account_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnImageRepository for $impl_type {
+            type ImageRepository = <$db_type as $crate::interfaces::repository::DependOnImageRepository>::ImageRepository;
+            fn image_repository(&self) -> &Self::ImageRepository {
+                $crate::interfaces::repository::DependOnImageRepository::image_repository(&self.$field)
             }
         }
 

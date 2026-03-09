@@ -1,7 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
-use kernel::interfaces::modify::{DependOnImageModifier, ImageModifier};
-use kernel::interfaces::query::{DependOnImageQuery, ImageQuery};
+use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
 use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId, ImageUrl};
 use kernel::KernelError;
 use sqlx::PgConnection;
@@ -28,7 +27,7 @@ impl From<ImageRow> for Image {
 
 pub struct PostgresImageRepository;
 
-impl ImageQuery for PostgresImageRepository {
+impl ImageRepository for PostgresImageRepository {
     type Executor = PostgresConnection;
 
     async fn find_by_id(
@@ -68,18 +67,6 @@ impl ImageQuery for PostgresImageRepository {
         .convert_error()
         .map(|option| option.map(|row| row.into()))
     }
-}
-
-impl DependOnImageQuery for PostgresDatabase {
-    type ImageQuery = PostgresImageRepository;
-
-    fn image_query(&self) -> &Self::ImageQuery {
-        &PostgresImageRepository
-    }
-}
-
-impl ImageModifier for PostgresImageRepository {
-    type Executor = PostgresConnection;
 
     async fn create(
         &self,
@@ -123,10 +110,10 @@ impl ImageModifier for PostgresImageRepository {
     }
 }
 
-impl DependOnImageModifier for PostgresDatabase {
-    type ImageModifier = PostgresImageRepository;
+impl DependOnImageRepository for PostgresDatabase {
+    type ImageRepository = PostgresImageRepository;
 
-    fn image_modifier(&self) -> &Self::ImageModifier {
+    fn image_repository(&self) -> &Self::ImageRepository {
         &PostgresImageRepository
     }
 }
@@ -148,8 +135,7 @@ mod test {
         use crate::database::postgres::image::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnImageModifier, ImageModifier};
-        use kernel::interfaces::query::{DependOnImageQuery, ImageQuery};
+        use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
         use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId};
         use uuid::Uuid;
 
@@ -169,18 +155,18 @@ mod test {
             );
 
             database
-                .image_modifier()
+                .image_repository()
                 .create(&mut transaction, &image)
                 .await
                 .unwrap();
             let result = database
-                .image_query()
+                .image_repository()
                 .find_by_id(&mut transaction, &id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(image));
             database
-                .image_modifier()
+                .image_repository()
                 .delete(&mut transaction, &id)
                 .await
                 .unwrap();
@@ -202,18 +188,18 @@ mod test {
             );
 
             database
-                .image_modifier()
+                .image_repository()
                 .create(&mut transaction, &image)
                 .await
                 .unwrap();
             let result = database
-                .image_query()
+                .image_repository()
                 .find_by_url(&mut transaction, &url)
                 .await
                 .unwrap();
             assert_eq!(result, Some(image.clone()));
             database
-                .image_modifier()
+                .image_repository()
                 .delete(&mut transaction, image.id())
                 .await
                 .unwrap();
@@ -224,7 +210,7 @@ mod test {
         use crate::database::postgres::image::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnImageModifier, ImageModifier};
+        use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
         use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId};
         use uuid::Uuid;
 
@@ -244,12 +230,12 @@ mod test {
             );
 
             database
-                .image_modifier()
+                .image_repository()
                 .create(&mut transaction, &image)
                 .await
                 .unwrap();
             database
-                .image_modifier()
+                .image_repository()
                 .delete(&mut transaction, image.id())
                 .await
                 .unwrap();
@@ -271,12 +257,12 @@ mod test {
             );
 
             database
-                .image_modifier()
+                .image_repository()
                 .create(&mut transaction, &image)
                 .await
                 .unwrap();
             database
-                .image_modifier()
+                .image_repository()
                 .delete(&mut transaction, &id)
                 .await
                 .unwrap();

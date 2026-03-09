@@ -3,7 +3,7 @@ use crate::entity::{RemoteAccount, RemoteAccountAcct, RemoteAccountId, RemoteAcc
 use crate::KernelError;
 use std::future::Future;
 
-pub trait RemoteAccountQuery: Sync + Send + 'static {
+pub trait RemoteAccountRepository: Sync + Send + 'static {
     type Executor: Executor;
 
     fn find_by_id(
@@ -23,12 +23,30 @@ pub trait RemoteAccountQuery: Sync + Send + 'static {
         executor: &mut Self::Executor,
         url: &RemoteAccountUrl,
     ) -> impl Future<Output = error_stack::Result<Option<RemoteAccount>, KernelError>> + Send;
+
+    fn create(
+        &self,
+        executor: &mut Self::Executor,
+        account: &RemoteAccount,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn update(
+        &self,
+        executor: &mut Self::Executor,
+        account: &RemoteAccount,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn delete(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &RemoteAccountId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
-pub trait DependOnRemoteAccountQuery: Sync + Send + DependOnDatabaseConnection {
-    type RemoteAccountQuery: RemoteAccountQuery<
+pub trait DependOnRemoteAccountRepository: Sync + Send + DependOnDatabaseConnection {
+    type RemoteAccountRepository: RemoteAccountRepository<
         Executor = <Self::DatabaseConnection as DatabaseConnection>::Executor,
     >;
 
-    fn remote_account_query(&self) -> &Self::RemoteAccountQuery;
+    fn remote_account_repository(&self) -> &Self::RemoteAccountRepository;
 }

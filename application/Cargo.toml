@@ -18,10 +18,10 @@ serde_json = "1"
 adapter = { path = "../adapter" }
 kernel = { path = "../kernel" }
 
+uuid = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "test-util"] }
 tempfile = "3"
-
-uuid.workspace = true
 
 driver.path = "../driver"

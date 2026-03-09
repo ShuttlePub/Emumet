@@ -9,6 +9,7 @@ dependencies = [
  "error-stack",
  "kernel",
  "tracing",
+ "uuid",
  "zeroize",
 ]
 

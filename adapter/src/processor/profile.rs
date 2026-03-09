@@ -1,0 +1,234 @@
+use error_stack::Report;
+use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+use kernel::interfaces::event::EventApplier;
+use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
+use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
+use kernel::interfaces::signal::Signal;
+use kernel::prelude::entity::{
+    AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
+    ProfileSummary,
+};
+use kernel::KernelError;
+use std::future::Future;
+
+// --- Signal DI trait (adapter-specific) ---
+
+pub trait DependOnProfileSignal: Send + Sync {
+    type ProfileSignal: Signal<ProfileId> + Send + Sync + 'static;
+    fn profile_signal(&self) -> &Self::ProfileSignal;
+}
+
+// --- ProfileCommandProcessor ---
+
+pub trait ProfileCommandProcessor: Send + Sync + 'static {
+    type Executor: Executor;
+
+    fn create(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: AccountId,
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+        nano_id: Nanoid<Profile>,
+    ) -> impl Future<Output = error_stack::Result<Profile, KernelError>> + Send;
+
+    fn update(
+        &self,
+        executor: &mut Self::Executor,
+        profile_id: ProfileId,
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+        current_version: EventVersion<Profile>,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn delete(
+        &self,
+        executor: &mut Self::Executor,
+        profile_id: ProfileId,
+        current_version: EventVersion<Profile>,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+}
+
+impl<T> ProfileCommandProcessor for T
+where
+    T: DependOnProfileEventStore + DependOnProfileSignal + Send + Sync + 'static,
+{
+    type Executor =
+        <<T as DependOnProfileEventStore>::ProfileEventStore as ProfileEventStore>::Executor;
+
+    async fn create(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: AccountId,
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+        nano_id: Nanoid<Profile>,
+    ) -> error_stack::Result<Profile, KernelError> {
+        let profile_id = ProfileId::new(uuid::Uuid::now_v7());
+        let command = Profile::create(
+            profile_id.clone(),
+            account_id,
+            display_name,
+            summary,
+            icon,
+            banner,
+            nano_id,
+        );
+
+        let event_envelope = self
+            .profile_event_store()
+            .persist_and_transform(executor, command)
+            .await?;
+
+        let mut profile = None;
+        Profile::apply(&mut profile, event_envelope)?;
+        let profile = profile.ok_or_else(|| {
+            Report::new(KernelError::Internal)
+                .attach_printable("Failed to construct profile from created event")
+        })?;
+
+        if let Err(e) = self.profile_signal().emit(profile_id).await {
+            tracing::warn!("Failed to emit profile signal: {:?}", e);
+        }
+
+        Ok(profile)
+    }
+
+    async fn update(
+        &self,
+        executor: &mut Self::Executor,
+        profile_id: ProfileId,
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+        current_version: EventVersion<Profile>,
+    ) -> error_stack::Result<(), KernelError> {
+        let command = Profile::update(
+            profile_id.clone(),
+            display_name,
+            summary,
+            icon,
+            banner,
+            current_version,
+        );
+
+        self.profile_event_store()
+            .persist_and_transform(executor, command)
+            .await?;
+
+        if let Err(e) = self.profile_signal().emit(profile_id).await {
+            tracing::warn!("Failed to emit profile signal: {:?}", e);
+        }
+
+        Ok(())
+    }
+
+    async fn delete(
+        &self,
+        executor: &mut Self::Executor,
+        profile_id: ProfileId,
+        current_version: EventVersion<Profile>,
+    ) -> error_stack::Result<(), KernelError> {
+        let command = Profile::delete(profile_id.clone(), current_version);
+
+        self.profile_event_store()
+            .persist_and_transform(executor, command)
+            .await?;
+
+        if let Err(e) = self.profile_signal().emit(profile_id).await {
+            tracing::warn!("Failed to emit profile signal: {:?}", e);
+        }
+
+        Ok(())
+    }
+}
+
+pub trait DependOnProfileCommandProcessor: DependOnDatabaseConnection + Send + Sync {
+    type ProfileCommandProcessor: ProfileCommandProcessor<
+        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    >;
+    fn profile_command_processor(&self) -> &Self::ProfileCommandProcessor;
+}
+
+impl<T> DependOnProfileCommandProcessor for T
+where
+    T: DependOnProfileEventStore
+        + DependOnProfileSignal
+        + DependOnDatabaseConnection
+        + Send
+        + Sync
+        + 'static,
+{
+    type ProfileCommandProcessor = Self;
+    fn profile_command_processor(&self) -> &Self::ProfileCommandProcessor {
+        self
+    }
+}
+
+// --- ProfileQueryProcessor ---
+
+pub trait ProfileQueryProcessor: Send + Sync + 'static {
+    type Executor: Executor;
+
+    fn find_by_id(
+        &self,
+        executor: &mut Self::Executor,
+        id: &ProfileId,
+    ) -> impl Future<Output = error_stack::Result<Option<Profile>, KernelError>> + Send;
+
+    fn find_by_account_id(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<Option<Profile>, KernelError>> + Send;
+}
+
+impl<T> ProfileQueryProcessor for T
+where
+    T: DependOnProfileReadModel + Send + Sync + 'static,
+{
+    type Executor =
+        <<T as DependOnProfileReadModel>::ProfileReadModel as ProfileReadModel>::Executor;
+
+    async fn find_by_id(
+        &self,
+        executor: &mut Self::Executor,
+        id: &ProfileId,
+    ) -> error_stack::Result<Option<Profile>, KernelError> {
+        self.profile_read_model().find_by_id(executor, id).await
+    }
+
+    async fn find_by_account_id(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+    ) -> error_stack::Result<Option<Profile>, KernelError> {
+        self.profile_read_model()
+            .find_by_account_id(executor, account_id)
+            .await
+    }
+}
+
+pub trait DependOnProfileQueryProcessor: DependOnDatabaseConnection + Send + Sync {
+    type ProfileQueryProcessor: ProfileQueryProcessor<
+        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    >;
+    fn profile_query_processor(&self) -> &Self::ProfileQueryProcessor;
+}
+
+impl<T> DependOnProfileQueryProcessor for T
+where
+    T: DependOnProfileReadModel + DependOnDatabaseConnection + Send + Sync + 'static,
+{
+    type ProfileQueryProcessor = Self;
+    fn profile_query_processor(&self) -> &Self::ProfileQueryProcessor {
+        self
+    }
+}

@@ -152,8 +152,8 @@ mod test {
     mod query {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{AuthHostModifier, DependOnAuthHostModifier};
         use kernel::interfaces::read_model::{AuthAccountReadModel, DependOnAuthAccountReadModel};
+        use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
         use kernel::prelude::entity::{
             AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
             EventVersion,
@@ -169,7 +169,7 @@ mod test {
             let auth_host_id = AuthHostId::new(Uuid::now_v7());
             let auth_host = AuthHost::new(auth_host_id.clone(), AuthHostUrl::new(Uuid::now_v7()));
             database
-                .auth_host_modifier()
+                .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
@@ -203,8 +203,8 @@ mod test {
     mod modify {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{AuthHostModifier, DependOnAuthHostModifier};
         use kernel::interfaces::read_model::{AuthAccountReadModel, DependOnAuthAccountReadModel};
+        use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
         use kernel::prelude::entity::{
             AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
             EventVersion,
@@ -221,7 +221,7 @@ mod test {
             let account_id = AuthAccountId::new(Uuid::now_v7());
             let auth_host = AuthHost::new(host_id.clone(), AuthHostUrl::new(Uuid::now_v7()));
             database
-                .auth_host_modifier()
+                .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
@@ -259,7 +259,7 @@ mod test {
             let account_id = AuthAccountId::new(Uuid::now_v7());
             let auth_host = AuthHost::new(host_id.clone(), AuthHostUrl::new(Uuid::now_v7()));
             database
-                .auth_host_modifier()
+                .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
@@ -307,7 +307,7 @@ mod test {
             let host_id = AuthHostId::new(Uuid::now_v7());
             let auth_host = AuthHost::new(host_id.clone(), AuthHostUrl::new(Uuid::now_v7()));
             database
-                .auth_host_modifier()
+                .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();

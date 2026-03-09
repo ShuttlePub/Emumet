@@ -6,7 +6,9 @@ mod auth_host;
 mod follow;
 mod image;
 mod metadata;
+mod metadata_event_store;
 mod profile;
+mod profile_event_store;
 mod remote_account;
 
 use crate::database::env;

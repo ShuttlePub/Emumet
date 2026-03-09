@@ -8,4 +8,5 @@ authors.workspace = true
 kernel = { path = "../kernel" }
 error-stack = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
 zeroize = "1.7"

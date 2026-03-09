@@ -1,6 +1,8 @@
 use crate::applier::ApplierContainer;
 use adapter::processor::account::DependOnAccountSignal;
 use adapter::processor::auth_account::DependOnAuthAccountSignal;
+use adapter::processor::metadata::DependOnMetadataSignal;
+use adapter::processor::profile::DependOnProfileSignal;
 use driver::crypto::{
     Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
 };
@@ -111,20 +113,91 @@ impl kernel::interfaces::event_store::DependOnAuthAccountEventStore for AppModul
     }
 }
 
-impl kernel::interfaces::query::DependOnAuthHostQuery for AppModule {
-    type AuthHostQuery =
-        <PostgresDatabase as kernel::interfaces::query::DependOnAuthHostQuery>::AuthHostQuery;
-    fn auth_host_query(&self) -> &Self::AuthHostQuery {
-        kernel::interfaces::query::DependOnAuthHostQuery::auth_host_query(
+impl kernel::interfaces::read_model::DependOnProfileReadModel for AppModule {
+    type ProfileReadModel = <PostgresDatabase as kernel::interfaces::read_model::DependOnProfileReadModel>::ProfileReadModel;
+    fn profile_read_model(&self) -> &Self::ProfileReadModel {
+        kernel::interfaces::read_model::DependOnProfileReadModel::profile_read_model(
             self.handler.as_ref().database_connection(),
         )
     }
 }
 
-impl kernel::interfaces::modify::DependOnAuthHostModifier for AppModule {
-    type AuthHostModifier = <PostgresDatabase as kernel::interfaces::modify::DependOnAuthHostModifier>::AuthHostModifier;
-    fn auth_host_modifier(&self) -> &Self::AuthHostModifier {
-        kernel::interfaces::modify::DependOnAuthHostModifier::auth_host_modifier(
+impl kernel::interfaces::event_store::DependOnProfileEventStore for AppModule {
+    type ProfileEventStore = <PostgresDatabase as kernel::interfaces::event_store::DependOnProfileEventStore>::ProfileEventStore;
+    fn profile_event_store(&self) -> &Self::ProfileEventStore {
+        kernel::interfaces::event_store::DependOnProfileEventStore::profile_event_store(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl DependOnProfileSignal for AppModule {
+    type ProfileSignal = ApplierContainer;
+    fn profile_signal(&self) -> &Self::ProfileSignal {
+        &self.applier_container
+    }
+}
+
+impl kernel::interfaces::read_model::DependOnMetadataReadModel for AppModule {
+    type MetadataReadModel = <PostgresDatabase as kernel::interfaces::read_model::DependOnMetadataReadModel>::MetadataReadModel;
+    fn metadata_read_model(&self) -> &Self::MetadataReadModel {
+        kernel::interfaces::read_model::DependOnMetadataReadModel::metadata_read_model(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::event_store::DependOnMetadataEventStore for AppModule {
+    type MetadataEventStore = <PostgresDatabase as kernel::interfaces::event_store::DependOnMetadataEventStore>::MetadataEventStore;
+    fn metadata_event_store(&self) -> &Self::MetadataEventStore {
+        kernel::interfaces::event_store::DependOnMetadataEventStore::metadata_event_store(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl DependOnMetadataSignal for AppModule {
+    type MetadataSignal = ApplierContainer;
+    fn metadata_signal(&self) -> &Self::MetadataSignal {
+        &self.applier_container
+    }
+}
+
+impl kernel::interfaces::repository::DependOnAuthHostRepository for AppModule {
+    type AuthHostRepository =
+        <PostgresDatabase as kernel::interfaces::repository::DependOnAuthHostRepository>::AuthHostRepository;
+    fn auth_host_repository(&self) -> &Self::AuthHostRepository {
+        kernel::interfaces::repository::DependOnAuthHostRepository::auth_host_repository(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::repository::DependOnFollowRepository for AppModule {
+    type FollowRepository =
+        <PostgresDatabase as kernel::interfaces::repository::DependOnFollowRepository>::FollowRepository;
+    fn follow_repository(&self) -> &Self::FollowRepository {
+        kernel::interfaces::repository::DependOnFollowRepository::follow_repository(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::repository::DependOnRemoteAccountRepository for AppModule {
+    type RemoteAccountRepository =
+        <PostgresDatabase as kernel::interfaces::repository::DependOnRemoteAccountRepository>::RemoteAccountRepository;
+    fn remote_account_repository(&self) -> &Self::RemoteAccountRepository {
+        kernel::interfaces::repository::DependOnRemoteAccountRepository::remote_account_repository(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::repository::DependOnImageRepository for AppModule {
+    type ImageRepository =
+        <PostgresDatabase as kernel::interfaces::repository::DependOnImageRepository>::ImageRepository;
+    fn image_repository(&self) -> &Self::ImageRepository {
+        kernel::interfaces::repository::DependOnImageRepository::image_repository(
             self.handler.as_ref().database_connection(),
         )
     }

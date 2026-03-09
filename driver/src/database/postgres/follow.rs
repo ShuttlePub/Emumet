@@ -1,8 +1,7 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
 use error_stack::Report;
-use kernel::interfaces::modify::{DependOnFollowModifier, FollowModifier};
-use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
+use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
 use kernel::prelude::entity::{
     AccountId, Follow, FollowApprovedAt, FollowId, FollowTargetId, RemoteAccountId,
 };
@@ -62,7 +61,14 @@ impl TryFrom<FollowRow> for Follow {
 
 pub struct PostgresFollowRepository;
 
-impl FollowQuery for PostgresFollowRepository {
+fn split_follow_target_id(target_id: &FollowTargetId) -> (Option<&Uuid>, Option<&Uuid>) {
+    match target_id {
+        FollowTargetId::Local(account_id) => (Some(account_id.as_ref()), None),
+        FollowTargetId::Remote(remote_account_id) => (None, Some(remote_account_id.as_ref())),
+    }
+}
+
+impl FollowRepository for PostgresFollowRepository {
     type Executor = PostgresConnection;
 
     async fn find_followings(
@@ -130,25 +136,6 @@ impl FollowQuery for PostgresFollowRepository {
             .convert_error()
             .and_then(|rows| rows.into_iter().map(Follow::try_from).collect::<Result<_, _>>())
     }
-}
-
-impl DependOnFollowQuery for PostgresDatabase {
-    type FollowQuery = PostgresFollowRepository;
-
-    fn follow_query(&self) -> &Self::FollowQuery {
-        &PostgresFollowRepository
-    }
-}
-
-fn split_follow_target_id(target_id: &FollowTargetId) -> (Option<&Uuid>, Option<&Uuid>) {
-    match target_id {
-        FollowTargetId::Local(account_id) => (Some(account_id.as_ref()), None),
-        FollowTargetId::Remote(remote_account_id) => (None, Some(remote_account_id.as_ref())),
-    }
-}
-
-impl FollowModifier for PostgresFollowRepository {
-    type Executor = PostgresConnection;
 
     async fn create(
         &self,
@@ -223,10 +210,10 @@ impl FollowModifier for PostgresFollowRepository {
     }
 }
 
-impl DependOnFollowModifier for PostgresDatabase {
-    type FollowModifier = PostgresFollowRepository;
+impl DependOnFollowRepository for PostgresDatabase {
+    type FollowRepository = PostgresFollowRepository;
 
-    fn follow_modifier(&self) -> &Self::FollowModifier {
+    fn follow_repository(&self) -> &Self::FollowRepository {
         &PostgresFollowRepository
     }
 }
@@ -236,9 +223,8 @@ mod test {
     mod query {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnFollowModifier, FollowModifier};
-        use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
         use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
+        use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
@@ -293,26 +279,26 @@ mod test {
             .unwrap();
 
             database
-                .follow_modifier()
+                .follow_repository()
                 .create(&mut transaction, &follow)
                 .await
                 .unwrap();
 
             let followers = database
-                .follow_query()
+                .follow_repository()
                 .find_followings(&mut transaction, &FollowTargetId::from(follower_id))
                 .await
                 .unwrap();
             assert_eq!(followers[0].id(), follow.id());
 
             let followers = database
-                .follow_query()
+                .follow_repository()
                 .find_followings(&mut transaction, &FollowTargetId::from(followee_id))
                 .await
                 .unwrap();
             assert!(followers.is_empty());
             database
-                .follow_modifier()
+                .follow_repository()
                 .delete(&mut transaction, follow.id())
                 .await
                 .unwrap();
@@ -376,26 +362,26 @@ mod test {
             .unwrap();
 
             database
-                .follow_modifier()
+                .follow_repository()
                 .create(&mut transaction, &follow)
                 .await
                 .unwrap();
 
             let followings = database
-                .follow_query()
+                .follow_repository()
                 .find_followers(&mut transaction, &FollowTargetId::from(followee_id))
                 .await
                 .unwrap();
             assert_eq!(followings[0].id(), follow.id());
 
             let followings = database
-                .follow_query()
+                .follow_repository()
                 .find_followers(&mut transaction, &FollowTargetId::from(follower_id))
                 .await
                 .unwrap();
             assert!(followings.is_empty());
             database
-                .follow_modifier()
+                .follow_repository()
                 .delete(&mut transaction, follow.id())
                 .await
                 .unwrap();
@@ -415,9 +401,8 @@ mod test {
     mod modify {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnFollowModifier, FollowModifier};
-        use kernel::interfaces::query::{DependOnFollowQuery, FollowQuery};
         use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
+        use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
         use kernel::prelude::entity::{
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
@@ -472,12 +457,12 @@ mod test {
             .unwrap();
 
             database
-                .follow_modifier()
+                .follow_repository()
                 .create(&mut transaction, &follow)
                 .await
                 .unwrap();
             database
-                .follow_modifier()
+                .follow_repository()
                 .delete(&mut transaction, follow.id())
                 .await
                 .unwrap();
@@ -542,14 +527,14 @@ mod test {
             .unwrap();
 
             let following = database
-                .follow_query()
+                .follow_repository()
                 .find_followings(&mut transaction, &FollowTargetId::from(follower_id.clone()))
                 .await
                 .unwrap();
             assert!(following.is_empty());
 
             database
-                .follow_modifier()
+                .follow_repository()
                 .create(&mut transaction, &follow)
                 .await
                 .unwrap();
@@ -562,19 +547,19 @@ mod test {
             )
             .unwrap();
             database
-                .follow_modifier()
+                .follow_repository()
                 .update(&mut transaction, &follow)
                 .await
                 .unwrap();
 
             let following = database
-                .follow_query()
+                .follow_repository()
                 .find_followers(&mut transaction, &FollowTargetId::from(followee_id))
                 .await
                 .unwrap();
             assert_eq!(following[0].id(), follow.id());
             database
-                .follow_modifier()
+                .follow_repository()
                 .delete(&mut transaction, follow.id())
                 .await
                 .unwrap();
@@ -638,19 +623,19 @@ mod test {
             .unwrap();
 
             database
-                .follow_modifier()
+                .follow_repository()
                 .create(&mut transaction, &follow)
                 .await
                 .unwrap();
 
             database
-                .follow_modifier()
+                .follow_repository()
                 .delete(&mut transaction, follow.id())
                 .await
                 .unwrap();
 
             let following = database
-                .follow_query()
+                .follow_repository()
                 .find_followers(&mut transaction, &FollowTargetId::from(follower_id))
                 .await
                 .unwrap();

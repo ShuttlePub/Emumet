@@ -1,7 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
-use kernel::interfaces::modify::{DependOnRemoteAccountModifier, RemoteAccountModifier};
-use kernel::interfaces::query::{DependOnRemoteAccountQuery, RemoteAccountQuery};
+use kernel::interfaces::repository::{DependOnRemoteAccountRepository, RemoteAccountRepository};
 use kernel::prelude::entity::{
     ImageId, RemoteAccount, RemoteAccountAcct, RemoteAccountId, RemoteAccountUrl,
 };
@@ -30,7 +29,7 @@ impl From<RemoteAccountRow> for RemoteAccount {
 
 pub struct PostgresRemoteAccountRepository;
 
-impl RemoteAccountQuery for PostgresRemoteAccountRepository {
+impl RemoteAccountRepository for PostgresRemoteAccountRepository {
     type Executor = PostgresConnection;
 
     async fn find_by_id(
@@ -95,18 +94,6 @@ impl RemoteAccountQuery for PostgresRemoteAccountRepository {
         .convert_error()
         .map(|option| option.map(RemoteAccount::from))
     }
-}
-
-impl DependOnRemoteAccountQuery for PostgresDatabase {
-    type RemoteAccountQuery = PostgresRemoteAccountRepository;
-
-    fn remote_account_query(&self) -> &Self::RemoteAccountQuery {
-        &PostgresRemoteAccountRepository
-    }
-}
-
-impl RemoteAccountModifier for PostgresRemoteAccountRepository {
-    type Executor = PostgresConnection;
 
     async fn create(
         &self,
@@ -176,10 +163,10 @@ impl RemoteAccountModifier for PostgresRemoteAccountRepository {
     }
 }
 
-impl DependOnRemoteAccountModifier for PostgresDatabase {
-    type RemoteAccountModifier = PostgresRemoteAccountRepository;
+impl DependOnRemoteAccountRepository for PostgresDatabase {
+    type RemoteAccountRepository = PostgresRemoteAccountRepository;
 
-    fn remote_account_modifier(&self) -> &Self::RemoteAccountModifier {
+    fn remote_account_repository(&self) -> &Self::RemoteAccountRepository {
         &PostgresRemoteAccountRepository
     }
 }
@@ -209,8 +196,9 @@ mod test {
         use crate::database::postgres::remote_account::test::acct_url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnRemoteAccountModifier, RemoteAccountModifier};
-        use kernel::interfaces::query::{DependOnRemoteAccountQuery, RemoteAccountQuery};
+        use kernel::interfaces::repository::{
+            DependOnRemoteAccountRepository, RemoteAccountRepository,
+        };
         use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
         use uuid::Uuid;
 
@@ -224,18 +212,18 @@ mod test {
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
+                .remote_account_repository()
                 .find_by_id(&mut transaction, &id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account));
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, &id)
                 .await
                 .unwrap();
@@ -255,19 +243,19 @@ mod test {
                 None,
             );
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
+                .remote_account_repository()
                 .find_by_acct(&mut transaction, &acct)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
 
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
@@ -287,18 +275,18 @@ mod test {
                 None,
             );
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
+                .remote_account_repository()
                 .find_by_url(&mut transaction, &url)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
@@ -309,8 +297,9 @@ mod test {
         use crate::database::postgres::remote_account::test::acct_url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnRemoteAccountModifier, RemoteAccountModifier};
-        use kernel::interfaces::query::{DependOnRemoteAccountQuery, RemoteAccountQuery};
+        use kernel::interfaces::repository::{
+            DependOnRemoteAccountRepository, RemoteAccountRepository,
+        };
         use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
         use uuid::Uuid;
 
@@ -324,12 +313,12 @@ mod test {
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id, acct, url, None);
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
@@ -345,7 +334,7 @@ mod test {
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
@@ -353,18 +342,18 @@ mod test {
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .update(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
+                .remote_account_repository()
                 .find_by_id(&mut transaction, &id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
@@ -380,18 +369,18 @@ mod test {
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
 
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, &id)
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
+                .remote_account_repository()
                 .find_by_id(&mut transaction, &id)
                 .await
                 .unwrap();
