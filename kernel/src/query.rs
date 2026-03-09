@@ -1,13 +1,8 @@
-mod auth_account;
 mod auth_host;
-mod event;
 mod follow;
 mod image;
 mod metadata;
 mod profile;
 mod remote_account;
 
-pub use self::{
-    auth_account::*, auth_host::*, event::*, follow::*, image::*, metadata::*, profile::*,
-    remote_account::*,
-};
+pub use self::{auth_host::*, follow::*, image::*, metadata::*, profile::*, remote_account::*};

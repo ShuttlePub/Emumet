@@ -1,20 +1,16 @@
-use crate::handler::Handler;
+use crate::handler::AppModule;
+use adapter::processor::auth_account::{
+    AuthAccountCommandProcessor, AuthAccountQueryProcessor, DependOnAuthAccountCommandProcessor,
+    DependOnAuthAccountQueryProcessor,
+};
 use axum_keycloak_auth::decode::KeycloakToken;
 use axum_keycloak_auth::instance::{KeycloakAuthInstance, KeycloakConfig};
 use axum_keycloak_auth::role::Role;
-use error_stack::Report;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
-use kernel::interfaces::event::EventApplier;
-use kernel::interfaces::modify::{
-    AuthAccountModifier, AuthHostModifier, DependOnAuthAccountModifier, DependOnAuthHostModifier,
-    DependOnEventModifier, EventModifier,
-};
-use kernel::interfaces::query::{
-    AuthAccountQuery, AuthHostQuery, DependOnAuthAccountQuery, DependOnAuthHostQuery,
-};
-use kernel::interfaces::signal::Signal;
+use kernel::interfaces::modify::{AuthHostModifier, DependOnAuthHostModifier};
+use kernel::interfaces::query::{AuthHostQuery, DependOnAuthHostQuery};
 use kernel::prelude::entity::{
-    AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
+    AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
 };
 use kernel::KernelError;
 use std::sync::LazyLock;
@@ -54,54 +50,36 @@ impl<T: Role> From<KeycloakToken<T>> for KeycloakAuthAccount {
 }
 
 pub async fn resolve_auth_account_id(
-    handler: &Handler,
-    signal: &impl Signal<AuthAccountId>,
+    app: &AppModule,
     auth_info: KeycloakAuthAccount,
 ) -> error_stack::Result<AuthAccountId, KernelError> {
     let client_id = AuthAccountClientId::new(auth_info.client_id);
-    let mut transaction = handler.database_connection().begin_transaction().await?;
-    let auth_account = handler
-        .auth_account_query()
-        .find_by_client_id(&mut transaction, &client_id)
+    let mut executor = app.database_connection().begin_transaction().await?;
+    let auth_account = app
+        .auth_account_query_processor()
+        .find_by_client_id(&mut executor, &client_id)
         .await?;
     let auth_account = if let Some(auth_account) = auth_account {
         auth_account
     } else {
         let url = AuthHostUrl::new(auth_info.host_url);
-        let auth_host = handler
+        let auth_host = app
             .auth_host_query()
-            .find_by_url(&mut transaction, &url)
+            .find_by_url(&mut executor, &url)
             .await?;
         let auth_host = if let Some(auth_host) = auth_host {
             auth_host
         } else {
             let auth_host = AuthHost::new(AuthHostId::default(), url);
-            handler
-                .auth_host_modifier()
-                .create(&mut transaction, &auth_host)
+            app.auth_host_modifier()
+                .create(&mut executor, &auth_host)
                 .await?;
             auth_host
         };
         let host_id = auth_host.into_destruct().id;
-        let auth_account_id = AuthAccountId::default();
-        let create_command = AuthAccount::create(auth_account_id.clone(), host_id, client_id);
-        let create_event = handler
-            .event_modifier()
-            .persist_and_transform(&mut transaction, create_command)
-            .await?;
-        signal.emit(auth_account_id.clone()).await?;
-        let mut auth_account = None;
-        AuthAccount::apply(&mut auth_account, create_event)?;
-        if let Some(auth_account) = auth_account {
-            handler
-                .auth_account_modifier()
-                .create(&mut transaction, &auth_account)
-                .await?;
-            auth_account
-        } else {
-            return Err(Report::new(KernelError::Internal)
-                .attach_printable("Failed to create auth account"));
-        }
+        app.auth_account_command_processor()
+            .create(&mut executor, host_id, client_id)
+            .await?
     };
     Ok(auth_account.id().clone())
 }

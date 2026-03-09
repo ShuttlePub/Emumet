@@ -1,8 +1,8 @@
 mod account;
 mod account_event_store;
 mod auth_account;
+mod auth_account_event_store;
 mod auth_host;
-mod event;
 mod follow;
 mod image;
 mod metadata;

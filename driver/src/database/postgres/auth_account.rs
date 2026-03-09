@@ -1,7 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
-use kernel::interfaces::modify::{AuthAccountModifier, DependOnAuthAccountModifier};
-use kernel::interfaces::query::{AuthAccountQuery, DependOnAuthAccountQuery};
+use kernel::interfaces::read_model::{AuthAccountReadModel, DependOnAuthAccountReadModel};
 use kernel::prelude::entity::{
     AuthAccount, AuthAccountClientId, AuthAccountId, AuthHostId, EventVersion,
 };
@@ -28,9 +27,9 @@ impl From<AuthAccountRow> for AuthAccount {
     }
 }
 
-pub struct PostgresAuthAccountRepository;
+pub struct PostgresAuthAccountReadModel;
 
-impl AuthAccountQuery for PostgresAuthAccountRepository {
+impl AuthAccountReadModel for PostgresAuthAccountReadModel {
     type Executor = PostgresConnection;
 
     async fn find_by_id(
@@ -74,18 +73,6 @@ impl AuthAccountQuery for PostgresAuthAccountRepository {
         .convert_error()
         .map(|option| option.map(|row| row.into()))
     }
-}
-
-impl DependOnAuthAccountQuery for PostgresDatabase {
-    type AuthAccountQuery = PostgresAuthAccountRepository;
-
-    fn auth_account_query(&self) -> &Self::AuthAccountQuery {
-        &PostgresAuthAccountRepository
-    }
-}
-
-impl AuthAccountModifier for PostgresAuthAccountRepository {
-    type Executor = PostgresConnection;
 
     async fn create(
         &self,
@@ -152,11 +139,11 @@ impl AuthAccountModifier for PostgresAuthAccountRepository {
     }
 }
 
-impl DependOnAuthAccountModifier for PostgresDatabase {
-    type AuthAccountModifier = PostgresAuthAccountRepository;
+impl DependOnAuthAccountReadModel for PostgresDatabase {
+    type AuthAccountReadModel = PostgresAuthAccountReadModel;
 
-    fn auth_account_modifier(&self) -> &Self::AuthAccountModifier {
-        &PostgresAuthAccountRepository
+    fn auth_account_read_model(&self) -> &Self::AuthAccountReadModel {
+        &PostgresAuthAccountReadModel
     }
 }
 
@@ -165,11 +152,8 @@ mod test {
     mod query {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AuthAccountModifier, AuthHostModifier, DependOnAuthAccountModifier,
-            DependOnAuthHostModifier,
-        };
-        use kernel::interfaces::query::{AuthAccountQuery, DependOnAuthAccountQuery};
+        use kernel::interfaces::modify::{AuthHostModifier, DependOnAuthHostModifier};
+        use kernel::interfaces::read_model::{AuthAccountReadModel, DependOnAuthAccountReadModel};
         use kernel::prelude::entity::{
             AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
             EventVersion,
@@ -198,18 +182,18 @@ mod test {
             );
 
             database
-                .auth_account_modifier()
+                .auth_account_read_model()
                 .create(&mut transaction, &auth_account)
                 .await
                 .unwrap();
             let result = database
-                .auth_account_query()
+                .auth_account_read_model()
                 .find_by_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(auth_account.clone()));
             database
-                .auth_account_modifier()
+                .auth_account_read_model()
                 .delete(&mut transaction, auth_account.id())
                 .await
                 .unwrap();
@@ -219,11 +203,8 @@ mod test {
     mod modify {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AuthAccountModifier, AuthHostModifier, DependOnAuthAccountModifier,
-            DependOnAuthHostModifier,
-        };
-        use kernel::interfaces::query::{AuthAccountQuery, DependOnAuthAccountQuery};
+        use kernel::interfaces::modify::{AuthHostModifier, DependOnAuthHostModifier};
+        use kernel::interfaces::read_model::{AuthAccountReadModel, DependOnAuthAccountReadModel};
         use kernel::prelude::entity::{
             AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
             EventVersion,
@@ -251,18 +232,18 @@ mod test {
                 EventVersion::new(Uuid::now_v7()),
             );
             database
-                .auth_account_modifier()
+                .auth_account_read_model()
                 .create(&mut transaction, &auth_account)
                 .await
                 .unwrap();
             let result = database
-                .auth_account_query()
+                .auth_account_read_model()
                 .find_by_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(auth_account.clone()));
             database
-                .auth_account_modifier()
+                .auth_account_read_model()
                 .delete(&mut transaction, auth_account.id())
                 .await
                 .unwrap();
@@ -289,7 +270,7 @@ mod test {
                 EventVersion::new(Uuid::now_v7()),
             );
             database
-                .auth_account_modifier()
+                .auth_account_read_model()
                 .create(&mut transaction, &auth_account)
                 .await
                 .unwrap();
@@ -300,18 +281,18 @@ mod test {
                 EventVersion::new(Uuid::now_v7()),
             );
             database
-                .auth_account_modifier()
+                .auth_account_read_model()
                 .update(&mut transaction, &updated_auth_account)
                 .await
                 .unwrap();
             let result = database
-                .auth_account_query()
+                .auth_account_read_model()
                 .find_by_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(updated_auth_account));
             database
-                .auth_account_modifier()
+                .auth_account_read_model()
                 .delete(&mut transaction, auth_account.id())
                 .await
                 .unwrap();
@@ -338,26 +319,21 @@ mod test {
                 EventVersion::new(Uuid::now_v7()),
             );
             database
-                .auth_account_modifier()
+                .auth_account_read_model()
                 .create(&mut transaction, &auth_account)
                 .await
                 .unwrap();
             database
-                .auth_account_modifier()
+                .auth_account_read_model()
                 .delete(&mut transaction, &account_id)
                 .await
                 .unwrap();
             let result = database
-                .auth_account_query()
+                .auth_account_read_model()
                 .find_by_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
             assert_eq!(result, None);
-            database
-                .auth_account_modifier()
-                .delete(&mut transaction, auth_account.id())
-                .await
-                .unwrap();
         }
     }
 }

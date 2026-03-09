@@ -17,7 +17,6 @@ use axum_keycloak_auth::instance::KeycloakAuthInstance;
 use axum_keycloak_auth::layer::KeycloakAuthLayer;
 use axum_keycloak_auth::PassthroughMode;
 use serde::{Deserialize, Serialize};
-use std::ops::Deref;
 use time::OffsetDateTime;
 
 #[derive(Debug, Deserialize)]
@@ -71,13 +70,9 @@ async fn get_accounts(
 ) -> Result<Json<AccountsResponse>, ErrorStatus> {
     expect_role!(&token, uri, method);
     let auth_info = KeycloakAuthAccount::from(token);
-    let auth_account_id = resolve_auth_account_id(
-        module.handler(),
-        module.applier_container().deref(),
-        auth_info,
-    )
-    .await
-    .map_err(ErrorStatus::from)?;
+    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+        .await
+        .map_err(ErrorStatus::from)?;
 
     let direction = direction.convert_to_direction()?;
     let pagination = Pagination::new(limit, cursor, direction);
@@ -124,13 +119,9 @@ async fn create_account(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(
-        module.handler(),
-        module.applier_container().deref(),
-        auth_info,
-    )
-    .await
-    .map_err(ErrorStatus::from)?;
+    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+        .await
+        .map_err(ErrorStatus::from)?;
 
     let account = module
         .create_account(auth_account_id, request.name, request.is_bot)
@@ -165,13 +156,9 @@ async fn get_account_by_id(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(
-        module.handler(),
-        module.applier_container().deref(),
-        auth_info,
-    )
-    .await
-    .map_err(ErrorStatus::from)?;
+    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+        .await
+        .map_err(ErrorStatus::from)?;
 
     let account = module
         .get_account_by_id(&auth_account_id, id)
@@ -207,13 +194,9 @@ async fn update_account_by_id(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(
-        module.handler(),
-        module.applier_container().deref(),
-        auth_info,
-    )
-    .await
-    .map_err(ErrorStatus::from)?;
+    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+        .await
+        .map_err(ErrorStatus::from)?;
 
     module
         .edit_account(&auth_account_id, id, request.is_bot)
@@ -240,13 +223,9 @@ async fn delete_account_by_id(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(
-        module.handler(),
-        module.applier_container().deref(),
-        auth_info,
-    )
-    .await
-    .map_err(ErrorStatus::from)?;
+    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+        .await
+        .map_err(ErrorStatus::from)?;
 
     module
         .delete_account(&auth_account_id, id)

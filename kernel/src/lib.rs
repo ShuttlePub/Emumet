@@ -51,8 +51,9 @@ pub mod interfaces {
 /// This macro generates implementations for:
 /// - DependOnDatabaseConnection
 /// - DependOnAccountReadModel, DependOnAccountEventStore
-/// - DependOnAuthAccountQuery, DependOnAuthHostQuery, DependOnEventQuery
-/// - DependOnAuthAccountModifier, DependOnAuthHostModifier, DependOnEventModifier
+/// - DependOnAuthAccountReadModel, DependOnAuthAccountEventStore
+/// - DependOnAuthHostQuery
+/// - DependOnAuthHostModifier
 ///
 /// # Usage
 /// ```ignore
@@ -87,10 +88,17 @@ macro_rules! impl_database_delegation {
             }
         }
 
-        impl $crate::interfaces::query::DependOnAuthAccountQuery for $impl_type {
-            type AuthAccountQuery = <$db_type as $crate::interfaces::query::DependOnAuthAccountQuery>::AuthAccountQuery;
-            fn auth_account_query(&self) -> &Self::AuthAccountQuery {
-                $crate::interfaces::query::DependOnAuthAccountQuery::auth_account_query(&self.$field)
+        impl $crate::interfaces::read_model::DependOnAuthAccountReadModel for $impl_type {
+            type AuthAccountReadModel = <$db_type as $crate::interfaces::read_model::DependOnAuthAccountReadModel>::AuthAccountReadModel;
+            fn auth_account_read_model(&self) -> &Self::AuthAccountReadModel {
+                $crate::interfaces::read_model::DependOnAuthAccountReadModel::auth_account_read_model(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::event_store::DependOnAuthAccountEventStore for $impl_type {
+            type AuthAccountEventStore = <$db_type as $crate::interfaces::event_store::DependOnAuthAccountEventStore>::AuthAccountEventStore;
+            fn auth_account_event_store(&self) -> &Self::AuthAccountEventStore {
+                $crate::interfaces::event_store::DependOnAuthAccountEventStore::auth_account_event_store(&self.$field)
             }
         }
 
@@ -101,20 +109,6 @@ macro_rules! impl_database_delegation {
             }
         }
 
-        impl $crate::interfaces::query::DependOnEventQuery for $impl_type {
-            type EventQuery = <$db_type as $crate::interfaces::query::DependOnEventQuery>::EventQuery;
-            fn event_query(&self) -> &Self::EventQuery {
-                $crate::interfaces::query::DependOnEventQuery::event_query(&self.$field)
-            }
-        }
-
-        impl $crate::interfaces::modify::DependOnAuthAccountModifier for $impl_type {
-            type AuthAccountModifier = <$db_type as $crate::interfaces::modify::DependOnAuthAccountModifier>::AuthAccountModifier;
-            fn auth_account_modifier(&self) -> &Self::AuthAccountModifier {
-                $crate::interfaces::modify::DependOnAuthAccountModifier::auth_account_modifier(&self.$field)
-            }
-        }
-
         impl $crate::interfaces::modify::DependOnAuthHostModifier for $impl_type {
             type AuthHostModifier = <$db_type as $crate::interfaces::modify::DependOnAuthHostModifier>::AuthHostModifier;
             fn auth_host_modifier(&self) -> &Self::AuthHostModifier {
@@ -122,11 +116,5 @@ macro_rules! impl_database_delegation {
             }
         }
 
-        impl $crate::interfaces::modify::DependOnEventModifier for $impl_type {
-            type EventModifier = <$db_type as $crate::interfaces::modify::DependOnEventModifier>::EventModifier;
-            fn event_modifier(&self) -> &Self::EventModifier {
-                $crate::interfaces::modify::DependOnEventModifier::event_modifier(&self.$field)
-            }
-        }
     };
 }
