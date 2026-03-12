@@ -1,12 +1,13 @@
 use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
+use crate::route::parse_comma_ids;
 use application::service::metadata::{
     CreateMetadataUseCase, DeleteMetadataUseCase, EditMetadataUseCase, GetMetadataUseCase,
 };
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +25,7 @@ struct UpdateMetadataRequest {
 
 #[derive(Debug, Serialize)]
 struct MetadataResponse {
+    account_id: String,
     nanoid: String,
     label: String,
     content: String,
@@ -32,6 +34,7 @@ struct MetadataResponse {
 impl From<application::transfer::metadata::MetadataDto> for MetadataResponse {
     fn from(dto: application::transfer::metadata::MetadataDto) -> Self {
         Self {
+            account_id: dto.account_nanoid,
             nanoid: dto.nanoid,
             label: dto.label,
             content: dto.content,
@@ -39,30 +42,30 @@ impl From<application::transfer::metadata::MetadataDto> for MetadataResponse {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct GetMetadataQuery {
+    account_ids: String,
+}
+
 pub trait MetadataRouter {
     fn route_metadata(self) -> Self;
 }
 
-async fn get_metadata(
+async fn get_metadata_batch(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    Path(account_id): Path<String>,
+    Query(query): Query<GetMetadataQuery>,
 ) -> Result<Json<Vec<MetadataResponse>>, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
-    if account_id.trim().is_empty() {
-        return Err(ErrorStatus::from((
-            StatusCode::BAD_REQUEST,
-            "Account ID cannot be empty".to_string(),
-        )));
-    }
+    let account_ids = parse_comma_ids(&query.account_ids)?;
 
     let auth_account_id = resolve_auth_account_id(&module, auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
     let metadata_list = module
-        .get_metadata(&auth_account_id, account_id)
+        .get_metadata_batch(&auth_account_id, account_ids)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -176,14 +179,12 @@ async fn delete_metadata(
 
 impl MetadataRouter for Router<AppModule> {
     fn route_metadata(self) -> Self {
-        self.route(
-            "/accounts/:account_id/metadata",
-            get(get_metadata).post(create_metadata),
-        )
-        .route(
-            "/accounts/:account_id/metadata/:id",
-            put(update_metadata).delete(delete_metadata),
-        )
+        self.route("/metadata", get(get_metadata_batch))
+            .route("/accounts/:account_id/metadata", post(create_metadata))
+            .route(
+                "/accounts/:account_id/metadata/:id",
+                put(update_metadata).delete(delete_metadata),
+            )
     }
 }
 
@@ -195,6 +196,7 @@ mod tests {
     #[test]
     fn test_metadata_response_from_dto() {
         let dto = MetadataDto {
+            account_nanoid: "acc-123".to_string(),
             nanoid: "test-nanoid".to_string(),
             label: "test-label".to_string(),
             content: "test-content".to_string(),
@@ -202,6 +204,7 @@ mod tests {
 
         let response = MetadataResponse::from(dto);
 
+        assert_eq!(response.account_id, "acc-123");
         assert_eq!(response.nanoid, "test-nanoid");
         assert_eq!(response.label, "test-label");
         assert_eq!(response.content, "test-content");

@@ -19,6 +19,12 @@ pub trait MetadataReadModel: Sync + Send + 'static {
         account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Vec<Metadata>, KernelError>> + Send;
 
+    fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Executor,
+        account_ids: &[AccountId],
+    ) -> impl Future<Output = error_stack::Result<Vec<Metadata>, KernelError>> + Send;
+
     // Projection update operations (called by EventApplier pipeline)
     fn create(
         &self,

@@ -1,7 +1,7 @@
 use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
-use crate::route::DirectionConverter;
+use crate::route::{parse_comma_ids, DirectionConverter};
 use application::service::account::{
     CreateAccountUseCase, DeactivateAccountUseCase, EditAccountUseCase, GetAccountUseCase,
 };
@@ -15,6 +15,7 @@ use time::OffsetDateTime;
 
 #[derive(Debug, Deserialize)]
 struct GetAllAccountQuery {
+    ids: Option<String>,
     limit: Option<u32>,
     cursor: Option<String>,
     direction: Option<String>,
@@ -55,6 +56,7 @@ async fn get_accounts(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Query(GetAllAccountQuery {
+        ids,
         direction,
         limit,
         cursor,
@@ -65,13 +67,28 @@ async fn get_accounts(
         .await
         .map_err(ErrorStatus::from)?;
 
-    let direction = direction.convert_to_direction()?;
-    let pagination = Pagination::new(limit, cursor, direction);
-    let result = module
-        .get_all_accounts(&auth_account_id, pagination)
-        .await
-        .map_err(ErrorStatus::from)?
-        .ok_or(ErrorStatus::from(StatusCode::NOT_FOUND))?;
+    let result = if let Some(ids) = ids {
+        if limit.is_some() || cursor.is_some() || direction.is_some() {
+            return Err(ErrorStatus::from((
+                StatusCode::BAD_REQUEST,
+                "Cannot use ids with pagination parameters".to_string(),
+            )));
+        }
+        let id_list = parse_comma_ids(&ids)?;
+        module
+            .get_accounts_by_ids(&auth_account_id, id_list)
+            .await
+            .map_err(ErrorStatus::from)?
+    } else {
+        let direction = direction.convert_to_direction()?;
+        let pagination = Pagination::new(limit, cursor, direction);
+        module
+            .get_all_accounts(&auth_account_id, pagination)
+            .await
+            .map_err(ErrorStatus::from)?
+            .ok_or(ErrorStatus::from(StatusCode::NOT_FOUND))?
+    };
+
     if result.is_empty() {
         return Err(ErrorStatus::from(StatusCode::NOT_FOUND));
     }
@@ -112,40 +129,6 @@ async fn create_account(
 
     let account = module
         .create_account(auth_account_id, request.name, request.is_bot)
-        .await
-        .map_err(ErrorStatus::from)?;
-
-    let response = AccountResponse {
-        id: account.nanoid,
-        name: account.name,
-        public_key: account.public_key,
-        is_bot: account.is_bot,
-        created_at: account.created_at,
-    };
-
-    Ok(Json(response))
-}
-
-async fn get_account_by_id(
-    Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
-    Path(id): Path<String>,
-) -> Result<Json<AccountResponse>, ErrorStatus> {
-    let auth_info = OidcAuthInfo::from(claims);
-
-    if id.trim().is_empty() {
-        return Err(ErrorStatus::from((
-            StatusCode::BAD_REQUEST,
-            "Account ID cannot be empty".to_string(),
-        )));
-    }
-
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
-        .await
-        .map_err(ErrorStatus::from)?;
-
-    let account = module
-        .get_account_by_id(&auth_account_id, id)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -217,7 +200,6 @@ impl AccountRouter for Router<AppModule> {
     fn route_account(self) -> Self {
         self.route("/accounts", get(get_accounts))
             .route("/accounts", post(create_account))
-            .route("/accounts/:id", get(get_account_by_id))
             .route("/accounts/:id", put(update_account_by_id))
             .route("/accounts/:id", delete(deactivate_account_by_id))
     }

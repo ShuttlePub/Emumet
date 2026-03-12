@@ -31,6 +31,12 @@ pub trait AccountReadModel: Sync + Send + 'static {
         nanoid: &Nanoid<Account>,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
 
+    fn find_by_nanoids(
+        &self,
+        executor: &mut Self::Executor,
+        nanoids: &[Nanoid<Account>],
+    ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
+
     // Projection update operations (called by EventApplier pipeline)
     fn create(
         &self,

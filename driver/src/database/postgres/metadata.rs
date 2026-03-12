@@ -78,6 +78,28 @@ impl MetadataReadModel for PostgresMetadataReadModel {
         .map(|rows| rows.into_iter().map(|row| row.into()).collect())
     }
 
+    async fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Executor,
+        account_ids: &[AccountId],
+    ) -> error_stack::Result<Vec<Metadata>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let ids: Vec<uuid::Uuid> = account_ids.iter().map(|id| *id.as_ref()).collect();
+        sqlx::query_as::<_, MetadataRow>(
+            // language=postgresql
+            r#"
+            SELECT id, account_id, label, content, version, nanoid
+            FROM metadatas
+            WHERE account_id = ANY($1)
+            "#,
+        )
+        .bind(&ids)
+        .fetch_all(con)
+        .await
+        .convert_error()
+        .map(|rows| rows.into_iter().map(|row| row.into()).collect())
+    }
+
     async fn create(
         &self,
         executor: &mut Self::Executor,

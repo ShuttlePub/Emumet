@@ -162,6 +162,12 @@ pub trait ProfileQueryProcessor: Send + Sync + 'static {
         executor: &mut Self::Executor,
         account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Option<Profile>, KernelError>> + Send;
+
+    fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Executor,
+        account_ids: &[AccountId],
+    ) -> impl Future<Output = error_stack::Result<Vec<Profile>, KernelError>> + Send;
 }
 
 impl<T> ProfileQueryProcessor for T
@@ -186,6 +192,16 @@ where
     ) -> error_stack::Result<Option<Profile>, KernelError> {
         self.profile_read_model()
             .find_by_account_id(executor, account_id)
+            .await
+    }
+
+    async fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Executor,
+        account_ids: &[AccountId],
+    ) -> error_stack::Result<Vec<Profile>, KernelError> {
+        self.profile_read_model()
+            .find_by_account_ids(executor, account_ids)
             .await
     }
 }

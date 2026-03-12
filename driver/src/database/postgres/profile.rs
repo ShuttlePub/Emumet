@@ -83,6 +83,27 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .map(|option| option.map(Profile::from))
     }
 
+    async fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Executor,
+        account_ids: &[AccountId],
+    ) -> error_stack::Result<Vec<Profile>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let ids: Vec<uuid::Uuid> = account_ids.iter().map(|id| *id.as_ref()).collect();
+        sqlx::query_as::<_, ProfileRow>(
+            //language=postgresql
+            r#"
+            SELECT id, account_id, display, summary, icon_id, banner_id, version, nanoid
+            FROM profiles WHERE account_id = ANY($1)
+            "#,
+        )
+        .bind(&ids)
+        .fetch_all(con)
+        .await
+        .convert_error()
+        .map(|rows| rows.into_iter().map(Profile::from).collect())
+    }
+
     async fn create(
         &self,
         executor: &mut Self::Executor,

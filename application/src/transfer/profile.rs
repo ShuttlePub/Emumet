@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct ProfileDto {
+    pub account_nanoid: String,
     pub nanoid: String,
     pub display_name: Option<String>,
     pub summary: Option<String>,
@@ -10,9 +11,10 @@ pub struct ProfileDto {
     pub banner_id: Option<Uuid>,
 }
 
-impl From<Profile> for ProfileDto {
-    fn from(profile: Profile) -> Self {
+impl ProfileDto {
+    pub fn new(profile: Profile, account_nanoid: String) -> Self {
         Self {
+            account_nanoid,
             nanoid: profile.nanoid().as_ref().to_string(),
             display_name: profile
                 .display_name()
@@ -35,7 +37,7 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn test_profile_dto_from_profile_with_all_fields() {
+    fn test_profile_dto_with_all_fields() {
         let profile_id = ProfileId::new(Uuid::now_v7());
         let account_id = AccountId::new(Uuid::now_v7());
         let nanoid = Nanoid::default();
@@ -44,6 +46,7 @@ mod tests {
         let icon_id = ImageId::new(Uuid::now_v7());
         let banner_id = ImageId::new(Uuid::now_v7());
         let version = EventVersion::new(Uuid::now_v7());
+        let account_nanoid = "acc-nanoid-123".to_string();
 
         let profile = Profile::new(
             profile_id,
@@ -56,8 +59,9 @@ mod tests {
             nanoid.clone(),
         );
 
-        let dto = ProfileDto::from(profile);
+        let dto = ProfileDto::new(profile, account_nanoid.clone());
 
+        assert_eq!(dto.account_nanoid, account_nanoid);
         assert_eq!(dto.nanoid, nanoid.as_ref().to_string());
         assert_eq!(dto.display_name, Some(display_name.as_ref().to_string()));
         assert_eq!(dto.summary, Some(summary.as_ref().to_string()));
@@ -66,11 +70,12 @@ mod tests {
     }
 
     #[test]
-    fn test_profile_dto_from_profile_with_no_optional_fields() {
+    fn test_profile_dto_with_no_optional_fields() {
         let profile_id = ProfileId::new(Uuid::now_v7());
         let account_id = AccountId::new(Uuid::now_v7());
         let nanoid = Nanoid::default();
         let version = EventVersion::new(Uuid::now_v7());
+        let account_nanoid = "acc-nanoid-456".to_string();
 
         let profile = Profile::new(
             profile_id,
@@ -83,8 +88,9 @@ mod tests {
             nanoid.clone(),
         );
 
-        let dto = ProfileDto::from(profile);
+        let dto = ProfileDto::new(profile, account_nanoid.clone());
 
+        assert_eq!(dto.account_nanoid, account_nanoid);
         assert_eq!(dto.nanoid, nanoid.as_ref().to_string());
         assert!(dto.display_name.is_none());
         assert!(dto.summary.is_none());

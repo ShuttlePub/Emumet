@@ -129,6 +129,28 @@ impl AccountReadModel for PostgresAccountReadModel {
         .map(|option| option.map(Account::from))
     }
 
+    async fn find_by_nanoids(
+        &self,
+        executor: &mut Self::Executor,
+        nanoids: &[Nanoid<Account>],
+    ) -> error_stack::Result<Vec<Account>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let nanoid_strs: Vec<&str> = nanoids.iter().map(|n| n.as_ref().as_str()).collect();
+        sqlx::query_as::<_, AccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at
+            FROM accounts
+            WHERE nanoid = ANY($1) AND deleted_at IS NULL
+            "#,
+        )
+        .bind(&nanoid_strs)
+        .fetch_all(con)
+        .await
+        .convert_error()
+        .map(|rows| rows.into_iter().map(Account::from).collect())
+    }
+
     async fn create(
         &self,
         executor: &mut Self::Executor,

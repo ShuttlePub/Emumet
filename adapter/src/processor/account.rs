@@ -180,6 +180,12 @@ pub trait AccountQueryProcessor: Send + Sync + 'static {
         executor: &mut Self::Executor,
         nanoid: &Nanoid<Account>,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
+
+    fn find_by_nanoids(
+        &self,
+        executor: &mut Self::Executor,
+        nanoids: &[Nanoid<Account>],
+    ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
 }
 
 impl<T> AccountQueryProcessor for T
@@ -214,6 +220,16 @@ where
     ) -> error_stack::Result<Option<Account>, KernelError> {
         self.account_read_model()
             .find_by_nanoid(executor, nanoid)
+            .await
+    }
+
+    async fn find_by_nanoids(
+        &self,
+        executor: &mut Self::Executor,
+        nanoids: &[Nanoid<Account>],
+    ) -> error_stack::Result<Vec<Account>, KernelError> {
+        self.account_read_model()
+            .find_by_nanoids(executor, nanoids)
             .await
     }
 }

@@ -19,6 +19,12 @@ pub trait ProfileReadModel: Sync + Send + 'static {
         account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Option<Profile>, KernelError>> + Send;
 
+    fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Executor,
+        account_ids: &[AccountId],
+    ) -> impl Future<Output = error_stack::Result<Vec<Profile>, KernelError>> + Send;
+
     // Projection update operations (called by EventApplier pipeline)
     fn create(
         &self,

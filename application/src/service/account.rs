@@ -51,29 +51,32 @@ pub trait GetAccountUseCase:
         }
     }
 
-    fn get_account_by_id(
+    fn get_accounts_by_ids(
         &self,
         auth_account_id: &AuthAccountId,
-        account_id: String,
-    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send {
+        ids: Vec<String>,
+    ) -> impl Future<Output = error_stack::Result<Vec<AccountDto>, KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            let nanoid = Nanoid::<Account>::new(account_id);
-            let account = self
+            let nanoids: Vec<Nanoid<Account>> =
+                ids.into_iter().map(Nanoid::<Account>::new).collect();
+            let accounts = self
                 .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
-                .await?
-                .ok_or_else(|| {
-                    Report::new(KernelError::NotFound).attach_printable(format!(
-                        "Account not found with nanoid: {}",
-                        nanoid.as_ref()
-                    ))
-                })?;
+                .find_by_nanoids(&mut transaction, &nanoids)
+                .await?;
 
-            check_permission(self, auth_account_id, &account_view(account.id())).await?;
+            let mut result = Vec::new();
+            for account in accounts {
+                if check_permission(self, auth_account_id, &account_view(account.id()))
+                    .await
+                    .is_ok()
+                {
+                    result.push(AccountDto::from(account));
+                }
+            }
 
-            Ok(AccountDto::from(account))
+            Ok(result)
         }
     }
 }

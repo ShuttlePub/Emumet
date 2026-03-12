@@ -94,34 +94,55 @@ pub trait GetMetadataUseCase:
     + DependOnAccountQueryProcessor
     + DependOnPermissionChecker
 {
-    fn get_metadata(
+    fn get_metadata_batch(
         &self,
         auth_account_id: &AuthAccountId,
-        account_nanoid: String,
+        account_nanoids: Vec<String>,
     ) -> impl Future<Output = error_stack::Result<Vec<MetadataDto>, KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(account_nanoid);
-            let account = self
+            let nanoids: Vec<Nanoid<Account>> = account_nanoids
+                .into_iter()
+                .map(Nanoid::<Account>::new)
+                .collect();
+            let accounts = self
                 .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
-                .await?
-                .ok_or_else(|| {
-                    Report::new(KernelError::NotFound).attach_printable(format!(
-                        "Account not found with nanoid: {}",
-                        nanoid.as_ref()
-                    ))
-                })?;
+                .find_by_nanoids(&mut transaction, &nanoids)
+                .await?;
 
-            check_permission(self, auth_account_id, &account_view(account.id())).await?;
+            let mut permitted_accounts = Vec::new();
+            for account in accounts {
+                if check_permission(self, auth_account_id, &account_view(account.id()))
+                    .await
+                    .is_ok()
+                {
+                    permitted_accounts.push(account);
+                }
+            }
+
+            if permitted_accounts.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let account_ids: Vec<_> = permitted_accounts.iter().map(|a| a.id().clone()).collect();
+            let nanoid_map: std::collections::HashMap<_, _> = permitted_accounts
+                .iter()
+                .map(|a| (a.id().clone(), a.nanoid().as_ref().to_string()))
+                .collect();
 
             let metadata_list = self
                 .metadata_query_processor()
-                .find_by_account_id(&mut transaction, account.id())
+                .find_by_account_ids(&mut transaction, &account_ids)
                 .await?;
 
-            Ok(metadata_list.into_iter().map(MetadataDto::from).collect())
+            Ok(metadata_list
+                .into_iter()
+                .filter_map(|metadata| {
+                    let account_nanoid = nanoid_map.get(metadata.account_id())?.clone();
+                    Some(MetadataDto::new(metadata, account_nanoid))
+                })
+                .collect())
         }
     }
 }
@@ -168,6 +189,7 @@ pub trait CreateMetadataUseCase:
 
             check_permission(self, auth_account_id, &account_edit(account.id())).await?;
 
+            let account_nanoid_str = account.nanoid().as_ref().to_string();
             let account_id = account.id().clone();
             let metadata_nanoid = Nanoid::<Metadata>::default();
             let metadata = self
@@ -181,7 +203,7 @@ pub trait CreateMetadataUseCase:
                 )
                 .await?;
 
-            Ok(MetadataDto::from(metadata))
+            Ok(MetadataDto::new(metadata, account_nanoid_str))
         }
     }
 }
