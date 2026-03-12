@@ -234,14 +234,19 @@ pub struct Handler {
 
 impl Handler {
     pub async fn init() -> error_stack::Result<Self, KernelError> {
-        let pgpool = PostgresDatabase::new().await?;
-        let redis = RedisDatabase::new()?;
-
         let hydra_admin_url =
             dotenvy::var("HYDRA_ADMIN_URL").unwrap_or_else(|_| "http://localhost:4445".to_string());
         let kratos_public_url = dotenvy::var("KRATOS_PUBLIC_URL")
             .unwrap_or_else(|_| "http://localhost:4433".to_string());
+        Self::init_with_urls(hydra_admin_url, kratos_public_url).await
+    }
 
+    async fn init_with_urls(
+        hydra_admin_url: String,
+        kratos_public_url: String,
+    ) -> error_stack::Result<Self, KernelError> {
+        let pgpool = PostgresDatabase::new().await?;
+        let redis = RedisDatabase::new()?;
         Ok(Self {
             pgpool,
             redis,
@@ -252,6 +257,21 @@ impl Handler {
             verifier: Rsa2048Verifier,
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_client: KratosClient::new(kratos_public_url),
+        })
+    }
+}
+
+#[cfg(test)]
+impl AppModule {
+    pub(crate) async fn new_for_oauth2_test(
+        hydra_admin_url: String,
+        kratos_public_url: String,
+    ) -> error_stack::Result<Self, KernelError> {
+        let handler = Arc::new(Handler::init_with_urls(hydra_admin_url, kratos_public_url).await?);
+        let applier_container = Arc::new(ApplierContainer::new(handler.clone()));
+        Ok(Self {
+            handler,
+            applier_container,
         })
     }
 }
