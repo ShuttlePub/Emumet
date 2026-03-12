@@ -328,15 +328,11 @@ mod tests {
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    async fn build_app(hydra_url: &str, kratos_url: &str) -> Option<Router> {
-        if dotenvy::var("DATABASE_URL").is_err() {
-            eprintln!("Skipping: DATABASE_URL not available");
-            return None;
-        }
+    async fn build_app(hydra_url: &str, kratos_url: &str) -> Router {
         let app = AppModule::new_for_oauth2_test(hydra_url.into(), kratos_url.into())
             .await
             .unwrap();
-        Some(Router::new().route_oauth2().with_state(app))
+        Router::new().route_oauth2().with_state(app)
     }
 
     async fn response_json(resp: axum::http::Response<Body>) -> serde_json::Value {
@@ -353,6 +349,8 @@ mod tests {
     // GET /oauth2/login
     // -----------------------------------------------------------------------
 
+    #[test_with::env(DATABASE_URL)]
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn login_skip_returns_redirect() {
         let hydra_mock = MockServer::start().await;
@@ -382,9 +380,7 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
@@ -401,6 +397,7 @@ mod tests {
         assert_eq!(json["redirect_to"], "http://example.com/callback");
     }
 
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn login_valid_kratos_session_returns_redirect() {
         let hydra_mock = MockServer::start().await;
@@ -443,9 +440,7 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
@@ -463,6 +458,7 @@ mod tests {
         assert_eq!(json["redirect_to"], "http://example.com/consent");
     }
 
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn login_no_cookie_returns_401() {
         let hydra_mock = MockServer::start().await;
@@ -483,9 +479,7 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
@@ -499,6 +493,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn login_invalid_kratos_session_returns_401() {
         let hydra_mock = MockServer::start().await;
@@ -525,9 +520,7 @@ mod tests {
             .mount(&kratos_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
@@ -546,6 +539,7 @@ mod tests {
     // GET /oauth2/consent
     // -----------------------------------------------------------------------
 
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn consent_skip_returns_redirect() {
         let hydra_mock = MockServer::start().await;
@@ -574,9 +568,7 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
@@ -593,6 +585,7 @@ mod tests {
         assert_eq!(json["redirect_to"], "http://example.com/token");
     }
 
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn consent_client_skip_consent_returns_redirect() {
         let hydra_mock = MockServer::start().await;
@@ -625,9 +618,7 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
@@ -644,6 +635,7 @@ mod tests {
         assert_eq!(json["redirect_to"], "http://example.com/token2");
     }
 
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn consent_no_skip_returns_show_consent() {
         let hydra_mock = MockServer::start().await;
@@ -667,9 +659,7 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
@@ -695,6 +685,7 @@ mod tests {
     // POST /oauth2/consent
     // -----------------------------------------------------------------------
 
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn consent_accept_valid_scopes_returns_redirect() {
         let hydra_mock = MockServer::start().await;
@@ -723,9 +714,7 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
@@ -750,6 +739,7 @@ mod tests {
         assert_eq!(json["redirect_to"], "http://example.com/done");
     }
 
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn consent_accept_invalid_scope_returns_400() {
         let hydra_mock = MockServer::start().await;
@@ -769,9 +759,7 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
@@ -793,6 +781,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
+    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn consent_reject_returns_redirect() {
         let hydra_mock = MockServer::start().await;
@@ -807,9 +796,7 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
-        let Some(app) = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await else {
-            return;
-        };
+        let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
             .oneshot(
