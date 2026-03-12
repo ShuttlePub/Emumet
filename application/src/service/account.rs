@@ -1,3 +1,4 @@
+use crate::permission::{account_delete, account_edit, account_view, check_permission};
 use crate::transfer::account::AccountDto;
 use crate::transfer::pagination::{apply_pagination, Pagination};
 use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
@@ -8,6 +9,9 @@ use adapter::processor::account::{
 use error_stack::Report;
 use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider};
 use kernel::interfaces::database::DatabaseConnection;
+use kernel::interfaces::permission::{
+    DependOnPermissionChecker, DependOnPermissionWriter, PermissionWriter, Relation, Resource,
+};
 use kernel::prelude::entity::{
     Account, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey, AuthAccountId, Nanoid,
 };
@@ -15,7 +19,9 @@ use kernel::KernelError;
 use serde_json;
 use std::future::Future;
 
-pub trait GetAccountUseCase: 'static + Sync + Send + DependOnAccountQueryProcessor {
+pub trait GetAccountUseCase:
+    'static + Sync + Send + DependOnAccountQueryProcessor + DependOnPermissionChecker
+{
     fn get_all_accounts(
         &self,
         auth_account_id: &AuthAccountId,
@@ -65,23 +71,17 @@ pub trait GetAccountUseCase: 'static + Sync + Send + DependOnAccountQueryProcess
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_view(account.id())).await?;
 
             Ok(AccountDto::from(account))
         }
     }
 }
 
-impl<T> GetAccountUseCase for T where T: 'static + DependOnAccountQueryProcessor {}
+impl<T> GetAccountUseCase for T where
+    T: 'static + DependOnAccountQueryProcessor + DependOnPermissionChecker
+{
+}
 
 pub trait CreateAccountUseCase:
     'static
@@ -90,6 +90,7 @@ pub trait CreateAccountUseCase:
     + DependOnAccountCommandProcessor
     + DependOnPasswordProvider
     + DependOnSigningKeyGenerator
+    + DependOnPermissionWriter
 {
     fn create_account(
         &self,
@@ -123,7 +124,15 @@ pub trait CreateAccountUseCase:
                     private_key,
                     public_key,
                     account_is_bot,
-                    auth_account_id,
+                    auth_account_id.clone(),
+                )
+                .await?;
+
+            self.permission_writer()
+                .create_relation(
+                    &Resource::Account(account.id().clone()),
+                    Relation::Owner,
+                    &auth_account_id,
                 )
                 .await?;
 
@@ -137,11 +146,17 @@ impl<T> CreateAccountUseCase for T where
         + DependOnAccountCommandProcessor
         + DependOnPasswordProvider
         + DependOnSigningKeyGenerator
+        + DependOnPermissionWriter
 {
 }
 
 pub trait EditAccountUseCase:
-    'static + Sync + Send + DependOnAccountCommandProcessor + DependOnAccountQueryProcessor
+    'static
+    + Sync
+    + Send
+    + DependOnAccountCommandProcessor
+    + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
 {
     fn edit_account(
         &self,
@@ -164,16 +179,7 @@ pub trait EditAccountUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
 
             let account_id = account.id().clone();
             let current_version = account.version().clone();
@@ -192,12 +198,21 @@ pub trait EditAccountUseCase:
 }
 
 impl<T> EditAccountUseCase for T where
-    T: 'static + DependOnAccountCommandProcessor + DependOnAccountQueryProcessor
+    T: 'static
+        + DependOnAccountCommandProcessor
+        + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }
 
 pub trait DeleteAccountUseCase:
-    'static + Sync + Send + DependOnAccountCommandProcessor + DependOnAccountQueryProcessor
+    'static
+    + Sync
+    + Send
+    + DependOnAccountCommandProcessor
+    + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
+    + DependOnPermissionWriter
 {
     fn delete_account(
         &self,
@@ -219,21 +234,20 @@ pub trait DeleteAccountUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_delete(account.id())).await?;
 
             let account_id = account.id().clone();
             let current_version = account.version().clone();
             self.account_command_processor()
-                .delete(&mut transaction, account_id, current_version)
+                .delete(&mut transaction, account_id.clone(), current_version)
+                .await?;
+
+            self.permission_writer()
+                .delete_relation(
+                    &Resource::Account(account_id),
+                    Relation::Owner,
+                    auth_account_id,
+                )
                 .await?;
 
             Ok(())
@@ -242,6 +256,10 @@ pub trait DeleteAccountUseCase:
 }
 
 impl<T> DeleteAccountUseCase for T where
-    T: 'static + DependOnAccountCommandProcessor + DependOnAccountQueryProcessor
+    T: 'static
+        + DependOnAccountCommandProcessor
+        + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
+        + DependOnPermissionWriter
 {
 }

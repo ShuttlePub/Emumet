@@ -4,7 +4,6 @@ mod error;
 mod handler;
 mod hydra;
 mod kratos;
-mod permission;
 mod route;
 
 use crate::auth::{JwksCache, OidcConfig};

@@ -4,6 +4,7 @@ mod entity;
 mod error;
 mod event;
 mod event_store;
+mod permission;
 mod read_model;
 mod repository;
 mod signal;
@@ -36,6 +37,9 @@ pub mod interfaces {
     }
     pub mod repository {
         pub use crate::repository::*;
+    }
+    pub mod permission {
+        pub use crate::permission::*;
     }
     pub mod signal {
         pub use crate::signal::*;

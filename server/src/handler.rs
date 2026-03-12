@@ -9,11 +9,13 @@ use driver::crypto::{
     Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
 };
 use driver::database::{PostgresDatabase, RedisDatabase};
+use driver::keto::KetoClient;
 use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
     DependOnSignatureVerifier, DependOnSigner,
 };
 use kernel::interfaces::database::DependOnDatabaseConnection;
+use kernel::interfaces::permission::{DependOnPermissionChecker, DependOnPermissionWriter};
 use kernel::KernelError;
 use std::sync::Arc;
 use vodca::References;
@@ -213,6 +215,20 @@ impl kernel::interfaces::repository::DependOnImageRepository for AppModule {
     }
 }
 
+impl DependOnPermissionChecker for AppModule {
+    type PermissionChecker = KetoClient;
+    fn permission_checker(&self) -> &Self::PermissionChecker {
+        self.handler.as_ref().permission_checker()
+    }
+}
+
+impl DependOnPermissionWriter for AppModule {
+    type PermissionWriter = KetoClient;
+    fn permission_writer(&self) -> &Self::PermissionWriter {
+        self.handler.as_ref().permission_writer()
+    }
+}
+
 // Note: DependOnSigningKeyGenerator, DependOnAccountCommandProcessor,
 // DependOnAccountQueryProcessor, and all UseCase traits are provided
 // automatically via blanket impls in adapter.
@@ -230,6 +246,7 @@ pub struct Handler {
     // Ory clients
     pub(crate) hydra_admin_client: HydraAdminClient,
     pub(crate) kratos_client: KratosClient,
+    keto_client: KetoClient,
 }
 
 impl Handler {
@@ -238,12 +255,24 @@ impl Handler {
             dotenvy::var("HYDRA_ADMIN_URL").unwrap_or_else(|_| "http://localhost:4445".to_string());
         let kratos_public_url = dotenvy::var("KRATOS_PUBLIC_URL")
             .unwrap_or_else(|_| "http://localhost:4433".to_string());
-        Self::init_with_urls(hydra_admin_url, kratos_public_url).await
+        let keto_read_url =
+            dotenvy::var("KETO_READ_URL").unwrap_or_else(|_| "http://localhost:4466".to_string());
+        let keto_write_url =
+            dotenvy::var("KETO_WRITE_URL").unwrap_or_else(|_| "http://localhost:4467".to_string());
+        Self::init_with_urls(
+            hydra_admin_url,
+            kratos_public_url,
+            keto_read_url,
+            keto_write_url,
+        )
+        .await
     }
 
     async fn init_with_urls(
         hydra_admin_url: String,
         kratos_public_url: String,
+        keto_read_url: String,
+        keto_write_url: String,
     ) -> error_stack::Result<Self, KernelError> {
         let pgpool = PostgresDatabase::new().await?;
         let redis = RedisDatabase::new()?;
@@ -257,6 +286,7 @@ impl Handler {
             verifier: Rsa2048Verifier,
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_client: KratosClient::new(kratos_public_url),
+            keto_client: KetoClient::new(keto_read_url, keto_write_url),
         })
     }
 }
@@ -267,7 +297,19 @@ impl AppModule {
         hydra_admin_url: String,
         kratos_public_url: String,
     ) -> error_stack::Result<Self, KernelError> {
-        let handler = Arc::new(Handler::init_with_urls(hydra_admin_url, kratos_public_url).await?);
+        let keto_read_url =
+            dotenvy::var("KETO_READ_URL").unwrap_or_else(|_| "http://localhost:4466".to_string());
+        let keto_write_url =
+            dotenvy::var("KETO_WRITE_URL").unwrap_or_else(|_| "http://localhost:4467".to_string());
+        let handler = Arc::new(
+            Handler::init_with_urls(
+                hydra_admin_url,
+                kratos_public_url,
+                keto_read_url,
+                keto_write_url,
+            )
+            .await?,
+        );
         let applier_container = Arc::new(ApplierContainer::new(handler.clone()));
         Ok(Self {
             handler,
@@ -314,5 +356,19 @@ impl DependOnSignatureVerifier for Handler {
     type SignatureVerifier = Rsa2048Verifier;
     fn signature_verifier(&self) -> &Self::SignatureVerifier {
         &self.verifier
+    }
+}
+
+impl DependOnPermissionChecker for Handler {
+    type PermissionChecker = KetoClient;
+    fn permission_checker(&self) -> &Self::PermissionChecker {
+        &self.keto_client
+    }
+}
+
+impl DependOnPermissionWriter for Handler {
+    type PermissionWriter = KetoClient;
+    fn permission_writer(&self) -> &Self::PermissionWriter {
+        &self.keto_client
     }
 }

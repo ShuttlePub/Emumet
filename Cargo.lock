@@ -693,6 +693,7 @@ dependencies = [
  "error-stack",
  "kernel",
  "rand",
+ "reqwest",
  "rsa",
  "serde",
  "serde_json",

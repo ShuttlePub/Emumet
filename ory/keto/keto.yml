@@ -1,0 +1,17 @@
+version: v0.12.0
+
+dsn: postgres://postgres:develop@postgres:5432/keto?sslmode=disable
+
+namespaces:
+  - id: 0
+    name: accounts
+  - id: 1
+    name: instance
+
+serve:
+  read:
+    host: 0.0.0.0
+    port: 4466
+  write:
+    host: 0.0.0.0
+    port: 4467

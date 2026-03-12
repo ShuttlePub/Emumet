@@ -1,3 +1,4 @@
+use crate::permission::{account_edit, account_view, check_permission};
 use crate::transfer::metadata::MetadataDto;
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use adapter::processor::metadata::{
@@ -8,6 +9,7 @@ use error_stack::Report;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{DependOnMetadataEventStore, MetadataEventStore};
+use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
 use kernel::prelude::entity::{
     Account, AuthAccountId, EventId, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
@@ -85,7 +87,12 @@ impl<T> UpdateMetadata for T where
 }
 
 pub trait GetMetadataUseCase:
-    'static + Sync + Send + DependOnMetadataQueryProcessor + DependOnAccountQueryProcessor
+    'static
+    + Sync
+    + Send
+    + DependOnMetadataQueryProcessor
+    + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
 {
     fn get_metadata(
         &self,
@@ -107,16 +114,7 @@ pub trait GetMetadataUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_view(account.id())).await?;
 
             let metadata_list = self
                 .metadata_query_processor()
@@ -129,12 +127,22 @@ pub trait GetMetadataUseCase:
 }
 
 impl<T> GetMetadataUseCase for T where
-    T: 'static + Sync + Send + DependOnMetadataQueryProcessor + DependOnAccountQueryProcessor
+    T: 'static
+        + Sync
+        + Send
+        + DependOnMetadataQueryProcessor
+        + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }
 
 pub trait CreateMetadataUseCase:
-    'static + Sync + Send + DependOnMetadataCommandProcessor + DependOnAccountQueryProcessor
+    'static
+    + Sync
+    + Send
+    + DependOnMetadataCommandProcessor
+    + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
 {
     fn create_metadata(
         &self,
@@ -158,16 +166,7 @@ pub trait CreateMetadataUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
 
             let account_id = account.id().clone();
             let metadata_nanoid = Nanoid::<Metadata>::default();
@@ -188,7 +187,12 @@ pub trait CreateMetadataUseCase:
 }
 
 impl<T> CreateMetadataUseCase for T where
-    T: 'static + Sync + Send + DependOnMetadataCommandProcessor + DependOnAccountQueryProcessor
+    T: 'static
+        + Sync
+        + Send
+        + DependOnMetadataCommandProcessor
+        + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }
 
@@ -199,6 +203,7 @@ pub trait EditMetadataUseCase:
     + DependOnMetadataCommandProcessor
     + DependOnMetadataQueryProcessor
     + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
 {
     fn edit_metadata(
         &self,
@@ -223,16 +228,7 @@ pub trait EditMetadataUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
 
             let metadata_list = self
                 .metadata_query_processor()
@@ -273,6 +269,7 @@ impl<T> EditMetadataUseCase for T where
         + DependOnMetadataCommandProcessor
         + DependOnMetadataQueryProcessor
         + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }
 
@@ -283,6 +280,7 @@ pub trait DeleteMetadataUseCase:
     + DependOnMetadataCommandProcessor
     + DependOnMetadataQueryProcessor
     + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
 {
     fn delete_metadata(
         &self,
@@ -305,16 +303,7 @@ pub trait DeleteMetadataUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
 
             let metadata_list = self
                 .metadata_query_processor()
@@ -349,5 +338,6 @@ impl<T> DeleteMetadataUseCase for T where
         + DependOnMetadataCommandProcessor
         + DependOnMetadataQueryProcessor
         + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }

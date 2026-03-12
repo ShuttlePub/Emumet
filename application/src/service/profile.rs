@@ -1,3 +1,4 @@
+use crate::permission::{account_edit, account_view, check_permission};
 use crate::transfer::profile::ProfileDto;
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use adapter::processor::profile::{
@@ -8,6 +9,7 @@ use error_stack::Report;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
+use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::prelude::entity::{
     Account, AuthAccountId, EventId, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
@@ -83,7 +85,12 @@ impl<T> UpdateProfile for T where
 }
 
 pub trait GetProfileUseCase:
-    'static + Sync + Send + DependOnProfileQueryProcessor + DependOnAccountQueryProcessor
+    'static
+    + Sync
+    + Send
+    + DependOnProfileQueryProcessor
+    + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
 {
     fn get_profile(
         &self,
@@ -105,16 +112,7 @@ pub trait GetProfileUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_view(account.id())).await?;
 
             let profile = self
                 .profile_query_processor()
@@ -131,7 +129,12 @@ pub trait GetProfileUseCase:
 }
 
 impl<T> GetProfileUseCase for T where
-    T: 'static + Sync + Send + DependOnProfileQueryProcessor + DependOnAccountQueryProcessor
+    T: 'static
+        + Sync
+        + Send
+        + DependOnProfileQueryProcessor
+        + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }
 
@@ -142,6 +145,7 @@ pub trait CreateProfileUseCase:
     + DependOnProfileCommandProcessor
     + DependOnProfileQueryProcessor
     + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
 {
     fn create_profile(
         &self,
@@ -167,16 +171,7 @@ pub trait CreateProfileUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
 
             let existing_profile = self
                 .profile_query_processor()
@@ -214,6 +209,7 @@ impl<T> CreateProfileUseCase for T where
         + DependOnProfileCommandProcessor
         + DependOnProfileQueryProcessor
         + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }
 
@@ -224,6 +220,7 @@ pub trait EditProfileUseCase:
     + DependOnProfileCommandProcessor
     + DependOnProfileQueryProcessor
     + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
 {
     fn edit_profile(
         &self,
@@ -249,16 +246,7 @@ pub trait EditProfileUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
 
             let profile = self
                 .profile_query_processor()
@@ -295,6 +283,7 @@ impl<T> EditProfileUseCase for T where
         + DependOnProfileCommandProcessor
         + DependOnProfileQueryProcessor
         + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }
 
@@ -305,6 +294,7 @@ pub trait DeleteProfileUseCase:
     + DependOnProfileCommandProcessor
     + DependOnProfileQueryProcessor
     + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
 {
     fn delete_profile(
         &self,
@@ -326,16 +316,7 @@ pub trait DeleteProfileUseCase:
                     ))
                 })?;
 
-            let accounts = self
-                .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
-                .await?;
-
-            let found = accounts.iter().any(|a| a.id() == account.id());
-            if !found {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("This account does not belong to the authenticated user"));
-            }
+            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
 
             let profile = self
                 .profile_query_processor()
@@ -364,5 +345,6 @@ impl<T> DeleteProfileUseCase for T where
         + DependOnProfileCommandProcessor
         + DependOnProfileQueryProcessor
         + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }

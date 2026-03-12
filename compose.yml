@@ -123,5 +123,45 @@ services:
       timeout: 5s
       retries: 5
 
+  keto-migrate:
+    image: docker.io/oryd/keto:v0.12.0
+    container_name: emumet-keto-migrate
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/keto?sslmode=disable
+    volumes:
+      - type: bind
+        source: ./ory/keto
+        target: /etc/config/keto
+        bind:
+          selinux: z
+    command: migrate up -y -c /etc/config/keto/keto.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  keto:
+    image: docker.io/oryd/keto:v0.12.0
+    container_name: emumet-keto
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/keto?sslmode=disable
+    volumes:
+      - type: bind
+        source: ./ory/keto
+        target: /etc/config/keto
+        bind:
+          selinux: z
+    command: serve -c /etc/config/keto/keto.yml
+    ports:
+      - "4466:4466"
+      - "4467:4467"
+    depends_on:
+      keto-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4466/health/alive || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres-data:
