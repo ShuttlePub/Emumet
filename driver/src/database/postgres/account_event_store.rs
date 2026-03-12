@@ -247,7 +247,7 @@ mod test {
                 update_event,
                 None,
             );
-            let delete_event = AccountEvent::Deleted;
+            let delete_event = AccountEvent::Deactivated;
             let deleted_account = CommandEnvelope::new(
                 EventId::from(account_id.clone()),
                 delete_event.name(),
@@ -296,7 +296,7 @@ mod test {
                 update_event,
                 None,
             );
-            let delete_event = AccountEvent::Deleted;
+            let delete_event = AccountEvent::Deactivated;
             let deleted_account = CommandEnvelope::new(
                 EventId::from(account_id.clone()),
                 delete_event.name(),

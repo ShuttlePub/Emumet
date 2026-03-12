@@ -1,9 +1,7 @@
 use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
-use application::service::profile::{
-    CreateProfileUseCase, DeleteProfileUseCase, EditProfileUseCase, GetProfileUseCase,
-};
+use application::service::profile::{CreateProfileUseCase, EditProfileUseCase, GetProfileUseCase};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -153,40 +151,11 @@ async fn update_profile(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn delete_profile(
-    Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
-    Path(account_id): Path<String>,
-) -> Result<StatusCode, ErrorStatus> {
-    let auth_info = OidcAuthInfo::from(claims);
-
-    if account_id.trim().is_empty() {
-        return Err(ErrorStatus::from((
-            StatusCode::BAD_REQUEST,
-            "Account ID cannot be empty".to_string(),
-        )));
-    }
-
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
-        .await
-        .map_err(ErrorStatus::from)?;
-
-    module
-        .delete_profile(&auth_account_id, account_id)
-        .await
-        .map_err(ErrorStatus::from)?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
 impl ProfileRouter for Router<AppModule> {
     fn route_profile(self) -> Self {
         self.route(
             "/accounts/:account_id/profile",
-            get(get_profile)
-                .post(create_profile)
-                .put(update_profile)
-                .delete(delete_profile),
+            get(get_profile).post(create_profile).put(update_profile),
         )
     }
 }

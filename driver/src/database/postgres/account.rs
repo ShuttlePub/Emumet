@@ -166,7 +166,7 @@ impl AccountReadModel for PostgresAccountReadModel {
             //language=postgresql
             r#"
             UPDATE accounts
-            SET name = $2, private_key = $3, public_key = $4, is_bot = $5, version = $6
+            SET name = $2, private_key = $3, public_key = $4, is_bot = $5, version = $6, deleted_at = $7
             WHERE id = $1
             "#,
         )
@@ -176,13 +176,14 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(account.public_key().as_ref())
         .bind(account.is_bot().as_ref())
         .bind(account.version().as_ref())
+        .bind(account.deleted_at().as_ref().map(|d| d.as_ref()))
         .execute(con)
         .await
         .convert_error()?;
         Ok(())
     }
 
-    async fn delete(
+    async fn deactivate(
         &self,
         executor: &mut Self::Executor,
         account_id: &AccountId,
@@ -194,6 +195,25 @@ impl AccountReadModel for PostgresAccountReadModel {
             UPDATE accounts
             SET deleted_at = CASE WHEN deleted_at IS NULL THEN now() ELSE deleted_at END
             WHERE id = $1
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
+
+    async fn unlink_all_auth_accounts(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query(
+            //language=postgresql
+            r#"
+            DELETE FROM auth_emumet_accounts WHERE emumet_id = $1
             "#,
         )
         .bind(account_id.as_ref())
@@ -323,7 +343,7 @@ mod test {
             assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
             database
                 .account_read_model()
-                .delete(&mut transaction, account.id())
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
@@ -360,7 +380,7 @@ mod test {
             assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
             database
                 .account_read_model()
-                .delete(&mut transaction, account.id())
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
@@ -444,7 +464,7 @@ mod test {
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
-        async fn delete() {
+        async fn deactivate() {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
@@ -467,7 +487,7 @@ mod test {
 
             database
                 .account_read_model()
-                .delete(&mut transaction, account.id())
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
             let result = database
@@ -497,7 +517,7 @@ mod test {
 
             database
                 .account_read_model()
-                .delete(&mut transaction, account.id())
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
             let result = database

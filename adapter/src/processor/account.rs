@@ -41,7 +41,7 @@ pub trait AccountCommandProcessor: Send + Sync + 'static {
         current_version: kernel::prelude::entity::EventVersion<Account>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
-    fn delete(
+    fn deactivate(
         &self,
         executor: &mut Self::Executor,
         account_id: AccountId,
@@ -116,13 +116,13 @@ where
         Ok(())
     }
 
-    async fn delete(
+    async fn deactivate(
         &self,
         executor: &mut Self::Executor,
         account_id: AccountId,
         current_version: kernel::prelude::entity::EventVersion<Account>,
     ) -> error_stack::Result<(), KernelError> {
-        let command = Account::delete(account_id.clone(), current_version);
+        let command = Account::deactivate(account_id.clone(), current_version);
 
         self.account_event_store()
             .persist_and_transform(executor, command)

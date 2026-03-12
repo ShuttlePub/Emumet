@@ -51,10 +51,6 @@ pub trait UpdateProfile:
                         self.profile_read_model()
                             .update(&mut transaction, &profile)
                             .await?;
-                    } else {
-                        self.profile_read_model()
-                            .delete(&mut transaction, &profile_id)
-                            .await?;
                     }
                 }
             } else {
@@ -277,68 +273,6 @@ pub trait EditProfileUseCase:
 }
 
 impl<T> EditProfileUseCase for T where
-    T: 'static
-        + Sync
-        + Send
-        + DependOnProfileCommandProcessor
-        + DependOnProfileQueryProcessor
-        + DependOnAccountQueryProcessor
-        + DependOnPermissionChecker
-{
-}
-
-pub trait DeleteProfileUseCase:
-    'static
-    + Sync
-    + Send
-    + DependOnProfileCommandProcessor
-    + DependOnProfileQueryProcessor
-    + DependOnAccountQueryProcessor
-    + DependOnPermissionChecker
-{
-    fn delete_profile(
-        &self,
-        auth_account_id: &AuthAccountId,
-        account_nanoid: String,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
-        async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
-
-            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(account_nanoid);
-            let account = self
-                .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
-                .await?
-                .ok_or_else(|| {
-                    Report::new(KernelError::NotFound).attach_printable(format!(
-                        "Account not found with nanoid: {}",
-                        nanoid.as_ref()
-                    ))
-                })?;
-
-            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
-
-            let profile = self
-                .profile_query_processor()
-                .find_by_account_id(&mut transaction, account.id())
-                .await?
-                .ok_or_else(|| {
-                    Report::new(KernelError::NotFound)
-                        .attach_printable("Profile not found for this account")
-                })?;
-
-            let profile_id = profile.id().clone();
-            let current_version = profile.version().clone();
-            self.profile_command_processor()
-                .delete(&mut transaction, profile_id, current_version)
-                .await?;
-
-            Ok(())
-        }
-    }
-}
-
-impl<T> DeleteProfileUseCase for T where
     T: 'static
         + Sync
         + Send

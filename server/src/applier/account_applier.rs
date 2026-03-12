@@ -3,9 +3,13 @@ use error_stack::ResultExt;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
-use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
+use kernel::interfaces::read_model::{
+    AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
+    DependOnProfileReadModel, MetadataReadModel, ProfileReadModel,
+};
+use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
 use kernel::interfaces::signal::Signal;
-use kernel::prelude::entity::{Account, AccountEvent, AccountId, EventId};
+use kernel::prelude::entity::{Account, AccountEvent, AccountId, EventId, FollowTargetId};
 use kernel::KernelError;
 use rikka_mq::config::MQConfig;
 use rikka_mq::define::redis::mq::RedisMessageQueue;
@@ -86,18 +90,88 @@ impl AccountApplier {
                         }
                     }
                     (Some(account), Some(_)) => {
-                        handler
-                            .account_read_model()
-                            .update(&mut tx, account)
-                            .await
-                            .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                        if account.deleted_at().is_some() {
+                            // Account deactivated: cascade delete related data
+                            handler
+                                .account_read_model()
+                                .deactivate(&mut tx, &id)
+                                .await
+                                .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+
+                            // Delete profile
+                            if let Some(profile) = handler
+                                .profile_read_model()
+                                .find_by_account_id(&mut tx, &id)
+                                .await
+                                .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?
+                            {
+                                handler
+                                    .profile_read_model()
+                                    .delete(&mut tx, profile.id())
+                                    .await
+                                    .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                            }
+
+                            // Delete all metadata
+                            let metadata_list = handler
+                                .metadata_read_model()
+                                .find_by_account_id(&mut tx, &id)
+                                .await
+                                .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                            for metadata in &metadata_list {
+                                handler
+                                    .metadata_read_model()
+                                    .delete(&mut tx, metadata.id())
+                                    .await
+                                    .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                            }
+
+                            // Delete all follow relationships (as follower and followee)
+                            let target_id = FollowTargetId::from(id.clone());
+                            let followings = handler
+                                .follow_repository()
+                                .find_followings(&mut tx, &target_id)
+                                .await
+                                .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                            for follow in &followings {
+                                handler
+                                    .follow_repository()
+                                    .delete(&mut tx, follow.id())
+                                    .await
+                                    .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                            }
+                            let followers = handler
+                                .follow_repository()
+                                .find_followers(&mut tx, &target_id)
+                                .await
+                                .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                            for follow in &followers {
+                                handler
+                                    .follow_repository()
+                                    .delete(&mut tx, follow.id())
+                                    .await
+                                    .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                            }
+
+                            // Unlink all auth accounts
+                            handler
+                                .account_read_model()
+                                .unlink_all_auth_accounts(&mut tx, &id)
+                                .await
+                                .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                        } else {
+                            handler
+                                .account_read_model()
+                                .update(&mut tx, account)
+                                .await
+                                .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                        }
                     }
                     (None, Some(_)) => {
-                        handler
-                            .account_read_model()
-                            .delete(&mut tx, &id)
-                            .await
-                            .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                        tracing::warn!(
+                            "Account applier: entity became None with existing projection for id {:?} — this should not happen after Deactivated migration",
+                            id
+                        );
                     }
                     (None, None) => {
                         tracing::warn!(

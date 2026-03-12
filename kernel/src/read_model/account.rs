@@ -44,7 +44,13 @@ pub trait AccountReadModel: Sync + Send + 'static {
         account: &Account,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
-    fn delete(
+    fn deactivate(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn unlink_all_auth_accounts(
         &self,
         executor: &mut Self::Executor,
         account_id: &AccountId,

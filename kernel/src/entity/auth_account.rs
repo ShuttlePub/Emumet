@@ -32,7 +32,6 @@ pub enum AuthAccountEvent {
         host: AuthHostId,
         client_id: AuthAccountClientId,
     },
-    Deleted,
 }
 
 impl AuthAccount {
@@ -47,19 +46,6 @@ impl AuthAccount {
             event.name(),
             event,
             Some(KnownEventVersion::Nothing),
-        )
-    }
-
-    pub fn delete(
-        id: AuthAccountId,
-        current_version: EventVersion<AuthAccount>,
-    ) -> CommandEnvelope<AuthAccountEvent, AuthAccount> {
-        let event = AuthAccountEvent::Deleted;
-        CommandEnvelope::new(
-            EventId::from(id),
-            event.name(),
-            event,
-            Some(KnownEventVersion::Prev(current_version)),
         )
     }
 }
@@ -87,13 +73,6 @@ impl EventApplier for AuthAccount {
                     client_id,
                     version: event.version,
                 });
-            }
-            AuthAccountEvent::Deleted => {
-                if entity.is_none() {
-                    return Err(Report::new(KernelError::Internal)
-                        .attach_printable(Self::not_exists(event.id.as_ref())));
-                }
-                *entity = None;
             }
         }
         Ok(())
@@ -126,27 +105,5 @@ mod test {
         assert_eq!(account.id(), &id);
         assert_eq!(account.host(), &host);
         assert_eq!(account.client_id(), &client_id);
-    }
-
-    #[test]
-    fn delete_auth_account() {
-        let id = AuthAccountId::new(Uuid::now_v7());
-        let host = AuthHostId::new(Uuid::now_v7());
-        let client_id = AuthAccountClientId::new(Uuid::now_v7());
-        let account = AuthAccount::new(
-            id.clone(),
-            host.clone(),
-            client_id.clone(),
-            EventVersion::new(Uuid::now_v7()),
-        );
-        let delete_account = AuthAccount::delete(id.clone(), account.version().clone());
-        let envelope = EventEnvelope::new(
-            delete_account.id().clone(),
-            delete_account.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
-        );
-        let mut account = Some(account);
-        AuthAccount::apply(&mut account, envelope).unwrap();
-        assert!(account.is_none());
     }
 }

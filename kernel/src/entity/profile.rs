@@ -49,7 +49,6 @@ pub enum ProfileEvent {
         icon: Option<ImageId>,
         banner: Option<ImageId>,
     },
-    Deleted,
 }
 
 impl Profile {
@@ -92,19 +91,6 @@ impl Profile {
             icon,
             banner,
         };
-        CommandEnvelope::new(
-            EventId::from(id),
-            event.name(),
-            event,
-            Some(KnownEventVersion::Prev(current_version)),
-        )
-    }
-
-    pub fn delete(
-        id: ProfileId,
-        current_version: EventVersion<Profile>,
-    ) -> CommandEnvelope<ProfileEvent, Profile> {
-        let event = ProfileEvent::Deleted;
         CommandEnvelope::new(
             EventId::from(id),
             event.name(),
@@ -171,14 +157,6 @@ impl EventApplier for Profile {
                         .attach_printable(Self::not_exists(event.id.as_ref())));
                 }
             }
-            ProfileEvent::Deleted => {
-                if entity.is_some() {
-                    *entity = None;
-                } else {
-                    return Err(Report::new(KernelError::Internal)
-                        .attach_printable(Self::not_exists(event.id.as_ref())));
-                }
-            }
         }
         Ok(())
     }
@@ -191,7 +169,6 @@ mod test {
         ProfileId, ProfileSummary,
     };
     use crate::event::EventApplier;
-    use crate::KernelError;
     use uuid::Uuid;
 
     #[test]
@@ -272,47 +249,5 @@ mod test {
         assert_eq!(profile.banner().as_ref().unwrap(), &banner);
         assert_eq!(profile.version(), &version);
         assert_eq!(profile.nanoid(), &nano_id);
-    }
-
-    #[test]
-    fn delete_profile() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = ProfileId::new(Uuid::now_v7());
-        let nano_id = Nanoid::default();
-        let profile = Profile::new(
-            id.clone(),
-            account_id.clone(),
-            None,
-            None,
-            None,
-            None,
-            EventVersion::new(Uuid::now_v7()),
-            nano_id.clone(),
-        );
-        let version = profile.version().clone();
-        let event = Profile::delete(id.clone(), version);
-        let envelope = EventEnvelope::new(
-            event.id().clone(),
-            event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
-        );
-        let mut profile = Some(profile);
-        Profile::apply(&mut profile, envelope).unwrap();
-        assert!(profile.is_none());
-    }
-
-    #[test]
-    fn delete_not_exist_profile() {
-        let id = ProfileId::new(Uuid::now_v7());
-        let version = EventVersion::new(Uuid::now_v7());
-        let event = Profile::delete(id.clone(), version);
-        let envelope = EventEnvelope::new(
-            event.id().clone(),
-            event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
-        );
-        let mut profile = None;
-        assert!(Profile::apply(&mut profile, envelope)
-            .is_err_and(|e| e.current_context() == &KernelError::Internal));
     }
 }

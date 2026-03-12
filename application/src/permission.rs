@@ -19,7 +19,7 @@ pub fn account_edit(account_id: &AccountId) -> Permission {
     ))
 }
 
-pub fn account_delete(account_id: &AccountId) -> Permission {
+pub fn account_deactivate(account_id: &AccountId) -> Permission {
     Permission::new(PermissionReq::new(
         Resource::Account(account_id.clone()),
         [Relation::Owner],

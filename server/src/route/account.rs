@@ -3,7 +3,7 @@ use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use crate::route::DirectionConverter;
 use application::service::account::{
-    CreateAccountUseCase, DeleteAccountUseCase, EditAccountUseCase, GetAccountUseCase,
+    CreateAccountUseCase, DeactivateAccountUseCase, EditAccountUseCase, GetAccountUseCase,
 };
 use application::transfer::pagination::Pagination;
 use axum::extract::{Path, Query, State};
@@ -187,7 +187,7 @@ async fn update_account_by_id(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn delete_account_by_id(
+async fn deactivate_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path(id): Path<String>,
@@ -206,7 +206,7 @@ async fn delete_account_by_id(
         .map_err(ErrorStatus::from)?;
 
     module
-        .delete_account(&auth_account_id, id)
+        .deactivate_account(&auth_account_id, id)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -219,6 +219,6 @@ impl AccountRouter for Router<AppModule> {
             .route("/accounts", post(create_account))
             .route("/accounts/:id", get(get_account_by_id))
             .route("/accounts/:id", put(update_account_by_id))
-            .route("/accounts/:id", delete(delete_account_by_id))
+            .route("/accounts/:id", delete(deactivate_account_by_id))
     }
 }

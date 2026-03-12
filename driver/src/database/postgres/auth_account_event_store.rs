@@ -235,14 +235,8 @@ mod test {
             assert_eq!(events.len(), 0);
 
             let created = create_auth_account_command(id.clone());
-            let create_envelope = db
-                .auth_account_event_store()
-                .persist_and_transform(&mut transaction, created.clone())
-                .await
-                .unwrap();
-            let deleted = AuthAccount::delete(id.clone(), create_envelope.version);
             db.auth_account_event_store()
-                .persist(&mut transaction, &deleted)
+                .persist_and_transform(&mut transaction, created.clone())
                 .await
                 .unwrap();
 
@@ -251,9 +245,8 @@ mod test {
                 .find_by_id(&mut transaction, &event_id, None)
                 .await
                 .unwrap();
-            assert_eq!(events.len(), 2);
+            assert_eq!(events.len(), 1);
             assert_eq!(&events[0].event, created.event());
-            assert_eq!(&events[1].event, deleted.event());
         }
 
         #[test_with::env(DATABASE_URL)]
@@ -270,30 +263,17 @@ mod test {
                 .persist_and_transform(&mut transaction, created.clone())
                 .await
                 .unwrap();
-            let deleted = AuthAccount::delete(id.clone(), create_envelope.version);
-            db.auth_account_event_store()
-                .persist(&mut transaction, &deleted)
-                .await
-                .unwrap();
 
             let all_events = db
                 .auth_account_event_store()
                 .find_by_id(&mut transaction, &event_id, None)
                 .await
                 .unwrap();
-            assert_eq!(all_events.len(), 2);
-
-            let since_events = db
-                .auth_account_event_store()
-                .find_by_id(&mut transaction, &event_id, Some(&all_events[0].version))
-                .await
-                .unwrap();
-            assert_eq!(since_events.len(), 1);
-            assert_eq!(&since_events[0].event, deleted.event());
+            assert_eq!(all_events.len(), 1);
 
             let no_events = db
                 .auth_account_event_store()
-                .find_by_id(&mut transaction, &event_id, Some(&all_events[1].version))
+                .find_by_id(&mut transaction, &event_id, Some(&create_envelope.version))
                 .await
                 .unwrap();
             assert_eq!(no_events.len(), 0);

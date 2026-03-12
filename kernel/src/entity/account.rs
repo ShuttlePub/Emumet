@@ -53,7 +53,8 @@ pub enum AccountEvent {
     Updated {
         is_bot: AccountIsBot,
     },
-    Deleted,
+    #[serde(alias = "deleted")]
+    Deactivated,
 }
 
 impl Account {
@@ -96,11 +97,11 @@ impl Account {
         )
     }
 
-    pub fn delete(
+    pub fn deactivate(
         id: AccountId,
         current_version: EventVersion<Account>,
     ) -> CommandEnvelope<AccountEvent, Account> {
-        let event = AccountEvent::Deleted;
+        let event = AccountEvent::Deactivated;
         CommandEnvelope::new(
             EventId::from(id),
             event.name(),
@@ -169,9 +170,14 @@ impl EventApplier for Account {
                         .attach_printable(Self::not_exists(event.id.as_ref())));
                 }
             }
-            AccountEvent::Deleted => {
-                if entity.is_some() {
-                    *entity = None;
+            AccountEvent::Deactivated => {
+                if let Some(account) = entity {
+                    if account.deleted_at.is_some() {
+                        return Err(Report::new(KernelError::Internal)
+                            .attach_printable("Account is already deactivated"));
+                    }
+                    account.deleted_at = Some(DeletedAt::now());
+                    account.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::not_exists(event.id.as_ref())));
@@ -312,7 +318,7 @@ mod test {
     }
 
     #[test]
-    fn delete_account() {
+    fn deactivate_account() {
         let id = AccountId::new(Uuid::now_v7());
         let name = AccountName::new("test");
         let private_key = AccountPrivateKey::new("private_key".to_string());
@@ -331,7 +337,7 @@ mod test {
             CreatedAt::now(),
         );
         let version = account.version().clone();
-        let event = Account::delete(id.clone(), version);
+        let event = Account::deactivate(id.clone(), version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
@@ -339,14 +345,59 @@ mod test {
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope.clone()).unwrap();
-        assert!(account.is_none());
+        assert!(account.is_some());
+        let account = account.unwrap();
+        assert!(account.deleted_at().is_some());
     }
 
     #[test]
-    fn delete_not_exist_account() {
+    fn deactivate_already_deactivated_account() {
+        let id = AccountId::new(Uuid::now_v7());
+        let name = AccountName::new("test");
+        let private_key = AccountPrivateKey::new("private_key".to_string());
+        let public_key = AccountPublicKey::new("public_key".to_string());
+        let is_bot = AccountIsBot::new(false);
+        let nano_id = Nanoid::default();
+        let account = Account::new(
+            id.clone(),
+            name.clone(),
+            private_key.clone(),
+            public_key.clone(),
+            is_bot.clone(),
+            None,
+            EventVersion::new(Uuid::now_v7()),
+            nano_id.clone(),
+            CreatedAt::now(),
+        );
+        let version = account.version().clone();
+        let event = Account::deactivate(id.clone(), version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::new(Uuid::now_v7()),
+        );
+        let mut account = Some(account);
+        Account::apply(&mut account, envelope).unwrap();
+        assert!(account.is_some());
+        assert!(account.as_ref().unwrap().deleted_at().is_some());
+
+        // Second deactivation should fail
+        let version2 = account.as_ref().unwrap().version().clone();
+        let event2 = Account::deactivate(id.clone(), version2);
+        let envelope2 = EventEnvelope::new(
+            event2.id().clone(),
+            event2.event().clone(),
+            EventVersion::new(Uuid::now_v7()),
+        );
+        assert!(Account::apply(&mut account, envelope2)
+            .is_err_and(|e| e.current_context() == &KernelError::Internal));
+    }
+
+    #[test]
+    fn deactivate_not_exist_account() {
         let id = AccountId::new(Uuid::now_v7());
         let version = EventVersion::new(Uuid::now_v7());
-        let event = Account::delete(id.clone(), version);
+        let event = Account::deactivate(id.clone(), version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),

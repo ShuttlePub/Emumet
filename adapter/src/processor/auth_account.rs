@@ -26,13 +26,6 @@ pub trait AuthAccountCommandProcessor: Send + Sync + 'static {
         host: AuthHostId,
         client_id: AuthAccountClientId,
     ) -> impl Future<Output = error_stack::Result<AuthAccount, KernelError>> + Send;
-
-    fn delete(
-        &self,
-        executor: &mut Self::Executor,
-        auth_account_id: AuthAccountId,
-        current_version: kernel::prelude::entity::EventVersion<AuthAccount>,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 impl<T> AuthAccountCommandProcessor for T
@@ -76,29 +69,6 @@ where
         }
 
         Ok(auth_account)
-    }
-
-    async fn delete(
-        &self,
-        executor: &mut Self::Executor,
-        auth_account_id: AuthAccountId,
-        current_version: kernel::prelude::entity::EventVersion<AuthAccount>,
-    ) -> error_stack::Result<(), KernelError> {
-        let command = AuthAccount::delete(auth_account_id.clone(), current_version);
-
-        self.auth_account_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
-
-        self.auth_account_read_model()
-            .delete(executor, &auth_account_id)
-            .await?;
-
-        if let Err(e) = self.auth_account_signal().emit(auth_account_id).await {
-            tracing::warn!("Failed to emit auth account signal: {:?}", e);
-        }
-
-        Ok(())
     }
 }
 

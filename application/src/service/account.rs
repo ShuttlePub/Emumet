@@ -1,4 +1,4 @@
-use crate::permission::{account_delete, account_edit, account_view, check_permission};
+use crate::permission::{account_deactivate, account_edit, account_view, check_permission};
 use crate::transfer::account::AccountDto;
 use crate::transfer::pagination::{apply_pagination, Pagination};
 use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
@@ -205,7 +205,7 @@ impl<T> EditAccountUseCase for T where
 {
 }
 
-pub trait DeleteAccountUseCase:
+pub trait DeactivateAccountUseCase:
     'static
     + Sync
     + Send
@@ -214,7 +214,7 @@ pub trait DeleteAccountUseCase:
     + DependOnPermissionChecker
     + DependOnPermissionWriter
 {
-    fn delete_account(
+    fn deactivate_account(
         &self,
         auth_account_id: &AuthAccountId,
         account_id: String,
@@ -234,12 +234,12 @@ pub trait DeleteAccountUseCase:
                     ))
                 })?;
 
-            check_permission(self, auth_account_id, &account_delete(account.id())).await?;
+            check_permission(self, auth_account_id, &account_deactivate(account.id())).await?;
 
             let account_id = account.id().clone();
             let current_version = account.version().clone();
             self.account_command_processor()
-                .delete(&mut transaction, account_id.clone(), current_version)
+                .deactivate(&mut transaction, account_id.clone(), current_version)
                 .await?;
 
             self.permission_writer()
@@ -255,7 +255,7 @@ pub trait DeleteAccountUseCase:
     }
 }
 
-impl<T> DeleteAccountUseCase for T where
+impl<T> DeactivateAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
         + DependOnAccountQueryProcessor

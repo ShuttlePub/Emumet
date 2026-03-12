@@ -44,13 +44,6 @@ pub trait ProfileCommandProcessor: Send + Sync + 'static {
         banner: Option<ImageId>,
         current_version: EventVersion<Profile>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
-
-    fn delete(
-        &self,
-        executor: &mut Self::Executor,
-        profile_id: ProfileId,
-        current_version: EventVersion<Profile>,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 impl<T> ProfileCommandProcessor for T
@@ -118,25 +111,6 @@ where
             banner,
             current_version,
         );
-
-        self.profile_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
-
-        if let Err(e) = self.profile_signal().emit(profile_id).await {
-            tracing::warn!("Failed to emit profile signal: {:?}", e);
-        }
-
-        Ok(())
-    }
-
-    async fn delete(
-        &self,
-        executor: &mut Self::Executor,
-        profile_id: ProfileId,
-        current_version: EventVersion<Profile>,
-    ) -> error_stack::Result<(), KernelError> {
-        let command = Profile::delete(profile_id.clone(), current_version);
 
         self.profile_event_store()
             .persist_and_transform(executor, command)

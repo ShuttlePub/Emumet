@@ -39,10 +39,6 @@ pub trait UpdateAuthAccount:
                         self.auth_account_read_model()
                             .update(&mut transaction, &auth_account)
                             .await?;
-                    } else {
-                        self.auth_account_read_model()
-                            .delete(&mut transaction, &auth_account_id)
-                            .await?;
                     }
                 }
             } else {

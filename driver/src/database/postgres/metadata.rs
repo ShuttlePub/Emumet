@@ -235,7 +235,7 @@ mod test {
 
             database
                 .account_read_model()
-                .delete(&mut transaction, account.id())
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
@@ -295,7 +295,7 @@ mod test {
 
             database
                 .account_read_model()
-                .delete(&mut transaction, account.id())
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
@@ -334,7 +334,7 @@ mod test {
 
             database
                 .account_read_model()
-                .delete(&mut transaction, account.id())
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
@@ -387,7 +387,7 @@ mod test {
 
             database
                 .account_read_model()
-                .delete(&mut transaction, account.id())
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
@@ -429,7 +429,7 @@ mod test {
 
             database
                 .account_read_model()
-                .delete(&mut transaction, account.id())
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
         }

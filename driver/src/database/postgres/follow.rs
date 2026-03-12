@@ -304,12 +304,12 @@ mod test {
                 .unwrap();
             database
                 .account_read_model()
-                .delete(&mut transaction, follower_account.id())
+                .deactivate(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .delete(&mut transaction, followee_account.id())
+                .deactivate(&mut transaction, followee_account.id())
                 .await
                 .unwrap();
         }
@@ -387,12 +387,12 @@ mod test {
                 .unwrap();
             database
                 .account_read_model()
-                .delete(&mut transaction, follower_account.id())
+                .deactivate(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .delete(&mut transaction, followee_account.id())
+                .deactivate(&mut transaction, followee_account.id())
                 .await
                 .unwrap();
         }
@@ -468,12 +468,12 @@ mod test {
                 .unwrap();
             database
                 .account_read_model()
-                .delete(&mut transaction, follower_account.id())
+                .deactivate(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .delete(&mut transaction, followee_account.id())
+                .deactivate(&mut transaction, followee_account.id())
                 .await
                 .unwrap();
         }
@@ -565,12 +565,12 @@ mod test {
                 .unwrap();
             database
                 .account_read_model()
-                .delete(&mut transaction, follower_account.id())
+                .deactivate(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .delete(&mut transaction, followee_account.id())
+                .deactivate(&mut transaction, followee_account.id())
                 .await
                 .unwrap();
         }
@@ -642,12 +642,12 @@ mod test {
             assert!(following.is_empty());
             database
                 .account_read_model()
-                .delete(&mut transaction, follower_account.id())
+                .deactivate(&mut transaction, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .delete(&mut transaction, followee_account.id())
+                .deactivate(&mut transaction, followee_account.id())
                 .await
                 .unwrap();
         }

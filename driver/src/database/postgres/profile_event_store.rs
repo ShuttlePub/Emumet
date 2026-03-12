@@ -250,13 +250,6 @@ mod test {
                 update_event,
                 None,
             );
-            let delete_event = ProfileEvent::Deleted;
-            let deleted_profile = CommandEnvelope::new(
-                EventId::from(profile_id.clone()),
-                delete_event.name(),
-                delete_event,
-                None,
-            );
 
             db.profile_event_store()
                 .persist(&mut transaction, &created_profile)
@@ -266,19 +259,14 @@ mod test {
                 .persist(&mut transaction, &updated_profile)
                 .await
                 .unwrap();
-            db.profile_event_store()
-                .persist(&mut transaction, &deleted_profile)
-                .await
-                .unwrap();
             let events = db
                 .profile_event_store()
                 .find_by_id(&mut transaction, &event_id, None)
                 .await
                 .unwrap();
-            assert_eq!(events.len(), 3);
+            assert_eq!(events.len(), 2);
             assert_eq!(&events[0].event, created_profile.event());
             assert_eq!(&events[1].event, updated_profile.event());
-            assert_eq!(&events[2].event, deleted_profile.event());
         }
 
         #[test_with::env(DATABASE_URL)]
@@ -302,13 +290,6 @@ mod test {
                 update_event,
                 None,
             );
-            let delete_event = ProfileEvent::Deleted;
-            let deleted_profile = CommandEnvelope::new(
-                EventId::from(profile_id.clone()),
-                delete_event.name(),
-                delete_event,
-                None,
-            );
 
             db.profile_event_store()
                 .persist(&mut transaction, &created_profile)
@@ -318,10 +299,6 @@ mod test {
                 .persist(&mut transaction, &updated_profile)
                 .await
                 .unwrap();
-            db.profile_event_store()
-                .persist(&mut transaction, &deleted_profile)
-                .await
-                .unwrap();
 
             // Get all events to obtain the first version
             let all_events = db
@@ -329,22 +306,21 @@ mod test {
                 .find_by_id(&mut transaction, &event_id, None)
                 .await
                 .unwrap();
-            assert_eq!(all_events.len(), 3);
+            assert_eq!(all_events.len(), 2);
 
-            // Query since the first event's version — should return the 2nd and 3rd events
+            // Query since the first event's version — should return the 2nd event
             let since_events = db
                 .profile_event_store()
                 .find_by_id(&mut transaction, &event_id, Some(&all_events[0].version))
                 .await
                 .unwrap();
-            assert_eq!(since_events.len(), 2);
+            assert_eq!(since_events.len(), 1);
             assert_eq!(&since_events[0].event, updated_profile.event());
-            assert_eq!(&since_events[1].event, deleted_profile.event());
 
             // Query since the last event's version — should return no events
             let no_events = db
                 .profile_event_store()
-                .find_by_id(&mut transaction, &event_id, Some(&all_events[2].version))
+                .find_by_id(&mut transaction, &event_id, Some(&all_events[1].version))
                 .await
                 .unwrap();
             assert_eq!(no_events.len(), 0);
