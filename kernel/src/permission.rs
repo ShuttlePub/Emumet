@@ -5,68 +5,90 @@ use std::future::Future;
 use std::ops::Add;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Relation {
+pub enum AccountRelation {
     Owner,
     Editor,
     Signer,
-    Admin,
-    Moderator,
 }
 
-impl Relation {
+impl AccountRelation {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Relation::Owner => "owner",
-            Relation::Editor => "editor",
-            Relation::Signer => "signer",
-            Relation::Admin => "admin",
-            Relation::Moderator => "moderator",
+            AccountRelation::Owner => "owner",
+            AccountRelation::Editor => "editor",
+            AccountRelation::Signer => "signer",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Resource {
-    Account(AccountId),
-    Instance,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InstanceRole {
+    Admin,
+    Moderator,
 }
 
-impl Resource {
+impl InstanceRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InstanceRole::Admin => "admin",
+            InstanceRole::Moderator => "moderator",
+        }
+    }
+}
+
+const ACCOUNT_NAMESPACE: &str = "accounts";
+const INSTANCE_NAMESPACE: &str = "instance";
+const INSTANCE_OBJECT_ID: &str = "singleton";
+
+#[derive(Debug, Clone)]
+pub enum PermissionReq {
+    Account {
+        account_id: AccountId,
+        relations: HashSet<AccountRelation>,
+    },
+    Instance {
+        roles: HashSet<InstanceRole>,
+    },
+}
+
+impl PermissionReq {
+    pub fn account(
+        account_id: AccountId,
+        relations: impl IntoIterator<Item = AccountRelation>,
+    ) -> Self {
+        Self::Account {
+            account_id,
+            relations: relations.into_iter().collect(),
+        }
+    }
+
+    pub fn instance(roles: impl IntoIterator<Item = InstanceRole>) -> Self {
+        Self::Instance {
+            roles: roles.into_iter().collect(),
+        }
+    }
+
     pub fn namespace(&self) -> &'static str {
         match self {
-            Resource::Account(_) => "accounts",
-            Resource::Instance => "instance",
+            PermissionReq::Account { .. } => ACCOUNT_NAMESPACE,
+            PermissionReq::Instance { .. } => INSTANCE_NAMESPACE,
         }
     }
 
     pub fn object_id(&self) -> String {
         match self {
-            Resource::Account(id) => id.as_ref().to_string(),
-            Resource::Instance => "singleton".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PermissionReq {
-    resource: Resource,
-    relations: HashSet<Relation>,
-}
-
-impl PermissionReq {
-    pub fn new(resource: Resource, relations: impl IntoIterator<Item = Relation>) -> Self {
-        Self {
-            resource,
-            relations: relations.into_iter().collect(),
+            PermissionReq::Account { account_id, .. } => account_id.as_ref().to_string(),
+            PermissionReq::Instance { .. } => INSTANCE_OBJECT_ID.to_string(),
         }
     }
 
-    pub fn resource(&self) -> &Resource {
-        &self.resource
-    }
-
-    pub fn relations(&self) -> &HashSet<Relation> {
-        &self.relations
+    pub fn relation_strs(&self) -> Vec<&'static str> {
+        match self {
+            PermissionReq::Account { relations, .. } => {
+                relations.iter().map(|r| r.as_str()).collect()
+            }
+            PermissionReq::Instance { roles, .. } => roles.iter().map(|r| r.as_str()).collect(),
+        }
     }
 }
 
@@ -124,18 +146,50 @@ pub trait DependOnPermissionChecker: Send + Sync {
     fn permission_checker(&self) -> &Self::PermissionChecker;
 }
 
+#[derive(Debug, Clone)]
+pub enum RelationTarget {
+    Account {
+        account_id: AccountId,
+        relation: AccountRelation,
+    },
+    Instance {
+        role: InstanceRole,
+    },
+}
+
+impl RelationTarget {
+    pub fn namespace(&self) -> &'static str {
+        match self {
+            RelationTarget::Account { .. } => ACCOUNT_NAMESPACE,
+            RelationTarget::Instance { .. } => INSTANCE_NAMESPACE,
+        }
+    }
+
+    pub fn object_id(&self) -> String {
+        match self {
+            RelationTarget::Account { account_id, .. } => account_id.as_ref().to_string(),
+            RelationTarget::Instance { .. } => INSTANCE_OBJECT_ID.to_string(),
+        }
+    }
+
+    pub fn relation_str(&self) -> &'static str {
+        match self {
+            RelationTarget::Account { relation, .. } => relation.as_str(),
+            RelationTarget::Instance { role, .. } => role.as_str(),
+        }
+    }
+}
+
 pub trait PermissionWriter: Send + Sync + 'static {
     fn create_relation(
         &self,
-        resource: &Resource,
-        relation: Relation,
+        target: &RelationTarget,
         subject: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn delete_relation(
         &self,
-        resource: &Resource,
-        relation: Relation,
+        target: &RelationTarget,
         subject: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }

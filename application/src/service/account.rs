@@ -10,7 +10,8 @@ use error_stack::Report;
 use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::{
-    DependOnPermissionChecker, DependOnPermissionWriter, PermissionWriter, Relation, Resource,
+    AccountRelation, DependOnPermissionChecker, DependOnPermissionWriter, PermissionWriter,
+    RelationTarget,
 };
 use kernel::prelude::entity::{
     Account, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey, AuthAccountId, Nanoid,
@@ -22,6 +23,8 @@ use std::future::Future;
 pub trait GetAccountUseCase:
     'static + Sync + Send + DependOnAccountQueryProcessor + DependOnPermissionChecker
 {
+    // find_by_auth_id returns only accounts owned by the authenticated user,
+    // so no additional permission check is needed.
     fn get_all_accounts(
         &self,
         auth_account_id: &AuthAccountId,
@@ -133,8 +136,10 @@ pub trait CreateAccountUseCase:
 
             self.permission_writer()
                 .create_relation(
-                    &Resource::Account(account.id().clone()),
-                    Relation::Owner,
+                    &RelationTarget::Account {
+                        account_id: account.id().clone(),
+                        relation: AccountRelation::Owner,
+                    },
                     &auth_account_id,
                 )
                 .await?;
@@ -247,8 +252,10 @@ pub trait DeactivateAccountUseCase:
 
             self.permission_writer()
                 .delete_relation(
-                    &Resource::Account(account_id),
-                    Relation::Owner,
+                    &RelationTarget::Account {
+                        account_id,
+                        relation: AccountRelation::Owner,
+                    },
                     auth_account_id,
                 )
                 .await?;

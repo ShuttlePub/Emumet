@@ -1,6 +1,6 @@
 use error_stack::{Report, ResultExt};
 use kernel::interfaces::permission::{
-    PermissionChecker, PermissionReq, PermissionWriter, Relation, Resource,
+    PermissionChecker, PermissionReq, PermissionWriter, RelationTarget,
 };
 use kernel::prelude::entity::AuthAccountId;
 use kernel::KernelError;
@@ -54,11 +54,11 @@ impl PermissionChecker for KetoClient {
     ) -> error_stack::Result<bool, KernelError> {
         let subject_id = subject.as_ref().to_string();
 
-        for relation in req.relations() {
+        for relation in req.relation_strs() {
             let body = CheckRequest {
-                namespace: req.resource().namespace().to_string(),
-                object: req.resource().object_id(),
-                relation: relation.as_str().to_string(),
+                namespace: req.namespace().to_string(),
+                object: req.object_id(),
+                relation: relation.to_string(),
                 subject_id: subject_id.clone(),
             };
 
@@ -70,6 +70,13 @@ impl PermissionChecker for KetoClient {
                 .await
                 .change_context_lazy(|| KernelError::Internal)
                 .attach_printable("Failed to check permission with Keto")?;
+
+            if response.status().is_server_error() {
+                return Err(Report::new(KernelError::Internal).attach_printable(format!(
+                    "Keto returned server error: {}",
+                    response.status()
+                )));
+            }
 
             if response.status().is_success() {
                 let check: CheckResponse = response
@@ -91,14 +98,13 @@ impl PermissionChecker for KetoClient {
 impl PermissionWriter for KetoClient {
     async fn create_relation(
         &self,
-        resource: &Resource,
-        relation: Relation,
+        target: &RelationTarget,
         subject: &AuthAccountId,
     ) -> error_stack::Result<(), KernelError> {
         let tuple = RelationTuple {
-            namespace: resource.namespace().to_string(),
-            object: resource.object_id(),
-            relation: relation.as_str().to_string(),
+            namespace: target.namespace().to_string(),
+            object: target.object_id(),
+            relation: target.relation_str().to_string(),
             subject_id: subject.as_ref().to_string(),
         };
 
@@ -120,16 +126,15 @@ impl PermissionWriter for KetoClient {
 
     async fn delete_relation(
         &self,
-        resource: &Resource,
-        relation: Relation,
+        target: &RelationTarget,
         subject: &AuthAccountId,
     ) -> error_stack::Result<(), KernelError> {
         self.http_client
             .delete(format!("{}/admin/relation-tuples", self.write_url))
             .query(&[
-                ("namespace", resource.namespace()),
-                ("object", &resource.object_id()),
-                ("relation", relation.as_str()),
+                ("namespace", target.namespace()),
+                ("object", &target.object_id()),
+                ("relation", target.relation_str()),
                 ("subject_id", &subject.as_ref().to_string()),
             ])
             .send()
