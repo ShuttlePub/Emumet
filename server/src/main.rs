@@ -1,20 +1,24 @@
 mod applier;
+mod auth;
 mod error;
 mod handler;
-mod keycloak;
+mod hydra;
+mod kratos;
 mod permission;
 mod route;
 
+use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
 use crate::handler::AppModule;
-use crate::keycloak::create_keycloak_instance;
 use crate::route::account::AccountRouter;
 use crate::route::metadata::MetadataRouter;
+use crate::route::oauth2::OAuth2Router;
 use crate::route::profile::ProfileRouter;
 use error_stack::ResultExt;
 use kernel::KernelError;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::layer::SubscriberExt;
@@ -43,13 +47,33 @@ async fn main() -> Result<(), StackTrace> {
         )
         .init();
 
-    let keycloak_auth_instance = Arc::new(create_keycloak_instance());
+    // OIDC / JWT auth setup
+    let oidc_config = OidcConfig::from_env();
+    let jwks_cache = Arc::new(JwksCache::new(
+        oidc_config.issuer_url.clone(),
+        Duration::from_secs(oidc_config.jwks_refetch_interval_secs),
+    ));
+    // Attempt eager JWKS init (non-fatal if Hydra is not yet available).
+    jwks_cache.try_init().await;
+    let oidc_config = Arc::new(oidc_config);
+
     let app = AppModule::new().await?;
 
-    let router = axum::Router::new()
-        .route_account(keycloak_auth_instance.clone())
-        .route_profile(keycloak_auth_instance.clone())
-        .route_metadata(keycloak_auth_instance)
+    // Routes that require JWT auth
+    let authed_routes = axum::Router::new()
+        .route_account()
+        .route_profile()
+        .route_metadata()
+        .layer(axum::middleware::from_fn_with_state(
+            (oidc_config, jwks_cache),
+            auth::auth_middleware,
+        ));
+
+    // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider)
+    let public_routes = axum::Router::new().route_oauth2();
+
+    let router = authed_routes
+        .merge(public_routes)
         .layer(CorsLayer::new())
         .with_state(app);
 

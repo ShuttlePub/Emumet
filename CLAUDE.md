@@ -24,29 +24,52 @@ cargo run -p server
 
 ## Required Services
 
-### PostgreSQL
+Use `podman-compose up` (or `docker-compose up`) to start all required services:
+
+```bash
+podman-compose up -d
+```
+
+This starts: PostgreSQL, Redis, Ory Kratos, and Ory Hydra.
+
+### Manual startup (alternative)
+
+#### PostgreSQL
 ```bash
 podman run --rm --name emumet-postgres -e POSTGRES_PASSWORD=develop -p 5432:5432 docker.io/postgres
 ```
 - User: postgres / Password: develop
 
-### Redis
+#### Redis
 Required for message queue (rikka-mq).
 
-### Keycloak
-```bash
-mkdir -p keycloak-data/h2
-podman run --rm -it -v ./keycloak-data/h2:/opt/keycloak/data/h2:Z,U -v ./keycloak-data/import:/opt/keycloak/data/import:Z,U -p 18080:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin --name emumet-keycloak quay.io/keycloak/keycloak:26.1 start-dev --import-realm
-```
-- URL: http://localhost:18080
-- Admin: admin / admin
-- Realm: emumet, Client: myclient, User: testuser / testuser
+### Auth: Ory Kratos + Hydra
+
+- **Kratos** (identity management): http://localhost:4433 (public), http://localhost:4434 (admin)
+  - Self-service registration enabled
+  - Identity schema: email + password
+  - Test user: testuser@example.com / testuser
+- **Hydra** (OAuth2/OIDC): http://localhost:4444 (public), http://localhost:4445 (admin)
+  - Login/Consent Provider: Emumet server (GET /oauth2/login, GET/POST /oauth2/consent)
+  - JWT issuer
+
+Config files: `ory/kratos/`, `ory/hydra/`
 
 ## Environment Variables
 
 Copy `.env.example` to `.env`:
 - `DATABASE_URL` or individual `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`
-- `KEYCLOAK_SERVER`, `KEYCLOAK_REALM`
+- `HYDRA_ISSUER_URL` — Hydra public URL for JWT validation (default: http://localhost:4444/)
+- `HYDRA_ADMIN_URL` — Hydra admin URL for Login/Consent API (default: http://localhost:4445/)
+- `KRATOS_PUBLIC_URL` — Kratos public URL for session verification (default: http://localhost:4433/)
+- `EXPECTED_AUDIENCE` — Expected JWT audience claim (default: account)
+- `REDIS_URL` or `REDIS_HOST` — Redis connection for message queue
+
+### Master Key Password
+
+Account creation requires a master key password file for signing key encryption:
+- Production: `/run/secrets/master-key-password`
+- Development: `./master-key-password` (create manually, `chmod 600`)
 
 ## Architecture
 
@@ -61,7 +84,7 @@ kernel → driver                → server
 - **adapter**: CQRS processors (CommandProcessor/QueryProcessor) that compose kernel traits, crypto trait composition (SigningKeyGenerator)
 - **application**: Use case services (Account CRUD use cases), event appliers (projection update), DTOs
 - **driver**: PostgreSQL/Redis implementations of kernel interfaces
-- **server**: Axum HTTP server, Keycloak auth, route handlers, DI wiring (Handler/AppModule)
+- **server**: Axum HTTP server, JWT auth (Ory Hydra), OAuth2 Login/Consent Provider, route handlers, DI wiring (Handler/AppModule)
 
 ### CQRS + Event Sourcing Pattern
 
@@ -129,6 +152,20 @@ These use the Repository pattern — a single trait combining read and write ope
 
 **Signal → Applier pipeline**: `Signal` trait emits entity IDs via Redis (rikka-mq). `ApplierContainer` (server/src/applier.rs) receives and dispatches to entity-specific appliers that update ReadModel projections.
 
+### Auth Architecture
+
+JWT validation middleware (`server/src/auth.rs`):
+- OIDC Discovery → JWKS cache (with kid-miss re-fetch, rate-limited)
+- Bearer token → RS256 validation → `Extension<AuthClaims>` inserted into request
+- `AuthClaims` → `OidcAuthInfo` → `resolve_auth_account_id` (find-or-create AuthHost + AuthAccount)
+
+OAuth2 Login/Consent Provider (`server/src/route/oauth2.rs`):
+- GET /oauth2/login — Kratos session → Hydra login accept
+- GET /oauth2/consent — skip check → redirect or show consent
+- POST /oauth2/consent — accept/reject with scope validation
+
+Value mapping: JWT `iss` → `AuthHost.url`, JWT `sub` (Kratos identity UUID) → `AuthAccount.client_id`
+
 ### Entity Structure
 
 Entities use vodca macros (`References`, `Newln`, `Nameln`) and `destructure::Destructure` for field access.
@@ -145,10 +182,17 @@ Event Sourcing対象エンティティ (Account, AuthAccount, Profile, Metadata)
 
 ### Server DI Architecture
 
-`Handler` — owns PostgresDatabase + RedisDatabase + crypto providers. `impl_database_delegation!` wires kernel traits.
+`Handler` — owns PostgresDatabase + RedisDatabase + crypto providers + HydraAdminClient + KratosClient. `impl_database_delegation!` wires kernel traits.
 
-`AppModule` — wraps `Arc<Handler>` + `Arc<ApplierContainer>`. Manually implements `DependOn*` for adapter-layer traits (Signal, ReadModel, EventStore, Repository). Blanket impls provide CommandProcessor/QueryProcessor automatically.
+`AppModule` — wraps `Arc<Handler>` + `Arc<ApplierContainer>`. Manually implements `DependOn*` for adapter-layer traits (Signal, ReadModel, EventStore, Repository). Blanket impls provide CommandProcessor/QueryProcessor automatically. Provides `hydra_admin_client()` and `kratos_client()` accessors.
 
 ### Testing
 
 Database tests use `#[test_with::env(DATABASE_URL)]` attribute to skip when database is unavailable.
+
+### Data Cleanup (after auth migration)
+
+If migrating from Keycloak to Ory, truncate auth-related tables:
+```sql
+TRUNCATE auth_hosts, auth_accounts, auth_account_events;
+```

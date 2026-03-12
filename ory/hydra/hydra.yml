@@ -1,0 +1,31 @@
+serve:
+  public:
+    port: 4444
+  admin:
+    port: 4445
+
+urls:
+  self:
+    issuer: http://localhost:4444/
+  login: http://localhost:8080/oauth2/login
+  consent: http://localhost:8080/oauth2/consent
+  post_logout_redirect: http://localhost:3000/
+
+secrets:
+  system:
+    - "dev-secret-do-not-use-in-production-32ch"
+
+strategies:
+  access_token: jwt
+
+oidc:
+  subject_identifiers:
+    supported_types:
+      - public
+
+log:
+  level: debug
+
+ttl:
+  access_token: 1h
+  refresh_token: 720h

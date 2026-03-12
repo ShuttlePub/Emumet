@@ -1,22 +1,15 @@
+use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
-use crate::expect_role;
 use crate::handler::AppModule;
-use crate::keycloak::{resolve_auth_account_id, KeycloakAuthAccount};
 use application::service::profile::{
     CreateProfileUseCase, DeleteProfileUseCase, EditProfileUseCase, GetProfileUseCase,
 };
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::http::{Method, Uri};
-use axum::routing::{delete, get, post, put};
+use axum::routing::get;
 use axum::{Extension, Json, Router};
-use axum_keycloak_auth::decode::KeycloakToken;
-use axum_keycloak_auth::instance::KeycloakAuthInstance;
-use axum_keycloak_auth::layer::KeycloakAuthLayer;
-use axum_keycloak_auth::PassthroughMode;
 use kernel::prelude::entity::ImageId;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -57,18 +50,15 @@ impl From<application::transfer::profile::ProfileDto> for ProfileResponse {
 }
 
 pub trait ProfileRouter {
-    fn route_profile(self, keycloak: Arc<KeycloakAuthInstance>) -> Self;
+    fn route_profile(self) -> Self;
 }
 
 async fn get_profile(
-    Extension(token): Extension<KeycloakToken<String>>,
+    Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    method: Method,
-    uri: Uri,
     Path(account_id): Path<String>,
 ) -> Result<Json<ProfileResponse>, ErrorStatus> {
-    expect_role!(&token, uri, method);
-    let auth_info = KeycloakAuthAccount::from(token);
+    let auth_info = OidcAuthInfo::from(claims);
 
     if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
@@ -90,15 +80,12 @@ async fn get_profile(
 }
 
 async fn create_profile(
-    Extension(token): Extension<KeycloakToken<String>>,
+    Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    method: Method,
-    uri: Uri,
     Path(account_id): Path<String>,
     Json(body): Json<CreateProfileRequest>,
 ) -> Result<(StatusCode, Json<ProfileResponse>), ErrorStatus> {
-    expect_role!(&token, uri, method);
-    let auth_info = KeycloakAuthAccount::from(token);
+    let auth_info = OidcAuthInfo::from(claims);
 
     if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
@@ -130,15 +117,12 @@ async fn create_profile(
 }
 
 async fn update_profile(
-    Extension(token): Extension<KeycloakToken<String>>,
+    Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    method: Method,
-    uri: Uri,
     Path(account_id): Path<String>,
     Json(body): Json<UpdateProfileRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
-    expect_role!(&token, uri, method);
-    let auth_info = KeycloakAuthAccount::from(token);
+    let auth_info = OidcAuthInfo::from(claims);
 
     if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
@@ -170,14 +154,11 @@ async fn update_profile(
 }
 
 async fn delete_profile(
-    Extension(token): Extension<KeycloakToken<String>>,
+    Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    method: Method,
-    uri: Uri,
     Path(account_id): Path<String>,
 ) -> Result<StatusCode, ErrorStatus> {
-    expect_role!(&token, uri, method);
-    let auth_info = KeycloakAuthAccount::from(token);
+    let auth_info = OidcAuthInfo::from(claims);
 
     if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
@@ -199,20 +180,13 @@ async fn delete_profile(
 }
 
 impl ProfileRouter for Router<AppModule> {
-    fn route_profile(self, keycloak: Arc<KeycloakAuthInstance>) -> Self {
+    fn route_profile(self) -> Self {
         self.route(
             "/accounts/:account_id/profile",
             get(get_profile)
                 .post(create_profile)
                 .put(update_profile)
                 .delete(delete_profile),
-        )
-        .layer(
-            KeycloakAuthLayer::<String>::builder()
-                .instance(keycloak)
-                .passthrough_mode(PassthroughMode::Block)
-                .expected_audiences(vec![String::from("account")])
-                .build(),
         )
     }
 }

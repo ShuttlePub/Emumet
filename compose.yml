@@ -1,0 +1,127 @@
+services:
+  postgres:
+    image: docker.io/postgres:16
+    container_name: emumet-postgres
+    environment:
+      POSTGRES_PASSWORD: develop
+      POSTGRES_USER: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - type: volume
+        source: postgres-data
+        target: /var/lib/postgresql/data
+      - type: bind
+        source: ./docker-entrypoint-initdb.d
+        target: /docker-entrypoint-initdb.d
+        bind:
+          selinux: z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: docker.io/redis:7
+    container_name: emumet-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  kratos-migrate:
+    image: docker.io/oryd/kratos:v1.3.1
+    container_name: emumet-kratos-migrate
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/kratos?sslmode=disable
+    volumes:
+      - type: bind
+        source: ./ory/kratos
+        target: /etc/config/kratos
+        bind:
+          selinux: z
+    command: migrate sql -e --yes
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  kratos:
+    image: docker.io/oryd/kratos:v1.3.1
+    container_name: emumet-kratos
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/kratos?sslmode=disable
+    volumes:
+      - type: bind
+        source: ./ory/kratos
+        target: /etc/config/kratos
+        bind:
+          selinux: z
+    command: serve -c /etc/config/kratos/kratos.yml --dev --watch-courier
+    ports:
+      - "4433:4433"
+      - "4434:4434"
+    depends_on:
+      kratos-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4433/health/alive || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kratos-import:
+    image: docker.io/oryd/kratos:v1.3.1
+    container_name: emumet-kratos-import
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/kratos?sslmode=disable
+    volumes:
+      - type: bind
+        source: ./ory/kratos
+        target: /etc/config/kratos
+        bind:
+          selinux: z
+    command: import identities /etc/config/kratos/seed-users.json -e http://kratos:4434
+    depends_on:
+      kratos:
+        condition: service_healthy
+
+  hydra-migrate:
+    image: docker.io/oryd/hydra:v2.3.0
+    container_name: emumet-hydra-migrate
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/hydra?sslmode=disable
+    command: migrate sql -e --yes
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  hydra:
+    image: docker.io/oryd/hydra:v2.3.0
+    container_name: emumet-hydra
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/hydra?sslmode=disable
+    volumes:
+      - type: bind
+        source: ./ory/hydra
+        target: /etc/config/hydra
+        bind:
+          selinux: z
+    command: serve all -c /etc/config/hydra/hydra.yml --dev
+    ports:
+      - "4444:4444"
+      - "4445:4445"
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4444/health/alive || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:

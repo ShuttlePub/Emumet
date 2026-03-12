@@ -1,7 +1,6 @@
+use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
-use crate::expect_role;
 use crate::handler::AppModule;
-use crate::keycloak::{resolve_auth_account_id, KeycloakAuthAccount};
 use crate::route::DirectionConverter;
 use application::service::account::{
     CreateAccountUseCase, DeleteAccountUseCase, EditAccountUseCase, GetAccountUseCase,
@@ -9,15 +8,9 @@ use application::service::account::{
 use application::transfer::pagination::Pagination;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::http::{Method, Uri};
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
-use axum_keycloak_auth::decode::KeycloakToken;
-use axum_keycloak_auth::instance::KeycloakAuthInstance;
-use axum_keycloak_auth::layer::KeycloakAuthLayer;
-use axum_keycloak_auth::PassthroughMode;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use time::OffsetDateTime;
 
 #[derive(Debug, Deserialize)]
@@ -55,22 +48,19 @@ struct AccountsResponse {
 }
 
 pub trait AccountRouter {
-    fn route_account(self, instance: Arc<KeycloakAuthInstance>) -> Self;
+    fn route_account(self) -> Self;
 }
 
 async fn get_accounts(
-    Extension(token): Extension<KeycloakToken<String>>,
+    Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    method: Method,
-    uri: Uri,
     Query(GetAllAccountQuery {
         direction,
         limit,
         cursor,
     }): Query<GetAllAccountQuery>,
 ) -> Result<Json<AccountsResponse>, ErrorStatus> {
-    expect_role!(&token, uri, method);
-    let auth_info = KeycloakAuthAccount::from(token);
+    let auth_info = OidcAuthInfo::from(claims);
     let auth_account_id = resolve_auth_account_id(&module, auth_info)
         .await
         .map_err(ErrorStatus::from)?;
@@ -103,16 +93,12 @@ async fn get_accounts(
 }
 
 async fn create_account(
-    Extension(token): Extension<KeycloakToken<String>>,
+    Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    method: Method,
-    uri: Uri,
     Json(request): Json<CreateAccountRequest>,
 ) -> Result<Json<AccountResponse>, ErrorStatus> {
-    expect_role!(&token, uri, method);
-    let auth_info = KeycloakAuthAccount::from(token);
+    let auth_info = OidcAuthInfo::from(claims);
 
-    // バリデーション
     if request.name.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
@@ -141,14 +127,11 @@ async fn create_account(
 }
 
 async fn get_account_by_id(
-    Extension(token): Extension<KeycloakToken<String>>,
+    Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    method: Method,
-    uri: Uri,
     Path(id): Path<String>,
 ) -> Result<Json<AccountResponse>, ErrorStatus> {
-    expect_role!(&token, uri, method);
-    let auth_info = KeycloakAuthAccount::from(token);
+    let auth_info = OidcAuthInfo::from(claims);
 
     if id.trim().is_empty() {
         return Err(ErrorStatus::from((
@@ -178,15 +161,12 @@ async fn get_account_by_id(
 }
 
 async fn update_account_by_id(
-    Extension(token): Extension<KeycloakToken<String>>,
+    Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    method: Method,
-    uri: Uri,
     Path(id): Path<String>,
     Json(request): Json<UpdateAccountRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
-    expect_role!(&token, uri, method);
-    let auth_info = KeycloakAuthAccount::from(token);
+    let auth_info = OidcAuthInfo::from(claims);
 
     if id.trim().is_empty() {
         return Err(ErrorStatus::from((
@@ -208,14 +188,11 @@ async fn update_account_by_id(
 }
 
 async fn delete_account_by_id(
-    Extension(token): Extension<KeycloakToken<String>>,
+    Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    method: Method,
-    uri: Uri,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ErrorStatus> {
-    expect_role!(&token, uri, method);
-    let auth_info = KeycloakAuthAccount::from(token);
+    let auth_info = OidcAuthInfo::from(claims);
 
     if id.trim().is_empty() {
         return Err(ErrorStatus::from((
@@ -237,18 +214,11 @@ async fn delete_account_by_id(
 }
 
 impl AccountRouter for Router<AppModule> {
-    fn route_account(self, instance: Arc<KeycloakAuthInstance>) -> Self {
+    fn route_account(self) -> Self {
         self.route("/accounts", get(get_accounts))
             .route("/accounts", post(create_account))
             .route("/accounts/:id", get(get_account_by_id))
             .route("/accounts/:id", put(update_account_by_id))
             .route("/accounts/:id", delete(delete_account_by_id))
-            .layer(
-                KeycloakAuthLayer::<String>::builder()
-                    .instance(instance)
-                    .passthrough_mode(PassthroughMode::Block)
-                    .expected_audiences(vec![String::from("account")])
-                    .build(),
-            )
     }
 }

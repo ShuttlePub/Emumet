@@ -1,0 +1,33 @@
+serve:
+  public:
+    base_url: http://localhost:4433/
+  admin:
+    base_url: http://localhost:4434/
+
+selfservice:
+  default_browser_return_url: http://localhost:3000/
+
+  flows:
+    registration:
+      enabled: true
+      ui_url: http://localhost:3000/registration
+
+    login:
+      ui_url: http://localhost:3000/login
+
+  methods:
+    password:
+      enabled: true
+
+identity:
+  default_schema_id: default
+  schemas:
+    - id: default
+      url: file:///etc/config/kratos/identity.schema.json
+
+log:
+  level: debug
+
+courier:
+  smtp:
+    connection_uri: smtp://localhost:1025/?skip_ssl_verify=true

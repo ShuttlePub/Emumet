@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 
 pub mod account;
 pub mod metadata;
+pub mod oauth2;
 pub mod profile;
 
 trait DirectionConverter {
@@ -19,32 +20,5 @@ impl DirectionConverter for Option<String> {
             },
             None => Ok(Direction::default()),
         }
-    }
-}
-
-/// ("/a/b/c", "GET") -> `["/:GET", "/a:GET", "/a/b:GET", "/a/b/c:GET"]`
-pub(super) fn to_permission_strings(path: &str, method: &str) -> Vec<String> {
-    path.split('/')
-        .scan(String::new(), |state, part| {
-            if !state.is_empty() {
-                state.push('/');
-            }
-            state.push_str(part);
-            Some(format!("/{state}:{method}"))
-        })
-        .collect::<Vec<String>>()
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_to_permission_strings() {
-        let path = "/a/b/c";
-        let method = "GET";
-        let result = to_permission_strings(path, method);
-        let expected = vec!["/:GET", "/a:GET", "/a/b:GET", "/a/b/c:GET"];
-        assert_eq!(result, expected);
     }
 }

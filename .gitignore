@@ -3,6 +3,5 @@
 .direnv
 /migrations/dbml-error.log
 .env
-keycloak-data/*
-!keycloak-data/import
 logs
+master-key-password
