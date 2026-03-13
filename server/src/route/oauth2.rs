@@ -14,7 +14,19 @@ const REMEMBER_FOR_SECS: i64 = 3600;
 // GET /oauth2/login
 // ---------------------------------------------------------------------------
 
-async fn login(
+#[utoipa::path(
+    get,
+    path = "/oauth2/login",
+    description = "Handle OAuth2 login flow. Verifies Kratos session and accepts Hydra login.",
+    params(("login_challenge" = String, Query, description = "Hydra login challenge")),
+    responses(
+        (status = 200, description = "Login result", body = OAuth2Response),
+        (status = 401, description = "Unauthorized (no valid Kratos session)"),
+        (status = 502, description = "Bad gateway (Hydra/Kratos error)"),
+    ),
+    tag = "OAuth2",
+)]
+pub(crate) async fn login(
     State(module): State<AppModule>,
     Query(LoginQuery { login_challenge }): Query<LoginQuery>,
     headers: axum::http::HeaderMap,
@@ -128,7 +140,18 @@ async fn verify_kratos_session(
 // GET /oauth2/consent
 // ---------------------------------------------------------------------------
 
-async fn get_consent(
+#[utoipa::path(
+    get,
+    path = "/oauth2/consent",
+    description = "Retrieve consent request details or auto-accept if skip is configured.",
+    params(("consent_challenge" = String, Query, description = "Hydra consent challenge")),
+    responses(
+        (status = 200, description = "Consent result", body = OAuth2Response),
+        (status = 502, description = "Bad gateway (Hydra error)"),
+    ),
+    tag = "OAuth2",
+)]
+pub(crate) async fn get_consent(
     State(module): State<AppModule>,
     Query(ConsentQuery { consent_challenge }): Query<ConsentQuery>,
 ) -> Result<Json<OAuth2Response>, StatusCode> {
@@ -191,7 +214,19 @@ async fn get_consent(
 // POST /oauth2/consent
 // ---------------------------------------------------------------------------
 
-async fn post_consent(
+#[utoipa::path(
+    post,
+    path = "/oauth2/consent",
+    description = "Submit consent decision (accept or reject).",
+    request_body = ConsentDecision,
+    responses(
+        (status = 200, description = "Consent decision result", body = OAuth2Response),
+        (status = 400, description = "Invalid scope requested"),
+        (status = 502, description = "Bad gateway (Hydra error)"),
+    ),
+    tag = "OAuth2",
+)]
+pub(crate) async fn post_consent(
     State(module): State<AppModule>,
     Json(decision): Json<ConsentDecision>,
 ) -> Result<Json<OAuth2Response>, StatusCode> {

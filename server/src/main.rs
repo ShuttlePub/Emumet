@@ -4,6 +4,7 @@ mod error;
 mod handler;
 mod hydra;
 mod kratos;
+mod openapi;
 mod route;
 mod schema;
 

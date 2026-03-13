@@ -1,16 +1,17 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct LoginQuery {
     pub login_challenge: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ConsentQuery {
     pub consent_challenge: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(tag = "action")]
 pub enum OAuth2Response {
     #[serde(rename = "redirect")]
@@ -23,7 +24,7 @@ pub enum OAuth2Response {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ConsentDecision {
     pub consent_challenge: String,
     pub accept: bool,

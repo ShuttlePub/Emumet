@@ -1,18 +1,19 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateMetadataRequest {
     pub label: String,
     pub content: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateMetadataRequest {
     pub label: String,
     pub content: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MetadataResponse {
     pub account_id: String,
     pub nanoid: String,
@@ -31,7 +32,7 @@ impl From<application::transfer::metadata::MetadataDto> for MetadataResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct GetMetadataQuery {
     pub account_ids: String,
 }

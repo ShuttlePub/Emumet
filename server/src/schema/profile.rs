@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateProfileRequest {
     pub display_name: Option<String>,
     pub summary: Option<String>,
@@ -9,7 +10,7 @@ pub struct CreateProfileRequest {
     pub banner: Option<Uuid>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateProfileRequest {
     pub display_name: Option<String>,
     pub summary: Option<String>,
@@ -17,7 +18,7 @@ pub struct UpdateProfileRequest {
     pub banner: Option<Uuid>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileResponse {
     pub account_id: String,
     pub nanoid: String,
@@ -40,7 +41,7 @@ impl From<application::transfer::profile::ProfileDto> for ProfileResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct GetProfilesQuery {
     pub account_ids: String,
 }

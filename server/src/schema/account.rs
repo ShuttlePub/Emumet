@@ -1,8 +1,9 @@
 use application::transfer::account::ModerationDto;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct GetAllAccountQuery {
     pub ids: Option<String>,
     pub limit: Option<u32>,
@@ -10,29 +11,29 @@ pub struct GetAllAccountQuery {
     pub direction: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateAccountRequest {
     pub name: String,
     pub is_bot: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateAccountRequest {
     pub is_bot: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SuspendAccountRequest {
     pub reason: String,
     pub expires_at: Option<OffsetDateTime>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct BanAccountRequest {
     pub reason: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AccountResponse {
     pub id: String,
     pub name: String,
@@ -43,7 +44,7 @@ pub struct AccountResponse {
     pub moderation: Option<ModerationResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ModerationResponse {
     Suspended {
@@ -58,7 +59,7 @@ pub enum ModerationResponse {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AccountsResponse {
     pub first: Option<String>,
     pub last: Option<String>,

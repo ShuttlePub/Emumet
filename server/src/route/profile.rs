@@ -16,7 +16,19 @@ pub trait ProfileRouter {
     fn route_profile(self) -> Self;
 }
 
-async fn get_profiles_batch(
+#[utoipa::path(
+    get,
+    path = "/profiles",
+    description = "Retrieve profiles for the given account IDs.",
+    params(("account_ids" = String, Query, description = "Comma-separated account IDs")),
+    responses(
+        (status = 200, description = "List of profiles", body = Vec<ProfileResponse>),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Profile",
+)]
+pub(crate) async fn get_profiles_batch(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Query(query): Query<GetProfilesQuery>,
@@ -39,7 +51,20 @@ async fn get_profiles_batch(
     ))
 }
 
-async fn create_profile(
+#[utoipa::path(
+    post,
+    path = "/accounts/{account_id}/profile",
+    description = "Create a profile for the specified account.",
+    params(("account_id" = String, Path, description = "Account nanoid")),
+    request_body = CreateProfileRequest,
+    responses(
+        (status = 201, description = "Profile created", body = ProfileResponse),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Profile",
+)]
+pub(crate) async fn create_profile(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path(account_id): Path<String>,
@@ -76,7 +101,20 @@ async fn create_profile(
     Ok((StatusCode::CREATED, Json(ProfileResponse::from(profile))))
 }
 
-async fn update_profile(
+#[utoipa::path(
+    put,
+    path = "/accounts/{account_id}/profile",
+    description = "Update the profile of the specified account.",
+    params(("account_id" = String, Path, description = "Account nanoid")),
+    request_body = UpdateProfileRequest,
+    responses(
+        (status = 204, description = "Profile updated"),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Profile",
+)]
+pub(crate) async fn update_profile(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path(account_id): Path<String>,

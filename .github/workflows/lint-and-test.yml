@@ -18,6 +18,17 @@ jobs:
     uses: ShuttlePub/workflows/.github/workflows/test-psql.yml@454354614b775cd3b470c991b532e8db1c1ed89f
     with:
       workspace: driver
+  openapi-check:
+    name: Check openapi.json is up-to-date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Regenerate openapi.json
+        run: cargo test -p server write_openapi_spec_to_file -- --ignored
+      - name: Check for uncommitted diff
+        run: git diff --exit-code openapi.json
   coverage:
     uses: ShuttlePub/workflows/.github/workflows/coverage.yml@d4c43ec23ffeaf5538fc32bdf63aa5e042ccee61
     secrets: inherit

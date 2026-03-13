@@ -3,8 +3,8 @@ use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use crate::route::{parse_comma_ids, DirectionConverter};
 use crate::schema::account::{
-    account_dto_to_response, AccountsResponse, BanAccountRequest, CreateAccountRequest,
-    SuspendAccountRequest, UpdateAccountRequest,
+    account_dto_to_response, AccountResponse, AccountsResponse, BanAccountRequest,
+    CreateAccountRequest, SuspendAccountRequest, UpdateAccountRequest,
 };
 use application::service::account::{
     BanAccountUseCase, CreateAccountUseCase, DeactivateAccountUseCase, EditAccountUseCase,
@@ -22,7 +22,25 @@ pub trait AccountRouter {
     fn route_account(self) -> Self;
 }
 
-async fn get_accounts(
+#[utoipa::path(
+    get,
+    path = "/accounts",
+    description = "Retrieve accounts by IDs or with cursor-based pagination.",
+    params(
+        ("ids" = Option<String>, Query, description = "Comma-separated account IDs"),
+        ("limit" = Option<u32>, Query, description = "Pagination limit"),
+        ("cursor" = Option<String>, Query, description = "Pagination cursor"),
+        ("direction" = Option<String>, Query, description = "Pagination direction (asc/desc)"),
+    ),
+    responses(
+        (status = 200, description = "List of accounts", body = AccountsResponse),
+        (status = 400, description = "Invalid request parameters"),
+        (status = 404, description = "No accounts found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn get_accounts(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Query(GetAllAccountQuery {
@@ -70,11 +88,23 @@ async fn get_accounts(
     Ok(Json(response))
 }
 
-async fn create_account(
+#[utoipa::path(
+    post,
+    path = "/accounts",
+    description = "Create a new account with a generated signing key pair.",
+    request_body = CreateAccountRequest,
+    responses(
+        (status = 201, description = "Account created", body = AccountResponse),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn create_account(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Json(request): Json<CreateAccountRequest>,
-) -> Result<Json<crate::schema::account::AccountResponse>, ErrorStatus> {
+) -> Result<(StatusCode, Json<crate::schema::account::AccountResponse>), ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
     if request.name.trim().is_empty() {
@@ -93,10 +123,23 @@ async fn create_account(
         .await
         .map_err(ErrorStatus::from)?;
 
-    Ok(Json(account_dto_to_response(account)))
+    Ok((StatusCode::CREATED, Json(account_dto_to_response(account))))
 }
 
-async fn update_account_by_id(
+#[utoipa::path(
+    put,
+    path = "/accounts/{id}",
+    description = "Update account properties.",
+    params(("id" = String, Path, description = "Account nanoid")),
+    request_body = UpdateAccountRequest,
+    responses(
+        (status = 204, description = "Account updated"),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn update_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path(id): Path<String>,
@@ -123,7 +166,19 @@ async fn update_account_by_id(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn deactivate_account_by_id(
+#[utoipa::path(
+    delete,
+    path = "/accounts/{id}",
+    description = "Deactivate an account and cascade-delete related resources.",
+    params(("id" = String, Path, description = "Account nanoid")),
+    responses(
+        (status = 204, description = "Account deactivated"),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn deactivate_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path(id): Path<String>,
@@ -149,7 +204,20 @@ async fn deactivate_account_by_id(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn suspend_account_by_id(
+#[utoipa::path(
+    post,
+    path = "/accounts/{id}/suspend",
+    description = "Suspend an account with a reason and optional expiry.",
+    params(("id" = String, Path, description = "Account nanoid")),
+    request_body = SuspendAccountRequest,
+    responses(
+        (status = 204, description = "Account suspended"),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn suspend_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path(id): Path<String>,
@@ -183,7 +251,19 @@ async fn suspend_account_by_id(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn unsuspend_account_by_id(
+#[utoipa::path(
+    post,
+    path = "/accounts/{id}/unsuspend",
+    description = "Remove suspension from an account.",
+    params(("id" = String, Path, description = "Account nanoid")),
+    responses(
+        (status = 204, description = "Account unsuspended"),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn unsuspend_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path(id): Path<String>,
@@ -209,7 +289,20 @@ async fn unsuspend_account_by_id(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn ban_account_by_id(
+#[utoipa::path(
+    post,
+    path = "/accounts/{id}/ban",
+    description = "Permanently ban an account.",
+    params(("id" = String, Path, description = "Account nanoid")),
+    request_body = BanAccountRequest,
+    responses(
+        (status = 204, description = "Account banned"),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn ban_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path(id): Path<String>,

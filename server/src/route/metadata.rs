@@ -17,7 +17,19 @@ pub trait MetadataRouter {
     fn route_metadata(self) -> Self;
 }
 
-async fn get_metadata_batch(
+#[utoipa::path(
+    get,
+    path = "/metadata",
+    description = "Retrieve metadata entries for the given account IDs.",
+    params(("account_ids" = String, Query, description = "Comma-separated account IDs")),
+    responses(
+        (status = 200, description = "List of metadata", body = Vec<MetadataResponse>),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Metadata",
+)]
+pub(crate) async fn get_metadata_batch(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Query(query): Query<GetMetadataQuery>,
@@ -43,7 +55,20 @@ async fn get_metadata_batch(
     ))
 }
 
-async fn create_metadata(
+#[utoipa::path(
+    post,
+    path = "/accounts/{account_id}/metadata",
+    description = "Create a metadata entry for the specified account.",
+    params(("account_id" = String, Path, description = "Account nanoid")),
+    request_body = CreateMetadataRequest,
+    responses(
+        (status = 201, description = "Metadata created", body = MetadataResponse),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Metadata",
+)]
+pub(crate) async fn create_metadata(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path(account_id): Path<String>,
@@ -70,7 +95,23 @@ async fn create_metadata(
     Ok((StatusCode::CREATED, Json(MetadataResponse::from(metadata))))
 }
 
-async fn update_metadata(
+#[utoipa::path(
+    put,
+    path = "/accounts/{account_id}/metadata/{id}",
+    description = "Update a metadata entry.",
+    params(
+        ("account_id" = String, Path, description = "Account nanoid"),
+        ("id" = String, Path, description = "Metadata nanoid"),
+    ),
+    request_body = UpdateMetadataRequest,
+    responses(
+        (status = 204, description = "Metadata updated"),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Metadata",
+)]
+pub(crate) async fn update_metadata(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path((account_id, metadata_id)): Path<(String, String)>,
@@ -110,7 +151,22 @@ async fn update_metadata(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn delete_metadata(
+#[utoipa::path(
+    delete,
+    path = "/accounts/{account_id}/metadata/{id}",
+    description = "Delete a metadata entry.",
+    params(
+        ("account_id" = String, Path, description = "Account nanoid"),
+        ("id" = String, Path, description = "Metadata nanoid"),
+    ),
+    responses(
+        (status = 204, description = "Metadata deleted"),
+        (status = 400, description = "Invalid request"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Metadata",
+)]
+pub(crate) async fn delete_metadata(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Path((account_id, metadata_id)): Path<(String, String)>,

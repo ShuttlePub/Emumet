@@ -32,6 +32,8 @@ vodca = { workspace = true }
 destructure = { workspace = true }
 serde = { workspace = true }
 
+utoipa = { version = "5.4.0", features = ["axum_extras", "time", "uuid"] }
+
 adapter = { path = "../adapter" }
 application = { path = "../application" }
 driver = { path = "../driver" }
