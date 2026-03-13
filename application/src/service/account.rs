@@ -1,4 +1,6 @@
-use crate::permission::{account_deactivate, account_edit, account_view, check_permission};
+use crate::permission::{
+    account_deactivate, account_edit, account_view, check_permission, instance_moderate,
+};
 use crate::transfer::account::AccountDto;
 use crate::transfer::pagination::{apply_pagination, Pagination};
 use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
@@ -271,5 +273,195 @@ impl<T> DeactivateAccountUseCase for T where
         + DependOnAccountQueryProcessor
         + DependOnPermissionChecker
         + DependOnPermissionWriter
+{
+}
+
+pub trait SuspendAccountUseCase:
+    'static
+    + Sync
+    + Send
+    + DependOnAccountCommandProcessor
+    + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
+{
+    fn suspend_account(
+        &self,
+        auth_account_id: &AuthAccountId,
+        account_id: String,
+        reason: String,
+        expires_at: Option<time::OffsetDateTime>,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+        async move {
+            let mut transaction = self.database_connection().begin_transaction().await?;
+
+            let nanoid = Nanoid::<Account>::new(account_id);
+            let account = self
+                .account_query_processor()
+                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Account not found with nanoid: {}",
+                        nanoid.as_ref()
+                    ))
+                })?;
+
+            check_permission(self, auth_account_id, &instance_moderate()).await?;
+
+            if let Some(exp) = expires_at {
+                if exp <= time::OffsetDateTime::now_utc() {
+                    return Err(Report::new(KernelError::Rejected)
+                        .attach_printable("expires_at must be in the future"));
+                }
+            }
+
+            if !account.status().is_active() {
+                return Err(
+                    Report::new(KernelError::Rejected).attach_printable("Account is not active")
+                );
+            }
+            if account.deleted_at().is_some() {
+                return Err(
+                    Report::new(KernelError::Rejected).attach_printable("Account is deactivated")
+                );
+            }
+
+            let account_id = account.id().clone();
+            let current_version = account.version().clone();
+            self.account_command_processor()
+                .suspend(
+                    &mut transaction,
+                    account_id,
+                    reason,
+                    expires_at,
+                    current_version,
+                )
+                .await?;
+
+            Ok(())
+        }
+    }
+}
+
+impl<T> SuspendAccountUseCase for T where
+    T: 'static
+        + DependOnAccountCommandProcessor
+        + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
+{
+}
+
+pub trait UnsuspendAccountUseCase:
+    'static
+    + Sync
+    + Send
+    + DependOnAccountCommandProcessor
+    + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
+{
+    fn unsuspend_account(
+        &self,
+        auth_account_id: &AuthAccountId,
+        account_id: String,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+        async move {
+            let mut transaction = self.database_connection().begin_transaction().await?;
+
+            let nanoid = Nanoid::<Account>::new(account_id);
+            let account = self
+                .account_query_processor()
+                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Account not found with nanoid: {}",
+                        nanoid.as_ref()
+                    ))
+                })?;
+
+            check_permission(self, auth_account_id, &instance_moderate()).await?;
+
+            if !account.status().is_suspended() {
+                return Err(
+                    Report::new(KernelError::Rejected).attach_printable("Account is not suspended")
+                );
+            }
+
+            let account_id = account.id().clone();
+            let current_version = account.version().clone();
+            self.account_command_processor()
+                .unsuspend(&mut transaction, account_id, current_version)
+                .await?;
+
+            Ok(())
+        }
+    }
+}
+
+impl<T> UnsuspendAccountUseCase for T where
+    T: 'static
+        + DependOnAccountCommandProcessor
+        + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
+{
+}
+
+pub trait BanAccountUseCase:
+    'static
+    + Sync
+    + Send
+    + DependOnAccountCommandProcessor
+    + DependOnAccountQueryProcessor
+    + DependOnPermissionChecker
+{
+    fn ban_account(
+        &self,
+        auth_account_id: &AuthAccountId,
+        account_id: String,
+        reason: String,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+        async move {
+            let mut transaction = self.database_connection().begin_transaction().await?;
+
+            let nanoid = Nanoid::<Account>::new(account_id);
+            let account = self
+                .account_query_processor()
+                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Account not found with nanoid: {}",
+                        nanoid.as_ref()
+                    ))
+                })?;
+
+            check_permission(self, auth_account_id, &instance_moderate()).await?;
+
+            if account.status().is_banned() {
+                return Err(Report::new(KernelError::Rejected)
+                    .attach_printable("Account is already banned"));
+            }
+            if account.deleted_at().is_some() {
+                return Err(
+                    Report::new(KernelError::Rejected).attach_printable("Account is deactivated")
+                );
+            }
+
+            let account_id = account.id().clone();
+            let current_version = account.version().clone();
+            self.account_command_processor()
+                .ban(&mut transaction, account_id, reason, current_version)
+                .await?;
+
+            Ok(())
+        }
+    }
+}
+
+impl<T> BanAccountUseCase for T where
+    T: 'static
+        + DependOnAccountCommandProcessor
+        + DependOnAccountQueryProcessor
+        + DependOnPermissionChecker
 {
 }

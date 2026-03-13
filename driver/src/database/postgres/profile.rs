@@ -218,6 +218,7 @@ mod test {
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
+                Default::default(),
                 None,
                 EventVersion::new(Uuid::now_v7()),
                 Nanoid::default(),

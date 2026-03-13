@@ -10,6 +10,7 @@ use kernel::prelude::entity::{
 };
 use kernel::KernelError;
 use std::future::Future;
+use time::OffsetDateTime;
 
 // --- Signal DI trait (adapter-specific) ---
 
@@ -45,6 +46,30 @@ pub trait AccountCommandProcessor: Send + Sync + 'static {
         &self,
         executor: &mut Self::Executor,
         account_id: AccountId,
+        current_version: kernel::prelude::entity::EventVersion<Account>,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn suspend(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: AccountId,
+        reason: String,
+        expires_at: Option<OffsetDateTime>,
+        current_version: kernel::prelude::entity::EventVersion<Account>,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn unsuspend(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: AccountId,
+        current_version: kernel::prelude::entity::EventVersion<Account>,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn ban(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: AccountId,
+        reason: String,
         current_version: kernel::prelude::entity::EventVersion<Account>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
@@ -134,6 +159,66 @@ where
 
         Ok(())
     }
+
+    async fn suspend(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: AccountId,
+        reason: String,
+        expires_at: Option<OffsetDateTime>,
+        current_version: kernel::prelude::entity::EventVersion<Account>,
+    ) -> error_stack::Result<(), KernelError> {
+        let command = Account::suspend(account_id.clone(), reason, expires_at, current_version);
+
+        self.account_event_store()
+            .persist_and_transform(executor, command)
+            .await?;
+
+        if let Err(e) = self.account_signal().emit(account_id).await {
+            tracing::warn!("Failed to emit account signal: {:?}", e);
+        }
+
+        Ok(())
+    }
+
+    async fn unsuspend(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: AccountId,
+        current_version: kernel::prelude::entity::EventVersion<Account>,
+    ) -> error_stack::Result<(), KernelError> {
+        let command = Account::unsuspend(account_id.clone(), current_version);
+
+        self.account_event_store()
+            .persist_and_transform(executor, command)
+            .await?;
+
+        if let Err(e) = self.account_signal().emit(account_id).await {
+            tracing::warn!("Failed to emit account signal: {:?}", e);
+        }
+
+        Ok(())
+    }
+
+    async fn ban(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: AccountId,
+        reason: String,
+        current_version: kernel::prelude::entity::EventVersion<Account>,
+    ) -> error_stack::Result<(), KernelError> {
+        let command = Account::ban(account_id.clone(), reason, current_version);
+
+        self.account_event_store()
+            .persist_and_transform(executor, command)
+            .await?;
+
+        if let Err(e) = self.account_signal().emit(account_id).await {
+            tracing::warn!("Failed to emit account signal: {:?}", e);
+        }
+
+        Ok(())
+    }
 }
 
 pub trait DependOnAccountCommandProcessor: DependOnDatabaseConnection + Send + Sync {
@@ -186,6 +271,24 @@ pub trait AccountQueryProcessor: Send + Sync + 'static {
         executor: &mut Self::Executor,
         nanoids: &[Nanoid<Account>],
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
+
+    fn find_by_id_unfiltered(
+        &self,
+        executor: &mut Self::Executor,
+        id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
+
+    fn find_by_nanoid_unfiltered(
+        &self,
+        executor: &mut Self::Executor,
+        nanoid: &Nanoid<Account>,
+    ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
+
+    fn find_by_nanoids_unfiltered(
+        &self,
+        executor: &mut Self::Executor,
+        nanoids: &[Nanoid<Account>],
+    ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
 }
 
 impl<T> AccountQueryProcessor for T
@@ -230,6 +333,36 @@ where
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         self.account_read_model()
             .find_by_nanoids(executor, nanoids)
+            .await
+    }
+
+    async fn find_by_id_unfiltered(
+        &self,
+        executor: &mut Self::Executor,
+        id: &AccountId,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        self.account_read_model()
+            .find_by_id_unfiltered(executor, id)
+            .await
+    }
+
+    async fn find_by_nanoid_unfiltered(
+        &self,
+        executor: &mut Self::Executor,
+        nanoid: &Nanoid<Account>,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        self.account_read_model()
+            .find_by_nanoid_unfiltered(executor, nanoid)
+            .await
+    }
+
+    async fn find_by_nanoids_unfiltered(
+        &self,
+        executor: &mut Self::Executor,
+        nanoids: &[Nanoid<Account>],
+    ) -> error_stack::Result<Vec<Account>, KernelError> {
+        self.account_read_model()
+            .find_by_nanoids_unfiltered(executor, nanoids)
             .await
     }
 }

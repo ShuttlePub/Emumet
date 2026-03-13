@@ -53,6 +53,7 @@ impl IntoResponse for ErrorStatus {
                 KernelError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
                 KernelError::PermissionDenied => StatusCode::FORBIDDEN,
                 KernelError::NotFound => StatusCode::NOT_FOUND,
+                KernelError::Rejected => StatusCode::UNPROCESSABLE_ENTITY,
             }
             .into_response(),
             ErrorStatus::StatusCode(code) => code.into_response(),

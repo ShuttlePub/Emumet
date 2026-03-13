@@ -8,6 +8,7 @@ pub enum KernelError {
     Internal,
     PermissionDenied,
     NotFound,
+    Rejected,
 }
 
 impl Display for KernelError {
@@ -18,6 +19,7 @@ impl Display for KernelError {
             KernelError::Internal => write!(f, "Internal kernel error"),
             KernelError::PermissionDenied => write!(f, "Permission denied"),
             KernelError::NotFound => write!(f, "Resource not found"),
+            KernelError::Rejected => write!(f, "Request rejected"),
         }
     }
 }

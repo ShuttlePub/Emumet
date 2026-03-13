@@ -37,10 +37,10 @@ impl AccountApplier {
                     .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
                 let event_id = EventId::from(id.clone());
 
-                // 既存Projection取得
+                // 既存Projection取得 (unfiltered: suspended/banned も含める)
                 let existing = handler
                     .account_read_model()
-                    .find_by_id(&mut tx, &id)
+                    .find_by_id_unfiltered(&mut tx, &id)
                     .await
                     .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
                 let since_version = existing.as_ref().map(|a| a.version().clone());
@@ -159,7 +159,37 @@ impl AccountApplier {
                                 .unlink_all_auth_accounts(&mut tx, &id)
                                 .await
                                 .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                        } else if account.status().is_banned() {
+                            handler
+                                .account_read_model()
+                                .ban(
+                                    &mut tx,
+                                    &id,
+                                    match account.status() {
+                                        kernel::prelude::entity::AccountStatus::Banned {
+                                            reason,
+                                            ..
+                                        } => reason,
+                                        _ => unreachable!(),
+                                    },
+                                )
+                                .await
+                                .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                        } else if account.status().is_suspended() {
+                            if let kernel::prelude::entity::AccountStatus::Suspended {
+                                reason,
+                                expires_at,
+                                ..
+                            } = account.status()
+                            {
+                                handler
+                                    .account_read_model()
+                                    .suspend(&mut tx, &id, reason, *expires_at)
+                                    .await
+                                    .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+                            }
                         } else {
+                            // Active or other: update() writes all columns including moderation fields
                             handler
                                 .account_read_model()
                                 .update(&mut tx, account)

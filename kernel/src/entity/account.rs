@@ -4,6 +4,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use vodca::{Nameln, Newln, References};
 
+use time::OffsetDateTime;
+
 use crate::entity::{
     AuthAccountId, CommandEnvelope, CreatedAt, DeletedAt, EventEnvelope, EventId, EventVersion,
     KnownEventVersion, Nanoid,
@@ -16,12 +18,14 @@ pub use self::is_bot::*;
 pub use self::name::*;
 pub use self::private_key::*;
 pub use self::public_key::*;
+pub use self::status::*;
 
 mod id;
 mod is_bot;
 mod name;
 mod private_key;
 mod public_key;
+mod status;
 
 #[derive(
     Debug, Clone, Hash, Eq, PartialEq, References, Newln, Serialize, Deserialize, Destructure,
@@ -32,6 +36,7 @@ pub struct Account {
     private_key: AccountPrivateKey,
     public_key: AccountPublicKey,
     is_bot: AccountIsBot,
+    status: AccountStatus,
     deleted_at: Option<DeletedAt<Account>>,
     version: EventVersion<Account>,
     nanoid: Nanoid<Account>,
@@ -55,6 +60,23 @@ pub enum AccountEvent {
     },
     #[serde(alias = "deleted")]
     Deactivated,
+    Suspended {
+        reason: String,
+        #[serde(with = "time::serde::rfc3339")]
+        suspended_at: OffsetDateTime,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "time::serde::rfc3339::option"
+        )]
+        expires_at: Option<OffsetDateTime>,
+    },
+    Unsuspended,
+    Banned {
+        reason: String,
+        #[serde(with = "time::serde::rfc3339")]
+        banned_at: OffsetDateTime,
+    },
 }
 
 impl Account {
@@ -109,6 +131,55 @@ impl Account {
             Some(KnownEventVersion::Prev(current_version)),
         )
     }
+
+    pub fn suspend(
+        id: AccountId,
+        reason: String,
+        expires_at: Option<OffsetDateTime>,
+        current_version: EventVersion<Account>,
+    ) -> CommandEnvelope<AccountEvent, Account> {
+        let event = AccountEvent::Suspended {
+            reason,
+            suspended_at: OffsetDateTime::now_utc(),
+            expires_at,
+        };
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Prev(current_version)),
+        )
+    }
+
+    pub fn unsuspend(
+        id: AccountId,
+        current_version: EventVersion<Account>,
+    ) -> CommandEnvelope<AccountEvent, Account> {
+        let event = AccountEvent::Unsuspended;
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Prev(current_version)),
+        )
+    }
+
+    pub fn ban(
+        id: AccountId,
+        reason: String,
+        current_version: EventVersion<Account>,
+    ) -> CommandEnvelope<AccountEvent, Account> {
+        let event = AccountEvent::Banned {
+            reason,
+            banned_at: OffsetDateTime::now_utc(),
+        };
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Prev(current_version)),
+        )
+    }
 }
 
 impl PartialOrd for Account {
@@ -155,6 +226,7 @@ impl EventApplier for Account {
                     private_key,
                     public_key,
                     is_bot,
+                    status: AccountStatus::Active,
                     deleted_at: None,
                     version: event.version,
                     nanoid: nano_id,
@@ -177,6 +249,61 @@ impl EventApplier for Account {
                             .attach_printable("Account is already deactivated"));
                     }
                     account.deleted_at = Some(DeletedAt::now());
+                    account.version = event.version;
+                } else {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable(Self::not_exists(event.id.as_ref())));
+                }
+            }
+            AccountEvent::Suspended {
+                reason,
+                suspended_at,
+                expires_at,
+            } => {
+                if let Some(account) = entity {
+                    if !account.status.is_active() {
+                        return Err(Report::new(KernelError::Internal)
+                            .attach_printable("Account is not active"));
+                    }
+                    if account.deleted_at.is_some() {
+                        return Err(Report::new(KernelError::Internal)
+                            .attach_printable("Account is deactivated"));
+                    }
+                    account.status = AccountStatus::Suspended {
+                        reason,
+                        suspended_at,
+                        expires_at,
+                    };
+                    account.version = event.version;
+                } else {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable(Self::not_exists(event.id.as_ref())));
+                }
+            }
+            AccountEvent::Unsuspended => {
+                if let Some(account) = entity {
+                    if !account.status.is_suspended() {
+                        return Err(Report::new(KernelError::Internal)
+                            .attach_printable("Account is not suspended"));
+                    }
+                    account.status = AccountStatus::Active;
+                    account.version = event.version;
+                } else {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable(Self::not_exists(event.id.as_ref())));
+                }
+            }
+            AccountEvent::Banned { reason, banned_at } => {
+                if let Some(account) = entity {
+                    if account.status.is_banned() {
+                        return Err(Report::new(KernelError::Internal)
+                            .attach_printable("Account is already banned"));
+                    }
+                    if account.deleted_at.is_some() {
+                        return Err(Report::new(KernelError::Internal)
+                            .attach_printable("Account is deactivated"));
+                    }
+                    account.status = AccountStatus::Banned { reason, banned_at };
                     account.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
@@ -245,6 +372,7 @@ mod test {
             private_key.clone(),
             public_key.clone(),
             is_bot.clone(),
+            Default::default(),
             None,
             EventVersion::new(Uuid::now_v7()),
             nano_id.clone(),
@@ -282,6 +410,7 @@ mod test {
             private_key.clone(),
             public_key.clone(),
             is_bot.clone(),
+            Default::default(),
             None,
             EventVersion::new(Uuid::now_v7()),
             nano_id.clone(),
@@ -331,6 +460,7 @@ mod test {
             private_key.clone(),
             public_key.clone(),
             is_bot.clone(),
+            Default::default(),
             None,
             EventVersion::new(Uuid::now_v7()),
             nano_id.clone(),
@@ -364,6 +494,7 @@ mod test {
             private_key.clone(),
             public_key.clone(),
             is_bot.clone(),
+            Default::default(),
             None,
             EventVersion::new(Uuid::now_v7()),
             nano_id.clone(),
@@ -404,6 +535,172 @@ mod test {
             EventVersion::new(Uuid::now_v7()),
         );
         let mut account = None;
+        assert!(Account::apply(&mut account, envelope)
+            .is_err_and(|e| e.current_context() == &KernelError::Internal));
+    }
+
+    fn make_active_account() -> (AccountId, Account) {
+        let id = AccountId::new(Uuid::now_v7());
+        let account = Account::new(
+            id.clone(),
+            AccountName::new("test"),
+            AccountPrivateKey::new("private_key".to_string()),
+            AccountPublicKey::new("public_key".to_string()),
+            AccountIsBot::new(false),
+            Default::default(),
+            None,
+            EventVersion::new(Uuid::now_v7()),
+            Nanoid::default(),
+            CreatedAt::now(),
+        );
+        (id, account)
+    }
+
+    #[test]
+    fn suspend_account() {
+        let (id, account) = make_active_account();
+        let version = account.version().clone();
+        let event = Account::suspend(id, "spam".into(), None, version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::new(Uuid::now_v7()),
+        );
+        let mut account = Some(account);
+        Account::apply(&mut account, envelope).unwrap();
+        let account = account.unwrap();
+        assert!(account.status().is_suspended());
+    }
+
+    #[test]
+    fn suspend_already_suspended_account() {
+        use crate::entity::AccountStatus;
+        use time::OffsetDateTime;
+
+        let id = AccountId::new(Uuid::now_v7());
+        let account = Account::new(
+            id.clone(),
+            AccountName::new("test"),
+            AccountPrivateKey::new("private_key".to_string()),
+            AccountPublicKey::new("public_key".to_string()),
+            AccountIsBot::new(false),
+            AccountStatus::Suspended {
+                reason: "spam".into(),
+                suspended_at: OffsetDateTime::now_utc(),
+                expires_at: None,
+            },
+            None,
+            EventVersion::new(Uuid::now_v7()),
+            Nanoid::default(),
+            CreatedAt::now(),
+        );
+        let version = account.version().clone();
+        let event = Account::suspend(id, "another reason".into(), None, version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::new(Uuid::now_v7()),
+        );
+        let mut account = Some(account);
+        assert!(Account::apply(&mut account, envelope)
+            .is_err_and(|e| e.current_context() == &KernelError::Internal));
+    }
+
+    #[test]
+    fn unsuspend_account() {
+        use crate::entity::AccountStatus;
+        use time::OffsetDateTime;
+
+        let id = AccountId::new(Uuid::now_v7());
+        let account = Account::new(
+            id.clone(),
+            AccountName::new("test"),
+            AccountPrivateKey::new("private_key".to_string()),
+            AccountPublicKey::new("public_key".to_string()),
+            AccountIsBot::new(false),
+            AccountStatus::Suspended {
+                reason: "spam".into(),
+                suspended_at: OffsetDateTime::now_utc(),
+                expires_at: None,
+            },
+            None,
+            EventVersion::new(Uuid::now_v7()),
+            Nanoid::default(),
+            CreatedAt::now(),
+        );
+        let version = account.version().clone();
+        let event = Account::unsuspend(id, version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::new(Uuid::now_v7()),
+        );
+        let mut account = Some(account);
+        Account::apply(&mut account, envelope).unwrap();
+        let account = account.unwrap();
+        assert!(account.status().is_active());
+    }
+
+    #[test]
+    fn unsuspend_active_account() {
+        let (id, account) = make_active_account();
+        let version = account.version().clone();
+        let event = Account::unsuspend(id, version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::new(Uuid::now_v7()),
+        );
+        let mut account = Some(account);
+        assert!(Account::apply(&mut account, envelope)
+            .is_err_and(|e| e.current_context() == &KernelError::Internal));
+    }
+
+    #[test]
+    fn ban_account() {
+        let (id, account) = make_active_account();
+        let version = account.version().clone();
+        let event = Account::ban(id, "violation".into(), version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::new(Uuid::now_v7()),
+        );
+        let mut account = Some(account);
+        Account::apply(&mut account, envelope).unwrap();
+        let account = account.unwrap();
+        assert!(account.status().is_banned());
+    }
+
+    #[test]
+    fn ban_already_banned_account() {
+        use crate::entity::AccountStatus;
+        use time::OffsetDateTime;
+
+        let id = AccountId::new(Uuid::now_v7());
+        let account = Account::new(
+            id.clone(),
+            AccountName::new("test"),
+            AccountPrivateKey::new("private_key".to_string()),
+            AccountPublicKey::new("public_key".to_string()),
+            AccountIsBot::new(false),
+            AccountStatus::Banned {
+                reason: "violation".into(),
+                banned_at: OffsetDateTime::now_utc(),
+            },
+            None,
+            EventVersion::new(Uuid::now_v7()),
+            Nanoid::default(),
+            CreatedAt::now(),
+        );
+        let version = account.version().clone();
+        let event = Account::ban(id, "another".into(), version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::new(Uuid::now_v7()),
+        );
+        let mut account = Some(account);
         assert!(Account::apply(&mut account, envelope)
             .is_err_and(|e| e.current_context() == &KernelError::Internal));
     }
