@@ -2,58 +2,15 @@ use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use crate::route::parse_comma_ids;
+use crate::schema::profile::{
+    CreateProfileRequest, GetProfilesQuery, ProfileResponse, UpdateProfileRequest,
+};
 use application::service::profile::{CreateProfileUseCase, EditProfileUseCase, GetProfileUseCase};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use kernel::prelude::entity::ImageId;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
-#[derive(Debug, Deserialize)]
-struct CreateProfileRequest {
-    display_name: Option<String>,
-    summary: Option<String>,
-    icon: Option<Uuid>,
-    banner: Option<Uuid>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateProfileRequest {
-    display_name: Option<String>,
-    summary: Option<String>,
-    icon: Option<Uuid>,
-    banner: Option<Uuid>,
-}
-
-#[derive(Debug, Serialize)]
-struct ProfileResponse {
-    account_id: String,
-    nanoid: String,
-    display_name: Option<String>,
-    summary: Option<String>,
-    icon_id: Option<Uuid>,
-    banner_id: Option<Uuid>,
-}
-
-impl From<application::transfer::profile::ProfileDto> for ProfileResponse {
-    fn from(dto: application::transfer::profile::ProfileDto) -> Self {
-        Self {
-            account_id: dto.account_nanoid,
-            nanoid: dto.nanoid,
-            display_name: dto.display_name,
-            summary: dto.summary,
-            icon_id: dto.icon_id,
-            banner_id: dto.banner_id,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct GetProfilesQuery {
-    account_ids: String,
-}
 
 pub trait ProfileRouter {
     fn route_profile(self) -> Self;
@@ -167,8 +124,9 @@ impl ProfileRouter for Router<AppModule> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::schema::profile::ProfileResponse;
     use application::transfer::profile::ProfileDto;
+    use uuid::Uuid;
 
     #[test]
     fn test_profile_response_from_dto_with_all_fields() {

@@ -2,6 +2,9 @@ use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use crate::route::parse_comma_ids;
+use crate::schema::metadata::{
+    CreateMetadataRequest, GetMetadataQuery, MetadataResponse, UpdateMetadataRequest,
+};
 use application::service::metadata::{
     CreateMetadataUseCase, DeleteMetadataUseCase, EditMetadataUseCase, GetMetadataUseCase,
 };
@@ -9,43 +12,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post, put};
 use axum::{Extension, Json, Router};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Deserialize)]
-struct CreateMetadataRequest {
-    label: String,
-    content: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateMetadataRequest {
-    label: String,
-    content: String,
-}
-
-#[derive(Debug, Serialize)]
-struct MetadataResponse {
-    account_id: String,
-    nanoid: String,
-    label: String,
-    content: String,
-}
-
-impl From<application::transfer::metadata::MetadataDto> for MetadataResponse {
-    fn from(dto: application::transfer::metadata::MetadataDto) -> Self {
-        Self {
-            account_id: dto.account_nanoid,
-            nanoid: dto.nanoid,
-            label: dto.label,
-            content: dto.content,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct GetMetadataQuery {
-    account_ids: String,
-}
 
 pub trait MetadataRouter {
     fn route_metadata(self) -> Self;
@@ -190,7 +156,7 @@ impl MetadataRouter for Router<AppModule> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::schema::metadata::MetadataResponse;
     use application::transfer::metadata::MetadataDto;
 
     #[test]

@@ -5,6 +5,7 @@ mod handler;
 mod hydra;
 mod kratos;
 mod route;
+mod schema;
 
 use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;

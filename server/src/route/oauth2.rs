@@ -1,52 +1,14 @@
 use crate::handler::AppModule;
 use crate::hydra::{AcceptConsentRequest, AcceptLoginRequest, RejectRequest};
 use crate::kratos::KratosClient;
+use crate::schema::oauth2::{ConsentDecision, ConsentQuery, LoginQuery, OAuth2Response};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 const REMEMBER_FOR_SECS: i64 = 3600;
-
-// ---------------------------------------------------------------------------
-// Query parameters
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-struct LoginQuery {
-    login_challenge: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ConsentQuery {
-    consent_challenge: String,
-}
-
-// ---------------------------------------------------------------------------
-// Response types
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "action")]
-enum OAuth2Response {
-    #[serde(rename = "redirect")]
-    Redirect { redirect_to: String },
-    #[serde(rename = "show_consent")]
-    ShowConsent {
-        consent_challenge: String,
-        client_name: Option<String>,
-        requested_scope: Vec<String>,
-    },
-}
-
-#[derive(Debug, Deserialize)]
-struct ConsentDecision {
-    consent_challenge: String,
-    accept: bool,
-    grant_scope: Option<Vec<String>>,
-}
 
 // ---------------------------------------------------------------------------
 // GET /oauth2/login

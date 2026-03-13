@@ -2,110 +2,21 @@ use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use crate::route::{parse_comma_ids, DirectionConverter};
+use crate::schema::account::{
+    account_dto_to_response, AccountsResponse, BanAccountRequest, CreateAccountRequest,
+    SuspendAccountRequest, UpdateAccountRequest,
+};
 use application::service::account::{
     BanAccountUseCase, CreateAccountUseCase, DeactivateAccountUseCase, EditAccountUseCase,
     GetAccountUseCase, SuspendAccountUseCase, UnsuspendAccountUseCase,
 };
-use application::transfer::account::ModerationDto;
 use application::transfer::pagination::Pagination;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
-use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 
-#[derive(Debug, Deserialize)]
-struct GetAllAccountQuery {
-    ids: Option<String>,
-    limit: Option<u32>,
-    cursor: Option<String>,
-    direction: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateAccountRequest {
-    name: String,
-    is_bot: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateAccountRequest {
-    is_bot: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct SuspendAccountRequest {
-    reason: String,
-    expires_at: Option<OffsetDateTime>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BanAccountRequest {
-    reason: String,
-}
-
-#[derive(Debug, Serialize)]
-struct AccountResponse {
-    id: String,
-    name: String,
-    public_key: String,
-    is_bot: bool,
-    created_at: OffsetDateTime,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    moderation: Option<ModerationResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ModerationResponse {
-    Suspended {
-        reason: String,
-        suspended_at: OffsetDateTime,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        expires_at: Option<OffsetDateTime>,
-    },
-    Banned {
-        reason: String,
-        banned_at: OffsetDateTime,
-    },
-}
-
-#[derive(Debug, Serialize)]
-struct AccountsResponse {
-    first: Option<String>,
-    last: Option<String>,
-    items: Vec<AccountResponse>,
-}
-
-fn to_moderation_response(dto: Option<&ModerationDto>) -> Option<ModerationResponse> {
-    dto.map(|m| match m {
-        ModerationDto::Suspended {
-            reason,
-            suspended_at,
-            expires_at,
-        } => ModerationResponse::Suspended {
-            reason: reason.clone(),
-            suspended_at: *suspended_at,
-            expires_at: *expires_at,
-        },
-        ModerationDto::Banned { reason, banned_at } => ModerationResponse::Banned {
-            reason: reason.clone(),
-            banned_at: *banned_at,
-        },
-    })
-}
-
-fn account_dto_to_response(account: application::transfer::account::AccountDto) -> AccountResponse {
-    AccountResponse {
-        id: account.nanoid,
-        name: account.name,
-        public_key: account.public_key,
-        is_bot: account.is_bot,
-        created_at: account.created_at,
-        moderation: to_moderation_response(account.moderation.as_ref()),
-    }
-}
+use crate::schema::account::GetAllAccountQuery;
 
 pub trait AccountRouter {
     fn route_account(self) -> Self;
@@ -163,7 +74,7 @@ async fn create_account(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
     Json(request): Json<CreateAccountRequest>,
-) -> Result<Json<AccountResponse>, ErrorStatus> {
+) -> Result<Json<crate::schema::account::AccountResponse>, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
     if request.name.trim().is_empty() {
