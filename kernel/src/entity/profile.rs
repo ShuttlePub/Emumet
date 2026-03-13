@@ -46,8 +46,8 @@ pub enum ProfileEvent {
     Updated {
         display_name: Option<ProfileDisplayName>,
         summary: Option<ProfileSummary>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
+        icon: Option<Option<ImageId>>,
+        banner: Option<Option<ImageId>>,
     },
 }
 
@@ -81,8 +81,8 @@ impl Profile {
         id: ProfileId,
         display_name: Option<ProfileDisplayName>,
         summary: Option<ProfileSummary>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
+        icon: Option<Option<ImageId>>,
+        banner: Option<Option<ImageId>>,
         current_version: EventVersion<Profile>,
     ) -> CommandEnvelope<ProfileEvent, Profile> {
         let event = ProfileEvent::Updated {
@@ -146,10 +146,10 @@ impl EventApplier for Profile {
                         profile.summary = Some(summary);
                     }
                     if let Some(icon) = icon {
-                        profile.icon = Some(icon);
+                        profile.icon = icon;
                     }
                     if let Some(banner) = banner {
-                        profile.banner = Some(banner);
+                        profile.banner = banner;
                     }
                     profile.version = event.version;
                 } else {
@@ -227,8 +227,8 @@ mod test {
             id.clone(),
             Some(display_name.clone()),
             Some(summary.clone()),
-            Some(icon.clone()),
-            Some(banner.clone()),
+            Some(Some(icon.clone())),
+            Some(Some(banner.clone())),
             current_version,
         );
         let version = EventVersion::new(Uuid::now_v7());
@@ -249,5 +249,39 @@ mod test {
         assert_eq!(profile.banner().as_ref().unwrap(), &banner);
         assert_eq!(profile.version(), &version);
         assert_eq!(profile.nanoid(), &nano_id);
+    }
+
+    #[test]
+    fn clear_icon_and_banner() {
+        let account_id = AccountId::new(Uuid::now_v7());
+        let id = ProfileId::new(Uuid::now_v7());
+        let nano_id = Nanoid::default();
+        let icon = ImageId::new(Uuid::now_v7());
+        let banner = ImageId::new(Uuid::now_v7());
+        let version = EventVersion::new(Uuid::now_v7());
+        let profile = Profile::new(
+            id.clone(),
+            account_id,
+            None,
+            None,
+            Some(icon),
+            Some(banner),
+            version.clone(),
+            nano_id,
+        );
+
+        // Clear both icon and banner with Some(None)
+        let update_event = Profile::update(id, None, None, Some(None), Some(None), version);
+        let new_version = EventVersion::new(Uuid::now_v7());
+        let envelope = EventEnvelope::new(
+            update_event.id().clone(),
+            update_event.event().clone(),
+            new_version,
+        );
+        let mut profile = Some(profile);
+        Profile::apply(&mut profile, envelope).unwrap();
+        let profile = profile.unwrap();
+        assert!(profile.icon().is_none());
+        assert!(profile.banner().is_none());
     }
 }

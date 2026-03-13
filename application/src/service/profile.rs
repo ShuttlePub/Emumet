@@ -11,9 +11,10 @@ use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
+use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
 use kernel::prelude::entity::{
-    Account, AuthAccountId, EventId, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
-    ProfileSummary,
+    Account, AuthAccountId, EventId, ImageId, ImageUrl, Nanoid, Profile, ProfileDisplayName,
+    ProfileId, ProfileSummary,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -86,6 +87,7 @@ pub trait GetProfileUseCase:
     + Send
     + DependOnProfileQueryProcessor
     + DependOnAccountQueryProcessor
+    + DependOnImageRepository
     + DependOnPermissionChecker
 {
     fn get_profiles_batch(
@@ -130,13 +132,24 @@ pub trait GetProfileUseCase:
                 .find_by_account_ids(&mut transaction, &account_ids)
                 .await?;
 
-            Ok(profiles
-                .into_iter()
-                .filter_map(|profile| {
-                    let account_nanoid = nanoid_map.get(profile.account_id())?.clone();
-                    Some(ProfileDto::new(profile, account_nanoid))
-                })
-                .collect())
+            let mut dtos = Vec::new();
+            for profile in profiles {
+                let account_nanoid = match nanoid_map.get(profile.account_id()) {
+                    Some(n) => n.clone(),
+                    None => continue,
+                };
+                let icon_url =
+                    resolve_image_url(self, &mut transaction, profile.icon().as_ref()).await?;
+                let banner_url =
+                    resolve_image_url(self, &mut transaction, profile.banner().as_ref()).await?;
+                dtos.push(ProfileDto::new(
+                    profile,
+                    account_nanoid,
+                    icon_url,
+                    banner_url,
+                ));
+            }
+            Ok(dtos)
         }
     }
 }
@@ -147,6 +160,7 @@ impl<T> GetProfileUseCase for T where
         + Send
         + DependOnProfileQueryProcessor
         + DependOnAccountQueryProcessor
+        + DependOnImageRepository
         + DependOnPermissionChecker
 {
 }
@@ -158,6 +172,7 @@ pub trait CreateProfileUseCase:
     + DependOnProfileCommandProcessor
     + DependOnProfileQueryProcessor
     + DependOnAccountQueryProcessor
+    + DependOnImageRepository
     + DependOnPermissionChecker
 {
     fn create_profile(
@@ -166,8 +181,8 @@ pub trait CreateProfileUseCase:
         account_nanoid: String,
         display_name: Option<String>,
         summary: Option<String>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
+        icon_url: Option<String>,
+        banner_url: Option<String>,
     ) -> impl Future<Output = error_stack::Result<ProfileDto, KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
@@ -195,6 +210,9 @@ pub trait CreateProfileUseCase:
                     .attach_printable("Profile already exists for this account"));
             }
 
+            let icon = resolve_image_id(self, &mut transaction, icon_url.as_deref()).await?;
+            let banner = resolve_image_id(self, &mut transaction, banner_url.as_deref()).await?;
+
             let account_nanoid_str = account.nanoid().as_ref().to_string();
             let account_id = account.id().clone();
             let profile_nanoid = Nanoid::<Profile>::default();
@@ -211,7 +229,17 @@ pub trait CreateProfileUseCase:
                 )
                 .await?;
 
-            Ok(ProfileDto::new(profile, account_nanoid_str))
+            let icon_url =
+                resolve_image_url(self, &mut transaction, profile.icon().as_ref()).await?;
+            let banner_url =
+                resolve_image_url(self, &mut transaction, profile.banner().as_ref()).await?;
+
+            Ok(ProfileDto::new(
+                profile,
+                account_nanoid_str,
+                icon_url,
+                banner_url,
+            ))
         }
     }
 }
@@ -223,6 +251,7 @@ impl<T> CreateProfileUseCase for T where
         + DependOnProfileCommandProcessor
         + DependOnProfileQueryProcessor
         + DependOnAccountQueryProcessor
+        + DependOnImageRepository
         + DependOnPermissionChecker
 {
 }
@@ -234,6 +263,7 @@ pub trait EditProfileUseCase:
     + DependOnProfileCommandProcessor
     + DependOnProfileQueryProcessor
     + DependOnAccountQueryProcessor
+    + DependOnImageRepository
     + DependOnPermissionChecker
 {
     fn edit_profile(
@@ -242,8 +272,8 @@ pub trait EditProfileUseCase:
         account_nanoid: String,
         display_name: Option<String>,
         summary: Option<String>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
+        icon_url: Option<Option<String>>,
+        banner_url: Option<Option<String>>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
@@ -271,6 +301,9 @@ pub trait EditProfileUseCase:
                         .attach_printable("Profile not found for this account")
                 })?;
 
+            let icon = resolve_optional_image_id(self, &mut transaction, &icon_url).await?;
+            let banner = resolve_optional_image_id(self, &mut transaction, &banner_url).await?;
+
             let profile_id = profile.id().clone();
             let current_version = profile.version().clone();
             self.profile_command_processor()
@@ -297,6 +330,66 @@ impl<T> EditProfileUseCase for T where
         + DependOnProfileCommandProcessor
         + DependOnProfileQueryProcessor
         + DependOnAccountQueryProcessor
+        + DependOnImageRepository
         + DependOnPermissionChecker
 {
+}
+
+async fn resolve_image_url<T: DependOnImageRepository + ?Sized>(
+    deps: &T,
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    image_id: Option<&ImageId>,
+) -> error_stack::Result<Option<String>, KernelError> {
+    let Some(id) = image_id else {
+        return Ok(None);
+    };
+    let image = deps.image_repository().find_by_id(executor, id).await?;
+    if image.is_none() {
+        tracing::warn!(?id, "Image record not found for referenced ImageId");
+    }
+    Ok(image.map(|img| img.url().as_ref().to_string()))
+}
+
+async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(
+    deps: &T,
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    url: Option<&str>,
+) -> error_stack::Result<Option<ImageId>, KernelError> {
+    let Some(url) = url else {
+        return Ok(None);
+    };
+    if url.is_empty() {
+        return Err(
+            Report::new(KernelError::Rejected).attach_printable("Image URL must not be empty")
+        );
+    }
+    let image_url = ImageUrl::new(url.to_string());
+    let image = deps
+        .image_repository()
+        .find_by_url(executor, &image_url)
+        .await?
+        .ok_or_else(|| {
+            Report::new(KernelError::NotFound)
+                .attach_printable(format!("Image not found with URL: {}", url))
+        })?;
+    Ok(Some(image.id().clone()))
+}
+
+/// Resolves `Option<Option<String>>` (update semantics) to `Option<Option<ImageId>>`.
+/// - `None` → `None` (no change)
+/// - `Some(None)` → `Some(None)` (clear)
+/// - `Some(Some(url))` → `Some(Some(image_id))` (set)
+async fn resolve_optional_image_id<T: DependOnImageRepository + ?Sized>(
+    deps: &T,
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    url: &Option<Option<String>>,
+) -> error_stack::Result<Option<Option<ImageId>>, KernelError> {
+    match url {
+        None => Ok(None),
+        Some(None) => Ok(Some(None)),
+        Some(Some(url)) => {
+            let id = resolve_image_id(deps, executor, Some(url.as_str())).await?;
+            Ok(Some(id))
+        }
+    }
 }

@@ -1,21 +1,35 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateProfileRequest {
     pub display_name: Option<String>,
     pub summary: Option<String>,
-    pub icon: Option<Uuid>,
-    pub banner: Option<Uuid>,
+    pub icon_url: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateProfileRequest {
     pub display_name: Option<String>,
     pub summary: Option<String>,
-    pub icon: Option<Uuid>,
-    pub banner: Option<Uuid>,
+    /// Absent = no change, null = clear, string = set
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    #[schema(nullable)]
+    pub icon_url: Option<Option<String>>,
+    /// Absent = no change, null = clear, string = set
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    #[schema(nullable)]
+    pub banner_url: Option<Option<String>>,
+}
+
+fn deserialize_optional_nullable<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -24,8 +38,8 @@ pub struct ProfileResponse {
     pub nanoid: String,
     pub display_name: Option<String>,
     pub summary: Option<String>,
-    pub icon_id: Option<Uuid>,
-    pub banner_id: Option<Uuid>,
+    pub icon_url: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 impl From<application::transfer::profile::ProfileDto> for ProfileResponse {
@@ -35,8 +49,8 @@ impl From<application::transfer::profile::ProfileDto> for ProfileResponse {
             nanoid: dto.nanoid,
             display_name: dto.display_name,
             summary: dto.summary,
-            icon_id: dto.icon_id,
-            banner_id: dto.banner_id,
+            icon_url: dto.icon_url,
+            banner_url: dto.banner_url,
         }
     }
 }

@@ -1,5 +1,4 @@
 use kernel::prelude::entity::Profile;
-use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct ProfileDto {
@@ -7,12 +6,17 @@ pub struct ProfileDto {
     pub nanoid: String,
     pub display_name: Option<String>,
     pub summary: Option<String>,
-    pub icon_id: Option<Uuid>,
-    pub banner_id: Option<Uuid>,
+    pub icon_url: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 impl ProfileDto {
-    pub fn new(profile: Profile, account_nanoid: String) -> Self {
+    pub fn new(
+        profile: Profile,
+        account_nanoid: String,
+        icon_url: Option<String>,
+        banner_url: Option<String>,
+    ) -> Self {
         Self {
             account_nanoid,
             nanoid: profile.nanoid().as_ref().to_string(),
@@ -21,8 +25,8 @@ impl ProfileDto {
                 .as_ref()
                 .map(|d| d.as_ref().to_string()),
             summary: profile.summary().as_ref().map(|s| s.as_ref().to_string()),
-            icon_id: profile.icon().as_ref().map(|i| *i.as_ref()),
-            banner_id: profile.banner().as_ref().map(|b| *b.as_ref()),
+            icon_url,
+            banner_url,
         }
     }
 }
@@ -53,20 +57,27 @@ mod tests {
             account_id,
             Some(display_name.clone()),
             Some(summary.clone()),
-            Some(icon_id.clone()),
-            Some(banner_id.clone()),
+            Some(icon_id),
+            Some(banner_id),
             version,
             nanoid.clone(),
         );
 
-        let dto = ProfileDto::new(profile, account_nanoid.clone());
+        let icon_url = "https://example.com/icon.png".to_string();
+        let banner_url = "https://example.com/banner.png".to_string();
+        let dto = ProfileDto::new(
+            profile,
+            account_nanoid.clone(),
+            Some(icon_url.clone()),
+            Some(banner_url.clone()),
+        );
 
         assert_eq!(dto.account_nanoid, account_nanoid);
         assert_eq!(dto.nanoid, nanoid.as_ref().to_string());
         assert_eq!(dto.display_name, Some(display_name.as_ref().to_string()));
         assert_eq!(dto.summary, Some(summary.as_ref().to_string()));
-        assert_eq!(dto.icon_id, Some(*icon_id.as_ref()));
-        assert_eq!(dto.banner_id, Some(*banner_id.as_ref()));
+        assert_eq!(dto.icon_url, Some(icon_url));
+        assert_eq!(dto.banner_url, Some(banner_url));
     }
 
     #[test]
@@ -88,13 +99,13 @@ mod tests {
             nanoid.clone(),
         );
 
-        let dto = ProfileDto::new(profile, account_nanoid.clone());
+        let dto = ProfileDto::new(profile, account_nanoid.clone(), None, None);
 
         assert_eq!(dto.account_nanoid, account_nanoid);
         assert_eq!(dto.nanoid, nanoid.as_ref().to_string());
         assert!(dto.display_name.is_none());
         assert!(dto.summary.is_none());
-        assert!(dto.icon_id.is_none());
-        assert!(dto.banner_id.is_none());
+        assert!(dto.icon_url.is_none());
+        assert!(dto.banner_url.is_none());
     }
 }

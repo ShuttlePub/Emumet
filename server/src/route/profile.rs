@@ -10,7 +10,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
-use kernel::prelude::entity::ImageId;
 
 pub trait ProfileRouter {
     fn route_profile(self) -> Self;
@@ -83,17 +82,14 @@ pub(crate) async fn create_profile(
         .await
         .map_err(ErrorStatus::from)?;
 
-    let icon = body.icon.map(ImageId::new);
-    let banner = body.banner.map(ImageId::new);
-
     let profile = module
         .create_profile(
             &auth_account_id,
             account_id,
             body.display_name,
             body.summary,
-            icon,
-            banner,
+            body.icon_url,
+            body.banner_url,
         )
         .await
         .map_err(ErrorStatus::from)?;
@@ -133,17 +129,14 @@ pub(crate) async fn update_profile(
         .await
         .map_err(ErrorStatus::from)?;
 
-    let icon = body.icon.map(ImageId::new);
-    let banner = body.banner.map(ImageId::new);
-
     module
         .edit_profile(
             &auth_account_id,
             account_id,
             body.display_name,
             body.summary,
-            icon,
-            banner,
+            body.icon_url,
+            body.banner_url,
         )
         .await
         .map_err(ErrorStatus::from)?;
@@ -162,9 +155,8 @@ impl ProfileRouter for Router<AppModule> {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::profile::ProfileResponse;
+    use crate::schema::profile::{ProfileResponse, UpdateProfileRequest};
     use application::transfer::profile::ProfileDto;
-    use uuid::Uuid;
 
     #[test]
     fn test_profile_response_from_dto_with_all_fields() {
@@ -173,8 +165,8 @@ mod tests {
             nanoid: "test-nanoid".to_string(),
             display_name: Some("Test User".to_string()),
             summary: Some("A test summary".to_string()),
-            icon_id: Some(Uuid::nil()),
-            banner_id: Some(Uuid::nil()),
+            icon_url: Some("https://example.com/icon.png".to_string()),
+            banner_url: Some("https://example.com/banner.png".to_string()),
         };
 
         let response = ProfileResponse::from(dto);
@@ -183,8 +175,14 @@ mod tests {
         assert_eq!(response.nanoid, "test-nanoid");
         assert_eq!(response.display_name, Some("Test User".to_string()));
         assert_eq!(response.summary, Some("A test summary".to_string()));
-        assert_eq!(response.icon_id, Some(Uuid::nil()));
-        assert_eq!(response.banner_id, Some(Uuid::nil()));
+        assert_eq!(
+            response.icon_url,
+            Some("https://example.com/icon.png".to_string())
+        );
+        assert_eq!(
+            response.banner_url,
+            Some("https://example.com/banner.png".to_string())
+        );
     }
 
     #[test]
@@ -194,8 +192,8 @@ mod tests {
             nanoid: "test-nanoid-2".to_string(),
             display_name: None,
             summary: None,
-            icon_id: None,
-            banner_id: None,
+            icon_url: None,
+            banner_url: None,
         };
 
         let response = ProfileResponse::from(dto);
@@ -204,7 +202,37 @@ mod tests {
         assert_eq!(response.nanoid, "test-nanoid-2");
         assert!(response.display_name.is_none());
         assert!(response.summary.is_none());
-        assert!(response.icon_id.is_none());
-        assert!(response.banner_id.is_none());
+        assert!(response.icon_url.is_none());
+        assert!(response.banner_url.is_none());
+    }
+
+    #[test]
+    fn test_update_request_absent_fields() {
+        let json = r#"{"display_name": "test"}"#;
+        let req: UpdateProfileRequest = serde_json::from_str(json).unwrap();
+        assert!(req.icon_url.is_none());
+        assert!(req.banner_url.is_none());
+    }
+
+    #[test]
+    fn test_update_request_null_fields() {
+        let json = r#"{"icon_url": null, "banner_url": null}"#;
+        let req: UpdateProfileRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.icon_url, Some(None));
+        assert_eq!(req.banner_url, Some(None));
+    }
+
+    #[test]
+    fn test_update_request_set_fields() {
+        let json = r#"{"icon_url": "https://example.com/icon.png", "banner_url": "https://example.com/banner.png"}"#;
+        let req: UpdateProfileRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            req.icon_url,
+            Some(Some("https://example.com/icon.png".to_string()))
+        );
+        assert_eq!(
+            req.banner_url,
+            Some(Some("https://example.com/banner.png".to_string()))
+        );
     }
 }

@@ -40,8 +40,8 @@ pub trait ProfileCommandProcessor: Send + Sync + 'static {
         profile_id: ProfileId,
         display_name: Option<ProfileDisplayName>,
         summary: Option<ProfileSummary>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
+        icon: Option<Option<ImageId>>,
+        banner: Option<Option<ImageId>>,
         current_version: EventVersion<Profile>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
@@ -99,8 +99,8 @@ where
         profile_id: ProfileId,
         display_name: Option<ProfileDisplayName>,
         summary: Option<ProfileSummary>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
+        icon: Option<Option<ImageId>>,
+        banner: Option<Option<ImageId>>,
         current_version: EventVersion<Profile>,
     ) -> error_stack::Result<(), KernelError> {
         let command = Profile::update(
