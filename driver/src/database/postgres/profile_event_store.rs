@@ -202,8 +202,8 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
         use kernel::prelude::entity::{
-            AccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid, Profile, ProfileEvent,
-            ProfileId,
+            AccountId, CommandEnvelope, EventId, FieldAction, KnownEventVersion, Nanoid, Profile,
+            ProfileEvent, ProfileId,
         };
         use uuid::Uuid;
 
@@ -241,8 +241,8 @@ mod test {
             let update_event = ProfileEvent::Updated {
                 display_name: None,
                 summary: None,
-                icon: None,
-                banner: None,
+                icon: FieldAction::Unchanged,
+                banner: FieldAction::Unchanged,
             };
             let updated_profile = CommandEnvelope::new(
                 EventId::from(profile_id.clone()),
@@ -281,8 +281,8 @@ mod test {
             let update_event = ProfileEvent::Updated {
                 display_name: None,
                 summary: None,
-                icon: None,
-                banner: None,
+                icon: FieldAction::Unchanged,
+                banner: FieldAction::Unchanged,
             };
             let updated_profile = CommandEnvelope::new(
                 EventId::from(profile_id.clone()),
@@ -332,8 +332,8 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
         use kernel::prelude::entity::{
-            AccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid, Profile, ProfileEvent,
-            ProfileId,
+            AccountId, CommandEnvelope, EventId, FieldAction, KnownEventVersion, Nanoid, Profile,
+            ProfileEvent, ProfileId,
         };
         use uuid::Uuid;
 

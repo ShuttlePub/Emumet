@@ -3,7 +3,8 @@ use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use crate::route::parse_comma_ids;
 use crate::schema::profile::{
-    CreateProfileRequest, GetProfilesQuery, ProfileResponse, UpdateProfileRequest,
+    into_field_action, CreateProfileRequest, GetProfilesQuery, ProfileResponse,
+    UpdateProfileRequest,
 };
 use application::service::profile::{CreateProfileUseCase, EditProfileUseCase, GetProfileUseCase};
 use axum::extract::{Path, Query, State};
@@ -135,8 +136,8 @@ pub(crate) async fn update_profile(
             account_id,
             body.display_name,
             body.summary,
-            body.icon_url,
-            body.banner_url,
+            into_field_action(body.icon_url),
+            into_field_action(body.banner_url),
         )
         .await
         .map_err(ErrorStatus::from)?;

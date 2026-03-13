@@ -5,7 +5,7 @@ use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventSto
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::interfaces::signal::Signal;
 use kernel::prelude::entity::{
-    AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
+    AccountId, EventVersion, FieldAction, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
     ProfileSummary,
 };
 use kernel::KernelError;
@@ -40,8 +40,8 @@ pub trait ProfileCommandProcessor: Send + Sync + 'static {
         profile_id: ProfileId,
         display_name: Option<ProfileDisplayName>,
         summary: Option<ProfileSummary>,
-        icon: Option<Option<ImageId>>,
-        banner: Option<Option<ImageId>>,
+        icon: FieldAction<ImageId>,
+        banner: FieldAction<ImageId>,
         current_version: EventVersion<Profile>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
@@ -99,8 +99,8 @@ where
         profile_id: ProfileId,
         display_name: Option<ProfileDisplayName>,
         summary: Option<ProfileSummary>,
-        icon: Option<Option<ImageId>>,
-        banner: Option<Option<ImageId>>,
+        icon: FieldAction<ImageId>,
+        banner: FieldAction<ImageId>,
         current_version: EventVersion<Profile>,
     ) -> error_stack::Result<(), KernelError> {
         let command = Profile::update(

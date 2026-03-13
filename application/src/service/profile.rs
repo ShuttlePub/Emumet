@@ -13,8 +13,8 @@ use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
 use kernel::prelude::entity::{
-    Account, AuthAccountId, EventId, ImageId, ImageUrl, Nanoid, Profile, ProfileDisplayName,
-    ProfileId, ProfileSummary,
+    Account, AuthAccountId, EventId, FieldAction, ImageId, ImageUrl, Nanoid, Profile,
+    ProfileDisplayName, ProfileId, ProfileSummary,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -302,8 +302,8 @@ pub trait EditProfileUseCase:
         account_nanoid: String,
         display_name: Option<String>,
         summary: Option<String>,
-        icon_url: Option<Option<String>>,
-        banner_url: Option<Option<String>>,
+        icon_url: FieldAction<String>,
+        banner_url: FieldAction<String>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
@@ -331,8 +331,8 @@ pub trait EditProfileUseCase:
                         .attach_printable("Profile not found for this account")
                 })?;
 
-            let icon = resolve_optional_image_id(self, &mut transaction, &icon_url).await?;
-            let banner = resolve_optional_image_id(self, &mut transaction, &banner_url).await?;
+            let icon = resolve_field_action_image_id(self, &mut transaction, &icon_url).await?;
+            let banner = resolve_field_action_image_id(self, &mut transaction, &banner_url).await?;
 
             let profile_id = profile.id().clone();
             let current_version = profile.version().clone();
@@ -405,21 +405,20 @@ async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(
     Ok(Some(image.id().clone()))
 }
 
-/// Resolves `Option<Option<String>>` (update semantics) to `Option<Option<ImageId>>`.
-/// - `None` → `None` (no change)
-/// - `Some(None)` → `Some(None)` (clear)
-/// - `Some(Some(url))` → `Some(Some(image_id))` (set)
-async fn resolve_optional_image_id<T: DependOnImageRepository + ?Sized>(
+async fn resolve_field_action_image_id<T: DependOnImageRepository + ?Sized>(
     deps: &T,
     executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
-    url: &Option<Option<String>>,
-) -> error_stack::Result<Option<Option<ImageId>>, KernelError> {
-    match url {
-        None => Ok(None),
-        Some(None) => Ok(Some(None)),
-        Some(Some(url)) => {
-            let id = resolve_image_id(deps, executor, Some(url.as_str())).await?;
-            Ok(Some(id))
+    action: &FieldAction<String>,
+) -> error_stack::Result<FieldAction<ImageId>, KernelError> {
+    match action {
+        FieldAction::Unchanged => Ok(FieldAction::Unchanged),
+        FieldAction::Clear => Ok(FieldAction::Clear),
+        FieldAction::Set(url) => {
+            // resolve_image_id with Some(url) always returns Ok(Some(id)) or Err(NotFound)
+            let id = resolve_image_id(deps, executor, Some(url.as_str()))
+                .await?
+                .expect("resolve_image_id with Some input never returns Ok(None)");
+            Ok(FieldAction::Set(id))
         }
     }
 }

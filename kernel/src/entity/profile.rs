@@ -7,7 +7,8 @@ pub use self::id::*;
 pub use self::summary::*;
 
 use super::{
-    AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion, Nanoid,
+    AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, FieldAction,
+    KnownEventVersion, Nanoid,
 };
 use crate::entity::image::ImageId;
 use crate::event::EventApplier;
@@ -46,8 +47,10 @@ pub enum ProfileEvent {
     Updated {
         display_name: Option<ProfileDisplayName>,
         summary: Option<ProfileSummary>,
-        icon: Option<Option<ImageId>>,
-        banner: Option<Option<ImageId>>,
+        #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
+        icon: FieldAction<ImageId>,
+        #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
+        banner: FieldAction<ImageId>,
     },
 }
 
@@ -81,8 +84,8 @@ impl Profile {
         id: ProfileId,
         display_name: Option<ProfileDisplayName>,
         summary: Option<ProfileSummary>,
-        icon: Option<Option<ImageId>>,
-        banner: Option<Option<ImageId>>,
+        icon: FieldAction<ImageId>,
+        banner: FieldAction<ImageId>,
         current_version: EventVersion<Profile>,
     ) -> CommandEnvelope<ProfileEvent, Profile> {
         let event = ProfileEvent::Updated {
@@ -145,11 +148,15 @@ impl EventApplier for Profile {
                     if let Some(summary) = summary {
                         profile.summary = Some(summary);
                     }
-                    if let Some(icon) = icon {
-                        profile.icon = icon;
+                    match icon {
+                        FieldAction::Unchanged => {}
+                        FieldAction::Clear => profile.icon = None,
+                        FieldAction::Set(v) => profile.icon = Some(v),
                     }
-                    if let Some(banner) = banner {
-                        profile.banner = banner;
+                    match banner {
+                        FieldAction::Unchanged => {}
+                        FieldAction::Clear => profile.banner = None,
+                        FieldAction::Set(v) => profile.banner = Some(v),
                     }
                     profile.version = event.version;
                 } else {
@@ -165,8 +172,8 @@ impl EventApplier for Profile {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        AccountId, EventEnvelope, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName,
-        ProfileId, ProfileSummary,
+        AccountId, EventEnvelope, EventVersion, FieldAction, ImageId, Nanoid, Profile,
+        ProfileDisplayName, ProfileId, ProfileSummary,
     };
     use crate::event::EventApplier;
     use uuid::Uuid;
@@ -227,8 +234,8 @@ mod test {
             id.clone(),
             Some(display_name.clone()),
             Some(summary.clone()),
-            Some(Some(icon.clone())),
-            Some(Some(banner.clone())),
+            FieldAction::Set(icon.clone()),
+            FieldAction::Set(banner.clone()),
             current_version,
         );
         let version = EventVersion::new(Uuid::now_v7());
@@ -270,8 +277,15 @@ mod test {
             nano_id,
         );
 
-        // Clear both icon and banner with Some(None)
-        let update_event = Profile::update(id, None, None, Some(None), Some(None), version);
+        // Clear both icon and banner with FieldAction::Clear
+        let update_event = Profile::update(
+            id,
+            None,
+            None,
+            FieldAction::Clear,
+            FieldAction::Clear,
+            version,
+        );
         let new_version = EventVersion::new(Uuid::now_v7());
         let envelope = EventEnvelope::new(
             update_event.id().clone(),

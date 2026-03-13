@@ -1,3 +1,4 @@
+use kernel::prelude::entity::FieldAction;
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
@@ -21,6 +22,14 @@ pub struct UpdateProfileRequest {
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     #[schema(nullable)]
     pub banner_url: Option<Option<String>>,
+}
+
+pub fn into_field_action<T>(value: Option<Option<T>>) -> FieldAction<T> {
+    match value {
+        None => FieldAction::Unchanged,
+        Some(None) => FieldAction::Clear,
+        Some(Some(v)) => FieldAction::Set(v),
+    }
 }
 
 fn deserialize_optional_nullable<'de, D>(
