@@ -24,7 +24,8 @@ impl Modify for SecurityAddon {
     info(
         title = "Emumet Account Service API",
         version = "0.1.0",
-        description = "Account Service for ShuttlePub"
+        description = "Account Service for ShuttlePub",
+        license(name = "AGPL-3.0", url = "https://www.gnu.org/licenses/agpl-3.0.html")
     ),
     paths(
         crate::route::account::get_accounts,
