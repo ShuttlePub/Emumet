@@ -132,16 +132,46 @@ pub trait GetProfileUseCase:
                 .find_by_account_ids(&mut transaction, &account_ids)
                 .await?;
 
+            let all_image_ids: Vec<ImageId> = {
+                let unique: std::collections::HashSet<_> = profiles
+                    .iter()
+                    .flat_map(|p| {
+                        p.icon()
+                            .as_ref()
+                            .into_iter()
+                            .chain(p.banner().as_ref().into_iter())
+                            .cloned()
+                    })
+                    .collect();
+                unique.into_iter().collect()
+            };
+
+            let image_map: std::collections::HashMap<ImageId, String> = if all_image_ids.is_empty()
+            {
+                std::collections::HashMap::new()
+            } else {
+                self.image_repository()
+                    .find_by_ids(&mut transaction, &all_image_ids)
+                    .await?
+                    .into_iter()
+                    .map(|img| (img.id().clone(), img.url().as_ref().to_string()))
+                    .collect()
+            };
+
             let mut dtos = Vec::new();
             for profile in profiles {
                 let account_nanoid = match nanoid_map.get(profile.account_id()) {
                     Some(n) => n.clone(),
                     None => continue,
                 };
-                let icon_url =
-                    resolve_image_url(self, &mut transaction, profile.icon().as_ref()).await?;
-                let banner_url =
-                    resolve_image_url(self, &mut transaction, profile.banner().as_ref()).await?;
+                let icon_url = profile
+                    .icon()
+                    .as_ref()
+                    .and_then(|id| image_map.get(id).cloned());
+                let banner_url = profile
+                    .banner()
+                    .as_ref()
+                    .and_then(|id| image_map.get(id).cloned());
                 dtos.push(ProfileDto::new(
                     profile,
                     account_nanoid,

@@ -49,6 +49,26 @@ impl ImageRepository for PostgresImageRepository {
         .map(|option| option.map(|row| row.into()))
     }
 
+    async fn find_by_ids(
+        &self,
+        executor: &mut Self::Executor,
+        ids: &[ImageId],
+    ) -> error_stack::Result<Vec<Image>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let uuids: Vec<Uuid> = ids.iter().map(|id| *id.as_ref()).collect();
+        sqlx::query_as::<_, ImageRow>(
+            // language=postgresql
+            r#"
+            SELECT id, url, hash, blurhash FROM images WHERE id = ANY($1)
+            "#,
+        )
+        .bind(&uuids)
+        .fetch_all(con)
+        .await
+        .convert_error()
+        .map(|rows| rows.into_iter().map(|row| row.into()).collect())
+    }
+
     async fn find_by_url(
         &self,
         executor: &mut Self::Executor,
@@ -168,6 +188,109 @@ mod test {
             database
                 .image_repository()
                 .delete(&mut transaction, &id)
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn find_by_ids_empty() {
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
+
+            let result = database
+                .image_repository()
+                .find_by_ids(&mut transaction, &[])
+                .await
+                .unwrap();
+            assert!(result.is_empty());
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn find_by_ids_multiple() {
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
+
+            let image1 = Image::new(
+                ImageId::new(Uuid::now_v7()),
+                url(),
+                ImageHash::new("hash1".to_string()),
+                ImageBlurHash::new("blur1".to_string()),
+            );
+            let image2 = Image::new(
+                ImageId::new(Uuid::now_v7()),
+                url(),
+                ImageHash::new("hash2".to_string()),
+                ImageBlurHash::new("blur2".to_string()),
+            );
+
+            database
+                .image_repository()
+                .create(&mut transaction, &image1)
+                .await
+                .unwrap();
+            database
+                .image_repository()
+                .create(&mut transaction, &image2)
+                .await
+                .unwrap();
+
+            let result = database
+                .image_repository()
+                .find_by_ids(
+                    &mut transaction,
+                    &[image1.id().clone(), image2.id().clone()],
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.len(), 2);
+            assert!(result.contains(&image1));
+            assert!(result.contains(&image2));
+
+            database
+                .image_repository()
+                .delete(&mut transaction, image1.id())
+                .await
+                .unwrap();
+            database
+                .image_repository()
+                .delete(&mut transaction, image2.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn find_by_ids_with_nonexistent() {
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.begin_transaction().await.unwrap();
+
+            let image = Image::new(
+                ImageId::new(Uuid::now_v7()),
+                url(),
+                ImageHash::new("hash".to_string()),
+                ImageBlurHash::new("blur".to_string()),
+            );
+
+            database
+                .image_repository()
+                .create(&mut transaction, &image)
+                .await
+                .unwrap();
+
+            let nonexistent_id = ImageId::new(Uuid::now_v7());
+            let result = database
+                .image_repository()
+                .find_by_ids(&mut transaction, &[image.id().clone(), nonexistent_id])
+                .await
+                .unwrap();
+            assert_eq!(result.len(), 1);
+            assert!(result.contains(&image));
+
+            database
+                .image_repository()
+                .delete(&mut transaction, image.id())
                 .await
                 .unwrap();
         }

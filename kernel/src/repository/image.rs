@@ -12,6 +12,15 @@ pub trait ImageRepository: Sync + Send + 'static {
         id: &ImageId,
     ) -> impl Future<Output = error_stack::Result<Option<Image>, KernelError>> + Send;
 
+    /// Returns images matching the given IDs.
+    /// Returns an empty vec if `ids` is empty.
+    /// The order of results is not guaranteed to match the input order.
+    fn find_by_ids(
+        &self,
+        executor: &mut Self::Executor,
+        ids: &[ImageId],
+    ) -> impl Future<Output = error_stack::Result<Vec<Image>, KernelError>> + Send;
+
     fn find_by_url(
         &self,
         executor: &mut Self::Executor,
