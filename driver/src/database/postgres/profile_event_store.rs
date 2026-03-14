@@ -9,12 +9,11 @@ use kernel::prelude::entity::{
 use kernel::KernelError;
 use serde_json;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct EventRow {
-    version: Uuid,
-    id: Uuid,
+    version: i64,
+    id: i64,
     #[allow(dead_code)]
     event_name: String,
     data: serde_json::Value,
@@ -84,7 +83,7 @@ impl ProfileEventStore for PostgresProfileEventStore {
         executor: &mut Self::Executor,
         command: &CommandEnvelope<ProfileEvent, Profile>,
     ) -> error_stack::Result<(), KernelError> {
-        self.persist_internal(executor, command, Uuid::now_v7())
+        self.persist_internal(executor, command, kernel::generate_id())
             .await
     }
 
@@ -93,7 +92,7 @@ impl ProfileEventStore for PostgresProfileEventStore {
         executor: &mut Self::Executor,
         command: CommandEnvelope<ProfileEvent, Profile>,
     ) -> error_stack::Result<EventEnvelope<ProfileEvent, Profile>, KernelError> {
-        let version = Uuid::now_v7();
+        let version = kernel::generate_id();
         self.persist_internal(executor, &command, version).await?;
 
         let command = command.into_destruct();
@@ -110,7 +109,7 @@ impl PostgresProfileEventStore {
         &self,
         executor: &mut PostgresConnection,
         command: &CommandEnvelope<ProfileEvent, Profile>,
-        version: Uuid,
+        version: i64,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
 
@@ -205,11 +204,10 @@ mod test {
             AccountId, CommandEnvelope, EventId, FieldAction, KnownEventVersion, Nanoid, Profile,
             ProfileEvent, ProfileId,
         };
-        use uuid::Uuid;
 
         fn create_profile_command(profile_id: ProfileId) -> CommandEnvelope<ProfileEvent, Profile> {
             let event = ProfileEvent::Created {
-                account_id: AccountId::new(Uuid::now_v7()),
+                account_id: AccountId::default(),
                 display_name: None,
                 summary: None,
                 icon: None,
@@ -227,9 +225,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let profile_id = ProfileId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
             let event_id = EventId::from(profile_id.clone());
             let events = db
                 .profile_event_store()
@@ -272,9 +271,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id_since_version() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let profile_id = ProfileId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
             let event_id = EventId::from(profile_id.clone());
 
             let created_profile = create_profile_command(profile_id.clone());
@@ -335,11 +335,10 @@ mod test {
             AccountId, CommandEnvelope, EventId, FieldAction, KnownEventVersion, Nanoid, Profile,
             ProfileEvent, ProfileId,
         };
-        use uuid::Uuid;
 
         fn create_profile_command(profile_id: ProfileId) -> CommandEnvelope<ProfileEvent, Profile> {
             let event = ProfileEvent::Created {
-                account_id: AccountId::new(Uuid::now_v7()),
+                account_id: AccountId::default(),
                 display_name: None,
                 summary: None,
                 icon: None,
@@ -357,9 +356,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn basic_creation() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let profile_id = ProfileId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
             let created_profile = create_profile_command(profile_id.clone());
             db.profile_event_store()
                 .persist(&mut transaction, &created_profile)
@@ -376,9 +376,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn persist_and_transform_test() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let profile_id = ProfileId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
             let created_profile = create_profile_command(profile_id.clone());
 
             let event_envelope = db
@@ -402,9 +403,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn known_event_version_nothing_prevents_duplicate() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let profile_id = ProfileId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
             let created_profile = create_profile_command(profile_id.clone());
 
             // First persist should succeed

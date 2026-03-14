@@ -2,82 +2,74 @@
 -- Database: PostgreSQL
 -- Generated at: 2025-01-25T10:07:34.134Z
 
-CREATE TABLE "event_streams" (
-  "version" UUID NOT NULL,
-  "id" UUID NOT NULL,
-  "event_name" TEXT NOT NULL,
-  "data" JSON NOT NULL,
-  PRIMARY KEY ("id", "version")
-);
-
 CREATE TABLE "accounts" (
-  "id" UUID PRIMARY KEY,
+  "id" BIGINT PRIMARY KEY,
   "name" TEXT NOT NULL,
   "private_key" TEXT NOT NULL,
   "public_key" TEXT NOT NULL,
   "is_bot" BOOLEAN NOT NULL,
   "deleted_at" TIMESTAMPTZ,
-  "version" UUID NOT NULL,
+  "version" BIGINT NOT NULL,
   "nanoid" TEXT UNIQUE NOT NULL,
   "created_at" TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE "remote_accounts" (
-  "id" UUID PRIMARY KEY NOT NULL,
+  "id" BIGINT PRIMARY KEY NOT NULL,
   "acct" TEXT UNIQUE NOT NULL,
   "url" TEXT UNIQUE NOT NULL,
-  "icon_id" UUID
+  "icon_id" BIGINT
 );
 
 CREATE TABLE "profiles" (
-  "id" UUID PRIMARY KEY NOT NULL,
-  "account_id" UUID NOT NULL,
+  "id" BIGINT PRIMARY KEY NOT NULL,
+  "account_id" BIGINT NOT NULL,
   "display" TEXT,
   "summary" TEXT,
-  "icon_id" UUID,
-  "banner_id" UUID,
-  "version" UUID NOT NULL,
+  "icon_id" BIGINT,
+  "banner_id" BIGINT,
+  "version" BIGINT NOT NULL,
   "nanoid" TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE "metadatas" (
-  "id" UUID PRIMARY KEY NOT NULL,
-  "account_id" UUID NOT NULL,
+  "id" BIGINT PRIMARY KEY NOT NULL,
+  "account_id" BIGINT NOT NULL,
   "label" TEXT NOT NULL,
   "content" TEXT NOT NULL,
-  "version" UUID NOT NULL,
+  "version" BIGINT NOT NULL,
   "nanoid" TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE "auth_hosts" (
-  "id" UUID PRIMARY KEY NOT NULL,
+  "id" BIGINT PRIMARY KEY NOT NULL,
   "url" TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE "auth_accounts" (
-  "id" UUID PRIMARY KEY NOT NULL,
-  "host_id" UUID NOT NULL,
+  "id" BIGINT PRIMARY KEY NOT NULL,
+  "host_id" BIGINT NOT NULL,
   "client_id" TEXT NOT NULL,
-  "version" UUID NOT NULL
+  "version" BIGINT NOT NULL
 );
 
 CREATE TABLE "auth_emumet_accounts" (
-  "emumet_id" UUID NOT NULL,
-  "auth_id" UUID NOT NULL,
+  "emumet_id" BIGINT NOT NULL,
+  "auth_id" BIGINT NOT NULL,
   PRIMARY KEY ("emumet_id", "auth_id")
 );
 
 CREATE TABLE "follows" (
-  "id" UUID PRIMARY KEY NOT NULL,
-  "follower_local_id" UUID,
-  "follower_remote_id" UUID,
-  "followee_local_id" UUID,
-  "followee_remote_id" UUID,
+  "id" BIGINT PRIMARY KEY NOT NULL,
+  "follower_local_id" BIGINT,
+  "follower_remote_id" BIGINT,
+  "followee_local_id" BIGINT,
+  "followee_remote_id" BIGINT,
   "approved_at" TIMESTAMPTZ
 );
 
 CREATE TABLE "images" (
-  "id" UUID PRIMARY KEY NOT NULL,
+  "id" BIGINT PRIMARY KEY NOT NULL,
   "url" TEXT UNIQUE NOT NULL,
   "hash" TEXT NOT NULL,
   "blurhash" TEXT NOT NULL

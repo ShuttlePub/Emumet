@@ -38,18 +38,18 @@ mod tests {
         AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
         ProfileSummary,
     };
-    use uuid::Uuid;
 
     #[test]
     fn test_profile_dto_with_all_fields() {
-        let profile_id = ProfileId::new(Uuid::now_v7());
-        let account_id = AccountId::new(Uuid::now_v7());
+        kernel::ensure_generator_initialized();
+        let profile_id = ProfileId::new(kernel::generate_id());
+        let account_id = AccountId::new(kernel::generate_id());
         let nanoid = Nanoid::default();
         let display_name = ProfileDisplayName::new("Test User".to_string());
         let summary = ProfileSummary::new("A test summary".to_string());
-        let icon_id = ImageId::new(Uuid::now_v7());
-        let banner_id = ImageId::new(Uuid::now_v7());
-        let version = EventVersion::new(Uuid::now_v7());
+        let icon_id = ImageId::new(kernel::generate_id());
+        let banner_id = ImageId::new(kernel::generate_id());
+        let version = EventVersion::new(kernel::generate_id());
         let account_nanoid = "acc-nanoid-123".to_string();
 
         let profile = Profile::new(
@@ -82,10 +82,11 @@ mod tests {
 
     #[test]
     fn test_profile_dto_with_no_optional_fields() {
-        let profile_id = ProfileId::new(Uuid::now_v7());
-        let account_id = AccountId::new(Uuid::now_v7());
+        kernel::ensure_generator_initialized();
+        let profile_id = ProfileId::new(kernel::generate_id());
+        let account_id = AccountId::new(kernel::generate_id());
         let nanoid = Nanoid::default();
-        let version = EventVersion::new(Uuid::now_v7());
+        let version = EventVersion::new(kernel::generate_id());
         let account_nanoid = "acc-nanoid-456".to_string();
 
         let profile = Profile::new(

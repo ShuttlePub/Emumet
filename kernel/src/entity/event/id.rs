@@ -1,13 +1,12 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use std::marker::PhantomData;
-use uuid::Uuid;
 use vodca::{AsRefln, Fromln};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Fromln, AsRefln)]
-pub struct EventId<Event, Entity>(Uuid, PhantomData<Event>, PhantomData<Entity>);
+pub struct EventId<Event, Entity>(i64, PhantomData<Event>, PhantomData<Entity>);
 
 impl<Ev, En> EventId<Ev, En> {
-    pub fn new(id: Uuid) -> Self {
+    pub fn new(id: i64) -> Self {
         Self(id, PhantomData, PhantomData)
     }
 }
@@ -26,6 +25,6 @@ impl<'de, Ev, En> Deserialize<'de> for EventId<Ev, En> {
     where
         D: Deserializer<'de>,
     {
-        <Uuid>::deserialize(deserializer).map(Self::new)
+        <i64>::deserialize(deserializer).map(Self::new)
     }
 }

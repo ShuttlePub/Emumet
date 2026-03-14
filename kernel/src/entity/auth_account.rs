@@ -85,18 +85,18 @@ mod test {
         AuthAccount, AuthAccountClientId, AuthAccountId, AuthHostId, EventEnvelope, EventVersion,
     };
     use crate::event::EventApplier;
-    use uuid::Uuid;
 
     #[test]
     fn create_auth_account() {
-        let id = AuthAccountId::new(Uuid::now_v7());
-        let host = AuthHostId::new(Uuid::now_v7());
-        let client_id = AuthAccountClientId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let id = AuthAccountId::default();
+        let host = AuthHostId::default();
+        let client_id = AuthAccountClientId::new("test-client-id");
         let create_account = AuthAccount::create(id.clone(), host.clone(), client_id.clone());
         let envelope = EventEnvelope::new(
             create_account.id().clone(),
             create_account.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = None;
         AuthAccount::apply(&mut account, envelope).unwrap();

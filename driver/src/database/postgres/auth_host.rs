@@ -4,11 +4,10 @@ use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostReposit
 use kernel::prelude::entity::{AuthHost, AuthHostId, AuthHostUrl};
 use kernel::KernelError;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct AuthHostRow {
-    id: Uuid,
+    id: i64,
     url: String,
 }
 
@@ -119,10 +118,9 @@ impl DependOnAuthHostRepository for PostgresDatabase {
 #[cfg(test)]
 mod test {
     use kernel::prelude::entity::AuthHostUrl;
-    use uuid::Uuid;
 
     fn url() -> AuthHostUrl {
-        AuthHostUrl::new(format!("https://{}.example.com", Uuid::now_v7()))
+        AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id()))
     }
 
     mod query {
@@ -131,15 +129,15 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
         use kernel::prelude::entity::{AuthHost, AuthHostId};
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let auth_host = AuthHost::new(AuthHostId::new(Uuid::now_v7()), url());
+            let auth_host = AuthHost::new(AuthHostId::default(), url());
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
@@ -158,10 +156,11 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_url() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let auth_host = AuthHost::new(AuthHostId::new(Uuid::now_v7()), url());
+            let auth_host = AuthHost::new(AuthHostId::default(), url());
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
@@ -184,15 +183,15 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
         use kernel::prelude::entity::{AuthHost, AuthHostId};
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let auth_host = AuthHost::new(AuthHostId::new(Uuid::now_v7()), url());
+            let auth_host = AuthHost::new(AuthHostId::default(), url());
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
@@ -211,10 +210,11 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let auth_host = AuthHost::new(AuthHostId::new(Uuid::now_v7()), url());
+            let auth_host = AuthHost::new(AuthHostId::default(), url());
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)

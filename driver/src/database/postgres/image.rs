@@ -4,11 +4,10 @@ use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
 use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId, ImageUrl};
 use kernel::KernelError;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct ImageRow {
-    id: Uuid,
+    id: i64,
     url: String,
     hash: String,
     blurhash: String,
@@ -55,14 +54,14 @@ impl ImageRepository for PostgresImageRepository {
         ids: &[ImageId],
     ) -> error_stack::Result<Vec<Image>, KernelError> {
         let con: &mut PgConnection = executor;
-        let uuids: Vec<Uuid> = ids.iter().map(|id| *id.as_ref()).collect();
+        let ids: Vec<i64> = ids.iter().map(|id| *id.as_ref()).collect();
         sqlx::query_as::<_, ImageRow>(
             // language=postgresql
             r#"
             SELECT id, url, hash, blurhash FROM images WHERE id = ANY($1)
             "#,
         )
-        .bind(&uuids)
+        .bind(&ids)
         .fetch_all(con)
         .await
         .convert_error()
@@ -157,15 +156,15 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
         use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId};
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(Uuid::now_v7());
+            let id = ImageId::new(kernel::generate_id());
             let url = url();
             let image = Image::new(
                 id.clone(),
@@ -195,6 +194,7 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_ids_empty() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
@@ -209,17 +209,18 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_ids_multiple() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let image1 = Image::new(
-                ImageId::new(Uuid::now_v7()),
+                ImageId::new(kernel::generate_id()),
                 url(),
                 ImageHash::new("hash1".to_string()),
                 ImageBlurHash::new("blur1".to_string()),
             );
             let image2 = Image::new(
-                ImageId::new(Uuid::now_v7()),
+                ImageId::new(kernel::generate_id()),
                 url(),
                 ImageHash::new("hash2".to_string()),
                 ImageBlurHash::new("blur2".to_string()),
@@ -263,11 +264,12 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_ids_with_nonexistent() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let image = Image::new(
-                ImageId::new(Uuid::now_v7()),
+                ImageId::new(kernel::generate_id()),
                 url(),
                 ImageHash::new("hash".to_string()),
                 ImageBlurHash::new("blur".to_string()),
@@ -279,7 +281,7 @@ mod test {
                 .await
                 .unwrap();
 
-            let nonexistent_id = ImageId::new(Uuid::now_v7());
+            let nonexistent_id = ImageId::new(kernel::generate_id());
             let result = database
                 .image_repository()
                 .find_by_ids(&mut transaction, &[image.id().clone(), nonexistent_id])
@@ -298,10 +300,11 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_url() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(Uuid::now_v7());
+            let id = ImageId::new(kernel::generate_id());
             let url = url();
             let image = Image::new(
                 id,
@@ -335,15 +338,15 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
         use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId};
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(Uuid::now_v7());
+            let id = ImageId::new(kernel::generate_id());
             let url = url();
             let image = Image::new(
                 id,
@@ -367,10 +370,11 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn delete() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(Uuid::now_v7());
+            let id = ImageId::new(kernel::generate_id());
             let url = url();
             let image = Image::new(
                 id.clone(),

@@ -63,7 +63,7 @@ where
         banner: Option<ImageId>,
         nano_id: Nanoid<Profile>,
     ) -> error_stack::Result<Profile, KernelError> {
-        let profile_id = ProfileId::new(uuid::Uuid::now_v7());
+        let profile_id = ProfileId::new(kernel::generate_id());
         let command = Profile::create(
             profile_id.clone(),
             account_id,

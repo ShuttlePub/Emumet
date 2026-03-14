@@ -63,7 +63,7 @@ where
         content: MetadataContent,
         nano_id: Nanoid<Metadata>,
     ) -> error_stack::Result<Metadata, KernelError> {
-        let metadata_id = MetadataId::new(uuid::Uuid::now_v7());
+        let metadata_id = MetadataId::new(kernel::generate_id());
         let command = Metadata::create(metadata_id.clone(), account_id, label, content, nano_id);
 
         let event_envelope = self

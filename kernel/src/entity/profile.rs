@@ -176,12 +176,12 @@ mod test {
         ProfileDisplayName, ProfileId, ProfileSummary,
     };
     use crate::event::EventApplier;
-    use uuid::Uuid;
 
     #[test]
     fn create_profile() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = ProfileId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let account_id = AccountId::default();
+        let id = ProfileId::new(crate::generate_id());
         let nano_id = Nanoid::default();
         let create_event = Profile::create(
             id.clone(),
@@ -195,7 +195,7 @@ mod test {
         let envelope = EventEnvelope::new(
             create_event.id().clone(),
             create_event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut profile = None;
         Profile::apply(&mut profile, envelope).unwrap();
@@ -212,8 +212,9 @@ mod test {
 
     #[test]
     fn update_profile() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = ProfileId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let account_id = AccountId::default();
+        let id = ProfileId::new(crate::generate_id());
         let nano_id = Nanoid::default();
         let profile = Profile::new(
             id.clone(),
@@ -222,13 +223,13 @@ mod test {
             None,
             None,
             None,
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             nano_id.clone(),
         );
         let display_name = ProfileDisplayName::new("display_name".to_string());
         let summary = ProfileSummary::new("summary".to_string());
-        let icon = ImageId::new(Uuid::now_v7());
-        let banner = ImageId::new(Uuid::now_v7());
+        let icon = ImageId::new(crate::generate_id());
+        let banner = ImageId::new(crate::generate_id());
         let current_version = profile.version().clone();
         let update_event = Profile::update(
             id.clone(),
@@ -238,7 +239,7 @@ mod test {
             FieldAction::Set(banner.clone()),
             current_version,
         );
-        let version = EventVersion::new(Uuid::now_v7());
+        let version = EventVersion::default();
         let envelope = EventEnvelope::new(
             update_event.id().clone(),
             update_event.event().clone(),
@@ -260,12 +261,13 @@ mod test {
 
     #[test]
     fn clear_icon_and_banner() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = ProfileId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let account_id = AccountId::default();
+        let id = ProfileId::new(crate::generate_id());
         let nano_id = Nanoid::default();
-        let icon = ImageId::new(Uuid::now_v7());
-        let banner = ImageId::new(Uuid::now_v7());
-        let version = EventVersion::new(Uuid::now_v7());
+        let icon = ImageId::new(crate::generate_id());
+        let banner = ImageId::new(crate::generate_id());
+        let version = EventVersion::default();
         let profile = Profile::new(
             id.clone(),
             account_id,
@@ -286,7 +288,7 @@ mod test {
             FieldAction::Clear,
             version,
         );
-        let new_version = EventVersion::new(Uuid::now_v7());
+        let new_version = EventVersion::default();
         let envelope = EventEnvelope::new(
             update_event.id().clone(),
             update_event.event().clone(),

@@ -10,12 +10,11 @@ use kernel::prelude::entity::{
 use kernel::KernelError;
 use serde_json;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct EventRow {
-    version: Uuid,
-    id: Uuid,
+    version: i64,
+    id: i64,
     #[allow(dead_code)]
     event_name: String,
     data: serde_json::Value,
@@ -85,7 +84,7 @@ impl AuthAccountEventStore for PostgresAuthAccountEventStore {
         executor: &mut Self::Executor,
         command: &CommandEnvelope<AuthAccountEvent, AuthAccount>,
     ) -> error_stack::Result<(), KernelError> {
-        self.persist_internal(executor, command, Uuid::now_v7())
+        self.persist_internal(executor, command, kernel::generate_id())
             .await
     }
 
@@ -94,7 +93,7 @@ impl AuthAccountEventStore for PostgresAuthAccountEventStore {
         executor: &mut Self::Executor,
         command: CommandEnvelope<AuthAccountEvent, AuthAccount>,
     ) -> error_stack::Result<EventEnvelope<AuthAccountEvent, AuthAccount>, KernelError> {
-        let version = Uuid::now_v7();
+        let version = kernel::generate_id();
         self.persist_internal(executor, &command, version).await?;
 
         let command = command.into_destruct();
@@ -111,7 +110,7 @@ impl PostgresAuthAccountEventStore {
         &self,
         executor: &mut PostgresConnection,
         command: &CommandEnvelope<AuthAccountEvent, AuthAccount>,
-        version: Uuid,
+        version: i64,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
 
@@ -205,14 +204,13 @@ mod test {
         AuthAccount, AuthAccountClientId, AuthAccountEvent, AuthAccountId, AuthHostId,
         CommandEnvelope, EventId,
     };
-    use uuid::Uuid;
 
     fn create_auth_account_command(
         id: AuthAccountId,
     ) -> CommandEnvelope<AuthAccountEvent, AuthAccount> {
         AuthAccount::create(
             id,
-            AuthHostId::new(Uuid::now_v7()),
+            AuthHostId::default(),
             AuthAccountClientId::new("test_client"),
         )
     }
@@ -223,9 +221,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let id = AuthAccountId::new(Uuid::now_v7());
+            let id = AuthAccountId::default();
             let event_id = EventId::from(id.clone());
             let events = db
                 .auth_account_event_store()
@@ -252,9 +251,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id_since_version() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let id = AuthAccountId::new(Uuid::now_v7());
+            let id = AuthAccountId::default();
             let event_id = EventId::from(id.clone());
 
             let created = create_auth_account_command(id.clone());
@@ -286,9 +286,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn basic_creation() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let id = AuthAccountId::new(Uuid::now_v7());
+            let id = AuthAccountId::default();
             let created = create_auth_account_command(id.clone());
             db.auth_account_event_store()
                 .persist(&mut transaction, &created)
@@ -305,9 +306,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn persist_and_transform_test() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let id = AuthAccountId::new(Uuid::now_v7());
+            let id = AuthAccountId::default();
             let created = create_auth_account_command(id.clone());
 
             let event_envelope = db
@@ -331,9 +333,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn optimistic_concurrency_nothing() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let id = AuthAccountId::new(Uuid::now_v7());
+            let id = AuthAccountId::default();
             let created = create_auth_account_command(id.clone());
             db.auth_account_event_store()
                 .persist(&mut transaction, &created)

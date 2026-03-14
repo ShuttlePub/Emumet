@@ -8,15 +8,14 @@ use kernel::prelude::entity::{
 use kernel::KernelError;
 use sqlx::PgConnection;
 use time::OffsetDateTime;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct FollowRow {
-    id: Uuid,
-    follower_local_id: Option<Uuid>,
-    follower_remote_id: Option<Uuid>,
-    followee_local_id: Option<Uuid>,
-    followee_remote_id: Option<Uuid>,
+    id: i64,
+    follower_local_id: Option<i64>,
+    follower_remote_id: Option<i64>,
+    followee_local_id: Option<i64>,
+    followee_remote_id: Option<i64>,
     approved_at: Option<OffsetDateTime>,
 }
 
@@ -61,7 +60,7 @@ impl TryFrom<FollowRow> for Follow {
 
 pub struct PostgresFollowRepository;
 
-fn split_follow_target_id(target_id: &FollowTargetId) -> (Option<&Uuid>, Option<&Uuid>) {
+fn split_follow_target_id(target_id: &FollowTargetId) -> (Option<&i64>, Option<&i64>) {
     match target_id {
         FollowTargetId::Local(account_id) => (Some(account_id.as_ref()), None),
         FollowTargetId::Remote(remote_account_id) => (None, Some(remote_account_id.as_ref())),
@@ -229,14 +228,14 @@ mod test {
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
         };
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_followers() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
-            let follower_id = AccountId::new(Uuid::now_v7());
+            let follower_id = AccountId::default();
             let follower_account = Account::new(
                 follower_id.clone(),
                 AccountName::new("follower".to_string()),
@@ -245,7 +244,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -254,7 +253,7 @@ mod test {
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
-            let followee_id = AccountId::new(Uuid::now_v7());
+            let followee_id = AccountId::default();
             let followee_account = Account::new(
                 followee_id.clone(),
                 AccountName::new("followee".to_string()),
@@ -263,7 +262,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -273,7 +272,7 @@ mod test {
                 .await
                 .unwrap();
             let follow = Follow::new(
-                FollowId::new(Uuid::now_v7()),
+                FollowId::new(kernel::generate_id()),
                 FollowTargetId::from(follower_id.clone()),
                 FollowTargetId::from(followee_id.clone()),
                 None,
@@ -319,9 +318,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_followings() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
-            let follower_id = AccountId::new(Uuid::now_v7());
+            let follower_id = AccountId::default();
             let follower_account = Account::new(
                 follower_id.clone(),
                 AccountName::new("follower".to_string()),
@@ -330,7 +330,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -339,7 +339,7 @@ mod test {
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
-            let followee_id = AccountId::new(Uuid::now_v7());
+            let followee_id = AccountId::default();
             let followee_account = Account::new(
                 followee_id.clone(),
                 AccountName::new("followee".to_string()),
@@ -348,7 +348,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -358,7 +358,7 @@ mod test {
                 .await
                 .unwrap();
             let follow = Follow::new(
-                FollowId::new(Uuid::now_v7()),
+                FollowId::new(kernel::generate_id()),
                 FollowTargetId::from(follower_id.clone()),
                 FollowTargetId::from(followee_id.clone()),
                 Some(FollowApprovedAt::default()),
@@ -411,14 +411,14 @@ mod test {
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
         };
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
-            let follower_id = AccountId::new(Uuid::now_v7());
+            let follower_id = AccountId::default();
             let follower_account = Account::new(
                 follower_id.clone(),
                 AccountName::new("follower".to_string()),
@@ -427,7 +427,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -436,7 +436,7 @@ mod test {
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
-            let followee_id = AccountId::new(Uuid::now_v7());
+            let followee_id = AccountId::default();
             let followee_account = Account::new(
                 followee_id.clone(),
                 AccountName::new("followee".to_string()),
@@ -445,7 +445,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -455,7 +455,7 @@ mod test {
                 .await
                 .unwrap();
             let follow = Follow::new(
-                FollowId::new(Uuid::now_v7()),
+                FollowId::new(kernel::generate_id()),
                 FollowTargetId::from(follower_id),
                 FollowTargetId::from(followee_id),
                 Some(FollowApprovedAt::default()),
@@ -487,10 +487,11 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let follower_id = AccountId::new(Uuid::now_v7());
+            let follower_id = AccountId::default();
             let follower_account = Account::new(
                 follower_id.clone(),
                 AccountName::new("follower".to_string()),
@@ -499,7 +500,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -508,7 +509,7 @@ mod test {
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
-            let followee_id = AccountId::new(Uuid::now_v7());
+            let followee_id = AccountId::default();
             let followee_account = Account::new(
                 followee_id.clone(),
                 AccountName::new("followee".to_string()),
@@ -517,7 +518,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -527,7 +528,7 @@ mod test {
                 .await
                 .unwrap();
             let follow = Follow::new(
-                FollowId::new(Uuid::now_v7()),
+                FollowId::new(kernel::generate_id()),
                 FollowTargetId::from(follower_id.clone()),
                 FollowTargetId::from(followee_id.clone()),
                 None,
@@ -586,9 +587,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn delete() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
-            let follower_id = AccountId::new(Uuid::now_v7());
+            let follower_id = AccountId::default();
             let follower_account = Account::new(
                 follower_id.clone(),
                 AccountName::new("follower".to_string()),
@@ -597,7 +599,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -606,7 +608,7 @@ mod test {
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
-            let followee_id = AccountId::new(Uuid::now_v7());
+            let followee_id = AccountId::default();
             let followee_account = Account::new(
                 followee_id.clone(),
                 AccountName::new("followee".to_string()),
@@ -615,7 +617,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -625,7 +627,7 @@ mod test {
                 .await
                 .unwrap();
             let follow = Follow::new(
-                FollowId::new(Uuid::now_v7()),
+                FollowId::new(kernel::generate_id()),
                 FollowTargetId::from(follower_id.clone()),
                 FollowTargetId::from(followee_id),
                 None,

@@ -7,7 +7,8 @@
       "name": "turtton"
     },
     "license": {
-      "name": ""
+      "name": "AGPL-3.0",
+      "url": "https://www.gnu.org/licenses/agpl-3.0.html"
     },
     "version": "0.1.0"
   },
@@ -876,12 +877,11 @@
       "CreateProfileRequest": {
         "type": "object",
         "properties": {
-          "banner": {
+          "banner_url": {
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
+            ]
           },
           "display_name": {
             "type": [
@@ -889,12 +889,11 @@
               "null"
             ]
           },
-          "icon": {
+          "icon_url": {
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
+            ]
           },
           "summary": {
             "type": [
@@ -1047,12 +1046,11 @@
           "account_id": {
             "type": "string"
           },
-          "banner_id": {
+          "banner_url": {
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
+            ]
           },
           "display_name": {
             "type": [
@@ -1060,12 +1058,11 @@
               "null"
             ]
           },
-          "icon_id": {
+          "icon_url": {
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
+            ]
           },
           "nanoid": {
             "type": "string"
@@ -1125,12 +1122,12 @@
       "UpdateProfileRequest": {
         "type": "object",
         "properties": {
-          "banner": {
+          "banner_url": {
             "type": [
               "string",
               "null"
             ],
-            "format": "uuid"
+            "description": "Absent = no change, null = clear, string = set"
           },
           "display_name": {
             "type": [
@@ -1138,12 +1135,12 @@
               "null"
             ]
           },
-          "icon": {
+          "icon_url": {
             "type": [
               "string",
               "null"
             ],
-            "format": "uuid"
+            "description": "Absent = no change, null = clear, string = set"
           },
           "summary": {
             "type": [

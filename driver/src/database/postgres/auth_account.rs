@@ -6,14 +6,13 @@ use kernel::prelude::entity::{
 };
 use kernel::KernelError;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct AuthAccountRow {
-    id: Uuid,
-    host_id: Uuid,
+    id: i64,
+    host_id: i64,
     client_id: String,
-    version: Uuid,
+    version: i64,
 }
 
 impl From<AuthAccountRow> for AuthAccount {
@@ -158,27 +157,30 @@ mod test {
             AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
             EventVersion,
         };
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let auth_host_id = AuthHostId::new(Uuid::now_v7());
-            let auth_host = AuthHost::new(auth_host_id.clone(), AuthHostUrl::new(Uuid::now_v7()));
+            let auth_host_id = AuthHostId::default();
+            let auth_host = AuthHost::new(
+                auth_host_id.clone(),
+                AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id())),
+            );
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
-            let account_id = AuthAccountId::new(Uuid::now_v7());
+            let account_id = AuthAccountId::default();
             let auth_account = AuthAccount::new(
                 account_id.clone(),
                 auth_host_id,
                 AuthAccountClientId::new("client_id".to_string()),
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
             );
 
             database
@@ -209,17 +211,20 @@ mod test {
             AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
             EventVersion,
         };
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let host_id = AuthHostId::new(Uuid::now_v7());
-            let account_id = AuthAccountId::new(Uuid::now_v7());
-            let auth_host = AuthHost::new(host_id.clone(), AuthHostUrl::new(Uuid::now_v7()));
+            let host_id = AuthHostId::default();
+            let account_id = AuthAccountId::default();
+            let auth_host = AuthHost::new(
+                host_id.clone(),
+                AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id())),
+            );
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
@@ -229,7 +234,7 @@ mod test {
                 account_id.clone(),
                 host_id,
                 AuthAccountClientId::new("client_id".to_string()),
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
             );
             database
                 .auth_account_read_model()
@@ -252,12 +257,16 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let host_id = AuthHostId::new(Uuid::now_v7());
-            let account_id = AuthAccountId::new(Uuid::now_v7());
-            let auth_host = AuthHost::new(host_id.clone(), AuthHostUrl::new(Uuid::now_v7()));
+            let host_id = AuthHostId::default();
+            let account_id = AuthAccountId::default();
+            let auth_host = AuthHost::new(
+                host_id.clone(),
+                AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id())),
+            );
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
@@ -267,7 +276,7 @@ mod test {
                 account_id.clone(),
                 host_id.clone(),
                 AuthAccountClientId::new("client_id".to_string()),
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
             );
             database
                 .auth_account_read_model()
@@ -278,7 +287,7 @@ mod test {
                 account_id.clone(),
                 host_id,
                 AuthAccountClientId::new("updated_client_id".to_string()),
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
             );
             database
                 .auth_account_read_model()
@@ -301,22 +310,26 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn delete() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let host_id = AuthHostId::new(Uuid::now_v7());
-            let auth_host = AuthHost::new(host_id.clone(), AuthHostUrl::new(Uuid::now_v7()));
+            let host_id = AuthHostId::default();
+            let auth_host = AuthHost::new(
+                host_id.clone(),
+                AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id())),
+            );
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
-            let account_id = AuthAccountId::new(Uuid::now_v7());
+            let account_id = AuthAccountId::default();
             let auth_account = AuthAccount::new(
                 account_id.clone(),
                 host_id,
                 AuthAccountClientId::new("client_id".to_string()),
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
             );
             database
                 .auth_account_read_model()

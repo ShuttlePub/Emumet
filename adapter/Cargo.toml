@@ -9,5 +9,4 @@ kernel = { path = "../kernel" }
 error-stack = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
-uuid = { workspace = true }
 zeroize = "1.7"

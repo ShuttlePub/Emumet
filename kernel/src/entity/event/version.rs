@@ -1,20 +1,19 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use std::marker::PhantomData;
-use uuid::Uuid;
 use vodca::{AsRefln, Fromln};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Fromln, AsRefln)]
-pub struct EventVersion<T>(Uuid, PhantomData<T>);
+pub struct EventVersion<T>(i64, PhantomData<T>);
 
 impl<T> EventVersion<T> {
-    pub fn new(version: Uuid) -> Self {
+    pub fn new(version: i64) -> Self {
         Self(version, PhantomData)
     }
 }
 
 impl<T> Default for EventVersion<T> {
     fn default() -> Self {
-        Self(Uuid::now_v7(), PhantomData)
+        Self(crate::generate_id(), PhantomData)
     }
 }
 
@@ -32,7 +31,7 @@ impl<'de, T> Deserialize<'de> for EventVersion<T> {
     where
         D: Deserializer<'de>,
     {
-        <Uuid>::deserialize(deserializer).map(Self::new)
+        <i64>::deserialize(deserializer).map(Self::new)
     }
 }
 

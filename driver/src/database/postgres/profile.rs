@@ -1,5 +1,4 @@
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::prelude::entity::{
@@ -13,13 +12,13 @@ use crate::ConvertError;
 
 #[derive(sqlx::FromRow)]
 struct ProfileRow {
-    id: Uuid,
-    account_id: Uuid,
+    id: i64,
+    account_id: i64,
     display: Option<String>,
     summary: Option<String>,
-    icon_id: Option<Uuid>,
-    banner_id: Option<Uuid>,
-    version: Uuid,
+    icon_id: Option<i64>,
+    banner_id: Option<i64>,
+    version: i64,
     nanoid: String,
 }
 
@@ -89,7 +88,7 @@ impl ProfileReadModel for PostgresProfileReadModel {
         account_ids: &[AccountId],
     ) -> error_stack::Result<Vec<Profile>, KernelError> {
         let con: &mut PgConnection = executor;
-        let ids: Vec<uuid::Uuid> = account_ids.iter().map(|id| *id.as_ref()).collect();
+        let ids: Vec<i64> = account_ids.iter().map(|id| *id.as_ref()).collect();
         sqlx::query_as::<_, ProfileRow>(
             //language=postgresql
             r#"
@@ -197,8 +196,6 @@ impl DependOnProfileReadModel for PostgresDatabase {
 #[cfg(test)]
 mod test {
     mod read_model {
-        use uuid::Uuid;
-
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::read_model::{
             AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
@@ -220,7 +217,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             )
@@ -234,7 +231,7 @@ mod test {
                 Some(ProfileSummary::new("summary")),
                 None,
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
             )
         }
@@ -242,11 +239,12 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let profile_id = ProfileId::new(Uuid::now_v7());
-            let account_id = AccountId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
             let profile = make_profile(profile_id.clone(), account_id.clone());
 
@@ -278,11 +276,12 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_account_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let profile_id = ProfileId::new(Uuid::now_v7());
-            let account_id = AccountId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
             let profile = make_profile(profile_id.clone(), account_id.clone());
 
@@ -307,7 +306,7 @@ mod test {
             // Non-existent account_id returns None
             let not_found = database
                 .profile_read_model()
-                .find_by_account_id(&mut transaction, &AccountId::new(Uuid::now_v7()))
+                .find_by_account_id(&mut transaction, &AccountId::default())
                 .await
                 .unwrap();
             assert!(not_found.is_none());
@@ -322,11 +321,12 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let profile_id = ProfileId::new(Uuid::now_v7());
-            let account_id = AccountId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
             let profile = make_profile(profile_id.clone(), account_id.clone());
 
@@ -359,11 +359,12 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let profile_id = ProfileId::new(Uuid::now_v7());
-            let account_id = AccountId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
             let profile = make_profile(profile_id.clone(), account_id.clone());
 
@@ -385,7 +386,7 @@ mod test {
                 Some(ProfileSummary::new("updated summary")),
                 None,
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
             );
             database
@@ -414,11 +415,12 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn delete() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let profile_id = ProfileId::new(Uuid::now_v7());
-            let account_id = AccountId::new(Uuid::now_v7());
+            let profile_id = ProfileId::new(kernel::generate_id());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
             let profile = make_profile(profile_id.clone(), account_id.clone());
 

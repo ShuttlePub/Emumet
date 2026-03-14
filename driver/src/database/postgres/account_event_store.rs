@@ -9,12 +9,11 @@ use kernel::prelude::entity::{
 use kernel::KernelError;
 use serde_json;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct EventRow {
-    version: Uuid,
-    id: Uuid,
+    version: i64,
+    id: i64,
     #[allow(dead_code)]
     event_name: String,
     data: serde_json::Value,
@@ -84,7 +83,7 @@ impl AccountEventStore for PostgresAccountEventStore {
         executor: &mut Self::Executor,
         command: &CommandEnvelope<AccountEvent, Account>,
     ) -> error_stack::Result<(), KernelError> {
-        self.persist_internal(executor, command, Uuid::now_v7())
+        self.persist_internal(executor, command, kernel::generate_id())
             .await
     }
 
@@ -93,7 +92,7 @@ impl AccountEventStore for PostgresAccountEventStore {
         executor: &mut Self::Executor,
         command: CommandEnvelope<AccountEvent, Account>,
     ) -> error_stack::Result<EventEnvelope<AccountEvent, Account>, KernelError> {
-        let version = Uuid::now_v7();
+        let version = kernel::generate_id();
         self.persist_internal(executor, &command, version).await?;
 
         let command = command.into_destruct();
@@ -110,7 +109,7 @@ impl PostgresAccountEventStore {
         &self,
         executor: &mut PostgresConnection,
         command: &CommandEnvelope<AccountEvent, Account>,
-        version: Uuid,
+        version: i64,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
 
@@ -205,7 +204,6 @@ mod test {
             Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
             AccountPublicKey, AuthAccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
         };
-        use uuid::Uuid;
 
         fn create_account_command(account_id: AccountId) -> CommandEnvelope<AccountEvent, Account> {
             let event = AccountEvent::Created {
@@ -214,7 +212,7 @@ mod test {
                 public_key: AccountPublicKey::new("test"),
                 is_bot: AccountIsBot::new(false),
                 nanoid: Nanoid::default(),
-                auth_account_id: AuthAccountId::new(uuid::Uuid::now_v7()),
+                auth_account_id: AuthAccountId::default(),
             };
             CommandEnvelope::new(
                 EventId::from(account_id),
@@ -227,9 +225,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let account_id = AccountId::new(Uuid::now_v7());
+            let account_id = AccountId::default();
             let event_id = EventId::from(account_id.clone());
             let events = db
                 .account_event_store()
@@ -281,9 +280,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id_since_version() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let account_id = AccountId::new(Uuid::now_v7());
+            let account_id = AccountId::default();
             let event_id = EventId::from(account_id.clone());
 
             let created_account = create_account_command(account_id.clone());
@@ -353,7 +353,6 @@ mod test {
             Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
             AccountPublicKey, AuthAccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
         };
-        use uuid::Uuid;
 
         fn create_account_command(account_id: AccountId) -> CommandEnvelope<AccountEvent, Account> {
             let event = AccountEvent::Created {
@@ -362,7 +361,7 @@ mod test {
                 public_key: AccountPublicKey::new("test"),
                 is_bot: AccountIsBot::new(false),
                 nanoid: Nanoid::default(),
-                auth_account_id: AuthAccountId::new(uuid::Uuid::now_v7()),
+                auth_account_id: AuthAccountId::default(),
             };
             CommandEnvelope::new(
                 EventId::from(account_id),
@@ -375,9 +374,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn basic_creation() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let account_id = AccountId::new(Uuid::now_v7());
+            let account_id = AccountId::default();
             let created_account = create_account_command(account_id.clone());
             db.account_event_store()
                 .persist(&mut transaction, &created_account)
@@ -394,9 +394,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn persist_and_transform_test() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let account_id = AccountId::new(Uuid::now_v7());
+            let account_id = AccountId::default();
             let created_account = create_account_command(account_id.clone());
 
             let event_envelope = db

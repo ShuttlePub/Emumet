@@ -10,8 +10,9 @@ members = [
 [workspace.dependencies]
 tokio = "1.39.2"
 serde = { version = "1", features = ["derive"] }
-uuid = { version = "1.4", features = ["serde", "v7"] }
-time = { version = "0.3", features = ["serde"] }
+uuid = { version = "1.4", features = ["serde"] }
+ferroid = { version = "1.0", features = ["snowflake", "atomic", "std", "serde", "alloc"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 nanoid = "0.4.0"
 dotenvy = "0.15.7"
 

@@ -153,12 +153,12 @@ mod test {
         MetadataLabel, Nanoid,
     };
     use crate::event::EventApplier;
-    use uuid::Uuid;
 
     #[test]
     fn create_metadata() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = MetadataId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let account_id = AccountId::default();
+        let id = MetadataId::new(crate::generate_id());
         let label = MetadataLabel::new("label".to_string());
         let content = MetadataContent::new("content".to_string());
         let nano_id = Nanoid::default();
@@ -172,7 +172,7 @@ mod test {
         let envelope = EventEnvelope::new(
             create_event.id().clone(),
             create_event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut metadata = None;
         Metadata::apply(&mut metadata, envelope).unwrap();
@@ -187,8 +187,9 @@ mod test {
 
     #[test]
     fn update_metadata() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = MetadataId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let account_id = AccountId::default();
+        let id = MetadataId::new(crate::generate_id());
         let label = MetadataLabel::new("label".to_string());
         let content = MetadataContent::new("content".to_string());
         let nano_id = Nanoid::default();
@@ -197,7 +198,7 @@ mod test {
             account_id.clone(),
             label.clone(),
             content.clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             nano_id.clone(),
         );
         let label = MetadataLabel::new("new_label".to_string());
@@ -205,7 +206,7 @@ mod test {
         let current_version = metadata.version().clone();
         let update_event =
             Metadata::update(id.clone(), label.clone(), content.clone(), current_version);
-        let version = EventVersion::new(Uuid::now_v7());
+        let version = EventVersion::default();
         let envelope = EventEnvelope::new(
             update_event.id().clone(),
             update_event.event().clone(),
@@ -225,8 +226,9 @@ mod test {
 
     #[test]
     fn delete_metadata() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = MetadataId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let account_id = AccountId::default();
+        let id = MetadataId::new(crate::generate_id());
         let label = MetadataLabel::new("label".to_string());
         let content = MetadataContent::new("content".to_string());
         let nano_id = Nanoid::default();
@@ -235,7 +237,7 @@ mod test {
             account_id.clone(),
             label.clone(),
             content.clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             nano_id.clone(),
         );
         let current_version = metadata.version().clone();
@@ -243,7 +245,7 @@ mod test {
         let envelope = EventEnvelope::new(
             delete_event.id().clone(),
             delete_event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut metadata = Some(metadata);
         Metadata::apply(&mut metadata, envelope).unwrap();

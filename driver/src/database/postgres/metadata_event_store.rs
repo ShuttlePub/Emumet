@@ -10,12 +10,11 @@ use kernel::prelude::entity::{
 use kernel::KernelError;
 use serde_json;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct EventRow {
-    version: Uuid,
-    id: Uuid,
+    version: i64,
+    id: i64,
     #[allow(dead_code)]
     event_name: String,
     data: serde_json::Value,
@@ -85,7 +84,7 @@ impl MetadataEventStore for PostgresMetadataEventStore {
         executor: &mut Self::Executor,
         command: &CommandEnvelope<MetadataEvent, Metadata>,
     ) -> error_stack::Result<(), KernelError> {
-        self.persist_internal(executor, command, Uuid::now_v7())
+        self.persist_internal(executor, command, kernel::generate_id())
             .await
     }
 
@@ -94,7 +93,7 @@ impl MetadataEventStore for PostgresMetadataEventStore {
         executor: &mut Self::Executor,
         command: CommandEnvelope<MetadataEvent, Metadata>,
     ) -> error_stack::Result<EventEnvelope<MetadataEvent, Metadata>, KernelError> {
-        let version = Uuid::now_v7();
+        let version = kernel::generate_id();
         self.persist_internal(executor, &command, version).await?;
 
         let command = command.into_destruct();
@@ -111,7 +110,7 @@ impl PostgresMetadataEventStore {
         &self,
         executor: &mut PostgresConnection,
         command: &CommandEnvelope<MetadataEvent, Metadata>,
-        version: Uuid,
+        version: i64,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
 
@@ -206,13 +205,12 @@ mod test {
             AccountId, CommandEnvelope, EventId, KnownEventVersion, Metadata, MetadataContent,
             MetadataEvent, MetadataId, MetadataLabel, Nanoid,
         };
-        use uuid::Uuid;
 
         fn create_metadata_command(
             metadata_id: MetadataId,
         ) -> CommandEnvelope<MetadataEvent, Metadata> {
             let event = MetadataEvent::Created {
-                account_id: AccountId::new(Uuid::now_v7()),
+                account_id: AccountId::default(),
                 label: MetadataLabel::new("label".to_string()),
                 content: MetadataContent::new("content".to_string()),
                 nanoid: Nanoid::default(),
@@ -228,9 +226,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata_id = MetadataId::new(kernel::generate_id());
             let event_id = EventId::from(metadata_id.clone());
             let events = db
                 .metadata_event_store()
@@ -283,9 +282,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id_since_version() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata_id = MetadataId::new(kernel::generate_id());
             let event_id = EventId::from(metadata_id.clone());
 
             let created_metadata = create_metadata_command(metadata_id.clone());
@@ -356,13 +356,12 @@ mod test {
             AccountId, CommandEnvelope, EventId, KnownEventVersion, Metadata, MetadataContent,
             MetadataEvent, MetadataId, MetadataLabel, Nanoid,
         };
-        use uuid::Uuid;
 
         fn create_metadata_command(
             metadata_id: MetadataId,
         ) -> CommandEnvelope<MetadataEvent, Metadata> {
             let event = MetadataEvent::Created {
-                account_id: AccountId::new(Uuid::now_v7()),
+                account_id: AccountId::default(),
                 label: MetadataLabel::new("label".to_string()),
                 content: MetadataContent::new("content".to_string()),
                 nanoid: Nanoid::default(),
@@ -378,9 +377,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn basic_creation() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata_id = MetadataId::new(kernel::generate_id());
             let created_metadata = create_metadata_command(metadata_id.clone());
             db.metadata_event_store()
                 .persist(&mut transaction, &created_metadata)
@@ -397,9 +397,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn persist_and_transform_test() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata_id = MetadataId::new(kernel::generate_id());
             let created_metadata = create_metadata_command(metadata_id.clone());
 
             let event_envelope = db
@@ -423,9 +424,10 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn known_event_version_nothing_prevents_duplicate() {
+            kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
-            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata_id = MetadataId::new(kernel::generate_id());
             let created_metadata = create_metadata_command(metadata_id.clone());
 
             // First persist should succeed

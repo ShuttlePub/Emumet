@@ -4,10 +4,13 @@ mod entity;
 mod error;
 mod event;
 mod event_store;
+pub mod id;
 mod permission;
 mod read_model;
 mod repository;
 mod signal;
+
+pub use id::*;
 
 pub use self::error::*;
 

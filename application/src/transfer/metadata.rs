@@ -25,16 +25,16 @@ mod tests {
     use kernel::prelude::entity::{
         AccountId, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
     };
-    use uuid::Uuid;
 
     #[test]
     fn test_metadata_dto_new() {
-        let metadata_id = MetadataId::new(Uuid::now_v7());
-        let account_id = AccountId::new(Uuid::now_v7());
+        kernel::ensure_generator_initialized();
+        let metadata_id = MetadataId::new(kernel::generate_id());
+        let account_id = AccountId::new(kernel::generate_id());
         let label = MetadataLabel::new("test label".to_string());
         let content = MetadataContent::new("test content".to_string());
         let nanoid = Nanoid::default();
-        let version = EventVersion::new(Uuid::now_v7());
+        let version = EventVersion::new(kernel::generate_id());
         let account_nanoid = "acc-nanoid-789".to_string();
 
         let metadata = Metadata::new(

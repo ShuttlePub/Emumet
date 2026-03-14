@@ -6,14 +6,13 @@ use kernel::prelude::entity::{
 };
 use kernel::KernelError;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct RemoteAccountRow {
-    id: Uuid,
+    id: i64,
     acct: String,
     url: String,
-    icon_id: Option<Uuid>,
+    icon_id: Option<i64>,
 }
 
 impl From<RemoteAccountRow> for RemoteAccount {
@@ -200,15 +199,15 @@ mod test {
             DependOnRemoteAccountRepository, RemoteAccountRepository,
         };
         use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId::new(Uuid::now_v7());
+            let id = RemoteAccountId::new(kernel::generate_id());
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database
@@ -232,12 +231,13 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_acct() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(
-                RemoteAccountId::new(Uuid::now_v7()),
+                RemoteAccountId::new(kernel::generate_id()),
                 acct.clone(),
                 url,
                 None,
@@ -264,12 +264,13 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_url() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(
-                RemoteAccountId::new(Uuid::now_v7()),
+                RemoteAccountId::new(kernel::generate_id()),
                 acct,
                 url.clone(),
                 None,
@@ -301,15 +302,15 @@ mod test {
             DependOnRemoteAccountRepository, RemoteAccountRepository,
         };
         use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
-        use uuid::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId::new(Uuid::now_v7());
+            let id = RemoteAccountId::new(kernel::generate_id());
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id, acct, url, None);
             database
@@ -327,10 +328,11 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId::new(Uuid::now_v7());
+            let id = RemoteAccountId::new(kernel::generate_id());
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database
@@ -362,10 +364,11 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn delete() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId::new(Uuid::now_v7());
+            let id = RemoteAccountId::new(kernel::generate_id());
             let (acct, url) = acct_url(None);
             let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
             database

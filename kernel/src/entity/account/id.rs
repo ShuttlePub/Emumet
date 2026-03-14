@@ -1,6 +1,5 @@
 use crate::entity::{Account, AccountEvent, EventId};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use vodca::{AsRefln, Fromln, Newln};
 
 #[derive(
@@ -17,11 +16,11 @@ use vodca::{AsRefln, Fromln, Newln};
     Serialize,
     Deserialize,
 )]
-pub struct AccountId(Uuid);
+pub struct AccountId(i64);
 
 impl Default for AccountId {
     fn default() -> Self {
-        AccountId(Uuid::now_v7())
+        AccountId(crate::generate_id())
     }
 }
 

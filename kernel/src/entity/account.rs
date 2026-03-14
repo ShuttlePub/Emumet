@@ -215,13 +215,10 @@ impl EventApplier for Account {
                     return Err(Report::new(KernelError::Internal)
                         .attach_printable(Self::already_exists(entity)));
                 }
-                let created_at = if let Some(timestamp) = event.id.as_ref().get_timestamp() {
-                    CreatedAt::try_from(timestamp)?
-                } else {
-                    CreatedAt::now()
-                };
+                let created_at =
+                    CreatedAt::from_timestamp_ms(crate::extract_timestamp_ms(*event.id.as_ref()))?;
                 *entity = Some(Account {
-                    id: AccountId::new(event.id),
+                    id: AccountId::new(*event.id.as_ref()),
                     name,
                     private_key,
                     public_key,
@@ -323,11 +320,11 @@ mod test {
     };
     use crate::event::EventApplier;
     use crate::KernelError;
-    use uuid::Uuid;
 
     #[test]
     fn create_account() {
-        let id = AccountId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
         let name = AccountName::new("test");
         let private_key = AccountPrivateKey::new("private_key".to_string());
         let public_key = AccountPublicKey::new("public_key".to_string());
@@ -339,13 +336,10 @@ mod test {
             public_key: public_key.clone(),
             is_bot: is_bot.clone(),
             nanoid: nano_id.clone(),
-            auth_account_id: AuthAccountId::new(Uuid::now_v7()),
+            auth_account_id: AuthAccountId::default(),
         };
-        let envelope = EventEnvelope::new(
-            EventId::from(id.clone()),
-            event,
-            EventVersion::new(Uuid::now_v7()),
-        );
+        let envelope =
+            EventEnvelope::new(EventId::from(id.clone()), event, EventVersion::default());
         let mut account = None;
         Account::apply(&mut account, envelope).unwrap();
         assert!(account.is_some());
@@ -360,7 +354,8 @@ mod test {
 
     #[test]
     fn create_exist_account() {
-        let id = AccountId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
         let name = AccountName::new("test");
         let private_key = AccountPrivateKey::new("private_key".to_string());
         let public_key = AccountPublicKey::new("public_key".to_string());
@@ -374,7 +369,7 @@ mod test {
             is_bot.clone(),
             Default::default(),
             None,
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             nano_id.clone(),
             CreatedAt::now(),
         );
@@ -384,13 +379,10 @@ mod test {
             public_key: public_key.clone(),
             is_bot: is_bot.clone(),
             nanoid: nano_id.clone(),
-            auth_account_id: AuthAccountId::new(Uuid::now_v7()),
+            auth_account_id: AuthAccountId::default(),
         };
-        let envelope = EventEnvelope::new(
-            EventId::from(id.clone()),
-            event,
-            EventVersion::new(Uuid::now_v7()),
-        );
+        let envelope =
+            EventEnvelope::new(EventId::from(id.clone()), event, EventVersion::default());
         let mut account = Some(account);
         assert!(Account::apply(&mut account, envelope)
             .is_err_and(|e| e.current_context() == &KernelError::Internal));
@@ -398,7 +390,8 @@ mod test {
 
     #[test]
     fn update_account() {
-        let id = AccountId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
         let name = AccountName::new("test");
         let private_key = AccountPrivateKey::new("private_key".to_string());
         let public_key = AccountPublicKey::new("public_key".to_string());
@@ -412,7 +405,7 @@ mod test {
             is_bot.clone(),
             Default::default(),
             None,
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             nano_id.clone(),
             CreatedAt::now(),
         );
@@ -421,7 +414,7 @@ mod test {
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope.clone()).unwrap();
@@ -433,13 +426,14 @@ mod test {
 
     #[test]
     fn update_not_exist_account() {
-        let id = AccountId::new(Uuid::now_v7());
-        let version = EventVersion::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
+        let version = EventVersion::default();
         let event = Account::update(id.clone(), AccountIsBot::new(true), version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = None;
         assert!(Account::apply(&mut account, envelope)
@@ -448,7 +442,8 @@ mod test {
 
     #[test]
     fn deactivate_account() {
-        let id = AccountId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
         let name = AccountName::new("test");
         let private_key = AccountPrivateKey::new("private_key".to_string());
         let public_key = AccountPublicKey::new("public_key".to_string());
@@ -462,7 +457,7 @@ mod test {
             is_bot.clone(),
             Default::default(),
             None,
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             nano_id.clone(),
             CreatedAt::now(),
         );
@@ -471,7 +466,7 @@ mod test {
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope.clone()).unwrap();
@@ -482,7 +477,8 @@ mod test {
 
     #[test]
     fn deactivate_already_deactivated_account() {
-        let id = AccountId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
         let name = AccountName::new("test");
         let private_key = AccountPrivateKey::new("private_key".to_string());
         let public_key = AccountPublicKey::new("public_key".to_string());
@@ -496,7 +492,7 @@ mod test {
             is_bot.clone(),
             Default::default(),
             None,
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             nano_id.clone(),
             CreatedAt::now(),
         );
@@ -505,7 +501,7 @@ mod test {
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope).unwrap();
@@ -518,7 +514,7 @@ mod test {
         let envelope2 = EventEnvelope::new(
             event2.id().clone(),
             event2.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         assert!(Account::apply(&mut account, envelope2)
             .is_err_and(|e| e.current_context() == &KernelError::Internal));
@@ -526,13 +522,14 @@ mod test {
 
     #[test]
     fn deactivate_not_exist_account() {
-        let id = AccountId::new(Uuid::now_v7());
-        let version = EventVersion::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
+        let version = EventVersion::default();
         let event = Account::deactivate(id.clone(), version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = None;
         assert!(Account::apply(&mut account, envelope)
@@ -540,7 +537,8 @@ mod test {
     }
 
     fn make_active_account() -> (AccountId, Account) {
-        let id = AccountId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
         let account = Account::new(
             id.clone(),
             AccountName::new("test"),
@@ -549,7 +547,7 @@ mod test {
             AccountIsBot::new(false),
             Default::default(),
             None,
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             Nanoid::default(),
             CreatedAt::now(),
         );
@@ -558,13 +556,14 @@ mod test {
 
     #[test]
     fn suspend_account() {
+        crate::ensure_generator_initialized();
         let (id, account) = make_active_account();
         let version = account.version().clone();
         let event = Account::suspend(id, "spam".into(), None, version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope).unwrap();
@@ -574,10 +573,11 @@ mod test {
 
     #[test]
     fn suspend_already_suspended_account() {
+        crate::ensure_generator_initialized();
         use crate::entity::AccountStatus;
         use time::OffsetDateTime;
 
-        let id = AccountId::new(Uuid::now_v7());
+        let id = AccountId::default();
         let account = Account::new(
             id.clone(),
             AccountName::new("test"),
@@ -590,7 +590,7 @@ mod test {
                 expires_at: None,
             },
             None,
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             Nanoid::default(),
             CreatedAt::now(),
         );
@@ -599,7 +599,7 @@ mod test {
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = Some(account);
         assert!(Account::apply(&mut account, envelope)
@@ -608,10 +608,11 @@ mod test {
 
     #[test]
     fn unsuspend_account() {
+        crate::ensure_generator_initialized();
         use crate::entity::AccountStatus;
         use time::OffsetDateTime;
 
-        let id = AccountId::new(Uuid::now_v7());
+        let id = AccountId::default();
         let account = Account::new(
             id.clone(),
             AccountName::new("test"),
@@ -624,7 +625,7 @@ mod test {
                 expires_at: None,
             },
             None,
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             Nanoid::default(),
             CreatedAt::now(),
         );
@@ -633,7 +634,7 @@ mod test {
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope).unwrap();
@@ -643,13 +644,14 @@ mod test {
 
     #[test]
     fn unsuspend_active_account() {
+        crate::ensure_generator_initialized();
         let (id, account) = make_active_account();
         let version = account.version().clone();
         let event = Account::unsuspend(id, version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = Some(account);
         assert!(Account::apply(&mut account, envelope)
@@ -658,13 +660,14 @@ mod test {
 
     #[test]
     fn ban_account() {
+        crate::ensure_generator_initialized();
         let (id, account) = make_active_account();
         let version = account.version().clone();
         let event = Account::ban(id, "violation".into(), version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = Some(account);
         Account::apply(&mut account, envelope).unwrap();
@@ -674,10 +677,11 @@ mod test {
 
     #[test]
     fn ban_already_banned_account() {
+        crate::ensure_generator_initialized();
         use crate::entity::AccountStatus;
         use time::OffsetDateTime;
 
-        let id = AccountId::new(Uuid::now_v7());
+        let id = AccountId::default();
         let account = Account::new(
             id.clone(),
             AccountName::new("test"),
@@ -689,7 +693,7 @@ mod test {
                 banned_at: OffsetDateTime::now_utc(),
             },
             None,
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
             Nanoid::default(),
             CreatedAt::now(),
         );
@@ -698,7 +702,7 @@ mod test {
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut account = Some(account);
         assert!(Account::apply(&mut account, envelope)

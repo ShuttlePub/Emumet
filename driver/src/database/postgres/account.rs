@@ -7,18 +7,17 @@ use kernel::prelude::entity::{
 };
 use kernel::KernelError;
 use sqlx::types::time::OffsetDateTime;
-use sqlx::types::Uuid;
 use sqlx::PgConnection;
 
 #[derive(sqlx::FromRow)]
 struct AccountRow {
-    id: Uuid,
+    id: i64,
     name: String,
     private_key: String,
     public_key: String,
     is_bot: bool,
     deleted_at: Option<OffsetDateTime>,
-    version: Uuid,
+    version: i64,
     nanoid: String,
     created_at: OffsetDateTime,
     suspended_at: Option<OffsetDateTime>,
@@ -496,15 +495,15 @@ mod test {
             AuthAccountId, CreatedAt, DeletedAt, EventVersion, Nanoid,
         };
         use sqlx::types::time::OffsetDateTime;
-        use sqlx::types::Uuid;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = AccountId::new(Uuid::now_v7());
+            let id = AccountId::default();
             let account = Account::new(
                 id.clone(),
                 AccountName::new("test"),
@@ -513,7 +512,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -533,12 +532,13 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_auth_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let accounts = database
                 .account_read_model()
-                .find_by_auth_id(&mut transaction, &AuthAccountId::new(Uuid::now_v7()))
+                .find_by_auth_id(&mut transaction, &AuthAccountId::default())
                 .await
                 .unwrap();
             assert!(accounts.is_empty());
@@ -547,19 +547,20 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_name() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let name = AccountName::new(Uuid::now_v7().to_string());
+            let name = AccountName::new(nanoid::nanoid!());
             let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
+                AccountId::default(),
                 name.clone(),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -585,19 +586,20 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_nanoid() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let nanoid = Nanoid::default();
             let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
+                AccountId::default(),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 nanoid.clone(),
                 CreatedAt::now(),
             );
@@ -623,18 +625,19 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
+                AccountId::default(),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -655,18 +658,19 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
+                AccountId::default(),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -683,7 +687,7 @@ mod test {
                 AccountIsBot::new(true),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -703,18 +707,19 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn deactivate() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
+                AccountId::default(),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );
@@ -738,14 +743,14 @@ mod test {
 
             // Ignore if the account is already deleted
             let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
+                AccountId::default(),
                 AccountName::new("test"),
                 AccountPrivateKey::new("test"),
                 AccountPublicKey::new("test"),
                 AccountIsBot::new(false),
                 Default::default(),
                 Some(DeletedAt::new(OffsetDateTime::now_utc())),
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             );

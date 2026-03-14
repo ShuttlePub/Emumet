@@ -9,10 +9,9 @@ authors.workspace = true
 [dependencies]
 dotenvy = { workspace = true }
 deadpool-redis = "0.20.0"
-sqlx = { version = "0.7", features = ["uuid", "time", "postgres", "runtime-tokio-native-tls", "json"] }
+sqlx = { version = "0.7", features = ["time", "postgres", "runtime-tokio-native-tls", "json"] }
 serde_json = "1"
 serde = { workspace = true }
-uuid = { workspace = true }
 time = { workspace = true }
 async-trait = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
@@ -31,6 +30,8 @@ zeroize = "1.7"
 kernel = { path = "../kernel" }
 
 [dev-dependencies]
+kernel = { path = "../kernel", features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "test-util"] }
 test-with.workspace = true
 tempfile = "3"
+nanoid = { workspace = true }

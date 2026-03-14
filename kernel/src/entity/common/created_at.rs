@@ -1,9 +1,8 @@
 use crate::KernelError;
-use error_stack::{Report, ResultExt};
+use error_stack::ResultExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::marker::PhantomData;
 use time::OffsetDateTime;
-use uuid::Timestamp;
 use vodca::{AsRefln, Fromln};
 
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Fromln, AsRefln)]
@@ -18,15 +17,13 @@ impl<T> CreatedAt<T> {
         let now = OffsetDateTime::now_utc();
         Self::new(now)
     }
-}
 
-impl<T> TryFrom<Timestamp> for CreatedAt<T> {
-    type Error = Report<KernelError>;
-    fn try_from(value: Timestamp) -> Result<Self, Self::Error> {
-        let (seconds, nanos) = value.to_unix();
-        let datetime = OffsetDateTime::from_unix_timestamp(seconds as i64)
+    pub fn from_timestamp_ms(ms: u64) -> error_stack::Result<Self, KernelError> {
+        let secs = (ms / 1000) as i64;
+        let nanos = ((ms % 1000) * 1_000_000) as u32;
+        let datetime = OffsetDateTime::from_unix_timestamp(secs)
             .change_context_lazy(|| KernelError::Internal)
-            .attach_printable_lazy(|| format!("Invalid seconds: {seconds}"))?
+            .attach_printable_lazy(|| format!("Invalid seconds: {secs}"))?
             .replace_nanosecond(nanos)
             .change_context_lazy(|| KernelError::Internal)
             .attach_printable_lazy(|| format!("Invalid nanos: {nanos}"))?;

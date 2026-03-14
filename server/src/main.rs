@@ -48,6 +48,14 @@ async fn main() -> Result<(), StackTrace> {
         )
         .init();
 
+    // Initialize Snowflake ID generator (must happen before any ID generation)
+    let worker_id: u64 = std::env::var("WORKER_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    kernel::init_generator(worker_id);
+    tracing::info!(worker_id, "Snowflake ID generator initialized");
+
     // OIDC / JWT auth setup
     let oidc_config = OidcConfig::from_env();
     let jwks_cache = Arc::new(JwksCache::new(

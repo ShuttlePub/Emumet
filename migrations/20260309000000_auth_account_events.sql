@@ -1,6 +1,6 @@
 CREATE TABLE "auth_account_events" (
-  "version" UUID NOT NULL,
-  "id" UUID NOT NULL,
+  "version" BIGINT NOT NULL,
+  "id" BIGINT NOT NULL,
   "event_name" TEXT NOT NULL,
   "data" JSONB NOT NULL,
   "occurred_at" TIMESTAMPTZ NOT NULL DEFAULT now(),

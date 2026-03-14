@@ -6,15 +6,14 @@ use kernel::prelude::entity::{
 };
 use kernel::KernelError;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct MetadataRow {
-    id: Uuid,
-    account_id: Uuid,
+    id: i64,
+    account_id: i64,
     label: String,
     content: String,
-    version: Uuid,
+    version: i64,
     nanoid: String,
 }
 
@@ -84,7 +83,7 @@ impl MetadataReadModel for PostgresMetadataReadModel {
         account_ids: &[AccountId],
     ) -> error_stack::Result<Vec<Metadata>, KernelError> {
         let con: &mut PgConnection = executor;
-        let ids: Vec<uuid::Uuid> = account_ids.iter().map(|id| *id.as_ref()).collect();
+        let ids: Vec<i64> = account_ids.iter().map(|id| *id.as_ref()).collect();
         sqlx::query_as::<_, MetadataRow>(
             // language=postgresql
             r#"
@@ -191,7 +190,6 @@ mod test {
             Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
             CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
         };
-        use uuid::Uuid;
 
         fn make_account(account_id: AccountId) -> Account {
             Account::new(
@@ -202,7 +200,7 @@ mod test {
                 AccountIsBot::new(false),
                 Default::default(),
                 None,
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
                 CreatedAt::now(),
             )
@@ -214,7 +212,7 @@ mod test {
                 account_id,
                 MetadataLabel::new("label"),
                 MetadataContent::new("content"),
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
             )
         }
@@ -222,12 +220,13 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let account_id = AccountId::new(Uuid::now_v7());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
-            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata_id = MetadataId::new(kernel::generate_id());
             let metadata = make_metadata(metadata_id.clone(), account_id.clone());
 
             database
@@ -251,7 +250,7 @@ mod test {
             // Non-existent id returns None
             let not_found = database
                 .metadata_read_model()
-                .find_by_id(&mut transaction, &MetadataId::new(Uuid::now_v7()))
+                .find_by_id(&mut transaction, &MetadataId::new(kernel::generate_id()))
                 .await
                 .unwrap();
             assert!(not_found.is_none());
@@ -266,19 +265,21 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_account_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let account_id = AccountId::new(Uuid::now_v7());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
 
-            let metadata1 = make_metadata(MetadataId::new(Uuid::now_v7()), account_id.clone());
+            let metadata1 =
+                make_metadata(MetadataId::new(kernel::generate_id()), account_id.clone());
             let metadata2 = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
+                MetadataId::new(kernel::generate_id()),
                 account_id.clone(),
                 MetadataLabel::new("label2"),
                 MetadataContent::new("content2"),
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
             );
 
@@ -311,7 +312,7 @@ mod test {
             // Non-existent account_id returns empty vec
             let not_found = database
                 .metadata_read_model()
-                .find_by_account_id(&mut transaction, &AccountId::new(Uuid::now_v7()))
+                .find_by_account_id(&mut transaction, &AccountId::default())
                 .await
                 .unwrap();
             assert!(not_found.is_empty());
@@ -326,12 +327,13 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let account_id = AccountId::new(Uuid::now_v7());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
-            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata_id = MetadataId::new(kernel::generate_id());
             let metadata = make_metadata(metadata_id.clone(), account_id.clone());
 
             database
@@ -365,12 +367,13 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let account_id = AccountId::new(Uuid::now_v7());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
-            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata_id = MetadataId::new(kernel::generate_id());
             let metadata = make_metadata(metadata_id.clone(), account_id.clone());
 
             database
@@ -389,7 +392,7 @@ mod test {
                 account_id.clone(),
                 MetadataLabel::new("updated_label"),
                 MetadataContent::new("updated_content"),
-                EventVersion::new(Uuid::now_v7()),
+                EventVersion::default(),
                 Nanoid::default(),
             );
             database
@@ -418,12 +421,13 @@ mod test {
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn delete() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let account_id = AccountId::new(Uuid::now_v7());
+            let account_id = AccountId::default();
             let account = make_account(account_id.clone());
-            let metadata_id = MetadataId::new(Uuid::now_v7());
+            let metadata_id = MetadataId::new(kernel::generate_id());
             let metadata = make_metadata(metadata_id.clone(), account_id.clone());
 
             database

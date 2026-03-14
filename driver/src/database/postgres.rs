@@ -19,7 +19,6 @@ use kernel::KernelError;
 use sqlx::pool::PoolConnection;
 use sqlx::{Error, PgConnection, Pool, Postgres};
 use std::ops::{Deref, DerefMut};
-use uuid::Uuid;
 
 const POSTGRESQL: &str = "DATABASE_URL";
 
@@ -60,7 +59,7 @@ impl PostgresDatabase {
 
 #[derive(sqlx::FromRow)]
 pub(in crate::database::postgres) struct VersionRow {
-    pub version: Uuid,
+    pub version: i64,
 }
 
 #[derive(sqlx::FromRow)]
