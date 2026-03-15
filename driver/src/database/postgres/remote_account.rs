@@ -1,20 +1,19 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
-use kernel::interfaces::modify::{DependOnRemoteAccountModifier, RemoteAccountModifier};
-use kernel::interfaces::query::{DependOnRemoteAccountQuery, RemoteAccountQuery};
+use error_stack::Report;
+use kernel::interfaces::repository::{DependOnRemoteAccountRepository, RemoteAccountRepository};
 use kernel::prelude::entity::{
     ImageId, RemoteAccount, RemoteAccountAcct, RemoteAccountId, RemoteAccountUrl,
 };
 use kernel::KernelError;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct RemoteAccountRow {
-    id: Uuid,
+    id: i64,
     acct: String,
     url: String,
-    icon_id: Option<Uuid>,
+    icon_id: Option<i64>,
 }
 
 impl From<RemoteAccountRow> for RemoteAccount {
@@ -30,15 +29,15 @@ impl From<RemoteAccountRow> for RemoteAccount {
 
 pub struct PostgresRemoteAccountRepository;
 
-impl RemoteAccountQuery for PostgresRemoteAccountRepository {
-    type Transaction = PostgresConnection;
+impl RemoteAccountRepository for PostgresRemoteAccountRepository {
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         id: &RemoteAccountId,
     ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, RemoteAccountRow>(
             // language=postgresql
             r#"
@@ -56,10 +55,10 @@ impl RemoteAccountQuery for PostgresRemoteAccountRepository {
 
     async fn find_by_acct(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         acct: &RemoteAccountAcct,
     ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, RemoteAccountRow>(
             // language=postgresql
             r#"
@@ -77,10 +76,10 @@ impl RemoteAccountQuery for PostgresRemoteAccountRepository {
 
     async fn find_by_url(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         url: &RemoteAccountUrl,
     ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, RemoteAccountRow>(
             // language=postgresql
             r#"
@@ -95,25 +94,13 @@ impl RemoteAccountQuery for PostgresRemoteAccountRepository {
         .convert_error()
         .map(|option| option.map(RemoteAccount::from))
     }
-}
-
-impl DependOnRemoteAccountQuery for PostgresDatabase {
-    type RemoteAccountQuery = PostgresRemoteAccountRepository;
-
-    fn remote_account_query(&self) -> &Self::RemoteAccountQuery {
-        &PostgresRemoteAccountRepository
-    }
-}
-
-impl RemoteAccountModifier for PostgresRemoteAccountRepository {
-    type Transaction = PostgresConnection;
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account: &RemoteAccount,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"
@@ -133,11 +120,11 @@ impl RemoteAccountModifier for PostgresRemoteAccountRepository {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account: &RemoteAccount,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
-        sqlx::query(
+        let con: &mut PgConnection = executor;
+        let result = sqlx::query(
             // language=postgresql
             r#"
             UPDATE remote_accounts
@@ -152,16 +139,20 @@ impl RemoteAccountModifier for PostgresRemoteAccountRepository {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target remote account not found for update"));
+        }
         Ok(())
     }
 
     async fn delete(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account_id: &RemoteAccountId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
-        sqlx::query(
+        let con: &mut PgConnection = executor;
+        let result = sqlx::query(
             // language=postgresql
             r#"
             DELETE FROM remote_accounts
@@ -172,130 +163,114 @@ impl RemoteAccountModifier for PostgresRemoteAccountRepository {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target remote account not found for delete"));
+        }
         Ok(())
     }
 }
 
-impl DependOnRemoteAccountModifier for PostgresDatabase {
-    type RemoteAccountModifier = PostgresRemoteAccountRepository;
+impl DependOnRemoteAccountRepository for PostgresDatabase {
+    type RemoteAccountRepository = PostgresRemoteAccountRepository;
 
-    fn remote_account_modifier(&self) -> &Self::RemoteAccountModifier {
+    fn remote_account_repository(&self) -> &Self::RemoteAccountRepository {
         &PostgresRemoteAccountRepository
     }
 }
 
 #[cfg(test)]
 mod test {
-    use kernel::prelude::entity::{RemoteAccountAcct, RemoteAccountUrl};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn acct_url(name: Option<&str>) -> (RemoteAccountAcct, RemoteAccountUrl) {
-        if let Some(name) = name {
-            (
-                RemoteAccountAcct::new(format!("{}@example.com", name)),
-                RemoteAccountUrl::new(format!("https://example.com/users/{}", name)),
-            )
-        } else {
-            static COUNTER: AtomicUsize = AtomicUsize::new(0);
-            let c = COUNTER.fetch_add(1, Ordering::Relaxed);
-            (
-                RemoteAccountAcct::new(format!("example{}@example.com", c)),
-                RemoteAccountUrl::new(format!("https://example.com/users/example{}", c)),
-            )
-        }
-    }
-
     mod query {
-        use crate::database::postgres::remote_account::test::acct_url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnRemoteAccountModifier, RemoteAccountModifier};
-        use kernel::interfaces::query::{DependOnRemoteAccountQuery, RemoteAccountQuery};
-        use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
-        use uuid::Uuid;
+        use kernel::interfaces::repository::{
+            DependOnRemoteAccountRepository, RemoteAccountRepository,
+        };
+        use kernel::test_utils::{unique_remote_acct, RemoteAccountBuilder};
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let id = RemoteAccountId::new(Uuid::now_v7());
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
+            let remote_account = RemoteAccountBuilder::new().build();
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
-                .find_by_id(&mut transaction, &id)
+                .remote_account_repository()
+                .find_by_id(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
-            assert_eq!(result, Some(remote_account));
+            assert_eq!(result, Some(remote_account.clone()));
             database
-                .remote_account_modifier()
-                .delete(&mut transaction, &id)
+                .remote_account_repository()
+                .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_acct() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(
-                RemoteAccountId::new(Uuid::now_v7()),
-                acct.clone(),
-                url,
-                None,
-            );
+            let (acct, url) = unique_remote_acct();
+            let remote_account = RemoteAccountBuilder::new()
+                .acct(acct.as_ref())
+                .url(url.as_ref())
+                .build();
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
+                .remote_account_repository()
                 .find_by_acct(&mut transaction, &acct)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
 
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_url() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(
-                RemoteAccountId::new(Uuid::now_v7()),
-                acct,
-                url.clone(),
-                None,
-            );
+            let (acct, url) = unique_remote_acct();
+            let remote_account = RemoteAccountBuilder::new()
+                .acct(acct.as_ref())
+                .url(url.as_ref())
+                .build();
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
+                .remote_account_repository()
                 .find_by_url(&mut transaction, &url)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
@@ -303,90 +278,90 @@ mod test {
     }
 
     mod modify {
-        use crate::database::postgres::remote_account::test::acct_url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{DependOnRemoteAccountModifier, RemoteAccountModifier};
-        use kernel::interfaces::query::{DependOnRemoteAccountQuery, RemoteAccountQuery};
-        use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
-        use uuid::Uuid;
+        use kernel::interfaces::repository::{
+            DependOnRemoteAccountRepository, RemoteAccountRepository,
+        };
+        use kernel::prelude::entity::RemoteAccountId;
+        use kernel::test_utils::RemoteAccountBuilder;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let id = RemoteAccountId::new(Uuid::now_v7());
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id, acct, url, None);
+            let remote_account = RemoteAccountBuilder::new().build();
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let id = RemoteAccountId::new(Uuid::now_v7());
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
+            let id = RemoteAccountId::new(kernel::generate_id());
+            let remote_account = RemoteAccountBuilder::new().id(id.clone()).build();
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
 
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
+            let remote_account = RemoteAccountBuilder::new().id(id.clone()).build();
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .update(&mut transaction, &remote_account)
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
+                .remote_account_repository()
                 .find_by_id(&mut transaction, &id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn delete() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let id = RemoteAccountId::new(Uuid::now_v7());
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
+            let remote_account = RemoteAccountBuilder::new().build();
             database
-                .remote_account_modifier()
+                .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
 
             database
-                .remote_account_modifier()
-                .delete(&mut transaction, &id)
+                .remote_account_repository()
+                .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
             let result = database
-                .remote_account_query()
-                .find_by_id(&mut transaction, &id)
+                .remote_account_repository()
+                .find_by_id(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
             assert_eq!(result, None);

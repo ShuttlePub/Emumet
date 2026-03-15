@@ -1,16 +1,16 @@
 use crate::KernelError;
 use std::future::Future;
 
-/// Databaseのトランザクション処理を示すトレイト
+/// Executorの取得を示すトレイト
 ///
 /// 現状は何もないが、将来的にトランザクション時に使える機能を示す可能性を考えて用意している
-pub trait Transaction {}
+pub trait Executor: Send {}
 
 pub trait DatabaseConnection: Sync + Send + 'static {
-    type Transaction: Transaction;
-    fn begin_transaction(
+    type Executor: Executor;
+    fn get_executor(
         &self,
-    ) -> impl Future<Output = error_stack::Result<Self::Transaction, KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<Self::Executor, KernelError>> + Send;
 }
 
 pub trait DependOnDatabaseConnection: Sync + Send {

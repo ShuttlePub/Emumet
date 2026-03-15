@@ -1,21 +1,20 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
-use kernel::interfaces::modify::{DependOnMetadataModifier, MetadataModifier};
-use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
+use error_stack::Report;
+use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
 use kernel::prelude::entity::{
     AccountId, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
 };
 use kernel::KernelError;
 use sqlx::PgConnection;
-use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
 struct MetadataRow {
-    id: Uuid,
-    account_id: Uuid,
+    id: i64,
+    account_id: i64,
     label: String,
     content: String,
-    version: Uuid,
+    version: i64,
     nanoid: String,
 }
 
@@ -32,17 +31,17 @@ impl From<MetadataRow> for Metadata {
     }
 }
 
-pub struct PostgresMetadataRepository;
+pub struct PostgresMetadataReadModel;
 
-impl MetadataQuery for PostgresMetadataRepository {
-    type Transaction = PostgresConnection;
+impl MetadataReadModel for PostgresMetadataReadModel {
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
-        metadata_id: &MetadataId,
+        executor: &mut Self::Executor,
+        id: &MetadataId,
     ) -> error_stack::Result<Option<Metadata>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, MetadataRow>(
             // language=postgresql
             r#"
@@ -51,7 +50,7 @@ impl MetadataQuery for PostgresMetadataRepository {
             WHERE id = $1
             "#,
         )
-        .bind(metadata_id.as_ref())
+        .bind(id.as_ref())
         .fetch_optional(con)
         .await
         .convert_error()
@@ -60,10 +59,10 @@ impl MetadataQuery for PostgresMetadataRepository {
 
     async fn find_by_account_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account_id: &AccountId,
     ) -> error_stack::Result<Vec<Metadata>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, MetadataRow>(
             // language=postgresql
             r#"
@@ -78,25 +77,35 @@ impl MetadataQuery for PostgresMetadataRepository {
         .convert_error()
         .map(|rows| rows.into_iter().map(|row| row.into()).collect())
     }
-}
 
-impl DependOnMetadataQuery for PostgresDatabase {
-    type MetadataQuery = PostgresMetadataRepository;
-
-    fn metadata_query(&self) -> &Self::MetadataQuery {
-        &PostgresMetadataRepository
+    async fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Executor,
+        account_ids: &[AccountId],
+    ) -> error_stack::Result<Vec<Metadata>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let ids: Vec<i64> = account_ids.iter().map(|id| *id.as_ref()).collect();
+        sqlx::query_as::<_, MetadataRow>(
+            // language=postgresql
+            r#"
+            SELECT id, account_id, label, content, version, nanoid
+            FROM metadatas
+            WHERE account_id = ANY($1)
+            "#,
+        )
+        .bind(&ids)
+        .fetch_all(con)
+        .await
+        .convert_error()
+        .map(|rows| rows.into_iter().map(|row| row.into()).collect())
     }
-}
-
-impl MetadataModifier for PostgresMetadataRepository {
-    type Transaction = PostgresConnection;
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata: &Metadata,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             // language=postgresql
             r#"
@@ -118,11 +127,11 @@ impl MetadataModifier for PostgresMetadataRepository {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata: &Metadata,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
-        sqlx::query(
+        let con: &mut PgConnection = executor;
+        let result = sqlx::query(
             // language=postgresql
             r#"
             UPDATE metadatas
@@ -137,16 +146,20 @@ impl MetadataModifier for PostgresMetadataRepository {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target metadata not found for update"));
+        }
         Ok(())
     }
 
     async fn delete(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         metadata_id: &MetadataId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
-        sqlx::query(
+        let con: &mut PgConnection = executor;
+        let result = sqlx::query(
             // language=postgresql
             r#"
             DELETE FROM metadatas
@@ -157,310 +170,284 @@ impl MetadataModifier for PostgresMetadataRepository {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target metadata not found for delete"));
+        }
         Ok(())
     }
 }
 
-impl DependOnMetadataModifier for PostgresDatabase {
-    type MetadataModifier = PostgresMetadataRepository;
+impl DependOnMetadataReadModel for PostgresDatabase {
+    type MetadataReadModel = PostgresMetadataReadModel;
 
-    fn metadata_modifier(&self) -> &Self::MetadataModifier {
-        &PostgresMetadataRepository
+    fn metadata_read_model(&self) -> &Self::MetadataReadModel {
+        &PostgresMetadataReadModel
     }
 }
 
 #[cfg(test)]
 mod test {
-
-    mod query {
+    mod read_model {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountModifier, DependOnAccountModifier, DependOnMetadataModifier, MetadataModifier,
+        use kernel::interfaces::read_model::{
+            AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
+            MetadataReadModel,
         };
-        use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
-        };
-        use uuid::Uuid;
+        use kernel::prelude::entity::{AccountId, Metadata, MetadataId};
+        use kernel::test_utils::{AccountBuilder, MetadataBuilder};
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let account_id = AccountId::new(Uuid::now_v7());
-
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let account_id = AccountId::default();
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let metadata_id = MetadataId::new(kernel::generate_id());
+            let metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
-                .find_by_id(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &metadata_id)
                 .await
                 .unwrap();
             assert_eq!(found.as_ref().map(Metadata::id), Some(metadata.id()));
-        }
 
-        #[tokio::test]
-        async fn find_by_account_id() {
-            let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
-
-            let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            // Non-existent id returns None
+            let not_found = database
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &MetadataId::new(kernel::generate_id()))
+                .await
+                .unwrap();
+            assert!(not_found.is_none());
 
             database
-                .account_modifier()
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn find_by_account_id() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
+
+            let account_id = AccountId::default();
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+
+            let metadata1 = MetadataBuilder::new()
+                .account_id(account_id.clone())
+                .build();
+            let metadata2 = MetadataBuilder::new()
+                .account_id(account_id.clone())
+                .label("label2")
+                .content("content2")
+                .build();
+
+            database
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-            let metadata2 = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label2".to_string()),
-                MetadataContent::new("content2".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
-                .create(&mut transaction, &metadata)
+                .metadata_read_model()
+                .create(&mut transaction, &metadata1)
                 .await
                 .unwrap();
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata2)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
+                .metadata_read_model()
                 .find_by_account_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
-            assert_eq!(
-                found.iter().map(Metadata::id).collect::<Vec<_>>(),
-                vec![metadata.id(), metadata2.id()]
-            );
-        }
-    }
-    mod modify {
-        use crate::database::PostgresDatabase;
-        use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{
-            AccountModifier, DependOnAccountModifier, DependOnMetadataModifier, MetadataModifier,
-        };
-        use kernel::interfaces::query::{DependOnMetadataQuery, MetadataQuery};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
-        };
-        use uuid::Uuid;
+            assert_eq!(found.len(), 2);
+            let ids: Vec<_> = found.iter().map(Metadata::id).collect();
+            assert!(ids.contains(&metadata1.id()));
+            assert!(ids.contains(&metadata2.id()));
 
-        #[tokio::test]
-        async fn create() {
-            let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
-
-            let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            // Non-existent account_id returns empty vec
+            let not_found = database
+                .metadata_read_model()
+                .find_by_account_id(&mut transaction, &AccountId::default())
+                .await
+                .unwrap();
+            assert!(not_found.is_empty());
 
             database
-                .account_modifier()
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn create() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
+
+            let account_id = AccountId::default();
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let metadata_id = MetadataId::new(kernel::generate_id());
+            let metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .build();
+
+            database
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
-                .find_by_id(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &metadata_id)
                 .await
+                .unwrap()
                 .unwrap();
-            assert_eq!(found.as_ref().map(Metadata::id), Some(metadata.id()));
-        }
-
-        #[tokio::test]
-        async fn update() {
-            let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
-
-            let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            assert_eq!(found.id(), metadata.id());
+            assert_eq!(found.label(), metadata.label());
+            assert_eq!(found.content(), metadata.content());
 
             database
-                .account_modifier()
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn update() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
+
+            let account_id = AccountId::default();
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let metadata_id = MetadataId::new(kernel::generate_id());
+            let metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .build();
+
+            database
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata)
                 .await
                 .unwrap();
 
-            let updated_metadata = Metadata::new(
-                metadata.id().clone(),
-                account_id.clone(),
-                MetadataLabel::new("label2".to_string()),
-                MetadataContent::new("content2".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
+            let updated_metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .label("updated_label")
+                .content("updated_content")
+                .build();
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .update(&mut transaction, &updated_metadata)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
-                .find_by_id(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &metadata_id)
                 .await
+                .unwrap()
                 .unwrap();
-            assert_eq!(
-                found.as_ref().map(Metadata::id),
-                Some(updated_metadata.id())
-            );
-        }
-
-        #[tokio::test]
-        async fn delete() {
-            let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
-
-            let account_id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                account_id.clone(),
-                AccountName::new("name".to_string()),
-                AccountPrivateKey::new("private_key".to_string()),
-                AccountPublicKey::new("public_key".to_string()),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            assert_eq!(found.id(), updated_metadata.id());
+            assert_eq!(found.label(), updated_metadata.label());
+            assert_eq!(found.content(), updated_metadata.content());
 
             database
-                .account_modifier()
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn delete() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
+
+            let account_id = AccountId::default();
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let metadata_id = MetadataId::new(kernel::generate_id());
+            let metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .build();
+
+            database
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let metadata = Metadata::new(
-                MetadataId::new(Uuid::now_v7()),
-                account_id.clone(),
-                MetadataLabel::new("label".to_string()),
-                MetadataContent::new("content".to_string()),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
-
             database
-                .metadata_modifier()
+                .metadata_read_model()
                 .create(&mut transaction, &metadata)
                 .await
                 .unwrap();
+
             database
-                .metadata_modifier()
-                .delete(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .delete(&mut transaction, &metadata_id)
                 .await
                 .unwrap();
 
             let found = database
-                .metadata_query()
-                .find_by_id(&mut transaction, metadata.id())
+                .metadata_read_model()
+                .find_by_id(&mut transaction, &metadata_id)
                 .await
                 .unwrap();
             assert!(found.is_none());
+
+            database
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
+                .await
+                .unwrap();
         }
     }
 }

@@ -1,5 +1,7 @@
 [workspace]
+resolver = "2"
 members = [
+  "adapter",
   "application",
   "driver",
   "kernel",
@@ -9,11 +11,21 @@ members = [
 [workspace.dependencies]
 tokio = "1.39.2"
 serde = { version = "1", features = ["derive"] }
-uuid = { version = "1.4", features = ["serde", "v7"] }
-time = { version = "0.3", features = ["serde"] }
+uuid = { version = "1.4", features = ["serde"] }
+ferroid = { version = "1.0", features = ["snowflake", "atomic", "std", "serde", "alloc"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 nanoid = "0.4.0"
+dotenvy = "0.15.7"
+
+vodca = "0.1.8"
+destructure = "0.5.6"
+qualified_do = "0.1.0"
 
 error-stack = "0.4.1"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["registry", "env-filter", "fmt"] }
+
+test-with = "0.14.7"
 
 [workspace.package]
 version = "0.1.0"

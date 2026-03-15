@@ -1,3 +1,5 @@
+use crate::KernelError;
+use error_stack::ResultExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::marker::PhantomData;
 use time::OffsetDateTime;
@@ -14,6 +16,18 @@ impl<T> CreatedAt<T> {
     pub fn now() -> Self {
         let now = OffsetDateTime::now_utc();
         Self::new(now)
+    }
+
+    pub fn from_timestamp_ms(ms: u64) -> error_stack::Result<Self, KernelError> {
+        let secs = (ms / 1000) as i64;
+        let nanos = ((ms % 1000) * 1_000_000) as u32;
+        let datetime = OffsetDateTime::from_unix_timestamp(secs)
+            .change_context_lazy(|| KernelError::Internal)
+            .attach_printable_lazy(|| format!("Invalid seconds: {secs}"))?
+            .replace_nanosecond(nanos)
+            .change_context_lazy(|| KernelError::Internal)
+            .attach_printable_lazy(|| format!("Invalid nanos: {nanos}"))?;
+        Ok(Self::new(datetime))
     }
 }
 

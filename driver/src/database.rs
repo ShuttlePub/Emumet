@@ -1,9 +1,12 @@
 mod postgres;
+mod redis;
 
 use error_stack::Report;
 use kernel::KernelError;
-pub use postgres::*;
 use std::env;
+
+pub use postgres::*;
+pub use redis::*;
 
 pub(crate) fn env(key: &str) -> error_stack::Result<Option<String>, KernelError> {
     let result = dotenvy::var(key);

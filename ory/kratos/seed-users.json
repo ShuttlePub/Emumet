@@ -1,0 +1,14 @@
+{
+  "schema_id": "default",
+  "state": "active",
+  "traits": {
+    "email": "testuser@example.com"
+  },
+  "credentials": {
+    "password": {
+      "config": {
+        "password": "testuser"
+      }
+    }
+  }
+}

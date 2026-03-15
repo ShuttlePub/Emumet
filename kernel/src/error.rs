@@ -1,11 +1,14 @@
 use error_stack::Context;
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum KernelError {
     Concurrency,
     Timeout,
     Internal,
+    PermissionDenied,
+    NotFound,
+    Rejected,
 }
 
 impl Display for KernelError {
@@ -14,6 +17,9 @@ impl Display for KernelError {
             KernelError::Concurrency => write!(f, "Concurrency error"),
             KernelError::Timeout => write!(f, "Process Timed out"),
             KernelError::Internal => write!(f, "Internal kernel error"),
+            KernelError::PermissionDenied => write!(f, "Permission denied"),
+            KernelError::NotFound => write!(f, "Resource not found"),
+            KernelError::Rejected => write!(f, "Request rejected"),
         }
     }
 }

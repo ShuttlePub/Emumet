@@ -3,3 +3,5 @@
 .direnv
 /migrations/dbml-error.log
 .env
+logs
+master-key-password

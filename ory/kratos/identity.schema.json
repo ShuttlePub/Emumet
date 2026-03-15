@@ -1,0 +1,28 @@
+{
+  "$id": "https://emumet.shuttlepub.example/identity.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Identity",
+  "type": "object",
+  "properties": {
+    "traits": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "title": "Email",
+          "ory.sh/kratos": {
+            "credentials": {
+              "password": {
+                "identifier": true
+              }
+            }
+          }
+        }
+      },
+      "required": ["email"],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

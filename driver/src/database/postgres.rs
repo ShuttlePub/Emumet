@@ -1,22 +1,24 @@
 mod account;
-mod event;
+mod account_event_store;
+mod auth_account;
+mod auth_account_event_store;
+mod auth_host;
 mod follow;
 mod image;
 mod metadata;
+mod metadata_event_store;
 mod profile;
+mod profile_event_store;
 mod remote_account;
-mod stellar_account;
-mod stellar_host;
 
 use crate::database::env;
 use crate::ConvertError;
 use error_stack::{Report, ResultExt};
-use kernel::interfaces::database::{DatabaseConnection, Transaction};
+use kernel::interfaces::database::{DatabaseConnection, Executor};
 use kernel::KernelError;
 use sqlx::pool::PoolConnection;
 use sqlx::{Error, PgConnection, Pool, Postgres};
 use std::ops::{Deref, DerefMut};
-use uuid::Uuid;
 
 const POSTGRESQL: &str = "DATABASE_URL";
 
@@ -55,19 +57,9 @@ impl PostgresDatabase {
     }
 }
 
-#[derive(sqlx::FromRow)]
-pub(in crate::database::postgres) struct VersionRow {
-    pub version: Uuid,
-}
-
-#[derive(sqlx::FromRow)]
-pub(in crate::database::postgres) struct CountRow {
-    pub count: i64,
-}
-
 pub struct PostgresConnection(PoolConnection<Postgres>);
 
-impl Transaction for PostgresConnection {}
+impl Executor for PostgresConnection {}
 
 impl Deref for PostgresConnection {
     type Target = PgConnection;
@@ -83,8 +75,8 @@ impl DerefMut for PostgresConnection {
 }
 
 impl DatabaseConnection for PostgresDatabase {
-    type Transaction = PostgresConnection;
-    async fn begin_transaction(&self) -> error_stack::Result<Self::Transaction, KernelError> {
+    type Executor = PostgresConnection;
+    async fn get_executor(&self) -> error_stack::Result<Self::Executor, KernelError> {
         let connection = self.pool.acquire().await.convert_error()?;
         Ok(PostgresConnection(connection))
     }

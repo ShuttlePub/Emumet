@@ -1,60 +1,113 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
-use kernel::interfaces::modify::{AccountModifier, DependOnAccountModifier};
-use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
+use error_stack::Report;
+use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
 use kernel::prelude::entity::{
-    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey, DeletedAt,
-    EventVersion, Nanoid, StellarAccountId,
+    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
+    AccountStatus, AuthAccountId, CreatedAt, DeletedAt, EventVersion, Nanoid,
 };
 use kernel::KernelError;
 use sqlx::types::time::OffsetDateTime;
-use sqlx::types::Uuid;
 use sqlx::PgConnection;
 
 #[derive(sqlx::FromRow)]
 struct AccountRow {
-    id: Uuid,
+    id: i64,
     name: String,
     private_key: String,
     public_key: String,
     is_bot: bool,
     deleted_at: Option<OffsetDateTime>,
-    version: Uuid,
+    version: i64,
     nanoid: String,
+    created_at: OffsetDateTime,
+    suspended_at: Option<OffsetDateTime>,
+    suspend_expires_at: Option<OffsetDateTime>,
+    suspend_reason: Option<String>,
+    banned_at: Option<OffsetDateTime>,
+    ban_reason: Option<String>,
+}
+
+/// Convert an AccountRow into an Account.
+///
+/// When `check_suspend_expiry` is `false` (used for filtered queries where SQL already
+/// excludes expired suspensions), suspended_at is trusted as-is.
+/// When `true` (used for unfiltered queries), Rust-side expiry check is performed.
+fn account_from_row(value: AccountRow, check_suspend_expiry: bool) -> Account {
+    let status = if let (Some(banned_at), Some(reason)) = (value.banned_at, value.ban_reason) {
+        AccountStatus::Banned { reason, banned_at }
+    } else if let (Some(suspended_at), Some(reason)) =
+        (value.suspended_at, value.suspend_reason.clone())
+    {
+        if check_suspend_expiry {
+            if let Some(expires_at) = value.suspend_expires_at {
+                if expires_at <= OffsetDateTime::now_utc() {
+                    AccountStatus::Active
+                } else {
+                    AccountStatus::Suspended {
+                        reason,
+                        suspended_at,
+                        expires_at: Some(expires_at),
+                    }
+                }
+            } else {
+                AccountStatus::Suspended {
+                    reason,
+                    suspended_at,
+                    expires_at: None,
+                }
+            }
+        } else {
+            AccountStatus::Suspended {
+                reason,
+                suspended_at,
+                expires_at: value.suspend_expires_at,
+            }
+        }
+    } else {
+        AccountStatus::Active
+    };
+
+    Account::new(
+        AccountId::new(value.id),
+        AccountName::new(value.name),
+        AccountPrivateKey::new(value.private_key),
+        AccountPublicKey::new(value.public_key),
+        AccountIsBot::new(value.is_bot),
+        status,
+        value.deleted_at.map(DeletedAt::new),
+        EventVersion::new(value.version),
+        Nanoid::new(value.nanoid),
+        CreatedAt::new(value.created_at),
+    )
 }
 
 impl From<AccountRow> for Account {
     fn from(value: AccountRow) -> Self {
-        Account::new(
-            AccountId::new(value.id),
-            AccountName::new(value.name),
-            AccountPrivateKey::new(value.private_key),
-            AccountPublicKey::new(value.public_key),
-            AccountIsBot::new(value.is_bot),
-            value.deleted_at.map(DeletedAt::new),
-            EventVersion::new(value.version),
-            Nanoid::new(value.nanoid),
-        )
+        account_from_row(value, false)
     }
 }
 
-pub struct PostgresAccountRepository;
+pub struct PostgresAccountReadModel;
 
-impl AccountQuery for PostgresAccountRepository {
-    type Transaction = PostgresConnection;
+impl AccountReadModel for PostgresAccountReadModel {
+    type Executor = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         id: &AccountId,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE id = $1 AND deleted_at IS NULL
+              AND banned_at IS NULL
+              AND (suspended_at IS NULL OR (suspend_expires_at IS NOT NULL AND suspend_expires_at <= now()))
             "#,
         )
         .bind(id.as_ref())
@@ -64,40 +117,46 @@ impl AccountQuery for PostgresAccountRepository {
         .map(|option| option.map(Account::from))
     }
 
-    async fn find_by_stellar_id(
+    async fn find_by_auth_id(
         &self,
-        transaction: &mut Self::Transaction,
-        stellar_id: &StellarAccountId,
+        executor: &mut Self::Executor,
+        auth_id: &AuthAccountId,
     ) -> error_stack::Result<Vec<Account>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid
+            -- Intentionally does NOT filter suspended/banned: allows account owners
+            -- to see their own accounts' moderation status via the listing endpoint.
+            SELECT accounts.id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
-            INNER JOIN stellar_emumet_accounts ON stellar_emumet_accounts.emumet_id = accounts.id
-            WHERE stellar_emumet_accounts.stellar_id = $1 AND deleted_at IS NULL
+            INNER JOIN auth_emumet_accounts ON auth_emumet_accounts.emumet_id = accounts.id
+            WHERE auth_emumet_accounts.auth_id = $1 AND deleted_at IS NULL
             "#,
         )
-        .bind(stellar_id.as_ref())
+        .bind(auth_id.as_ref())
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|rows| rows.into_iter().map(Account::from).collect())
+        .map(|rows| rows.into_iter().map(|row| account_from_row(row, true)).collect())
     }
 
     async fn find_by_name(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         name: &AccountName,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE name = $1 AND deleted_at IS NULL
+              AND banned_at IS NULL
+              AND (suspended_at IS NULL OR (suspend_expires_at IS NOT NULL AND suspend_expires_at <= now()))
             "#,
         )
         .bind(name.as_ref())
@@ -106,30 +165,67 @@ impl AccountQuery for PostgresAccountRepository {
         .convert_error()
         .map(|option| option.map(Account::from))
     }
-}
 
-impl DependOnAccountQuery for PostgresDatabase {
-    type AccountQuery = PostgresAccountRepository;
-
-    fn account_query(&self) -> &Self::AccountQuery {
-        &PostgresAccountRepository
+    async fn find_by_nanoid(
+        &self,
+        executor: &mut Self::Executor,
+        nanoid: &Nanoid<Account>,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, AccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
+            FROM accounts
+            WHERE nanoid = $1 AND deleted_at IS NULL
+              AND banned_at IS NULL
+              AND (suspended_at IS NULL OR (suspend_expires_at IS NOT NULL AND suspend_expires_at <= now()))
+            "#,
+        )
+        .bind(nanoid.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(Account::from))
     }
-}
 
-impl AccountModifier for PostgresAccountRepository {
-    type Transaction = PostgresConnection;
+    async fn find_by_nanoids(
+        &self,
+        executor: &mut Self::Executor,
+        nanoids: &[Nanoid<Account>],
+    ) -> error_stack::Result<Vec<Account>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let nanoid_strs: Vec<&str> = nanoids.iter().map(|n| n.as_ref().as_str()).collect();
+        sqlx::query_as::<_, AccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
+            FROM accounts
+            WHERE nanoid = ANY($1) AND deleted_at IS NULL
+              AND banned_at IS NULL
+              AND (suspended_at IS NULL OR (suspend_expires_at IS NOT NULL AND suspend_expires_at <= now()))
+            "#,
+        )
+        .bind(&nanoid_strs)
+        .fetch_all(con)
+        .await
+        .convert_error()
+        .map(|rows| rows.into_iter().map(Account::from).collect())
+    }
 
     async fn create(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account: &Account,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
+        let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO accounts (id, name, private_key, public_key, is_bot, version, nanoid)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO accounts (id, name, private_key, public_key, is_bot, version, nanoid, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(account.id().as_ref())
@@ -139,6 +235,7 @@ impl AccountModifier for PostgresAccountRepository {
         .bind(account.is_bot().as_ref())
         .bind(account.version().as_ref())
         .bind(account.nanoid().as_ref())
+        .bind(account.created_at().as_ref())
         .execute(con)
         .await
         .convert_error()?;
@@ -147,15 +244,35 @@ impl AccountModifier for PostgresAccountRepository {
 
     async fn update(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account: &Account,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
-        sqlx::query(
+        let con: &mut PgConnection = executor;
+        let (suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason) =
+            match account.status() {
+                AccountStatus::Active => (None, None, None, None, None),
+                AccountStatus::Suspended {
+                    reason,
+                    suspended_at,
+                    expires_at,
+                } => (
+                    Some(*suspended_at),
+                    *expires_at,
+                    Some(reason.clone()),
+                    None,
+                    None,
+                ),
+                AccountStatus::Banned { reason, banned_at } => {
+                    (None, None, None, Some(*banned_at), Some(reason.clone()))
+                }
+            };
+        let result = sqlx::query(
             //language=postgresql
             r#"
             UPDATE accounts
-            SET name = $2, private_key = $3, public_key = $4, is_bot = $5, version = $6
+            SET name = $2, private_key = $3, public_key = $4, is_bot = $5, version = $6, deleted_at = $7,
+                suspended_at = $8, suspend_expires_at = $9, suspend_reason = $10,
+                banned_at = $11, ban_reason = $12
             WHERE id = $1
             "#,
         )
@@ -165,19 +282,29 @@ impl AccountModifier for PostgresAccountRepository {
         .bind(account.public_key().as_ref())
         .bind(account.is_bot().as_ref())
         .bind(account.version().as_ref())
+        .bind(account.deleted_at().as_ref().map(|d| d.as_ref()))
+        .bind(suspended_at)
+        .bind(suspend_expires_at)
+        .bind(suspend_reason)
+        .bind(banned_at)
+        .bind(ban_reason)
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target account not found for update"));
+        }
         Ok(())
     }
 
-    async fn delete(
+    async fn deactivate(
         &self,
-        transaction: &mut Self::Transaction,
+        executor: &mut Self::Executor,
         account_id: &AccountId,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = transaction;
-        sqlx::query(
+        let con: &mut PgConnection = executor;
+        let result = sqlx::query(
             //language=postgresql
             r#"
             UPDATE accounts
@@ -189,143 +316,317 @@ impl AccountModifier for PostgresAccountRepository {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target account not found for deactivate"));
+        }
+        Ok(())
+    }
+
+    async fn unlink_all_auth_accounts(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query(
+            //language=postgresql
+            r#"
+            DELETE FROM auth_emumet_accounts WHERE emumet_id = $1
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
+
+    async fn link_auth_account(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+        auth_account_id: &AuthAccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO auth_emumet_accounts (emumet_id, auth_id) VALUES ($1, $2)
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .bind(auth_account_id.as_ref())
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
+
+    async fn find_by_id_unfiltered(
+        &self,
+        executor: &mut Self::Executor,
+        id: &AccountId,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, AccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
+            FROM accounts
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(id.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(|row| account_from_row(row, true)))
+    }
+
+    async fn find_by_nanoid_unfiltered(
+        &self,
+        executor: &mut Self::Executor,
+        nanoid: &Nanoid<Account>,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, AccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
+            FROM accounts
+            WHERE nanoid = $1 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(nanoid.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(|row| account_from_row(row, true)))
+    }
+
+    async fn find_by_nanoids_unfiltered(
+        &self,
+        executor: &mut Self::Executor,
+        nanoids: &[Nanoid<Account>],
+    ) -> error_stack::Result<Vec<Account>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let nanoid_strs: Vec<&str> = nanoids.iter().map(|n| n.as_ref().as_str()).collect();
+        sqlx::query_as::<_, AccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
+            FROM accounts
+            WHERE nanoid = ANY($1) AND deleted_at IS NULL
+            "#,
+        )
+        .bind(&nanoid_strs)
+        .fetch_all(con)
+        .await
+        .convert_error()
+        .map(|rows| rows.into_iter().map(|row| account_from_row(row, true)).collect())
+    }
+
+    async fn suspend(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+        reason: &str,
+        expires_at: Option<OffsetDateTime>,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query(
+            //language=postgresql
+            r#"
+            UPDATE accounts
+            SET suspended_at = now(), suspend_expires_at = $2, suspend_reason = $3
+            WHERE id = $1
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .bind(expires_at)
+        .bind(reason)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
+
+    async fn unsuspend(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query(
+            //language=postgresql
+            r#"
+            UPDATE accounts
+            SET suspended_at = NULL, suspend_expires_at = NULL, suspend_reason = NULL
+            WHERE id = $1
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
+
+    async fn ban(
+        &self,
+        executor: &mut Self::Executor,
+        account_id: &AccountId,
+        reason: &str,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query(
+            //language=postgresql
+            r#"
+            UPDATE accounts
+            SET banned_at = now(), ban_reason = $2,
+                suspended_at = NULL, suspend_expires_at = NULL, suspend_reason = NULL
+            WHERE id = $1
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .bind(reason)
+        .execute(con)
+        .await
+        .convert_error()?;
         Ok(())
     }
 }
 
-impl DependOnAccountModifier for PostgresDatabase {
-    type AccountModifier = PostgresAccountRepository;
+impl DependOnAccountReadModel for PostgresDatabase {
+    type AccountReadModel = PostgresAccountReadModel;
 
-    fn account_modifier(&self) -> &Self::AccountModifier {
-        &PostgresAccountRepository
+    fn account_read_model(&self) -> &Self::AccountReadModel {
+        &PostgresAccountReadModel
     }
 }
 
 #[cfg(test)]
 mod test {
-    mod query {
+    mod read_model {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{AccountModifier, DependOnAccountModifier};
-        use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            EventVersion, Nanoid, StellarAccountId,
-        };
-        use sqlx::types::Uuid;
+        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
+        use kernel::prelude::entity::{Account, AccountId, AuthAccountId, DeletedAt, Nanoid};
+        use kernel::test_utils::{unique_account_name, AccountBuilder};
+        use sqlx::types::time::OffsetDateTime;
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let id = AccountId::new(Uuid::now_v7());
-            let account = Account::new(
-                id.clone(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let id = AccountId::default();
+            let account = AccountBuilder::new().id(id.clone()).build();
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, &id)
                 .await
                 .unwrap();
             assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
-        async fn find_by_stellar_id() {
+        async fn find_by_auth_id() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let accounts = database
-                .account_query()
-                .find_by_stellar_id(&mut transaction, &StellarAccountId::new(Uuid::now_v7()))
+                .account_read_model()
+                .find_by_auth_id(&mut transaction, &AuthAccountId::default())
                 .await
                 .unwrap();
             assert!(accounts.is_empty());
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn find_by_name() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let name = AccountName::new("findbynametest");
-            let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
-                name.clone(),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let name = unique_account_name();
+            let account = AccountBuilder::new().name(name.as_ref()).build();
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
 
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_name(&mut transaction, &name)
                 .await
                 .unwrap();
             assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
             database
-                .account_modifier()
-                .delete(&mut transaction, account.id())
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
         }
-    }
 
-    mod modify {
-        use crate::database::PostgresDatabase;
-        use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::modify::{AccountModifier, DependOnAccountModifier};
-        use kernel::interfaces::query::{AccountQuery, DependOnAccountQuery};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            DeletedAt, EventVersion, Nanoid,
-        };
-        use sqlx::types::time::OffsetDateTime;
-        use sqlx::types::Uuid;
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn find_by_nanoid() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
+            let nanoid = Nanoid::default();
+            let account = AccountBuilder::new().nanoid(nanoid.clone()).build();
+            database
+                .account_read_model()
+                .create(&mut transaction, &account)
+                .await
+                .unwrap();
+
+            let result = database
+                .account_read_model()
+                .find_by_nanoid(&mut transaction, &nanoid)
+                .await
+                .unwrap();
+            assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
+            database
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn create() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let account = AccountBuilder::new().build();
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap()
@@ -333,106 +634,82 @@ mod test {
             assert_eq!(result.id(), account.id());
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
         async fn update() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let account = AccountBuilder::new().build();
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let updated_account = Account::new(
-                account.id().clone(),
-                AccountName::new("test2"),
-                AccountPrivateKey::new("test2"),
-                AccountPublicKey::new("test2"),
-                AccountIsBot::new(true),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let updated_account = AccountBuilder::new()
+                .id(account.id().clone())
+                .name("test2")
+                .private_key("test2")
+                .public_key("test2")
+                .is_bot(true)
+                .build();
             database
-                .account_modifier()
+                .account_read_model()
                 .update(&mut transaction, &updated_account)
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap();
             assert_eq!(result.as_ref().map(Account::id), Some(updated_account.id()));
         }
 
+        #[test_with::env(DATABASE_URL)]
         #[tokio::test]
-        async fn delete() {
+        async fn deactivate() {
+            kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
-            let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                None,
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let account = AccountBuilder::new().build();
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
 
             database
-                .account_modifier()
-                .delete(&mut transaction, account.id())
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap();
             assert!(result.is_none());
 
             // Ignore if the account is already deleted
-            let account = Account::new(
-                AccountId::new(Uuid::now_v7()),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                Some(DeletedAt::new(OffsetDateTime::now_utc())),
-                EventVersion::new(Uuid::now_v7()),
-                Nanoid::default(),
-            );
+            let account = AccountBuilder::new()
+                .deleted_at(Some(DeletedAt::new(OffsetDateTime::now_utc())))
+                .build();
             database
-                .account_modifier()
+                .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
 
             database
-                .account_modifier()
-                .delete(&mut transaction, account.id())
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
                 .await
                 .unwrap();
             let result = database
-                .account_query()
+                .account_read_model()
                 .find_by_id(&mut transaction, account.id())
                 .await
                 .unwrap();

@@ -7,7 +7,8 @@ pub use self::id::*;
 pub use self::summary::*;
 
 use super::{
-    AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion, Nanoid,
+    AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, FieldAction,
+    KnownEventVersion, Nanoid,
 };
 use crate::entity::image::ImageId;
 use crate::event::EventApplier;
@@ -31,7 +32,7 @@ pub struct Profile {
     nanoid: Nanoid<Profile>,
 }
 
-#[derive(Debug, Clone, Nameln, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Nameln, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[vodca(prefix = "profile", snake_case)]
 pub enum ProfileEvent {
@@ -44,10 +45,14 @@ pub enum ProfileEvent {
         nanoid: Nanoid<Profile>,
     },
     Updated {
-        display_name: Option<ProfileDisplayName>,
-        summary: Option<ProfileSummary>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
+        #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
+        display_name: FieldAction<ProfileDisplayName>,
+        #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
+        summary: FieldAction<ProfileSummary>,
+        #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
+        icon: FieldAction<ImageId>,
+        #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
+        banner: FieldAction<ImageId>,
     },
 }
 
@@ -79,10 +84,11 @@ impl Profile {
 
     pub fn update(
         id: ProfileId,
-        display_name: Option<ProfileDisplayName>,
-        summary: Option<ProfileSummary>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
+        display_name: FieldAction<ProfileDisplayName>,
+        summary: FieldAction<ProfileSummary>,
+        icon: FieldAction<ImageId>,
+        banner: FieldAction<ImageId>,
+        current_version: EventVersion<Profile>,
     ) -> CommandEnvelope<ProfileEvent, Profile> {
         let event = ProfileEvent::Updated {
             display_name,
@@ -90,7 +96,12 @@ impl Profile {
             icon,
             banner,
         };
-        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(KnownEventVersion::Prev(current_version)),
+        )
     }
 }
 
@@ -133,17 +144,25 @@ impl EventApplier for Profile {
                 banner,
             } => {
                 if let Some(profile) = entity {
-                    if let Some(display_name) = display_name {
-                        profile.display_name = Some(display_name);
+                    match display_name {
+                        FieldAction::Unchanged => {}
+                        FieldAction::Clear => profile.display_name = None,
+                        FieldAction::Set(v) => profile.display_name = Some(v),
                     }
-                    if let Some(summary) = summary {
-                        profile.summary = Some(summary);
+                    match summary {
+                        FieldAction::Unchanged => {}
+                        FieldAction::Clear => profile.summary = None,
+                        FieldAction::Set(v) => profile.summary = Some(v),
                     }
-                    if let Some(icon) = icon {
-                        profile.icon = Some(icon);
+                    match icon {
+                        FieldAction::Unchanged => {}
+                        FieldAction::Clear => profile.icon = None,
+                        FieldAction::Set(v) => profile.icon = Some(v),
                     }
-                    if let Some(banner) = banner {
-                        profile.banner = Some(banner);
+                    match banner {
+                        FieldAction::Unchanged => {}
+                        FieldAction::Clear => profile.banner = None,
+                        FieldAction::Set(v) => profile.banner = Some(v),
                     }
                     profile.version = event.version;
                 } else {
@@ -159,16 +178,17 @@ impl EventApplier for Profile {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        AccountId, EventEnvelope, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName,
-        ProfileId, ProfileSummary,
+        AccountId, EventEnvelope, EventVersion, FieldAction, ImageId, Nanoid, Profile,
+        ProfileDisplayName, ProfileId, ProfileSummary,
     };
     use crate::event::EventApplier;
-    use uuid::Uuid;
+    use crate::test_utils::ProfileBuilder;
 
     #[test]
     fn create_profile() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = ProfileId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let account_id = AccountId::default();
+        let id = ProfileId::new(crate::generate_id());
         let nano_id = Nanoid::default();
         let create_event = Profile::create(
             id.clone(),
@@ -182,7 +202,7 @@ mod test {
         let envelope = EventEnvelope::new(
             create_event.id().clone(),
             create_event.event().clone(),
-            EventVersion::new(Uuid::now_v7()),
+            EventVersion::default(),
         );
         let mut profile = None;
         Profile::apply(&mut profile, envelope).unwrap();
@@ -199,31 +219,31 @@ mod test {
 
     #[test]
     fn update_profile() {
-        let account_id = AccountId::new(Uuid::now_v7());
-        let id = ProfileId::new(Uuid::now_v7());
+        crate::ensure_generator_initialized();
+        let account_id = AccountId::default();
+        let id = ProfileId::new(crate::generate_id());
         let nano_id = Nanoid::default();
-        let profile = Profile::new(
-            id.clone(),
-            account_id.clone(),
-            None,
-            None,
-            None,
-            None,
-            EventVersion::new(Uuid::now_v7()),
-            nano_id.clone(),
-        );
+        let profile = ProfileBuilder::new()
+            .id(id.clone())
+            .account_id(account_id.clone())
+            .display_name(None::<String>)
+            .summary(None::<String>)
+            .nanoid(nano_id.clone())
+            .build();
         let display_name = ProfileDisplayName::new("display_name".to_string());
         let summary = ProfileSummary::new("summary".to_string());
-        let icon = ImageId::new(Uuid::now_v7());
-        let banner = ImageId::new(Uuid::now_v7());
+        let icon = ImageId::new(crate::generate_id());
+        let banner = ImageId::new(crate::generate_id());
+        let current_version = profile.version().clone();
         let update_event = Profile::update(
             id.clone(),
-            Some(display_name.clone()),
-            Some(summary.clone()),
-            Some(icon.clone()),
-            Some(banner.clone()),
+            FieldAction::Set(display_name.clone()),
+            FieldAction::Set(summary.clone()),
+            FieldAction::Set(icon.clone()),
+            FieldAction::Set(banner.clone()),
+            current_version,
         );
-        let version = EventVersion::new(Uuid::now_v7());
+        let version = EventVersion::default();
         let envelope = EventEnvelope::new(
             update_event.id().clone(),
             update_event.event().clone(),
@@ -241,5 +261,42 @@ mod test {
         assert_eq!(profile.banner().as_ref().unwrap(), &banner);
         assert_eq!(profile.version(), &version);
         assert_eq!(profile.nanoid(), &nano_id);
+    }
+
+    #[test]
+    fn clear_icon_and_banner() {
+        crate::ensure_generator_initialized();
+        let id = ProfileId::new(crate::generate_id());
+        let icon = ImageId::new(crate::generate_id());
+        let banner = ImageId::new(crate::generate_id());
+        let profile = ProfileBuilder::new()
+            .id(id.clone())
+            .display_name(None::<String>)
+            .summary(None::<String>)
+            .icon(Some(icon))
+            .banner(Some(banner))
+            .build();
+        let version = profile.version().clone();
+
+        // Clear both icon and banner with FieldAction::Clear
+        let update_event = Profile::update(
+            id,
+            FieldAction::Unchanged,
+            FieldAction::Unchanged,
+            FieldAction::Clear,
+            FieldAction::Clear,
+            version,
+        );
+        let new_version = EventVersion::default();
+        let envelope = EventEnvelope::new(
+            update_event.id().clone(),
+            update_event.event().clone(),
+            new_version,
+        );
+        let mut profile = Some(profile);
+        Profile::apply(&mut profile, envelope).unwrap();
+        let profile = profile.unwrap();
+        assert!(profile.icon().is_none());
+        assert!(profile.banner().is_none());
     }
 }
