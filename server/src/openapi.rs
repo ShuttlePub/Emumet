@@ -1,6 +1,7 @@
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+#[allow(dead_code)] // utoipa OpenApiマクロ内部で使用される
 struct SecurityAddon;
 
 impl Modify for SecurityAddon {
@@ -71,8 +72,10 @@ impl Modify for SecurityAddon {
         (name = "OAuth2", description = "OAuth2 Login/Consent Provider"),
     )
 )]
+#[allow(dead_code)] // utoipa OpenApiマクロ内部で使用される
 pub struct ApiDoc;
 
+#[cfg(test)]
 pub fn generate_openapi_json() -> String {
     ApiDoc::openapi()
         .to_pretty_json()

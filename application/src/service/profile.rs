@@ -139,7 +139,7 @@ pub trait GetProfileUseCase:
                         p.icon()
                             .as_ref()
                             .into_iter()
-                            .chain(p.banner().as_ref().into_iter())
+                            .chain(p.banner().as_ref())
                             .cloned()
                     })
                     .collect();

@@ -143,6 +143,7 @@ impl HydraAdminClient {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // JSONデシリアライズで全フィールドが必要
 pub struct LoginRequest {
     pub challenge: String,
     pub skip: bool,
@@ -154,6 +155,7 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // JSONデシリアライズで全フィールドが必要
 pub struct OAuth2Client {
     pub client_id: Option<String>,
     pub client_name: Option<String>,
@@ -170,6 +172,7 @@ pub struct AcceptLoginRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // JSONデシリアライズで全フィールドが必要
 pub struct ConsentRequest {
     pub challenge: String,
     pub skip: bool,

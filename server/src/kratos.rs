@@ -63,6 +63,7 @@ pub struct KratosSession {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)] // JSONデシリアライズで全フィールドが必要
 pub struct KratosIdentity {
     pub id: String,
     #[serde(default)]

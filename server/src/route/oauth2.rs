@@ -20,8 +20,7 @@ const REMEMBER_FOR_SECS: i64 = 3600;
     description = "Handle OAuth2 login flow. Verifies Kratos session and accepts Hydra login.",
     params(("login_challenge" = String, Query, description = "Hydra login challenge")),
     responses(
-        (status = 200, description = "Login result", body = OAuth2Response),
-        (status = 401, description = "Unauthorized (no valid Kratos session)"),
+        (status = 200, description = "Login result (redirect on success or reject)", body = OAuth2Response),
         (status = 502, description = "Bad gateway (Hydra/Kratos error)"),
     ),
     tag = "OAuth2",
@@ -71,7 +70,28 @@ pub(crate) async fn login(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let kratos_session = verify_kratos_session(kratos, cookie).await?;
+    let kratos_session = match verify_kratos_session(kratos, cookie).await {
+        Ok(session) => session,
+        Err(_) => {
+            let redirect = hydra
+                .reject_login(
+                    &login_challenge,
+                    &RejectRequest {
+                        error: "login_required".to_string(),
+                        error_description: Some("No valid Kratos session found.".to_string()),
+                    },
+                )
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to reject login at Hydra: {e}");
+                    StatusCode::BAD_GATEWAY
+                })?;
+
+            return Ok(Json(OAuth2Response::Redirect {
+                redirect_to: redirect.redirect_to,
+            }));
+        }
+    };
 
     // 4. Accept login with Kratos identity UUID as subject.
     let redirect = hydra
@@ -457,7 +477,7 @@ mod tests {
 
     #[test_with::env(DATABASE_URL)]
     #[tokio::test]
-    async fn login_no_cookie_returns_401() {
+    async fn login_no_cookie_rejects_and_redirects() {
         let hydra_mock = MockServer::start().await;
         let kratos_mock = MockServer::start().await;
 
@@ -476,6 +496,15 @@ mod tests {
             .mount(&hydra_mock)
             .await;
 
+        Mock::given(method("PUT"))
+            .and(path("/admin/oauth2/auth/requests/login/reject"))
+            .and(query_param("login_challenge", "challenge-3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "redirect_to": "http://example.com/login-rejected"
+            })))
+            .mount(&hydra_mock)
+            .await;
+
         let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
@@ -487,12 +516,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = response_json(resp).await;
+        assert_eq!(json["action"], "redirect");
+        assert_eq!(json["redirect_to"], "http://example.com/login-rejected");
     }
 
     #[test_with::env(DATABASE_URL)]
     #[tokio::test]
-    async fn login_invalid_kratos_session_returns_401() {
+    async fn login_invalid_kratos_session_rejects_and_redirects() {
         let hydra_mock = MockServer::start().await;
         let kratos_mock = MockServer::start().await;
 
@@ -517,6 +549,15 @@ mod tests {
             .mount(&kratos_mock)
             .await;
 
+        Mock::given(method("PUT"))
+            .and(path("/admin/oauth2/auth/requests/login/reject"))
+            .and(query_param("login_challenge", "challenge-4"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "redirect_to": "http://example.com/login-rejected"
+            })))
+            .mount(&hydra_mock)
+            .await;
+
         let app = build_app(&hydra_mock.uri(), &kratos_mock.uri()).await;
 
         let resp = app
@@ -529,7 +570,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = response_json(resp).await;
+        assert_eq!(json["action"], "redirect");
+        assert_eq!(json["redirect_to"], "http://example.com/login-rejected");
     }
 
     // -----------------------------------------------------------------------

@@ -65,6 +65,7 @@ pub enum OneOrMany {
 }
 
 impl OneOrMany {
+    #[cfg(test)]
     pub fn contains(&self, value: &str) -> bool {
         match self {
             OneOrMany::One(s) => s == value,
@@ -149,6 +150,7 @@ impl JwksCache {
 
     /// Construct a `JwksCache` with a pre-populated `JwkSet` (test helper).
     /// The refetch interval is set to zero so re-fetches are always eligible.
+    #[cfg(test)]
     pub fn new_with_jwks(issuer_url: String, jwks: JwkSet) -> Self {
         let past = Instant::now()
             .checked_sub(Duration::from_secs(1))
@@ -386,7 +388,7 @@ pub async fn resolve_auth_account_id(
 }
 
 /// Extract the raw Bearer token string from the `Authorization` header.
-fn extract_bearer_token<'a>(request: &'a Request<Body>) -> Result<&'a str, StatusCode> {
+fn extract_bearer_token(request: &Request<Body>) -> Result<&str, StatusCode> {
     let header_value = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)

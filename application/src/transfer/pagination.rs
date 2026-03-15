@@ -1,16 +1,11 @@
 use vodca::Nameln;
 
-#[derive(Debug, Nameln)]
+#[derive(Debug, Default, Nameln)]
 #[vodca(snake_case)]
 pub enum Direction {
+    #[default]
     NEXT,
     PREV,
-}
-
-impl Default for Direction {
-    fn default() -> Self {
-        Self::NEXT
-    }
 }
 
 impl TryFrom<String> for Direction {

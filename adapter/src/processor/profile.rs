@@ -23,6 +23,7 @@ pub trait DependOnProfileSignal: Send + Sync {
 pub trait ProfileCommandProcessor: Send + Sync + 'static {
     type Executor: Executor;
 
+    #[allow(clippy::too_many_arguments)]
     fn create(
         &self,
         executor: &mut Self::Executor,
@@ -34,6 +35,7 @@ pub trait ProfileCommandProcessor: Send + Sync + 'static {
         nano_id: Nanoid<Profile>,
     ) -> impl Future<Output = error_stack::Result<Profile, KernelError>> + Send;
 
+    #[allow(clippy::too_many_arguments)]
     fn update(
         &self,
         executor: &mut Self::Executor,
