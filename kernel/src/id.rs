@@ -48,12 +48,16 @@ pub fn extract_timestamp_ms(raw: i64) -> u64 {
     ts_offset + EMUMET_EPOCH_MS
 }
 
-/// Ensures the generator is initialized (idempotent, worker_id=0). Test-only.
+/// Ensures the generator is initialized with a PID-derived worker_id (idempotent). Test-only.
+///
+/// Each process gets a PID-derived worker_id (0-1023) to avoid Snowflake ID collisions
+/// when tests run in separate processes (e.g., cargo-nextest).
 #[cfg(any(test, feature = "test-utils"))]
 pub fn ensure_generator_initialized() {
     let _ = GENERATOR.get_or_init(|| {
+        let worker_id = std::process::id() as u64 % (MAX_WORKER_ID + 1);
         let clock = MonotonicClock::with_epoch(EMUMET_EPOCH);
-        AtomicSnowflakeGenerator::new(0, clock)
+        AtomicSnowflakeGenerator::new(worker_id, clock)
     });
 }
 

@@ -19,7 +19,6 @@ pub use self::profile::*;
 pub use self::remote_account::*;
 
 use crate::entity::{AccountName, AuthHostUrl, ImageUrl, RemoteAccountAcct, RemoteAccountUrl};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub const DEFAULT_ACCOUNT_NAME: &str = "alice";
 pub const DEFAULT_PRIVATE_KEY: &str =
@@ -34,10 +33,9 @@ pub const DEFAULT_CLIENT_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 pub const DEFAULT_IMAGE_HASH: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb924";
 pub const DEFAULT_BLUR_HASH: &str = "LEHV6nWB2yk8pyo0adR*.7kCMdnj";
 
-static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-fn next_unique() -> usize {
-    UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst)
+fn next_unique() -> i64 {
+    crate::ensure_generator_initialized();
+    crate::id::generate_id()
 }
 
 pub fn unique_account_name() -> AccountName {
