@@ -681,7 +681,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Login result",
+            "description": "Login result (redirect on success or reject)",
             "content": {
               "application/json": {
                 "schema": {
@@ -689,9 +689,6 @@
                 }
               }
             }
-          },
-          "401": {
-            "description": "Unauthorized (no valid Kratos session)"
           },
           "502": {
             "description": "Bad gateway (Hydra/Kratos error)"
