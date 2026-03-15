@@ -1,3 +1,4 @@
+use application::transfer::metadata::{CreateMetadataDto, UpdateMetadataDto};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -7,10 +8,31 @@ pub struct CreateMetadataRequest {
     pub content: String,
 }
 
+impl CreateMetadataRequest {
+    pub fn into_dto(self, account_nanoid: String) -> CreateMetadataDto {
+        CreateMetadataDto {
+            account_nanoid,
+            label: self.label,
+            content: self.content,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateMetadataRequest {
     pub label: String,
     pub content: String,
+}
+
+impl UpdateMetadataRequest {
+    pub fn into_dto(self, account_nanoid: String, metadata_nanoid: String) -> UpdateMetadataDto {
+        UpdateMetadataDto {
+            account_nanoid,
+            metadata_nanoid,
+            label: self.label,
+            content: self.content,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]

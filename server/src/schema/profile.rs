@@ -1,3 +1,4 @@
+use application::transfer::profile::{CreateProfileDto, UpdateProfileDto};
 use kernel::prelude::entity::FieldAction;
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -8,6 +9,18 @@ pub struct CreateProfileRequest {
     pub summary: Option<String>,
     pub icon_url: Option<String>,
     pub banner_url: Option<String>,
+}
+
+impl CreateProfileRequest {
+    pub fn into_dto(self, account_nanoid: String) -> CreateProfileDto {
+        CreateProfileDto {
+            account_nanoid,
+            display_name: self.display_name,
+            summary: self.summary,
+            icon_url: self.icon_url,
+            banner_url: self.banner_url,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -24,7 +37,23 @@ pub struct UpdateProfileRequest {
     pub banner_url: Option<Option<String>>,
 }
 
-pub fn into_field_action<T>(value: Option<Option<T>>) -> FieldAction<T> {
+impl UpdateProfileRequest {
+    pub fn into_dto(self, account_nanoid: String) -> UpdateProfileDto {
+        UpdateProfileDto {
+            account_nanoid,
+            display_name: self.display_name,
+            summary: self.summary,
+            icon_url: into_field_action(self.icon_url),
+            banner_url: into_field_action(self.banner_url),
+        }
+    }
+}
+
+// NOTE: This could be a From<Option<Option<T>>> impl on FieldAction in kernel,
+// but FieldAction is a domain type and Option<Option<T>> is a JSON deserialization
+// convention (absent/null/value). Keeping this conversion in the server layer
+// avoids leaking serialization concerns into the kernel.
+fn into_field_action<T>(value: Option<Option<T>>) -> FieldAction<T> {
     match value {
         None => FieldAction::Unchanged,
         Some(None) => FieldAction::Clear,

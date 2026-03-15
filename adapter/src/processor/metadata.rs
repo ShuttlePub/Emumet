@@ -17,6 +17,24 @@ pub trait DependOnMetadataSignal: Send + Sync {
     fn metadata_signal(&self) -> &Self::MetadataSignal;
 }
 
+// --- Param structs ---
+
+#[derive(Debug)]
+pub struct CreateMetadataParam {
+    pub account_id: AccountId,
+    pub label: MetadataLabel,
+    pub content: MetadataContent,
+    pub nano_id: Nanoid<Metadata>,
+}
+
+#[derive(Debug)]
+pub struct UpdateMetadataParam {
+    pub metadata_id: MetadataId,
+    pub label: MetadataLabel,
+    pub content: MetadataContent,
+    pub current_version: EventVersion<Metadata>,
+}
+
 // --- MetadataCommandProcessor ---
 
 pub trait MetadataCommandProcessor: Send + Sync + 'static {
@@ -25,19 +43,13 @@ pub trait MetadataCommandProcessor: Send + Sync + 'static {
     fn create(
         &self,
         executor: &mut Self::Executor,
-        account_id: AccountId,
-        label: MetadataLabel,
-        content: MetadataContent,
-        nano_id: Nanoid<Metadata>,
+        param: CreateMetadataParam,
     ) -> impl Future<Output = error_stack::Result<Metadata, KernelError>> + Send;
 
     fn update(
         &self,
         executor: &mut Self::Executor,
-        metadata_id: MetadataId,
-        label: MetadataLabel,
-        content: MetadataContent,
-        current_version: EventVersion<Metadata>,
+        param: UpdateMetadataParam,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn delete(
@@ -58,13 +70,16 @@ where
     async fn create(
         &self,
         executor: &mut Self::Executor,
-        account_id: AccountId,
-        label: MetadataLabel,
-        content: MetadataContent,
-        nano_id: Nanoid<Metadata>,
+        param: CreateMetadataParam,
     ) -> error_stack::Result<Metadata, KernelError> {
         let metadata_id = MetadataId::new(kernel::generate_id());
-        let command = Metadata::create(metadata_id.clone(), account_id, label, content, nano_id);
+        let command = Metadata::create(
+            metadata_id.clone(),
+            param.account_id,
+            param.label,
+            param.content,
+            param.nano_id,
+        );
 
         let event_envelope = self
             .metadata_event_store()
@@ -88,18 +103,20 @@ where
     async fn update(
         &self,
         executor: &mut Self::Executor,
-        metadata_id: MetadataId,
-        label: MetadataLabel,
-        content: MetadataContent,
-        current_version: EventVersion<Metadata>,
+        param: UpdateMetadataParam,
     ) -> error_stack::Result<(), KernelError> {
-        let command = Metadata::update(metadata_id.clone(), label, content, current_version);
+        let command = Metadata::update(
+            param.metadata_id.clone(),
+            param.label,
+            param.content,
+            param.current_version,
+        );
 
         self.metadata_event_store()
             .persist_and_transform(executor, command)
             .await?;
 
-        if let Err(e) = self.metadata_signal().emit(metadata_id).await {
+        if let Err(e) = self.metadata_signal().emit(param.metadata_id).await {
             tracing::warn!("Failed to emit metadata signal: {:?}", e);
         }
 

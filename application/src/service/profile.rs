@@ -1,9 +1,9 @@
 use crate::permission::{account_edit, account_view, check_permission};
-use crate::transfer::profile::ProfileDto;
+use crate::transfer::profile::{CreateProfileDto, ProfileDto, UpdateProfileDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use adapter::processor::profile::{
-    DependOnProfileCommandProcessor, DependOnProfileQueryProcessor, ProfileCommandProcessor,
-    ProfileQueryProcessor,
+    CreateProfileParam, DependOnProfileCommandProcessor, DependOnProfileQueryProcessor,
+    ProfileCommandProcessor, ProfileQueryProcessor, UpdateProfileParam,
 };
 use error_stack::Report;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
@@ -208,16 +208,12 @@ pub trait CreateProfileUseCase:
     fn create_profile(
         &self,
         auth_account_id: &AuthAccountId,
-        account_nanoid: String,
-        display_name: Option<String>,
-        summary: Option<String>,
-        icon_url: Option<String>,
-        banner_url: Option<String>,
+        dto: CreateProfileDto,
     ) -> impl Future<Output = error_stack::Result<ProfileDto, KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(account_nanoid);
+            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut transaction, &nanoid)
@@ -240,22 +236,23 @@ pub trait CreateProfileUseCase:
                     .attach_printable("Profile already exists for this account"));
             }
 
-            let icon = resolve_image_id(self, &mut transaction, icon_url.as_deref()).await?;
-            let banner = resolve_image_id(self, &mut transaction, banner_url.as_deref()).await?;
+            let icon = resolve_image_id(self, &mut transaction, dto.icon_url.as_deref()).await?;
+            let banner =
+                resolve_image_id(self, &mut transaction, dto.banner_url.as_deref()).await?;
 
             let account_nanoid_str = account.nanoid().as_ref().to_string();
-            let account_id = account.id().clone();
-            let profile_nanoid = Nanoid::<Profile>::default();
             let profile = self
                 .profile_command_processor()
                 .create(
                     &mut transaction,
-                    account_id,
-                    display_name.map(ProfileDisplayName::new),
-                    summary.map(ProfileSummary::new),
-                    icon,
-                    banner,
-                    profile_nanoid,
+                    CreateProfileParam {
+                        account_id: account.id().clone(),
+                        display_name: dto.display_name.map(ProfileDisplayName::new),
+                        summary: dto.summary.map(ProfileSummary::new),
+                        icon,
+                        banner,
+                        nano_id: Nanoid::<Profile>::default(),
+                    },
                 )
                 .await?;
 
@@ -286,7 +283,7 @@ impl<T> CreateProfileUseCase for T where
 {
 }
 
-pub trait EditProfileUseCase:
+pub trait UpdateProfileUseCase:
     'static
     + Sync
     + Send
@@ -296,19 +293,15 @@ pub trait EditProfileUseCase:
     + DependOnImageRepository
     + DependOnPermissionChecker
 {
-    fn edit_profile(
+    fn update_profile(
         &self,
         auth_account_id: &AuthAccountId,
-        account_nanoid: String,
-        display_name: Option<String>,
-        summary: Option<String>,
-        icon_url: FieldAction<String>,
-        banner_url: FieldAction<String>,
+        dto: UpdateProfileDto,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(account_nanoid);
+            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut transaction, &nanoid)
@@ -331,20 +324,21 @@ pub trait EditProfileUseCase:
                         .attach_printable("Profile not found for this account")
                 })?;
 
-            let icon = resolve_field_action_image_id(self, &mut transaction, &icon_url).await?;
-            let banner = resolve_field_action_image_id(self, &mut transaction, &banner_url).await?;
+            let icon = resolve_field_action_image_id(self, &mut transaction, &dto.icon_url).await?;
+            let banner =
+                resolve_field_action_image_id(self, &mut transaction, &dto.banner_url).await?;
 
-            let profile_id = profile.id().clone();
-            let current_version = profile.version().clone();
             self.profile_command_processor()
                 .update(
                     &mut transaction,
-                    profile_id,
-                    display_name.map(ProfileDisplayName::new),
-                    summary.map(ProfileSummary::new),
-                    icon,
-                    banner,
-                    current_version,
+                    UpdateProfileParam {
+                        profile_id: profile.id().clone(),
+                        display_name: dto.display_name.map(ProfileDisplayName::new),
+                        summary: dto.summary.map(ProfileSummary::new),
+                        icon,
+                        banner,
+                        current_version: profile.version().clone(),
+                    },
                 )
                 .await?;
 
@@ -353,7 +347,7 @@ pub trait EditProfileUseCase:
     }
 }
 
-impl<T> EditProfileUseCase for T where
+impl<T> UpdateProfileUseCase for T where
     T: 'static
         + Sync
         + Send

@@ -2,6 +2,18 @@ use kernel::prelude::entity::{Account, AccountStatus};
 use time::OffsetDateTime;
 
 #[derive(Debug)]
+pub struct CreateAccountDto {
+    pub name: String,
+    pub is_bot: bool,
+}
+
+#[derive(Debug)]
+pub struct UpdateAccountDto {
+    pub account_nanoid: String,
+    pub is_bot: bool,
+}
+
+#[derive(Debug)]
 pub struct AccountDto {
     pub nanoid: String,
     pub name: String,

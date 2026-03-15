@@ -1,9 +1,9 @@
 use crate::permission::{account_edit, account_view, check_permission};
-use crate::transfer::metadata::MetadataDto;
+use crate::transfer::metadata::{CreateMetadataDto, MetadataDto, UpdateMetadataDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use adapter::processor::metadata::{
-    DependOnMetadataCommandProcessor, DependOnMetadataQueryProcessor, MetadataCommandProcessor,
-    MetadataQueryProcessor,
+    CreateMetadataParam, DependOnMetadataCommandProcessor, DependOnMetadataQueryProcessor,
+    MetadataCommandProcessor, MetadataQueryProcessor, UpdateMetadataParam,
 };
 use error_stack::Report;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
@@ -168,14 +168,12 @@ pub trait CreateMetadataUseCase:
     fn create_metadata(
         &self,
         auth_account_id: &AuthAccountId,
-        account_nanoid: String,
-        label: String,
-        content: String,
+        dto: CreateMetadataDto,
     ) -> impl Future<Output = error_stack::Result<MetadataDto, KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(account_nanoid);
+            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut transaction, &nanoid)
@@ -196,10 +194,12 @@ pub trait CreateMetadataUseCase:
                 .metadata_command_processor()
                 .create(
                     &mut transaction,
-                    account_id,
-                    MetadataLabel::new(label),
-                    MetadataContent::new(content),
-                    metadata_nanoid,
+                    CreateMetadataParam {
+                        account_id,
+                        label: MetadataLabel::new(dto.label),
+                        content: MetadataContent::new(dto.content),
+                        nano_id: metadata_nanoid,
+                    },
                 )
                 .await?;
 
@@ -218,7 +218,7 @@ impl<T> CreateMetadataUseCase for T where
 {
 }
 
-pub trait EditMetadataUseCase:
+pub trait UpdateMetadataUseCase:
     'static
     + Sync
     + Send
@@ -227,18 +227,15 @@ pub trait EditMetadataUseCase:
     + DependOnAccountQueryProcessor
     + DependOnPermissionChecker
 {
-    fn edit_metadata(
+    fn update_metadata(
         &self,
         auth_account_id: &AuthAccountId,
-        account_nanoid: String,
-        metadata_nanoid: String,
-        label: String,
-        content: String,
+        dto: UpdateMetadataDto,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(account_nanoid);
+            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut transaction, &nanoid)
@@ -259,11 +256,11 @@ pub trait EditMetadataUseCase:
 
             let metadata = metadata_list
                 .into_iter()
-                .find(|m| m.nanoid().as_ref() == &metadata_nanoid)
+                .find(|m| m.nanoid().as_ref() == &dto.metadata_nanoid)
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
                         "Metadata not found with nanoid: {}",
-                        metadata_nanoid
+                        dto.metadata_nanoid
                     ))
                 })?;
 
@@ -272,10 +269,12 @@ pub trait EditMetadataUseCase:
             self.metadata_command_processor()
                 .update(
                     &mut transaction,
-                    metadata_id,
-                    MetadataLabel::new(label),
-                    MetadataContent::new(content),
-                    current_version,
+                    UpdateMetadataParam {
+                        metadata_id,
+                        label: MetadataLabel::new(dto.label),
+                        content: MetadataContent::new(dto.content),
+                        current_version,
+                    },
                 )
                 .await?;
 
@@ -284,7 +283,7 @@ pub trait EditMetadataUseCase:
     }
 }
 
-impl<T> EditMetadataUseCase for T where
+impl<T> UpdateMetadataUseCase for T where
     T: 'static
         + Sync
         + Send

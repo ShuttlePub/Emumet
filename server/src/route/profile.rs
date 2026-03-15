@@ -3,10 +3,11 @@ use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use crate::route::parse_comma_ids;
 use crate::schema::profile::{
-    into_field_action, CreateProfileRequest, GetProfilesQuery, ProfileResponse,
-    UpdateProfileRequest,
+    CreateProfileRequest, GetProfilesQuery, ProfileResponse, UpdateProfileRequest,
 };
-use application::service::profile::{CreateProfileUseCase, EditProfileUseCase, GetProfileUseCase};
+use application::service::profile::{
+    CreateProfileUseCase, GetProfileUseCase, UpdateProfileUseCase,
+};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -84,14 +85,7 @@ pub(crate) async fn create_profile(
         .map_err(ErrorStatus::from)?;
 
     let profile = module
-        .create_profile(
-            &auth_account_id,
-            account_id,
-            body.display_name,
-            body.summary,
-            body.icon_url,
-            body.banner_url,
-        )
+        .create_profile(&auth_account_id, body.into_dto(account_id))
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -131,14 +125,7 @@ pub(crate) async fn update_profile(
         .map_err(ErrorStatus::from)?;
 
     module
-        .edit_profile(
-            &auth_account_id,
-            account_id,
-            body.display_name,
-            body.summary,
-            into_field_action(body.icon_url),
-            into_field_action(body.banner_url),
-        )
+        .update_profile(&auth_account_id, body.into_dto(account_id))
         .await
         .map_err(ErrorStatus::from)?;
 

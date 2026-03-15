@@ -127,9 +127,9 @@ Query Flow:
 - `PostgresMetadataReadModel` → `metadatas` table
 
 **application** provides use case services and event appliers:
-- `GetAccountUseCase` / `CreateAccountUseCase` / `EditAccountUseCase` / `DeleteAccountUseCase` — Account CRUD orchestration via CommandProcessor/QueryProcessor
-- `GetProfileUseCase` / `CreateProfileUseCase` / `EditProfileUseCase` / `DeleteProfileUseCase` — Profile CRUD
-- `GetMetadataUseCase` / `CreateMetadataUseCase` / `EditMetadataUseCase` / `DeleteMetadataUseCase` — Metadata CRUD
+- `GetAccountUseCase` / `CreateAccountUseCase` / `UpdateAccountUseCase` / `DeactivateAccountUseCase` / `SuspendAccountUseCase` / `UnsuspendAccountUseCase` / `BanAccountUseCase` — Account CRUD + moderation orchestration via CommandProcessor/QueryProcessor
+- `GetProfileUseCase` / `CreateProfileUseCase` / `UpdateProfileUseCase` — Profile CRUD
+- `GetMetadataUseCase` / `CreateMetadataUseCase` / `UpdateMetadataUseCase` / `DeleteMetadataUseCase` — Metadata CRUD
 - `UpdateAuthAccount` / `UpdateProfile` / `UpdateMetadata` — event appliers that replay events from EventStore, update ReadModel projections
 
 #### Repository entities (Follow, RemoteAccount, Image, AuthHost)

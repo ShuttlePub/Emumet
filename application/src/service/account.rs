@@ -1,12 +1,12 @@
 use crate::permission::{
     account_deactivate, account_edit, account_view, check_permission, instance_moderate,
 };
-use crate::transfer::account::AccountDto;
+use crate::transfer::account::{AccountDto, CreateAccountDto, UpdateAccountDto};
 use crate::transfer::pagination::{apply_pagination, Pagination};
 use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
 use adapter::processor::account::{
-    AccountCommandProcessor, AccountQueryProcessor, DependOnAccountCommandProcessor,
-    DependOnAccountQueryProcessor,
+    AccountCommandProcessor, AccountQueryProcessor, CreateAccountParam,
+    DependOnAccountCommandProcessor, DependOnAccountQueryProcessor, UpdateAccountParam,
 };
 use error_stack::Report;
 use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider};
@@ -103,8 +103,7 @@ pub trait CreateAccountUseCase:
     fn create_account(
         &self,
         auth_account_id: AuthAccountId,
-        name: String,
-        is_bot: bool,
+        dto: CreateAccountDto,
     ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
@@ -121,18 +120,20 @@ pub trait CreateAccountUseCase:
 
             let private_key = AccountPrivateKey::new(encrypted_private_key_json);
             let public_key = AccountPublicKey::new(key_pair.public_key_pem);
-            let account_name = AccountName::new(name);
-            let account_is_bot = AccountIsBot::new(is_bot);
+            let account_name = AccountName::new(dto.name);
+            let account_is_bot = AccountIsBot::new(dto.is_bot);
 
             let account = self
                 .account_command_processor()
                 .create(
                     &mut transaction,
-                    account_name,
-                    private_key,
-                    public_key,
-                    account_is_bot,
-                    auth_account_id.clone(),
+                    CreateAccountParam {
+                        name: account_name,
+                        private_key,
+                        public_key,
+                        is_bot: account_is_bot,
+                        auth_account_id: auth_account_id.clone(),
+                    },
                 )
                 .await?;
 
@@ -160,7 +161,7 @@ impl<T> CreateAccountUseCase for T where
 {
 }
 
-pub trait EditAccountUseCase:
+pub trait UpdateAccountUseCase:
     'static
     + Sync
     + Send
@@ -168,16 +169,15 @@ pub trait EditAccountUseCase:
     + DependOnAccountQueryProcessor
     + DependOnPermissionChecker
 {
-    fn edit_account(
+    fn update_account(
         &self,
         auth_account_id: &AuthAccountId,
-        account_id: String,
-        is_bot: bool,
+        dto: UpdateAccountDto,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
             let mut transaction = self.database_connection().begin_transaction().await?;
 
-            let nanoid = Nanoid::<Account>::new(account_id);
+            let nanoid = Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut transaction, &nanoid)
@@ -191,14 +191,14 @@ pub trait EditAccountUseCase:
 
             check_permission(self, auth_account_id, &account_edit(account.id())).await?;
 
-            let account_id = account.id().clone();
-            let current_version = account.version().clone();
             self.account_command_processor()
                 .update(
                     &mut transaction,
-                    account_id,
-                    AccountIsBot::new(is_bot),
-                    current_version,
+                    UpdateAccountParam {
+                        account_id: account.id().clone(),
+                        is_bot: AccountIsBot::new(dto.is_bot),
+                        current_version: account.version().clone(),
+                    },
                 )
                 .await?;
 
@@ -207,7 +207,7 @@ pub trait EditAccountUseCase:
     }
 }
 
-impl<T> EditAccountUseCase for T where
+impl<T> UpdateAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
         + DependOnAccountQueryProcessor

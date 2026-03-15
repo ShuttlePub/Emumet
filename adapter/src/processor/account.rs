@@ -12,6 +12,22 @@ use kernel::KernelError;
 use std::future::Future;
 use time::OffsetDateTime;
 
+#[derive(Debug)]
+pub struct CreateAccountParam {
+    pub name: AccountName,
+    pub private_key: AccountPrivateKey,
+    pub public_key: AccountPublicKey,
+    pub is_bot: AccountIsBot,
+    pub auth_account_id: AuthAccountId,
+}
+
+#[derive(Debug)]
+pub struct UpdateAccountParam {
+    pub account_id: AccountId,
+    pub is_bot: AccountIsBot,
+    pub current_version: kernel::prelude::entity::EventVersion<Account>,
+}
+
 // --- Signal DI trait (adapter-specific) ---
 
 pub trait DependOnAccountSignal: Send + Sync {
@@ -27,19 +43,13 @@ pub trait AccountCommandProcessor: Send + Sync + 'static {
     fn create(
         &self,
         executor: &mut Self::Executor,
-        name: AccountName,
-        private_key: AccountPrivateKey,
-        public_key: AccountPublicKey,
-        is_bot: AccountIsBot,
-        auth_account_id: AuthAccountId,
+        param: CreateAccountParam,
     ) -> impl Future<Output = error_stack::Result<Account, KernelError>> + Send;
 
     fn update(
         &self,
         executor: &mut Self::Executor,
-        account_id: AccountId,
-        is_bot: AccountIsBot,
-        current_version: kernel::prelude::entity::EventVersion<Account>,
+        param: UpdateAccountParam,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn deactivate(
@@ -84,12 +94,15 @@ where
     async fn create(
         &self,
         executor: &mut Self::Executor,
-        name: AccountName,
-        private_key: AccountPrivateKey,
-        public_key: AccountPublicKey,
-        is_bot: AccountIsBot,
-        auth_account_id: AuthAccountId,
+        param: CreateAccountParam,
     ) -> error_stack::Result<Account, KernelError> {
+        let CreateAccountParam {
+            name,
+            private_key,
+            public_key,
+            is_bot,
+            auth_account_id,
+        } = param;
         let account_id = AccountId::default();
         let nanoid = Nanoid::<Account>::default();
         let command = Account::create(
@@ -124,17 +137,19 @@ where
     async fn update(
         &self,
         executor: &mut Self::Executor,
-        account_id: AccountId,
-        is_bot: AccountIsBot,
-        current_version: kernel::prelude::entity::EventVersion<Account>,
+        param: UpdateAccountParam,
     ) -> error_stack::Result<(), KernelError> {
-        let command = Account::update(account_id.clone(), is_bot, current_version);
+        let command = Account::update(
+            param.account_id.clone(),
+            param.is_bot,
+            param.current_version,
+        );
 
         self.account_event_store()
             .persist_and_transform(executor, command)
             .await?;
 
-        if let Err(e) = self.account_signal().emit(account_id).await {
+        if let Err(e) = self.account_signal().emit(param.account_id).await {
             tracing::warn!("Failed to emit account signal: {:?}", e);
         }
 

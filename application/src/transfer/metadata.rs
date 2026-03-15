@@ -1,6 +1,21 @@
 use kernel::prelude::entity::Metadata;
 
 #[derive(Debug)]
+pub struct CreateMetadataDto {
+    pub account_nanoid: String,
+    pub label: String,
+    pub content: String,
+}
+
+#[derive(Debug)]
+pub struct UpdateMetadataDto {
+    pub account_nanoid: String,
+    pub metadata_nanoid: String,
+    pub label: String,
+    pub content: String,
+}
+
+#[derive(Debug)]
 pub struct MetadataDto {
     pub account_nanoid: String,
     pub nanoid: String,

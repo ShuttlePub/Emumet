@@ -18,33 +18,43 @@ pub trait DependOnProfileSignal: Send + Sync {
     fn profile_signal(&self) -> &Self::ProfileSignal;
 }
 
+// --- Param structs ---
+
+#[derive(Debug)]
+pub struct CreateProfileParam {
+    pub account_id: AccountId,
+    pub display_name: Option<ProfileDisplayName>,
+    pub summary: Option<ProfileSummary>,
+    pub icon: Option<ImageId>,
+    pub banner: Option<ImageId>,
+    pub nano_id: Nanoid<Profile>,
+}
+
+#[derive(Debug)]
+pub struct UpdateProfileParam {
+    pub profile_id: ProfileId,
+    pub display_name: Option<ProfileDisplayName>,
+    pub summary: Option<ProfileSummary>,
+    pub icon: FieldAction<ImageId>,
+    pub banner: FieldAction<ImageId>,
+    pub current_version: EventVersion<Profile>,
+}
+
 // --- ProfileCommandProcessor ---
 
 pub trait ProfileCommandProcessor: Send + Sync + 'static {
     type Executor: Executor;
 
-    #[allow(clippy::too_many_arguments)]
     fn create(
         &self,
         executor: &mut Self::Executor,
-        account_id: AccountId,
-        display_name: Option<ProfileDisplayName>,
-        summary: Option<ProfileSummary>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
-        nano_id: Nanoid<Profile>,
+        param: CreateProfileParam,
     ) -> impl Future<Output = error_stack::Result<Profile, KernelError>> + Send;
 
-    #[allow(clippy::too_many_arguments)]
     fn update(
         &self,
         executor: &mut Self::Executor,
-        profile_id: ProfileId,
-        display_name: Option<ProfileDisplayName>,
-        summary: Option<ProfileSummary>,
-        icon: FieldAction<ImageId>,
-        banner: FieldAction<ImageId>,
-        current_version: EventVersion<Profile>,
+        param: UpdateProfileParam,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
@@ -58,22 +68,17 @@ where
     async fn create(
         &self,
         executor: &mut Self::Executor,
-        account_id: AccountId,
-        display_name: Option<ProfileDisplayName>,
-        summary: Option<ProfileSummary>,
-        icon: Option<ImageId>,
-        banner: Option<ImageId>,
-        nano_id: Nanoid<Profile>,
+        param: CreateProfileParam,
     ) -> error_stack::Result<Profile, KernelError> {
         let profile_id = ProfileId::new(kernel::generate_id());
         let command = Profile::create(
             profile_id.clone(),
-            account_id,
-            display_name,
-            summary,
-            icon,
-            banner,
-            nano_id,
+            param.account_id,
+            param.display_name,
+            param.summary,
+            param.icon,
+            param.banner,
+            param.nano_id,
         );
 
         let event_envelope = self
@@ -98,27 +103,22 @@ where
     async fn update(
         &self,
         executor: &mut Self::Executor,
-        profile_id: ProfileId,
-        display_name: Option<ProfileDisplayName>,
-        summary: Option<ProfileSummary>,
-        icon: FieldAction<ImageId>,
-        banner: FieldAction<ImageId>,
-        current_version: EventVersion<Profile>,
+        param: UpdateProfileParam,
     ) -> error_stack::Result<(), KernelError> {
         let command = Profile::update(
-            profile_id.clone(),
-            display_name,
-            summary,
-            icon,
-            banner,
-            current_version,
+            param.profile_id.clone(),
+            param.display_name,
+            param.summary,
+            param.icon,
+            param.banner,
+            param.current_version,
         );
 
         self.profile_event_store()
             .persist_and_transform(executor, command)
             .await?;
 
-        if let Err(e) = self.profile_signal().emit(profile_id).await {
+        if let Err(e) = self.profile_signal().emit(param.profile_id).await {
             tracing::warn!("Failed to emit profile signal: {:?}", e);
         }
 

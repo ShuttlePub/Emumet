@@ -7,8 +7,8 @@ use crate::schema::account::{
     CreateAccountRequest, SuspendAccountRequest, UpdateAccountRequest,
 };
 use application::service::account::{
-    BanAccountUseCase, CreateAccountUseCase, DeactivateAccountUseCase, EditAccountUseCase,
-    GetAccountUseCase, SuspendAccountUseCase, UnsuspendAccountUseCase,
+    BanAccountUseCase, CreateAccountUseCase, DeactivateAccountUseCase, GetAccountUseCase,
+    SuspendAccountUseCase, UnsuspendAccountUseCase, UpdateAccountUseCase,
 };
 use application::transfer::pagination::Pagination;
 use axum::extract::{Path, Query, State};
@@ -119,7 +119,7 @@ pub(crate) async fn create_account(
         .map_err(ErrorStatus::from)?;
 
     let account = module
-        .create_account(auth_account_id, request.name, request.is_bot)
+        .create_account(auth_account_id, request.into_dto())
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -159,7 +159,7 @@ pub(crate) async fn update_account_by_id(
         .map_err(ErrorStatus::from)?;
 
     module
-        .edit_account(&auth_account_id, id, request.is_bot)
+        .update_account(&auth_account_id, request.into_dto(id))
         .await
         .map_err(ErrorStatus::from)?;
 

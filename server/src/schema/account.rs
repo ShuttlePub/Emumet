@@ -1,4 +1,4 @@
-use application::transfer::account::ModerationDto;
+use application::transfer::account::{CreateAccountDto, ModerationDto, UpdateAccountDto};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::ToSchema;
@@ -17,9 +17,27 @@ pub struct CreateAccountRequest {
     pub is_bot: bool,
 }
 
+impl CreateAccountRequest {
+    pub fn into_dto(self) -> CreateAccountDto {
+        CreateAccountDto {
+            name: self.name,
+            is_bot: self.is_bot,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateAccountRequest {
     pub is_bot: bool,
+}
+
+impl UpdateAccountRequest {
+    pub fn into_dto(self, account_nanoid: String) -> UpdateAccountDto {
+        UpdateAccountDto {
+            account_nanoid,
+            is_bot: self.is_bot,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

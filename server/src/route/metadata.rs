@@ -6,7 +6,7 @@ use crate::schema::metadata::{
     CreateMetadataRequest, GetMetadataQuery, MetadataResponse, UpdateMetadataRequest,
 };
 use application::service::metadata::{
-    CreateMetadataUseCase, DeleteMetadataUseCase, EditMetadataUseCase, GetMetadataUseCase,
+    CreateMetadataUseCase, DeleteMetadataUseCase, GetMetadataUseCase, UpdateMetadataUseCase,
 };
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -88,7 +88,7 @@ pub(crate) async fn create_metadata(
         .map_err(ErrorStatus::from)?;
 
     let metadata = module
-        .create_metadata(&auth_account_id, account_id, body.label, body.content)
+        .create_metadata(&auth_account_id, body.into_dto(account_id))
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -138,13 +138,7 @@ pub(crate) async fn update_metadata(
         .map_err(ErrorStatus::from)?;
 
     module
-        .edit_metadata(
-            &auth_account_id,
-            account_id,
-            metadata_id,
-            body.label,
-            body.content,
-        )
+        .update_metadata(&auth_account_id, body.into_dto(account_id, metadata_id))
         .await
         .map_err(ErrorStatus::from)?;
 
