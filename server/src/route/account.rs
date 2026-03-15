@@ -111,6 +111,13 @@ pub(crate) async fn create_account(
         )));
     }
 
+    if request.name.len() > 100 {
+        return Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            "Account name must not exceed 100 characters".to_string(),
+        )));
+    }
+
     let auth_account_id = resolve_auth_account_id(&module, auth_info)
         .await
         .map_err(ErrorStatus::from)?;

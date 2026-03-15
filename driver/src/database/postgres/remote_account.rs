@@ -1,5 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
+use error_stack::Report;
 use kernel::interfaces::repository::{DependOnRemoteAccountRepository, RemoteAccountRepository};
 use kernel::prelude::entity::{
     ImageId, RemoteAccount, RemoteAccountAcct, RemoteAccountId, RemoteAccountUrl,
@@ -123,7 +124,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
         account: &RemoteAccount,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             // language=postgresql
             r#"
             UPDATE remote_accounts
@@ -138,6 +139,10 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target remote account not found for update"));
+        }
         Ok(())
     }
 
@@ -147,7 +152,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
         account_id: &RemoteAccountId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             // language=postgresql
             r#"
             DELETE FROM remote_accounts
@@ -158,6 +163,10 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target remote account not found for delete"));
+        }
         Ok(())
     }
 }

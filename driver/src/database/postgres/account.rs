@@ -1,5 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
+use error_stack::Report;
 use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
 use kernel::prelude::entity::{
     Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
@@ -27,14 +28,18 @@ struct AccountRow {
     ban_reason: Option<String>,
 }
 
-impl From<AccountRow> for Account {
-    fn from(value: AccountRow) -> Self {
-        let status = if let (Some(banned_at), Some(reason)) = (value.banned_at, value.ban_reason) {
-            AccountStatus::Banned { reason, banned_at }
-        } else if let (Some(suspended_at), Some(reason)) =
-            (value.suspended_at, value.suspend_reason.clone())
-        {
-            // If suspend has expired, treat as Active
+/// Convert an AccountRow into an Account.
+///
+/// When `check_suspend_expiry` is `false` (used for filtered queries where SQL already
+/// excludes expired suspensions), suspended_at is trusted as-is.
+/// When `true` (used for unfiltered queries), Rust-side expiry check is performed.
+fn account_from_row(value: AccountRow, check_suspend_expiry: bool) -> Account {
+    let status = if let (Some(banned_at), Some(reason)) = (value.banned_at, value.ban_reason) {
+        AccountStatus::Banned { reason, banned_at }
+    } else if let (Some(suspended_at), Some(reason)) =
+        (value.suspended_at, value.suspend_reason.clone())
+    {
+        if check_suspend_expiry {
             if let Some(expires_at) = value.suspend_expires_at {
                 if expires_at <= OffsetDateTime::now_utc() {
                     AccountStatus::Active
@@ -53,21 +58,33 @@ impl From<AccountRow> for Account {
                 }
             }
         } else {
-            AccountStatus::Active
-        };
+            AccountStatus::Suspended {
+                reason,
+                suspended_at,
+                expires_at: value.suspend_expires_at,
+            }
+        }
+    } else {
+        AccountStatus::Active
+    };
 
-        Account::new(
-            AccountId::new(value.id),
-            AccountName::new(value.name),
-            AccountPrivateKey::new(value.private_key),
-            AccountPublicKey::new(value.public_key),
-            AccountIsBot::new(value.is_bot),
-            status,
-            value.deleted_at.map(DeletedAt::new),
-            EventVersion::new(value.version),
-            Nanoid::new(value.nanoid),
-            CreatedAt::new(value.created_at),
-        )
+    Account::new(
+        AccountId::new(value.id),
+        AccountName::new(value.name),
+        AccountPrivateKey::new(value.private_key),
+        AccountPublicKey::new(value.public_key),
+        AccountIsBot::new(value.is_bot),
+        status,
+        value.deleted_at.map(DeletedAt::new),
+        EventVersion::new(value.version),
+        Nanoid::new(value.nanoid),
+        CreatedAt::new(value.created_at),
+    )
+}
+
+impl From<AccountRow> for Account {
+    fn from(value: AccountRow) -> Self {
+        account_from_row(value, false)
     }
 }
 
@@ -122,7 +139,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|rows| rows.into_iter().map(Account::from).collect())
+        .map(|rows| rows.into_iter().map(|row| account_from_row(row, true)).collect())
     }
 
     async fn find_by_name(
@@ -249,7 +266,7 @@ impl AccountReadModel for PostgresAccountReadModel {
                     (None, None, None, Some(*banned_at), Some(reason.clone()))
                 }
             };
-        sqlx::query(
+        let result = sqlx::query(
             //language=postgresql
             r#"
             UPDATE accounts
@@ -274,6 +291,10 @@ impl AccountReadModel for PostgresAccountReadModel {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target account not found for update"));
+        }
         Ok(())
     }
 
@@ -283,7 +304,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         account_id: &AccountId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             //language=postgresql
             r#"
             UPDATE accounts
@@ -295,6 +316,10 @@ impl AccountReadModel for PostgresAccountReadModel {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target account not found for deactivate"));
+        }
         Ok(())
     }
 
@@ -357,7 +382,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         .fetch_optional(con)
         .await
         .convert_error()
-        .map(|option| option.map(Account::from))
+        .map(|option| option.map(|row| account_from_row(row, true)))
     }
 
     async fn find_by_nanoid_unfiltered(
@@ -379,7 +404,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         .fetch_optional(con)
         .await
         .convert_error()
-        .map(|option| option.map(Account::from))
+        .map(|option| option.map(|row| account_from_row(row, true)))
     }
 
     async fn find_by_nanoids_unfiltered(
@@ -402,7 +427,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|rows| rows.into_iter().map(Account::from).collect())
+        .map(|rows| rows.into_iter().map(|row| account_from_row(row, true)).collect())
     }
 
     async fn suspend(

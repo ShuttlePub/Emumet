@@ -94,48 +94,6 @@ impl AuthAccountReadModel for PostgresAuthAccountReadModel {
         .convert_error()?;
         Ok(())
     }
-
-    async fn update(
-        &self,
-        executor: &mut Self::Executor,
-        auth_account: &AuthAccount,
-    ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = executor;
-        sqlx::query(
-            //language=postgresql
-            r#"
-            UPDATE auth_accounts SET host_id = $2, client_id = $3, version = $4
-            WHERE id = $1
-            "#,
-        )
-        .bind(auth_account.id().as_ref())
-        .bind(auth_account.host().as_ref())
-        .bind(auth_account.client_id().as_ref())
-        .bind(auth_account.version().as_ref())
-        .execute(con)
-        .await
-        .convert_error()?;
-        Ok(())
-    }
-
-    async fn delete(
-        &self,
-        executor: &mut Self::Executor,
-        account_id: &AuthAccountId,
-    ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = executor;
-        sqlx::query(
-            //language=postgresql
-            r#"
-            DELETE FROM auth_accounts WHERE id = $1
-            "#,
-        )
-        .bind(account_id.as_ref())
-        .execute(con)
-        .await
-        .convert_error()?;
-        Ok(())
-    }
 }
 
 impl DependOnAuthAccountReadModel for PostgresDatabase {
@@ -187,12 +145,7 @@ mod test {
                 .find_by_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(auth_account.clone()));
-            database
-                .auth_account_read_model()
-                .delete(&mut transaction, auth_account.id())
-                .await
-                .unwrap();
+            assert_eq!(result, Some(auth_account));
         }
     }
 
@@ -234,98 +187,7 @@ mod test {
                 .find_by_id(&mut transaction, &account_id)
                 .await
                 .unwrap();
-            assert_eq!(result, Some(auth_account.clone()));
-            database
-                .auth_account_read_model()
-                .delete(&mut transaction, auth_account.id())
-                .await
-                .unwrap();
-        }
-
-        #[test_with::env(DATABASE_URL)]
-        #[tokio::test]
-        async fn update() {
-            kernel::ensure_generator_initialized();
-            let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
-
-            let host_id = AuthHostId::default();
-            let account_id = AuthAccountId::default();
-            let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
-            database
-                .auth_host_repository()
-                .create(&mut transaction, &auth_host)
-                .await
-                .unwrap();
-            let auth_account = AuthAccountBuilder::new()
-                .id(account_id.clone())
-                .host(host_id.clone())
-                .client_id("client_id")
-                .build();
-            database
-                .auth_account_read_model()
-                .create(&mut transaction, &auth_account)
-                .await
-                .unwrap();
-            let updated_auth_account = AuthAccountBuilder::new()
-                .id(account_id.clone())
-                .host(host_id)
-                .client_id("updated_client_id")
-                .build();
-            database
-                .auth_account_read_model()
-                .update(&mut transaction, &updated_auth_account)
-                .await
-                .unwrap();
-            let result = database
-                .auth_account_read_model()
-                .find_by_id(&mut transaction, &account_id)
-                .await
-                .unwrap();
-            assert_eq!(result, Some(updated_auth_account));
-            database
-                .auth_account_read_model()
-                .delete(&mut transaction, auth_account.id())
-                .await
-                .unwrap();
-        }
-
-        #[test_with::env(DATABASE_URL)]
-        #[tokio::test]
-        async fn delete() {
-            kernel::ensure_generator_initialized();
-            let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
-
-            let host_id = AuthHostId::default();
-            let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
-            database
-                .auth_host_repository()
-                .create(&mut transaction, &auth_host)
-                .await
-                .unwrap();
-            let account_id = AuthAccountId::default();
-            let auth_account = AuthAccountBuilder::new()
-                .id(account_id.clone())
-                .host(host_id)
-                .client_id("client_id")
-                .build();
-            database
-                .auth_account_read_model()
-                .create(&mut transaction, &auth_account)
-                .await
-                .unwrap();
-            database
-                .auth_account_read_model()
-                .delete(&mut transaction, &account_id)
-                .await
-                .unwrap();
-            let result = database
-                .auth_account_read_model()
-                .find_by_id(&mut transaction, &account_id)
-                .await
-                .unwrap();
-            assert_eq!(result, None);
+            assert_eq!(result, Some(auth_account));
         }
     }
 }

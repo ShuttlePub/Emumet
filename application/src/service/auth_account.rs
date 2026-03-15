@@ -19,43 +19,27 @@ pub trait UpdateAuthAccount:
                 .auth_account_read_model()
                 .find_by_id(&mut transaction, &auth_account_id)
                 .await?;
-            let event_id = EventId::from(auth_account_id.clone());
 
-            if let Some(auth_account) = existing {
-                let events = self
-                    .auth_account_event_store()
-                    .find_by_id(&mut transaction, &event_id, Some(auth_account.version()))
-                    .await?;
-                if events
-                    .last()
-                    .map(|event| &event.version != auth_account.version())
-                    .unwrap_or(false)
-                {
-                    let mut auth_account = Some(auth_account);
-                    for event in events {
-                        AuthAccount::apply(&mut auth_account, event)?;
-                    }
-                    if let Some(auth_account) = auth_account {
-                        self.auth_account_read_model()
-                            .update(&mut transaction, &auth_account)
-                            .await?;
-                    }
+            // AuthAccountEvent only has a Created variant, so if a projection
+            // already exists there is nothing to update.
+            if existing.is_some() {
+                return Ok(());
+            }
+
+            let event_id = EventId::from(auth_account_id.clone());
+            let events = self
+                .auth_account_event_store()
+                .find_by_id(&mut transaction, &event_id, None)
+                .await?;
+            if !events.is_empty() {
+                let mut auth_account = None;
+                for event in events {
+                    AuthAccount::apply(&mut auth_account, event)?;
                 }
-            } else {
-                let events = self
-                    .auth_account_event_store()
-                    .find_by_id(&mut transaction, &event_id, None)
-                    .await?;
-                if !events.is_empty() {
-                    let mut auth_account = None;
-                    for event in events {
-                        AuthAccount::apply(&mut auth_account, event)?;
-                    }
-                    if let Some(auth_account) = auth_account {
-                        self.auth_account_read_model()
-                            .create(&mut transaction, &auth_account)
-                            .await?;
-                    }
+                if let Some(auth_account) = auth_account {
+                    self.auth_account_read_model()
+                        .create(&mut transaction, &auth_account)
+                        .await?;
                 }
             }
             Ok(())

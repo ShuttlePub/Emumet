@@ -94,7 +94,7 @@ where
         })?;
 
         if let Err(e) = self.metadata_signal().emit(metadata_id).await {
-            tracing::warn!("Failed to emit metadata signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit metadata signal");
         }
 
         Ok(metadata)
@@ -117,7 +117,7 @@ where
             .await?;
 
         if let Err(e) = self.metadata_signal().emit(param.metadata_id).await {
-            tracing::warn!("Failed to emit metadata signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit metadata signal");
         }
 
         Ok(())
@@ -136,7 +136,7 @@ where
             .await?;
 
         if let Err(e) = self.metadata_signal().emit(metadata_id).await {
-            tracing::warn!("Failed to emit metadata signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit metadata signal");
         }
 
         Ok(())

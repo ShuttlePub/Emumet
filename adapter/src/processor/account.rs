@@ -128,7 +128,7 @@ where
         })?;
 
         if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::warn!("Failed to emit account signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit account signal");
         }
 
         Ok(account)
@@ -169,7 +169,7 @@ where
             .await?;
 
         if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::warn!("Failed to emit account signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit account signal");
         }
 
         Ok(())
@@ -190,7 +190,7 @@ where
             .await?;
 
         if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::warn!("Failed to emit account signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit account signal");
         }
 
         Ok(())
@@ -209,7 +209,7 @@ where
             .await?;
 
         if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::warn!("Failed to emit account signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit account signal");
         }
 
         Ok(())
@@ -229,7 +229,7 @@ where
             .await?;
 
         if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::warn!("Failed to emit account signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit account signal");
         }
 
         Ok(())

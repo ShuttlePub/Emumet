@@ -70,6 +70,7 @@ pub(crate) fn apply_pagination<T: Ord>(
                 })
                 .take(limit as usize)
                 .collect();
+            vec.reverse();
         }
     };
     vec

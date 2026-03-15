@@ -79,36 +79,25 @@ impl Default for FilePasswordProvider {
 
 impl PasswordProvider for FilePasswordProvider {
     fn get_password(&self) -> Result<Zeroizing<Vec<u8>>, KernelError> {
-        // Try secrets path first
-        if Path::new(&self.secrets_path).exists() {
-            validate_file_permissions(&self.secrets_path)?;
-            let password = std::fs::read(&self.secrets_path).map_err(|e| {
-                Report::new(KernelError::Internal).attach_printable(format!(
-                    "Failed to read master password from '{}': {}",
-                    self.secrets_path, e
-                ))
-            })?;
-            if password.is_empty() {
-                return Err(Report::new(KernelError::Internal)
-                    .attach_printable("Master password file is empty"));
+        // Try secrets path first, then fall back to local path
+        for path in [&self.secrets_path, &self.fallback_path] {
+            match std::fs::read(path) {
+                Ok(password) => {
+                    validate_file_permissions(path)?;
+                    if password.is_empty() {
+                        return Err(Report::new(KernelError::Internal)
+                            .attach_printable("Master password file is empty"));
+                    }
+                    return Ok(Zeroizing::new(password));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(Report::new(KernelError::Internal).attach_printable(format!(
+                        "Failed to read master password from '{}': {}",
+                        path, e
+                    )));
+                }
             }
-            return Ok(Zeroizing::new(password));
-        }
-
-        // Fall back to local path
-        if Path::new(&self.fallback_path).exists() {
-            validate_file_permissions(&self.fallback_path)?;
-            let password = std::fs::read(&self.fallback_path).map_err(|e| {
-                Report::new(KernelError::Internal).attach_printable(format!(
-                    "Failed to read master password from '{}': {}",
-                    self.fallback_path, e
-                ))
-            })?;
-            if password.is_empty() {
-                return Err(Report::new(KernelError::Internal)
-                    .attach_printable("Master password file is empty"));
-            }
-            return Ok(Zeroizing::new(password));
         }
 
         Err(Report::new(KernelError::Internal).attach_printable(format!(

@@ -25,18 +25,6 @@ pub trait AuthAccountReadModel: Sync + Send + 'static {
         executor: &mut Self::Executor,
         auth_account: &AuthAccount,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
-
-    fn update(
-        &self,
-        executor: &mut Self::Executor,
-        auth_account: &AuthAccount,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
-
-    fn delete(
-        &self,
-        executor: &mut Self::Executor,
-        account_id: &AuthAccountId,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DependOnAuthAccountReadModel: Sync + Send + DependOnDatabaseConnection {

@@ -1,5 +1,6 @@
 use sqlx::PgConnection;
 
+use error_stack::Report;
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::prelude::entity::{
     AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
@@ -141,7 +142,7 @@ impl ProfileReadModel for PostgresProfileReadModel {
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             //language=postgresql
             r#"
             UPDATE profiles SET display = $2, summary = $3, icon_id = $4, banner_id = $5, version = $6
@@ -162,6 +163,10 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target profile not found for update"));
+        }
         Ok(())
     }
 
@@ -171,7 +176,7 @@ impl ProfileReadModel for PostgresProfileReadModel {
         profile_id: &ProfileId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             //language=postgresql
             r#"
             DELETE FROM profiles WHERE id = $1
@@ -181,6 +186,10 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target profile not found for delete"));
+        }
         Ok(())
     }
 }

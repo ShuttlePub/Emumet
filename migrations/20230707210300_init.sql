@@ -59,7 +59,8 @@ CREATE TABLE "auth_accounts" (
   "id" BIGINT PRIMARY KEY NOT NULL,
   "host_id" BIGINT NOT NULL,
   "client_id" TEXT NOT NULL,
-  "version" BIGINT NOT NULL
+  "version" BIGINT NOT NULL,
+  UNIQUE ("host_id", "client_id")
 );
 
 CREATE TABLE "auth_emumet_accounts" (
@@ -74,7 +75,11 @@ CREATE TABLE "follows" (
   "follower_remote_id" BIGINT,
   "followee_local_id" BIGINT,
   "followee_remote_id" BIGINT,
-  "approved_at" TIMESTAMPTZ
+  "approved_at" TIMESTAMPTZ,
+  CONSTRAINT chk_follower_exclusive
+    CHECK ((follower_local_id IS NOT NULL) != (follower_remote_id IS NOT NULL)),
+  CONSTRAINT chk_followee_exclusive
+    CHECK ((followee_local_id IS NOT NULL) != (followee_remote_id IS NOT NULL))
 );
 
 CREATE TABLE "images" (
@@ -119,6 +124,8 @@ CREATE TABLE "metadata_events" (
   "occurred_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY ("id", "version")
 );
+
+CREATE INDEX idx_metadatas_account_id ON metadatas (account_id);
 
 ALTER TABLE "remote_accounts" ADD FOREIGN KEY ("icon_id") REFERENCES "images" ("id") ON DELETE SET NULL;
 

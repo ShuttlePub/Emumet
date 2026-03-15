@@ -114,7 +114,7 @@ impl KeyEncryptor for Argon2Encryptor {
         &self,
         encrypted: &EncryptedPrivateKey,
         password: &[u8],
-    ) -> Result<Vec<u8>, KernelError> {
+    ) -> Result<Zeroizing<Vec<u8>>, KernelError> {
         // Decode Base64 fields (use generic error message to prevent information leakage)
         let salt = BASE64.decode(&encrypted.salt).map_err(|_| {
             Report::new(KernelError::Internal).attach_printable("Invalid encrypted data format")
@@ -165,10 +165,13 @@ impl KeyEncryptor for Argon2Encryptor {
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         // Use generic error message to prevent timing attacks
-        cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| {
-            Report::new(KernelError::Internal)
-                .attach_printable("Decryption failed: invalid password or corrupted data")
-        })
+        cipher
+            .decrypt(nonce, ciphertext.as_ref())
+            .map(Zeroizing::new)
+            .map_err(|_| {
+                Report::new(KernelError::Internal)
+                    .attach_printable("Decryption failed: invalid password or corrupted data")
+            })
     }
 }
 
@@ -192,7 +195,7 @@ mod tests {
         assert_eq!(encrypted.algorithm, SigningAlgorithm::Rsa2048);
 
         let decrypted = encryptor.decrypt(&encrypted, password).unwrap();
-        assert_eq!(decrypted, original);
+        assert_eq!(decrypted.as_slice(), original);
     }
 
     #[test]

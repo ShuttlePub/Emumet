@@ -80,6 +80,24 @@ pub(crate) async fn create_profile(
         )));
     }
 
+    if let Some(ref dn) = body.display_name {
+        if dn.len() > 100 {
+            return Err(ErrorStatus::from((
+                StatusCode::BAD_REQUEST,
+                "display_name must not exceed 100 characters".to_string(),
+            )));
+        }
+    }
+
+    if let Some(ref s) = body.summary {
+        if s.len() > 1000 {
+            return Err(ErrorStatus::from((
+                StatusCode::BAD_REQUEST,
+                "summary must not exceed 1000 characters".to_string(),
+            )));
+        }
+    }
+
     let auth_account_id = resolve_auth_account_id(&module, auth_info)
         .await
         .map_err(ErrorStatus::from)?;
@@ -118,6 +136,24 @@ pub(crate) async fn update_profile(
             StatusCode::BAD_REQUEST,
             "Account ID cannot be empty".to_string(),
         )));
+    }
+
+    if let Some(Some(ref dn)) = body.display_name {
+        if dn.len() > 100 {
+            return Err(ErrorStatus::from((
+                StatusCode::BAD_REQUEST,
+                "display_name must not exceed 100 characters".to_string(),
+            )));
+        }
+    }
+
+    if let Some(Some(ref s)) = body.summary {
+        if s.len() > 1000 {
+            return Err(ErrorStatus::from((
+                StatusCode::BAD_REQUEST,
+                "summary must not exceed 1000 characters".to_string(),
+            )));
+        }
     }
 
     let auth_account_id = resolve_auth_account_id(&module, auth_info)

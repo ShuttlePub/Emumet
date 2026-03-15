@@ -60,12 +60,21 @@ where
                 .attach_printable("Failed to construct auth account from created event")
         })?;
 
-        self.auth_account_read_model()
+        if let Err(e) = self
+            .auth_account_read_model()
             .create(executor, &auth_account)
-            .await?;
+            .await
+        {
+            tracing::error!(
+                ?e,
+                "Failed to create auth account read model, emitting signal for recovery"
+            );
+            let _ = self.auth_account_signal().emit(auth_account_id).await;
+            return Err(e);
+        }
 
         if let Err(e) = self.auth_account_signal().emit(auth_account_id).await {
-            tracing::warn!("Failed to emit auth account signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit auth account signal");
         }
 
         Ok(auth_account)

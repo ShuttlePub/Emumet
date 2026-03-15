@@ -1,4 +1,3 @@
-use crate::database::postgres::{CountRow, VersionRow};
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
 use error_stack::Report;
@@ -114,73 +113,71 @@ impl PostgresProfileEventStore {
         let con: &mut PgConnection = executor;
 
         let event_name = command.event_name();
+        let data = serde_json::to_value(command.event()).convert_error()?;
         let prev_version = command.prev_version().as_ref();
-        if let Some(prev_version) = prev_version {
-            match prev_version {
-                KnownEventVersion::Nothing => {
-                    let amount = sqlx::query_as::<_, CountRow>(
-                        //language=postgresql
-                        r#"
-                        SELECT COUNT(*)
-                        FROM profile_events
-                        WHERE id = $1
-                        "#,
-                    )
-                    .bind(command.id().as_ref())
-                    .fetch_one(&mut *con)
-                    .await
-                    .convert_error()?;
-                    if amount.count != 0 {
-                        return Err(Report::new(KernelError::Concurrency).attach_printable(
-                            format!("Event {} already exists", command.id().as_ref()),
-                        ));
-                    }
-                }
-                KnownEventVersion::Prev(prev_version) => {
-                    let last_version = sqlx::query_as::<_, VersionRow>(
-                        //language=postgresql
-                        r#"
-                        SELECT version
-                        FROM profile_events
-                        WHERE id = $1
-                        ORDER BY version DESC
-                        LIMIT 1
-                        "#,
-                    )
-                    .bind(command.id().as_ref())
-                    .fetch_optional(&mut *con)
-                    .await
-                    .convert_error()?;
-                    if last_version
-                        .map(|row: VersionRow| &row.version != prev_version.as_ref())
-                        .unwrap_or(true)
-                    {
-                        return Err(Report::new(KernelError::Concurrency).attach_printable(
-                            format!(
-                                "Event {} version {} already exists",
-                                command.id().as_ref(),
-                                prev_version.as_ref()
-                            ),
-                        ));
-                    }
-                }
-            };
-        }
 
-        sqlx::query(
-            //language=postgresql
-            r#"
-            INSERT INTO profile_events (version, id, event_name, data)
-            VALUES ($1, $2, $3, $4)
-            "#,
-        )
-        .bind(version)
-        .bind(command.id().as_ref())
-        .bind(event_name)
-        .bind(serde_json::to_value(command.event()).convert_error()?)
-        .execute(con)
-        .await
-        .convert_error()?;
+        let result = match prev_version {
+            Some(KnownEventVersion::Nothing) => {
+                sqlx::query(
+                    //language=postgresql
+                    r#"
+                    INSERT INTO profile_events (version, id, event_name, data)
+                    SELECT $1, $2, $3, $4
+                    WHERE NOT EXISTS (SELECT 1 FROM profile_events WHERE id = $2)
+                    "#,
+                )
+                .bind(version)
+                .bind(command.id().as_ref())
+                .bind(event_name)
+                .bind(&data)
+                .execute(&mut *con)
+                .await
+                .convert_error()?
+            }
+            Some(KnownEventVersion::Prev(prev)) => {
+                sqlx::query(
+                    //language=postgresql
+                    r#"
+                    INSERT INTO profile_events (version, id, event_name, data)
+                    SELECT $1, $2, $3, $4
+                    WHERE (SELECT MAX(version) FROM profile_events WHERE id = $2) = $5
+                    "#,
+                )
+                .bind(version)
+                .bind(command.id().as_ref())
+                .bind(event_name)
+                .bind(&data)
+                .bind(prev.as_ref())
+                .execute(&mut *con)
+                .await
+                .convert_error()?
+            }
+            None => {
+                sqlx::query(
+                    //language=postgresql
+                    r#"
+                    INSERT INTO profile_events (version, id, event_name, data)
+                    VALUES ($1, $2, $3, $4)
+                    "#,
+                )
+                .bind(version)
+                .bind(command.id().as_ref())
+                .bind(event_name)
+                .bind(&data)
+                .execute(con)
+                .await
+                .convert_error()?
+            }
+        };
+
+        if prev_version.is_some() && result.rows_affected() == 0 {
+            return Err(
+                Report::new(KernelError::Concurrency).attach_printable(format!(
+                    "Concurrency conflict for event {}",
+                    command.id().as_ref()
+                )),
+            );
+        }
 
         Ok(())
     }

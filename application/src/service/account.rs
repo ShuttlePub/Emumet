@@ -257,15 +257,21 @@ pub trait DeactivateAccountUseCase:
                 .deactivate(&mut transaction, account_id.clone(), current_version)
                 .await?;
 
-            self.permission_writer()
-                .delete_relation(
-                    &RelationTarget::Account {
-                        account_id,
-                        relation: AccountRelation::Owner,
-                    },
-                    auth_account_id,
-                )
-                .await?;
+            for relation in [
+                AccountRelation::Owner,
+                AccountRelation::Editor,
+                AccountRelation::Signer,
+            ] {
+                self.permission_writer()
+                    .delete_relation(
+                        &RelationTarget::Account {
+                            account_id: account_id.clone(),
+                            relation,
+                        },
+                        auth_account_id,
+                    )
+                    .await?;
+            }
 
             Ok(())
         }

@@ -57,16 +57,6 @@ impl PostgresDatabase {
     }
 }
 
-#[derive(sqlx::FromRow)]
-pub(in crate::database::postgres) struct VersionRow {
-    pub version: i64,
-}
-
-#[derive(sqlx::FromRow)]
-pub(in crate::database::postgres) struct CountRow {
-    pub count: i64,
-}
-
 pub struct PostgresConnection(PoolConnection<Postgres>);
 
 impl Executor for PostgresConnection {}

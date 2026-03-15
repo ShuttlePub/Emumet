@@ -207,10 +207,12 @@ impl JwksCache {
                     tracing::info!("JwksCache: JWKS refreshed from {jwks_uri}");
                 }
                 Err(e) => {
+                    self.inner.write().await.last_fetch = Instant::now();
                     tracing::warn!("JwksCache: failed to parse JWKS response: {e}");
                 }
             },
             Err(e) => {
+                self.inner.write().await.last_fetch = Instant::now();
                 tracing::warn!("JwksCache: JWKS fetch failed ({jwks_uri}): {e}");
             }
         }

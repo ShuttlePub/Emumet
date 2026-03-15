@@ -3,6 +3,9 @@ use error_stack::ResultExt;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
+use kernel::interfaces::permission::{
+    AccountRelation, DependOnPermissionWriter, PermissionWriter, RelationTarget,
+};
 use kernel::interfaces::read_model::{
     AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
     DependOnProfileReadModel, MetadataReadModel, ProfileReadModel,
@@ -87,6 +90,27 @@ impl AccountApplier {
                                 .link_auth_account(&mut tx, &id, &auth_id)
                                 .await
                                 .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
+
+                            // Ensure Owner relation exists in Keto (idempotent upsert).
+                            // This acts as a recovery mechanism if the permission_writer
+                            // call in CreateAccountUseCase failed.
+                            if let Err(e) = handler
+                                .permission_writer()
+                                .create_relation(
+                                    &RelationTarget::Account {
+                                        account_id: id.clone(),
+                                        relation: AccountRelation::Owner,
+                                    },
+                                    &auth_id,
+                                )
+                                .await
+                            {
+                                tracing::warn!(
+                                    "Account applier: failed to create Owner relation for account {:?}: {:?}",
+                                    id,
+                                    e
+                                );
+                            }
                         }
                     }
                     (Some(account), Some(_)) => {

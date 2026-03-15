@@ -94,7 +94,7 @@ where
         })?;
 
         if let Err(e) = self.profile_signal().emit(profile_id).await {
-            tracing::warn!("Failed to emit profile signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit profile signal");
         }
 
         Ok(profile)
@@ -119,7 +119,7 @@ where
             .await?;
 
         if let Err(e) = self.profile_signal().emit(param.profile_id).await {
-            tracing::warn!("Failed to emit profile signal: {:?}", e);
+            tracing::error!(?e, "Failed to emit profile signal");
         }
 
         Ok(())

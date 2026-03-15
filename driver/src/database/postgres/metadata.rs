@@ -1,5 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
+use error_stack::Report;
 use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
 use kernel::prelude::entity::{
     AccountId, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
@@ -130,7 +131,7 @@ impl MetadataReadModel for PostgresMetadataReadModel {
         metadata: &Metadata,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             // language=postgresql
             r#"
             UPDATE metadatas
@@ -145,6 +146,10 @@ impl MetadataReadModel for PostgresMetadataReadModel {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target metadata not found for update"));
+        }
         Ok(())
     }
 
@@ -154,7 +159,7 @@ impl MetadataReadModel for PostgresMetadataReadModel {
         metadata_id: &MetadataId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             // language=postgresql
             r#"
             DELETE FROM metadatas
@@ -165,6 +170,10 @@ impl MetadataReadModel for PostgresMetadataReadModel {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target metadata not found for delete"));
+        }
         Ok(())
     }
 }

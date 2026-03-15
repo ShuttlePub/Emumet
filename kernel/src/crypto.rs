@@ -23,7 +23,7 @@ impl std::fmt::Display for SigningAlgorithm {
 }
 
 /// Encrypted private key with metadata for decryption
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EncryptedPrivateKey {
     /// Base64-encoded ciphertext (encrypted PEM)
     pub ciphertext: String,
@@ -33,6 +33,16 @@ pub struct EncryptedPrivateKey {
     pub salt: String,
     /// Algorithm used to generate the key pair
     pub algorithm: SigningAlgorithm,
+}
+
+impl std::fmt::Debug for EncryptedPrivateKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EncryptedPrivateKey")
+            .field("ciphertext", &"[REDACTED]")
+            .field("nonce", &"[REDACTED]")
+            .field("salt", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Generated key pair with public key in PEM format and encrypted private key
@@ -80,7 +90,7 @@ pub trait KeyEncryptor: Send + Sync {
         &self,
         encrypted: &EncryptedPrivateKey,
         password: &[u8],
-    ) -> Result<Vec<u8>, KernelError>;
+    ) -> Result<Zeroizing<Vec<u8>>, KernelError>;
 }
 
 /// Trait for signing data with a private key

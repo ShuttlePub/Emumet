@@ -170,7 +170,7 @@ impl FollowRepository for PostgresFollowRepository {
         let con: &mut PgConnection = executor;
         let (follower_local_id, follower_remote_id) = split_follow_target_id(follow.source());
         let (followee_local_id, followee_remote_id) = split_follow_target_id(follow.destination());
-        sqlx::query(
+        let result = sqlx::query(
             //language=postgresql
             r#"
             UPDATE follows
@@ -186,6 +186,10 @@ impl FollowRepository for PostgresFollowRepository {
             .execute(con)
             .await
             .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target follow not found for update"));
+        }
         Ok(())
     }
 
@@ -195,7 +199,7 @@ impl FollowRepository for PostgresFollowRepository {
         follow_id: &FollowId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             //language=postgresql
             r#"
             DELETE FROM follows WHERE id = $1
@@ -205,6 +209,10 @@ impl FollowRepository for PostgresFollowRepository {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target follow not found for delete"));
+        }
         Ok(())
     }
 }

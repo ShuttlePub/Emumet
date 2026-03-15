@@ -1,5 +1,6 @@
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
+use error_stack::Report;
 use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
 use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId, ImageUrl};
 use kernel::KernelError;
@@ -115,7 +116,7 @@ impl ImageRepository for PostgresImageRepository {
         image_id: &ImageId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             // language=postgresql
             r#"
             DELETE FROM images WHERE id = $1
@@ -125,6 +126,10 @@ impl ImageRepository for PostgresImageRepository {
         .execute(con)
         .await
         .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("Target image not found for delete"));
+        }
         Ok(())
     }
 }

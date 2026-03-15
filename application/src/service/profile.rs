@@ -52,6 +52,10 @@ pub trait UpdateProfile:
                         self.profile_read_model()
                             .update(&mut transaction, &profile)
                             .await?;
+                    } else {
+                        self.profile_read_model()
+                            .delete(&mut transaction, &profile_id)
+                            .await?;
                     }
                 }
             } else {

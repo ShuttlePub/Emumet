@@ -83,6 +83,20 @@ pub(crate) async fn create_metadata(
         )));
     }
 
+    if body.label.trim().is_empty() || body.label.len() > 100 {
+        return Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            "label must be between 1 and 100 characters".to_string(),
+        )));
+    }
+
+    if body.content.len() > 10000 {
+        return Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            "content must not exceed 10000 characters".to_string(),
+        )));
+    }
+
     let auth_account_id = resolve_auth_account_id(&module, auth_info)
         .await
         .map_err(ErrorStatus::from)?;
@@ -130,6 +144,20 @@ pub(crate) async fn update_metadata(
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
             "Metadata ID cannot be empty".to_string(),
+        )));
+    }
+
+    if body.label.trim().is_empty() || body.label.len() > 100 {
+        return Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            "label must be between 1 and 100 characters".to_string(),
+        )));
+    }
+
+    if body.content.len() > 10000 {
+        return Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            "content must not exceed 10000 characters".to_string(),
         )));
     }
 

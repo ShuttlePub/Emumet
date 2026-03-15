@@ -47,15 +47,29 @@ impl From<(StatusCode, String)> for ErrorStatus {
 impl IntoResponse for ErrorStatus {
     fn into_response(self) -> axum::response::Response {
         match self {
-            ErrorStatus::Report(e) => match e.current_context() {
-                KernelError::Concurrency => StatusCode::CONFLICT,
-                KernelError::Timeout => StatusCode::REQUEST_TIMEOUT,
-                KernelError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-                KernelError::PermissionDenied => StatusCode::FORBIDDEN,
-                KernelError::NotFound => StatusCode::NOT_FOUND,
-                KernelError::Rejected => StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorStatus::Report(e) => {
+                let status = match e.current_context() {
+                    KernelError::Concurrency => {
+                        tracing::warn!("Concurrency conflict: {e:?}");
+                        StatusCode::CONFLICT
+                    }
+                    KernelError::Timeout => {
+                        tracing::warn!("Request timeout: {e:?}");
+                        StatusCode::REQUEST_TIMEOUT
+                    }
+                    KernelError::Internal => {
+                        tracing::error!("Internal error: {e:?}");
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    }
+                    KernelError::PermissionDenied => StatusCode::FORBIDDEN,
+                    KernelError::NotFound => StatusCode::NOT_FOUND,
+                    KernelError::Rejected => {
+                        tracing::warn!("Request rejected: {e:?}");
+                        StatusCode::UNPROCESSABLE_ENTITY
+                    }
+                };
+                status.into_response()
             }
-            .into_response(),
             ErrorStatus::StatusCode(code) => code.into_response(),
             ErrorStatus::StatusCodeWithMessage(code, message) => (code, message).into_response(),
         }
