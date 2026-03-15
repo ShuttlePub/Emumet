@@ -1130,7 +1130,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Absent = no change, null = clear, string = set"
           },
           "icon_url": {
             "type": [
@@ -1143,7 +1144,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Absent = no change, null = clear, string = set"
           }
         }
       }
