@@ -27,7 +27,7 @@ pub trait UpdateProfile:
         profile_id: ProfileId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
             let existing = self
                 .profile_read_model()
                 .find_by_id(&mut transaction, &profile_id)
@@ -96,7 +96,7 @@ pub trait GetProfileUseCase:
         account_nanoids: Vec<String>,
     ) -> impl Future<Output = error_stack::Result<Vec<ProfileDto>, KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoids: Vec<Nanoid<Account>> = account_nanoids
                 .into_iter()
@@ -211,12 +211,12 @@ pub trait CreateProfileUseCase:
         dto: CreateProfileDto,
     ) -> impl Future<Output = error_stack::Result<ProfileDto, KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -226,6 +226,11 @@ pub trait CreateProfileUseCase:
                 })?;
 
             check_permission(self, auth_account_id, &account_edit(account.id())).await?;
+
+            if !account.status().is_active() {
+                return Err(Report::new(KernelError::Rejected)
+                    .attach_printable("Cannot create profile for a suspended or banned account"));
+            }
 
             let existing_profile = self
                 .profile_query_processor()
@@ -299,12 +304,12 @@ pub trait UpdateProfileUseCase:
         dto: UpdateProfileDto,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -314,6 +319,11 @@ pub trait UpdateProfileUseCase:
                 })?;
 
             check_permission(self, auth_account_id, &account_edit(account.id())).await?;
+
+            if !account.status().is_active() {
+                return Err(Report::new(KernelError::Rejected)
+                    .attach_printable("Cannot update profile for a suspended or banned account"));
+            }
 
             let profile = self
                 .profile_query_processor()

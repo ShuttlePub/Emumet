@@ -38,7 +38,7 @@ pub trait GetAccountUseCase:
     ) -> impl Future<Output = error_stack::Result<Option<Vec<AccountDto>>, KernelError>> + Send
     {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
             let accounts = self
                 .account_query_processor()
                 .find_by_auth_id(&mut transaction, auth_account_id)
@@ -62,7 +62,7 @@ pub trait GetAccountUseCase:
         ids: Vec<String>,
     ) -> impl Future<Output = error_stack::Result<Vec<AccountDto>, KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoids: Vec<Nanoid<Account>> =
                 ids.into_iter().map(Nanoid::<Account>::new).collect();
@@ -106,7 +106,7 @@ pub trait CreateAccountUseCase:
         dto: CreateAccountDto,
     ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             // Generate key pair
             let master_password = self.password_provider().get_password()?;
@@ -175,12 +175,12 @@ pub trait UpdateAccountUseCase:
         dto: UpdateAccountDto,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -190,6 +190,11 @@ pub trait UpdateAccountUseCase:
                 })?;
 
             check_permission(self, auth_account_id, &account_edit(account.id())).await?;
+
+            if !account.status().is_active() {
+                return Err(Report::new(KernelError::Rejected)
+                    .attach_printable("Cannot modify a suspended or banned account"));
+            }
 
             self.account_command_processor()
                 .update(
@@ -230,7 +235,7 @@ pub trait DeactivateAccountUseCase:
         account_id: String,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self
@@ -292,7 +297,7 @@ pub trait SuspendAccountUseCase:
         expires_at: Option<time::OffsetDateTime>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self
@@ -365,7 +370,7 @@ pub trait UnsuspendAccountUseCase:
         account_id: String,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self
@@ -421,7 +426,7 @@ pub trait BanAccountUseCase:
         reason: String,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let account = self

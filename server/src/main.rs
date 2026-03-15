@@ -15,6 +15,7 @@ use crate::route::account::AccountRouter;
 use crate::route::metadata::MetadataRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile::ProfileRouter;
+use axum::http::{header, HeaderValue, Method};
 use error_stack::ResultExt;
 use kernel::KernelError;
 use std::net::SocketAddr;
@@ -83,7 +84,7 @@ async fn main() -> Result<(), StackTrace> {
 
     let router = authed_routes
         .merge(public_routes)
-        .layer(CorsLayer::new())
+        .layer(build_cors_layer())
         .with_state(app);
 
     let bind = SocketAddr::from(([0, 0, 0, 0], 8080));
@@ -97,4 +98,20 @@ async fn main() -> Result<(), StackTrace> {
         .change_context_lazy(|| KernelError::Internal)?;
 
     Ok(())
+}
+
+fn build_cors_layer() -> CorsLayer {
+    match std::env::var("CORS_ALLOWED_ORIGINS").ok().as_deref() {
+        None | Some("*") => CorsLayer::permissive(),
+        Some(origins) => {
+            let origins: Vec<HeaderValue> = origins
+                .split(',')
+                .filter_map(|s| s.trim().parse::<HeaderValue>().ok())
+                .collect();
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        }
+    }
 }

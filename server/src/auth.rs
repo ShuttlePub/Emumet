@@ -357,7 +357,7 @@ pub async fn resolve_auth_account_id(
     auth_info: OidcAuthInfo,
 ) -> error_stack::Result<AuthAccountId, KernelError> {
     let client_id = AuthAccountClientId::new(auth_info.subject);
-    let mut executor = app.database_connection().begin_transaction().await?;
+    let mut executor = app.database_connection().get_executor().await?;
     let auth_account = app
         .auth_account_query_processor()
         .find_by_client_id(&mut executor, &client_id)

@@ -210,7 +210,7 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
@@ -250,7 +250,7 @@ mod test {
         async fn find_by_account_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
@@ -298,7 +298,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
@@ -339,7 +339,7 @@ mod test {
         async fn update() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
@@ -394,7 +394,7 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();

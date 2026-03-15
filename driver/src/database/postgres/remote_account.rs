@@ -185,7 +185,7 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let remote_account = RemoteAccountBuilder::new().build();
             database
@@ -211,7 +211,7 @@ mod test {
         async fn find_by_acct() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let (acct, url) = unique_remote_acct();
             let remote_account = RemoteAccountBuilder::new()
@@ -242,7 +242,7 @@ mod test {
         async fn find_by_url() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let (acct, url) = unique_remote_acct();
             let remote_account = RemoteAccountBuilder::new()
@@ -282,7 +282,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let remote_account = RemoteAccountBuilder::new().build();
             database
@@ -302,7 +302,7 @@ mod test {
         async fn update() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let id = RemoteAccountId::new(kernel::generate_id());
             let remote_account = RemoteAccountBuilder::new().id(id.clone()).build();
@@ -336,7 +336,7 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let remote_account = RemoteAccountBuilder::new().build();
             database

@@ -499,7 +499,7 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let id = AccountId::default();
             let account = AccountBuilder::new().id(id.clone()).build();
@@ -521,7 +521,7 @@ mod test {
         async fn find_by_auth_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let accounts = database
                 .account_read_model()
@@ -536,7 +536,7 @@ mod test {
         async fn find_by_name() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let name = unique_account_name();
             let account = AccountBuilder::new().name(name.as_ref()).build();
@@ -564,7 +564,7 @@ mod test {
         async fn find_by_nanoid() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let nanoid = Nanoid::default();
             let account = AccountBuilder::new().nanoid(nanoid.clone()).build();
@@ -592,7 +592,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let account = AccountBuilder::new().build();
             database
@@ -614,7 +614,7 @@ mod test {
         async fn update() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let account = AccountBuilder::new().build();
             database
@@ -647,7 +647,7 @@ mod test {
         async fn deactivate() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let account = AccountBuilder::new().build();
             database

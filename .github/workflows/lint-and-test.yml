@@ -13,7 +13,7 @@ jobs:
   check:
     uses: ShuttlePub/workflows/.github/workflows/check.yml@a95cf7631a550a66628dd4a2a8d6ef4d253edab4
     with:
-      workspace: '[ "kernel", "application", "server" ]'
+      workspace: '[ "kernel", "adapter", "application", "server" ]'
   check-driver:
     uses: ShuttlePub/workflows/.github/workflows/test-psql.yml@454354614b775cd3b470c991b532e8db1c1ed89f
     with:

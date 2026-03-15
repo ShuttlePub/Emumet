@@ -33,8 +33,8 @@ pub struct CreateProfileParam {
 #[derive(Debug)]
 pub struct UpdateProfileParam {
     pub profile_id: ProfileId,
-    pub display_name: Option<ProfileDisplayName>,
-    pub summary: Option<ProfileSummary>,
+    pub display_name: FieldAction<ProfileDisplayName>,
+    pub summary: FieldAction<ProfileSummary>,
     pub icon: FieldAction<ImageId>,
     pub banner: FieldAction<ImageId>,
     pub current_version: EventVersion<Profile>,

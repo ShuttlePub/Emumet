@@ -151,7 +151,7 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let id = ImageId::new(kernel::generate_id());
             let image = ImageBuilder::new().id(id.clone()).build();
@@ -179,7 +179,7 @@ mod test {
         async fn find_by_ids_empty() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let result = database
                 .image_repository()
@@ -194,7 +194,7 @@ mod test {
         async fn find_by_ids_multiple() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let image1 = ImageBuilder::new().hash("hash1").blur_hash("blur1").build();
             let image2 = ImageBuilder::new().hash("hash2").blur_hash("blur2").build();
@@ -239,7 +239,7 @@ mod test {
         async fn find_by_ids_with_nonexistent() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let image = ImageBuilder::new().build();
 
@@ -270,7 +270,7 @@ mod test {
         async fn find_by_url() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let url = unique_image_url();
             let image = ImageBuilder::new().url(url.as_ref()).build();
@@ -305,7 +305,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let image = ImageBuilder::new().build();
 
@@ -326,7 +326,7 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let image = ImageBuilder::new().build();
 

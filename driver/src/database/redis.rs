@@ -51,7 +51,7 @@ impl Deref for RedisConnection {
 impl DatabaseConnection for RedisDatabase {
     type Executor = RedisConnection;
 
-    async fn begin_transaction(&self) -> error_stack::Result<Self::Executor, KernelError> {
+    async fn get_executor(&self) -> error_stack::Result<Self::Executor, KernelError> {
         let pool = self
             .pool
             .get()

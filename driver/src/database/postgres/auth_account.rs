@@ -161,7 +161,7 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let auth_host_id = AuthHostId::default();
             let auth_host = AuthHostBuilder::new().id(auth_host_id.clone()).build();
@@ -209,7 +209,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let host_id = AuthHostId::default();
             let account_id = AuthAccountId::default();
@@ -247,7 +247,7 @@ mod test {
         async fn update() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let host_id = AuthHostId::default();
             let account_id = AuthAccountId::default();
@@ -295,7 +295,7 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let host_id = AuthHostId::default();
             let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();

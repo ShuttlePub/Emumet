@@ -25,8 +25,14 @@ impl CreateProfileRequest {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateProfileRequest {
-    pub display_name: Option<String>,
-    pub summary: Option<String>,
+    /// Absent = no change, null = clear, string = set
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    #[schema(nullable)]
+    pub display_name: Option<Option<String>>,
+    /// Absent = no change, null = clear, string = set
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    #[schema(nullable)]
+    pub summary: Option<Option<String>>,
     /// Absent = no change, null = clear, string = set
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     #[schema(nullable)]
@@ -41,8 +47,8 @@ impl UpdateProfileRequest {
     pub fn into_dto(self, account_nanoid: String) -> UpdateProfileDto {
         UpdateProfileDto {
             account_nanoid,
-            display_name: self.display_name,
-            summary: self.summary,
+            display_name: into_field_action(self.display_name),
+            summary: into_field_action(self.summary),
             icon_url: into_field_action(self.icon_url),
             banner_url: into_field_action(self.banner_url),
         }

@@ -45,8 +45,10 @@ pub enum ProfileEvent {
         nanoid: Nanoid<Profile>,
     },
     Updated {
-        display_name: Option<ProfileDisplayName>,
-        summary: Option<ProfileSummary>,
+        #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
+        display_name: FieldAction<ProfileDisplayName>,
+        #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
+        summary: FieldAction<ProfileSummary>,
         #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
         icon: FieldAction<ImageId>,
         #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
@@ -82,8 +84,8 @@ impl Profile {
 
     pub fn update(
         id: ProfileId,
-        display_name: Option<ProfileDisplayName>,
-        summary: Option<ProfileSummary>,
+        display_name: FieldAction<ProfileDisplayName>,
+        summary: FieldAction<ProfileSummary>,
         icon: FieldAction<ImageId>,
         banner: FieldAction<ImageId>,
         current_version: EventVersion<Profile>,
@@ -142,11 +144,15 @@ impl EventApplier for Profile {
                 banner,
             } => {
                 if let Some(profile) = entity {
-                    if let Some(display_name) = display_name {
-                        profile.display_name = Some(display_name);
+                    match display_name {
+                        FieldAction::Unchanged => {}
+                        FieldAction::Clear => profile.display_name = None,
+                        FieldAction::Set(v) => profile.display_name = Some(v),
                     }
-                    if let Some(summary) = summary {
-                        profile.summary = Some(summary);
+                    match summary {
+                        FieldAction::Unchanged => {}
+                        FieldAction::Clear => profile.summary = None,
+                        FieldAction::Set(v) => profile.summary = Some(v),
                     }
                     match icon {
                         FieldAction::Unchanged => {}
@@ -231,8 +237,8 @@ mod test {
         let current_version = profile.version().clone();
         let update_event = Profile::update(
             id.clone(),
-            Some(display_name.clone()),
-            Some(summary.clone()),
+            FieldAction::Set(display_name.clone()),
+            FieldAction::Set(summary.clone()),
             FieldAction::Set(icon.clone()),
             FieldAction::Set(banner.clone()),
             current_version,
@@ -275,8 +281,8 @@ mod test {
         // Clear both icon and banner with FieldAction::Clear
         let update_event = Profile::update(
             id,
-            None,
-            None,
+            FieldAction::Unchanged,
+            FieldAction::Unchanged,
             FieldAction::Clear,
             FieldAction::Clear,
             version,

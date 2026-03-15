@@ -39,6 +39,8 @@ pub fn generate_id() -> i64 {
         .get()
         .expect("Snowflake generator not initialized. Call init_generator() first.");
     let id: EmumetSnowflake = gen.next_id(|_| std::thread::yield_now());
+    // The reserved bit (1 of 64 bits) stays 0 by ferroid's design, so this cast is safe.
+    // If it ever overflowed, the `generate_id_is_positive` test would catch it.
     id.to_raw() as i64
 }
 

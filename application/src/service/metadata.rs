@@ -25,7 +25,7 @@ pub trait UpdateMetadata:
         metadata_id: MetadataId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
             let existing = self
                 .metadata_read_model()
                 .find_by_id(&mut transaction, &metadata_id)
@@ -100,7 +100,7 @@ pub trait GetMetadataUseCase:
         account_nanoids: Vec<String>,
     ) -> impl Future<Output = error_stack::Result<Vec<MetadataDto>, KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoids: Vec<Nanoid<Account>> = account_nanoids
                 .into_iter()
@@ -171,12 +171,12 @@ pub trait CreateMetadataUseCase:
         dto: CreateMetadataDto,
     ) -> impl Future<Output = error_stack::Result<MetadataDto, KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -186,6 +186,11 @@ pub trait CreateMetadataUseCase:
                 })?;
 
             check_permission(self, auth_account_id, &account_edit(account.id())).await?;
+
+            if !account.status().is_active() {
+                return Err(Report::new(KernelError::Rejected)
+                    .attach_printable("Cannot create metadata for a suspended or banned account"));
+            }
 
             let account_nanoid_str = account.nanoid().as_ref().to_string();
             let account_id = account.id().clone();
@@ -233,12 +238,12 @@ pub trait UpdateMetadataUseCase:
         dto: UpdateMetadataDto,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -248,6 +253,11 @@ pub trait UpdateMetadataUseCase:
                 })?;
 
             check_permission(self, auth_account_id, &account_edit(account.id())).await?;
+
+            if !account.status().is_active() {
+                return Err(Report::new(KernelError::Rejected)
+                    .attach_printable("Cannot update metadata for a suspended or banned account"));
+            }
 
             let metadata_list = self
                 .metadata_query_processor()
@@ -310,12 +320,12 @@ pub trait DeleteMetadataUseCase:
         metadata_nanoid: String,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(account_nanoid);
             let account = self
                 .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -325,6 +335,11 @@ pub trait DeleteMetadataUseCase:
                 })?;
 
             check_permission(self, auth_account_id, &account_edit(account.id())).await?;
+
+            if !account.status().is_active() {
+                return Err(Report::new(KernelError::Rejected)
+                    .attach_printable("Cannot delete metadata for a suspended or banned account"));
+            }
 
             let metadata_list = self
                 .metadata_query_processor()

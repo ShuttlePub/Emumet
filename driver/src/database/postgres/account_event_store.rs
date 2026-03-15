@@ -210,7 +210,7 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let account_id = AccountId::default();
             let event_id = EventId::from(account_id.clone());
             let events = db
@@ -265,7 +265,7 @@ mod test {
         async fn find_by_id_since_version() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let account_id = AccountId::default();
             let event_id = EventId::from(account_id.clone());
 
@@ -340,7 +340,7 @@ mod test {
         async fn basic_creation() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let account_id = AccountId::default();
             let created_account = account_create_command(account_id.clone());
             db.account_event_store()
@@ -360,7 +360,7 @@ mod test {
         async fn persist_and_transform_test() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let account_id = AccountId::default();
             let created_account = account_create_command(account_id.clone());
 

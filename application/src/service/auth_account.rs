@@ -14,7 +14,7 @@ pub trait UpdateAuthAccount:
         auth_account_id: AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> {
         async move {
-            let mut transaction = self.database_connection().begin_transaction().await?;
+            let mut transaction = self.database_connection().get_executor().await?;
             let existing = self
                 .auth_account_read_model()
                 .find_by_id(&mut transaction, &auth_account_id)

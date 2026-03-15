@@ -12,8 +12,8 @@ pub struct CreateProfileDto {
 #[derive(Debug)]
 pub struct UpdateProfileDto {
     pub account_nanoid: String,
-    pub display_name: Option<String>,
-    pub summary: Option<String>,
+    pub display_name: FieldAction<String>,
+    pub summary: FieldAction<String>,
     pub icon_url: FieldAction<String>,
     pub banner_url: FieldAction<String>,
 }

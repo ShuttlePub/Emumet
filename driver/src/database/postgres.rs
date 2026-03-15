@@ -86,7 +86,7 @@ impl DerefMut for PostgresConnection {
 
 impl DatabaseConnection for PostgresDatabase {
     type Executor = PostgresConnection;
-    async fn begin_transaction(&self) -> error_stack::Result<Self::Executor, KernelError> {
+    async fn get_executor(&self) -> error_stack::Result<Self::Executor, KernelError> {
         let connection = self.pool.acquire().await.convert_error()?;
         Ok(PostgresConnection(connection))
     }

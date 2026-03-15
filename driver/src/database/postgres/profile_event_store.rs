@@ -210,7 +210,7 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let event_id = EventId::from(profile_id.clone());
             let events = db
@@ -221,8 +221,8 @@ mod test {
             assert_eq!(events.len(), 0);
             let created_profile = profile_create_command(profile_id.clone());
             let update_event = ProfileEvent::Updated {
-                display_name: None,
-                summary: None,
+                display_name: FieldAction::Unchanged,
+                summary: FieldAction::Unchanged,
                 icon: FieldAction::Unchanged,
                 banner: FieldAction::Unchanged,
             };
@@ -256,14 +256,14 @@ mod test {
         async fn find_by_id_since_version() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let event_id = EventId::from(profile_id.clone());
 
             let created_profile = profile_create_command(profile_id.clone());
             let update_event = ProfileEvent::Updated {
-                display_name: None,
-                summary: None,
+                display_name: FieldAction::Unchanged,
+                summary: FieldAction::Unchanged,
                 icon: FieldAction::Unchanged,
                 banner: FieldAction::Unchanged,
             };
@@ -322,7 +322,7 @@ mod test {
         async fn basic_creation() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let created_profile = profile_create_command(profile_id.clone());
             db.profile_event_store()
@@ -342,7 +342,7 @@ mod test {
         async fn persist_and_transform_test() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let created_profile = profile_create_command(profile_id.clone());
 
@@ -369,7 +369,7 @@ mod test {
         async fn known_event_version_nothing_prevents_duplicate() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let created_profile = profile_create_command(profile_id.clone());
 

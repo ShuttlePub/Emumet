@@ -74,12 +74,9 @@ pub(crate) async fn get_accounts(
             .get_all_accounts(&auth_account_id, pagination)
             .await
             .map_err(ErrorStatus::from)?
-            .ok_or(ErrorStatus::from(StatusCode::NOT_FOUND))?
+            .unwrap_or_default()
     };
 
-    if result.is_empty() {
-        return Err(ErrorStatus::from(StatusCode::NOT_FOUND));
-    }
     let response = AccountsResponse {
         first: result.first().map(|account| account.nanoid.clone()),
         last: result.last().map(|account| account.nanoid.clone()),
@@ -340,10 +337,10 @@ impl AccountRouter for Router<AppModule> {
     fn route_account(self) -> Self {
         self.route("/accounts", get(get_accounts))
             .route("/accounts", post(create_account))
-            .route("/accounts/:id", put(update_account_by_id))
-            .route("/accounts/:id", delete(deactivate_account_by_id))
-            .route("/accounts/:id/suspend", post(suspend_account_by_id))
-            .route("/accounts/:id/unsuspend", post(unsuspend_account_by_id))
-            .route("/accounts/:id/ban", post(ban_account_by_id))
+            .route("/accounts/{id}", put(update_account_by_id))
+            .route("/accounts/{id}", delete(deactivate_account_by_id))
+            .route("/accounts/{id}/suspend", post(suspend_account_by_id))
+            .route("/accounts/{id}/unsuspend", post(unsuspend_account_by_id))
+            .route("/accounts/{id}/ban", post(ban_account_by_id))
     }
 }

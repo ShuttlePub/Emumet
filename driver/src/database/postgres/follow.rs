@@ -232,7 +232,7 @@ mod test {
         async fn find_followers() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
@@ -299,7 +299,7 @@ mod test {
         async fn find_followings() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
@@ -376,7 +376,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
@@ -430,7 +430,7 @@ mod test {
         async fn update() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
 
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
@@ -511,7 +511,7 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.begin_transaction().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())

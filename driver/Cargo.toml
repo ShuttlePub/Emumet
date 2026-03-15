@@ -13,13 +13,11 @@ sqlx = { version = "0.7", features = ["time", "postgres", "runtime-tokio-native-
 serde_json = "1"
 serde = { workspace = true }
 time = { workspace = true }
-async-trait = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
 
 vodca.workspace = true
 error-stack = { workspace = true }
 
-# Cryptography (moved from application)
 rsa = { version = "0.9", features = ["sha2", "pem"] }
 argon2 = "0.5"
 aes-gcm = "0.10"

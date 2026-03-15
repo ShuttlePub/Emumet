@@ -10,7 +10,6 @@ dependencies = [
  "kernel",
  "time",
  "tracing",
- "zeroize",
 ]
 
 [[package]]
@@ -686,7 +685,6 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
- "async-trait",
  "base64 0.22.1",
  "deadpool-redis",
  "dotenvy",
@@ -1427,12 +1425,10 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "destructure",
  "error-stack",
  "ferroid",
  "nanoid",
- "rand 0.8.5",
  "serde",
  "time",
  "vodca",

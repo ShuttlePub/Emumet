@@ -211,7 +211,7 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let id = AuthAccountId::default();
             let event_id = EventId::from(id.clone());
             let events = db
@@ -241,7 +241,7 @@ mod test {
         async fn find_by_id_since_version() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let id = AuthAccountId::default();
             let event_id = EventId::from(id.clone());
 
@@ -276,7 +276,7 @@ mod test {
         async fn basic_creation() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let id = AuthAccountId::default();
             let created = auth_account_create_command(id.clone());
             db.auth_account_event_store()
@@ -296,7 +296,7 @@ mod test {
         async fn persist_and_transform_test() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let id = AuthAccountId::default();
             let created = auth_account_create_command(id.clone());
 
@@ -323,7 +323,7 @@ mod test {
         async fn optimistic_concurrency_nothing() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.begin_transaction().await.unwrap();
+            let mut transaction = db.get_executor().await.unwrap();
             let id = AuthAccountId::default();
             let created = auth_account_create_command(id.clone());
             db.auth_account_event_store()

@@ -135,7 +135,7 @@ pub(crate) async fn update_profile(
 impl ProfileRouter for Router<AppModule> {
     fn route_profile(self) -> Self {
         self.route("/profiles", get(get_profiles_batch)).route(
-            "/accounts/:account_id/profile",
+            "/accounts/{account_id}/profile",
             post(create_profile).put(update_profile),
         )
     }

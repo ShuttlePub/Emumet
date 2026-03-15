@@ -367,7 +367,6 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test_with::env(DATABASE_URL)]
-    #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn login_skip_returns_redirect() {
         let hydra_mock = MockServer::start().await;

@@ -196,9 +196,9 @@ pub(crate) async fn delete_metadata(
 impl MetadataRouter for Router<AppModule> {
     fn route_metadata(self) -> Self {
         self.route("/metadata", get(get_metadata_batch))
-            .route("/accounts/:account_id/metadata", post(create_metadata))
+            .route("/accounts/{account_id}/metadata", post(create_metadata))
             .route(
-                "/accounts/:account_id/metadata/:id",
+                "/accounts/{account_id}/metadata/{id}",
                 put(update_metadata).delete(delete_metadata),
             )
     }
