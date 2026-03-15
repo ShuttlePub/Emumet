@@ -10,6 +10,9 @@ mod read_model;
 mod repository;
 mod signal;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 pub use id::*;
 
 pub use self::error::*;

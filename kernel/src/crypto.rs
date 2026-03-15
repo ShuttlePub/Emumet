@@ -6,7 +6,9 @@ use zeroize::Zeroizing;
 /// Supported signing algorithms
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SigningAlgorithm {
+    #[default]
     Rsa2048,
     Ed25519,
 }
@@ -17,12 +19,6 @@ impl std::fmt::Display for SigningAlgorithm {
             Self::Rsa2048 => write!(f, "rsa2048"),
             Self::Ed25519 => write!(f, "ed25519"),
         }
-    }
-}
-
-impl Default for SigningAlgorithm {
-    fn default() -> Self {
-        Self::Rsa2048
     }
 }
 

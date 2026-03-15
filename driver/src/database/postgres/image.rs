@@ -139,23 +139,12 @@ impl DependOnImageRepository for PostgresDatabase {
 
 #[cfg(test)]
 mod test {
-    use kernel::prelude::entity::ImageUrl;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn url() -> ImageUrl {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        ImageUrl::new(format!(
-            "https://example.com/{}",
-            COUNTER.fetch_add(1, Ordering::SeqCst)
-        ))
-    }
-
     mod query {
-        use crate::database::postgres::image::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
-        use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId};
+        use kernel::prelude::entity::ImageId;
+        use kernel::test_utils::{unique_image_url, ImageBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -165,13 +154,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let id = ImageId::new(kernel::generate_id());
-            let url = url();
-            let image = Image::new(
-                id.clone(),
-                url,
-                ImageHash::new("hash".to_string()),
-                ImageBlurHash::new("blur_hash".to_string()),
-            );
+            let image = ImageBuilder::new().id(id.clone()).build();
 
             database
                 .image_repository()
@@ -213,18 +196,8 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let image1 = Image::new(
-                ImageId::new(kernel::generate_id()),
-                url(),
-                ImageHash::new("hash1".to_string()),
-                ImageBlurHash::new("blur1".to_string()),
-            );
-            let image2 = Image::new(
-                ImageId::new(kernel::generate_id()),
-                url(),
-                ImageHash::new("hash2".to_string()),
-                ImageBlurHash::new("blur2".to_string()),
-            );
+            let image1 = ImageBuilder::new().hash("hash1").blur_hash("blur1").build();
+            let image2 = ImageBuilder::new().hash("hash2").blur_hash("blur2").build();
 
             database
                 .image_repository()
@@ -268,12 +241,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let image = Image::new(
-                ImageId::new(kernel::generate_id()),
-                url(),
-                ImageHash::new("hash".to_string()),
-                ImageBlurHash::new("blur".to_string()),
-            );
+            let image = ImageBuilder::new().build();
 
             database
                 .image_repository()
@@ -304,14 +272,8 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(kernel::generate_id());
-            let url = url();
-            let image = Image::new(
-                id,
-                url.clone(),
-                ImageHash::new("hash".to_string()),
-                ImageBlurHash::new("blur_hash".to_string()),
-            );
+            let url = unique_image_url();
+            let image = ImageBuilder::new().url(url.as_ref()).build();
 
             database
                 .image_repository()
@@ -333,11 +295,10 @@ mod test {
     }
 
     mod modifier {
-        use crate::database::postgres::image::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
-        use kernel::prelude::entity::{Image, ImageBlurHash, ImageHash, ImageId};
+        use kernel::test_utils::ImageBuilder;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -346,14 +307,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(kernel::generate_id());
-            let url = url();
-            let image = Image::new(
-                id,
-                url,
-                ImageHash::new("hash".to_string()),
-                ImageBlurHash::new("blur_hash".to_string()),
-            );
+            let image = ImageBuilder::new().build();
 
             database
                 .image_repository()
@@ -374,14 +328,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = ImageId::new(kernel::generate_id());
-            let url = url();
-            let image = Image::new(
-                id.clone(),
-                url,
-                ImageHash::new("hash".to_string()),
-                ImageBlurHash::new("blur_hash".to_string()),
-            );
+            let image = ImageBuilder::new().build();
 
             database
                 .image_repository()
@@ -390,7 +337,7 @@ mod test {
                 .unwrap();
             database
                 .image_repository()
-                .delete(&mut transaction, &id)
+                .delete(&mut transaction, image.id())
                 .await
                 .unwrap();
         }

@@ -186,36 +186,8 @@ mod test {
             AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
             MetadataReadModel,
         };
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
-        };
-
-        fn make_account(account_id: AccountId) -> Account {
-            Account::new(
-                account_id,
-                AccountName::new("name"),
-                AccountPrivateKey::new("private_key"),
-                AccountPublicKey::new("public_key"),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            )
-        }
-
-        fn make_metadata(metadata_id: MetadataId, account_id: AccountId) -> Metadata {
-            Metadata::new(
-                metadata_id,
-                account_id,
-                MetadataLabel::new("label"),
-                MetadataContent::new("content"),
-                EventVersion::default(),
-                Nanoid::default(),
-            )
-        }
+        use kernel::prelude::entity::{AccountId, Metadata, MetadataId};
+        use kernel::test_utils::{AccountBuilder, MetadataBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -225,9 +197,12 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
             let metadata_id = MetadataId::new(kernel::generate_id());
-            let metadata = make_metadata(metadata_id.clone(), account_id.clone());
+            let metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
                 .account_read_model()
@@ -270,18 +245,16 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
 
-            let metadata1 =
-                make_metadata(MetadataId::new(kernel::generate_id()), account_id.clone());
-            let metadata2 = Metadata::new(
-                MetadataId::new(kernel::generate_id()),
-                account_id.clone(),
-                MetadataLabel::new("label2"),
-                MetadataContent::new("content2"),
-                EventVersion::default(),
-                Nanoid::default(),
-            );
+            let metadata1 = MetadataBuilder::new()
+                .account_id(account_id.clone())
+                .build();
+            let metadata2 = MetadataBuilder::new()
+                .account_id(account_id.clone())
+                .label("label2")
+                .content("content2")
+                .build();
 
             database
                 .account_read_model()
@@ -332,9 +305,12 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
             let metadata_id = MetadataId::new(kernel::generate_id());
-            let metadata = make_metadata(metadata_id.clone(), account_id.clone());
+            let metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
                 .account_read_model()
@@ -372,9 +348,12 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
             let metadata_id = MetadataId::new(kernel::generate_id());
-            let metadata = make_metadata(metadata_id.clone(), account_id.clone());
+            let metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
                 .account_read_model()
@@ -387,14 +366,12 @@ mod test {
                 .await
                 .unwrap();
 
-            let updated_metadata = Metadata::new(
-                metadata_id.clone(),
-                account_id.clone(),
-                MetadataLabel::new("updated_label"),
-                MetadataContent::new("updated_content"),
-                EventVersion::default(),
-                Nanoid::default(),
-            );
+            let updated_metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .label("updated_label")
+                .content("updated_content")
+                .build();
             database
                 .metadata_read_model()
                 .update(&mut transaction, &updated_metadata)
@@ -426,9 +403,12 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
             let metadata_id = MetadataId::new(kernel::generate_id());
-            let metadata = make_metadata(metadata_id.clone(), account_id.clone());
+            let metadata = MetadataBuilder::new()
+                .id(metadata_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
                 .account_read_model()

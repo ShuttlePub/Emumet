@@ -117,18 +117,11 @@ impl DependOnAuthHostRepository for PostgresDatabase {
 
 #[cfg(test)]
 mod test {
-    use kernel::prelude::entity::AuthHostUrl;
-
-    fn url() -> AuthHostUrl {
-        AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id()))
-    }
-
     mod query {
-        use crate::database::postgres::auth_host::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
-        use kernel::prelude::entity::{AuthHost, AuthHostId};
+        use kernel::test_utils::AuthHostBuilder;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -137,7 +130,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let auth_host = AuthHost::new(AuthHostId::default(), url());
+            let auth_host = AuthHostBuilder::new().build();
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
@@ -160,7 +153,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let auth_host = AuthHost::new(AuthHostId::default(), url());
+            let auth_host = AuthHostBuilder::new().build();
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
@@ -178,11 +171,10 @@ mod test {
     }
 
     mod modify {
-        use crate::database::postgres::auth_host::test::url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
-        use kernel::prelude::entity::{AuthHost, AuthHostId};
+        use kernel::test_utils::{unique_auth_host_url, AuthHostBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -191,7 +183,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let auth_host = AuthHost::new(AuthHostId::default(), url());
+            let auth_host = AuthHostBuilder::new().build();
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
@@ -214,14 +206,18 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let auth_host = AuthHost::new(AuthHostId::default(), url());
+            let auth_host = AuthHostBuilder::new().build();
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
 
-            let updated_auth_host = AuthHost::new(auth_host.id().clone(), url());
+            let new_url = unique_auth_host_url();
+            let updated_auth_host = AuthHostBuilder::new()
+                .id(auth_host.id().clone())
+                .url(new_url.as_ref())
+                .build();
             database
                 .auth_host_repository()
                 .update(&mut transaction, &updated_auth_host)

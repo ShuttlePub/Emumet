@@ -200,41 +200,10 @@ mod test {
         use kernel::interfaces::read_model::{
             AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
         };
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventVersion, Nanoid, Profile, ProfileDisplayName, ProfileId,
-            ProfileSummary,
-        };
+        use kernel::prelude::entity::{AccountId, Profile, ProfileId};
+        use kernel::test_utils::{AccountBuilder, ProfileBuilder};
 
         use crate::database::PostgresDatabase;
-
-        fn make_account(account_id: AccountId) -> Account {
-            Account::new(
-                account_id,
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            )
-        }
-
-        fn make_profile(profile_id: ProfileId, account_id: AccountId) -> Profile {
-            Profile::new(
-                profile_id,
-                account_id,
-                Some(ProfileDisplayName::new("display name")),
-                Some(ProfileSummary::new("summary")),
-                None,
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-            )
-        }
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -245,8 +214,11 @@ mod test {
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
-            let profile = make_profile(profile_id.clone(), account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let profile = ProfileBuilder::new()
+                .id(profile_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
                 .account_read_model()
@@ -282,8 +254,11 @@ mod test {
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
-            let profile = make_profile(profile_id.clone(), account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let profile = ProfileBuilder::new()
+                .id(profile_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
                 .account_read_model()
@@ -327,8 +302,11 @@ mod test {
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
-            let profile = make_profile(profile_id.clone(), account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let profile = ProfileBuilder::new()
+                .id(profile_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
                 .account_read_model()
@@ -365,8 +343,11 @@ mod test {
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
-            let profile = make_profile(profile_id.clone(), account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let profile = ProfileBuilder::new()
+                .id(profile_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
                 .account_read_model()
@@ -379,16 +360,12 @@ mod test {
                 .await
                 .unwrap();
 
-            let updated_profile = Profile::new(
-                profile_id.clone(),
-                account_id.clone(),
-                Some(ProfileDisplayName::new("updated display name")),
-                Some(ProfileSummary::new("updated summary")),
-                None,
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-            );
+            let updated_profile = ProfileBuilder::new()
+                .id(profile_id.clone())
+                .account_id(account_id.clone())
+                .display_name(Some("updated display name"))
+                .summary(Some("updated summary"))
+                .build();
             database
                 .profile_read_model()
                 .update(&mut transaction, &updated_profile)
@@ -421,8 +398,11 @@ mod test {
 
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
-            let account = make_account(account_id.clone());
-            let profile = make_profile(profile_id.clone(), account_id.clone());
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let profile = ProfileBuilder::new()
+                .id(profile_id.clone())
+                .account_id(account_id.clone())
+                .build();
 
             database
                 .account_read_model()

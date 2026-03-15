@@ -3,7 +3,9 @@ use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AccountStatus {
+    #[default]
     Active,
     Suspended {
         reason: String,
@@ -21,12 +23,6 @@ pub enum AccountStatus {
         #[serde(with = "time::serde::rfc3339")]
         banned_at: OffsetDateTime,
     },
-}
-
-impl Default for AccountStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 impl std::hash::Hash for AccountStatus {

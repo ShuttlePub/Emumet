@@ -201,26 +201,9 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
         use kernel::prelude::entity::{
-            AccountId, CommandEnvelope, EventId, FieldAction, KnownEventVersion, Nanoid, Profile,
-            ProfileEvent, ProfileId,
+            CommandEnvelope, EventId, FieldAction, ProfileEvent, ProfileId,
         };
-
-        fn create_profile_command(profile_id: ProfileId) -> CommandEnvelope<ProfileEvent, Profile> {
-            let event = ProfileEvent::Created {
-                account_id: AccountId::default(),
-                display_name: None,
-                summary: None,
-                icon: None,
-                banner: None,
-                nanoid: Nanoid::default(),
-            };
-            CommandEnvelope::new(
-                EventId::from(profile_id),
-                event.name(),
-                event,
-                Some(KnownEventVersion::Nothing),
-            )
-        }
+        use kernel::test_utils::profile_create_command;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -236,7 +219,7 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(events.len(), 0);
-            let created_profile = create_profile_command(profile_id.clone());
+            let created_profile = profile_create_command(profile_id.clone());
             let update_event = ProfileEvent::Updated {
                 display_name: None,
                 summary: None,
@@ -277,7 +260,7 @@ mod test {
             let profile_id = ProfileId::new(kernel::generate_id());
             let event_id = EventId::from(profile_id.clone());
 
-            let created_profile = create_profile_command(profile_id.clone());
+            let created_profile = profile_create_command(profile_id.clone());
             let update_event = ProfileEvent::Updated {
                 display_name: None,
                 summary: None,
@@ -331,27 +314,8 @@ mod test {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
-        use kernel::prelude::entity::{
-            AccountId, CommandEnvelope, EventId, FieldAction, KnownEventVersion, Nanoid, Profile,
-            ProfileEvent, ProfileId,
-        };
-
-        fn create_profile_command(profile_id: ProfileId) -> CommandEnvelope<ProfileEvent, Profile> {
-            let event = ProfileEvent::Created {
-                account_id: AccountId::default(),
-                display_name: None,
-                summary: None,
-                icon: None,
-                banner: None,
-                nanoid: Nanoid::default(),
-            };
-            CommandEnvelope::new(
-                EventId::from(profile_id),
-                event.name(),
-                event,
-                Some(KnownEventVersion::Nothing),
-            )
-        }
+        use kernel::prelude::entity::{EventId, ProfileId};
+        use kernel::test_utils::profile_create_command;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -360,7 +324,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
-            let created_profile = create_profile_command(profile_id.clone());
+            let created_profile = profile_create_command(profile_id.clone());
             db.profile_event_store()
                 .persist(&mut transaction, &created_profile)
                 .await
@@ -380,7 +344,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
-            let created_profile = create_profile_command(profile_id.clone());
+            let created_profile = profile_create_command(profile_id.clone());
 
             let event_envelope = db
                 .profile_event_store()
@@ -407,7 +371,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
-            let created_profile = create_profile_command(profile_id.clone());
+            let created_profile = profile_create_command(profile_id.clone());
 
             // First persist should succeed
             db.profile_event_store()

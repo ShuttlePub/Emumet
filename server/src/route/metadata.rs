@@ -214,21 +214,22 @@ impl MetadataRouter for Router<AppModule> {
 mod tests {
     use crate::schema::metadata::MetadataResponse;
     use application::transfer::metadata::MetadataDto;
+    use kernel::test_utils::{DEFAULT_METADATA_CONTENT, DEFAULT_METADATA_LABEL};
 
     #[test]
     fn test_metadata_response_from_dto() {
         let dto = MetadataDto {
             account_nanoid: "acc-123".to_string(),
-            nanoid: "test-nanoid".to_string(),
-            label: "test-label".to_string(),
-            content: "test-content".to_string(),
+            nanoid: "meta-nanoid-1".to_string(),
+            label: DEFAULT_METADATA_LABEL.to_string(),
+            content: DEFAULT_METADATA_CONTENT.to_string(),
         };
 
         let response = MetadataResponse::from(dto);
 
         assert_eq!(response.account_id, "acc-123");
-        assert_eq!(response.nanoid, "test-nanoid");
-        assert_eq!(response.label, "test-label");
-        assert_eq!(response.content, "test-content");
+        assert_eq!(response.nanoid, "meta-nanoid-1");
+        assert_eq!(response.label, DEFAULT_METADATA_LABEL);
+        assert_eq!(response.content, DEFAULT_METADATA_CONTENT);
     }
 }

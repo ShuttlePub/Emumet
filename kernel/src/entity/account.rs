@@ -316,9 +316,10 @@ impl EventApplier for Account {
 mod test {
     use crate::entity::{
         Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
-        AccountPublicKey, AuthAccountId, CreatedAt, EventEnvelope, EventId, EventVersion, Nanoid,
+        AccountPublicKey, AuthAccountId, EventEnvelope, EventId, EventVersion, Nanoid,
     };
     use crate::event::EventApplier;
+    use crate::test_utils::AccountBuilder;
     use crate::KernelError;
 
     #[test]
@@ -356,29 +357,17 @@ mod test {
     fn create_exist_account() {
         crate::ensure_generator_initialized();
         let id = AccountId::default();
-        let name = AccountName::new("test");
-        let private_key = AccountPrivateKey::new("private_key".to_string());
-        let public_key = AccountPublicKey::new("public_key".to_string());
-        let is_bot = AccountIsBot::new(false);
         let nano_id = Nanoid::default();
-        let account = Account::new(
-            id.clone(),
-            name.clone(),
-            private_key.clone(),
-            public_key.clone(),
-            is_bot.clone(),
-            Default::default(),
-            None,
-            EventVersion::default(),
-            nano_id.clone(),
-            CreatedAt::now(),
-        );
+        let account = AccountBuilder::new()
+            .id(id.clone())
+            .nanoid(nano_id.clone())
+            .build();
         let event = AccountEvent::Created {
-            name: name.clone(),
-            private_key: private_key.clone(),
-            public_key: public_key.clone(),
-            is_bot: is_bot.clone(),
-            nanoid: nano_id.clone(),
+            name: AccountName::new("test"),
+            private_key: AccountPrivateKey::new("private_key".to_string()),
+            public_key: AccountPublicKey::new("public_key".to_string()),
+            is_bot: AccountIsBot::new(false),
+            nanoid: nano_id,
             auth_account_id: AuthAccountId::default(),
         };
         let envelope =
@@ -392,23 +381,11 @@ mod test {
     fn update_account() {
         crate::ensure_generator_initialized();
         let id = AccountId::default();
-        let name = AccountName::new("test");
-        let private_key = AccountPrivateKey::new("private_key".to_string());
-        let public_key = AccountPublicKey::new("public_key".to_string());
-        let is_bot = AccountIsBot::new(false);
         let nano_id = Nanoid::default();
-        let account = Account::new(
-            id.clone(),
-            name.clone(),
-            private_key.clone(),
-            public_key.clone(),
-            is_bot.clone(),
-            Default::default(),
-            None,
-            EventVersion::default(),
-            nano_id.clone(),
-            CreatedAt::now(),
-        );
+        let account = AccountBuilder::new()
+            .id(id.clone())
+            .nanoid(nano_id.clone())
+            .build();
         let version = account.version().clone();
         let event = Account::update(id.clone(), AccountIsBot::new(true), version);
         let envelope = EventEnvelope::new(
@@ -444,23 +421,7 @@ mod test {
     fn deactivate_account() {
         crate::ensure_generator_initialized();
         let id = AccountId::default();
-        let name = AccountName::new("test");
-        let private_key = AccountPrivateKey::new("private_key".to_string());
-        let public_key = AccountPublicKey::new("public_key".to_string());
-        let is_bot = AccountIsBot::new(false);
-        let nano_id = Nanoid::default();
-        let account = Account::new(
-            id.clone(),
-            name.clone(),
-            private_key.clone(),
-            public_key.clone(),
-            is_bot.clone(),
-            Default::default(),
-            None,
-            EventVersion::default(),
-            nano_id.clone(),
-            CreatedAt::now(),
-        );
+        let account = AccountBuilder::new().id(id.clone()).build();
         let version = account.version().clone();
         let event = Account::deactivate(id.clone(), version);
         let envelope = EventEnvelope::new(
@@ -479,23 +440,7 @@ mod test {
     fn deactivate_already_deactivated_account() {
         crate::ensure_generator_initialized();
         let id = AccountId::default();
-        let name = AccountName::new("test");
-        let private_key = AccountPrivateKey::new("private_key".to_string());
-        let public_key = AccountPublicKey::new("public_key".to_string());
-        let is_bot = AccountIsBot::new(false);
-        let nano_id = Nanoid::default();
-        let account = Account::new(
-            id.clone(),
-            name.clone(),
-            private_key.clone(),
-            public_key.clone(),
-            is_bot.clone(),
-            Default::default(),
-            None,
-            EventVersion::default(),
-            nano_id.clone(),
-            CreatedAt::now(),
-        );
+        let account = AccountBuilder::new().id(id.clone()).build();
         let version = account.version().clone();
         let event = Account::deactivate(id.clone(), version);
         let envelope = EventEnvelope::new(
@@ -536,28 +481,11 @@ mod test {
             .is_err_and(|e| e.current_context() == &KernelError::Internal));
     }
 
-    fn make_active_account() -> (AccountId, Account) {
-        crate::ensure_generator_initialized();
-        let id = AccountId::default();
-        let account = Account::new(
-            id.clone(),
-            AccountName::new("test"),
-            AccountPrivateKey::new("private_key".to_string()),
-            AccountPublicKey::new("public_key".to_string()),
-            AccountIsBot::new(false),
-            Default::default(),
-            None,
-            EventVersion::default(),
-            Nanoid::default(),
-            CreatedAt::now(),
-        );
-        (id, account)
-    }
-
     #[test]
     fn suspend_account() {
         crate::ensure_generator_initialized();
-        let (id, account) = make_active_account();
+        let id = AccountId::default();
+        let account = AccountBuilder::new().id(id.clone()).build();
         let version = account.version().clone();
         let event = Account::suspend(id, "spam".into(), None, version);
         let envelope = EventEnvelope::new(
@@ -578,22 +506,14 @@ mod test {
         use time::OffsetDateTime;
 
         let id = AccountId::default();
-        let account = Account::new(
-            id.clone(),
-            AccountName::new("test"),
-            AccountPrivateKey::new("private_key".to_string()),
-            AccountPublicKey::new("public_key".to_string()),
-            AccountIsBot::new(false),
-            AccountStatus::Suspended {
+        let account = AccountBuilder::new()
+            .id(id.clone())
+            .status(AccountStatus::Suspended {
                 reason: "spam".into(),
                 suspended_at: OffsetDateTime::now_utc(),
                 expires_at: None,
-            },
-            None,
-            EventVersion::default(),
-            Nanoid::default(),
-            CreatedAt::now(),
-        );
+            })
+            .build();
         let version = account.version().clone();
         let event = Account::suspend(id, "another reason".into(), None, version);
         let envelope = EventEnvelope::new(
@@ -613,22 +533,14 @@ mod test {
         use time::OffsetDateTime;
 
         let id = AccountId::default();
-        let account = Account::new(
-            id.clone(),
-            AccountName::new("test"),
-            AccountPrivateKey::new("private_key".to_string()),
-            AccountPublicKey::new("public_key".to_string()),
-            AccountIsBot::new(false),
-            AccountStatus::Suspended {
+        let account = AccountBuilder::new()
+            .id(id.clone())
+            .status(AccountStatus::Suspended {
                 reason: "spam".into(),
                 suspended_at: OffsetDateTime::now_utc(),
                 expires_at: None,
-            },
-            None,
-            EventVersion::default(),
-            Nanoid::default(),
-            CreatedAt::now(),
-        );
+            })
+            .build();
         let version = account.version().clone();
         let event = Account::unsuspend(id, version);
         let envelope = EventEnvelope::new(
@@ -645,7 +557,8 @@ mod test {
     #[test]
     fn unsuspend_active_account() {
         crate::ensure_generator_initialized();
-        let (id, account) = make_active_account();
+        let id = AccountId::default();
+        let account = AccountBuilder::new().id(id.clone()).build();
         let version = account.version().clone();
         let event = Account::unsuspend(id, version);
         let envelope = EventEnvelope::new(
@@ -661,7 +574,8 @@ mod test {
     #[test]
     fn ban_account() {
         crate::ensure_generator_initialized();
-        let (id, account) = make_active_account();
+        let id = AccountId::default();
+        let account = AccountBuilder::new().id(id.clone()).build();
         let version = account.version().clone();
         let event = Account::ban(id, "violation".into(), version);
         let envelope = EventEnvelope::new(
@@ -682,21 +596,13 @@ mod test {
         use time::OffsetDateTime;
 
         let id = AccountId::default();
-        let account = Account::new(
-            id.clone(),
-            AccountName::new("test"),
-            AccountPrivateKey::new("private_key".to_string()),
-            AccountPublicKey::new("public_key".to_string()),
-            AccountIsBot::new(false),
-            AccountStatus::Banned {
+        let account = AccountBuilder::new()
+            .id(id.clone())
+            .status(AccountStatus::Banned {
                 reason: "violation".into(),
                 banned_at: OffsetDateTime::now_utc(),
-            },
-            None,
-            EventVersion::default(),
-            Nanoid::default(),
-            CreatedAt::now(),
-        );
+            })
+            .build();
         let version = account.version().clone();
         let event = Account::ban(id, "another".into(), version);
         let envelope = EventEnvelope::new(

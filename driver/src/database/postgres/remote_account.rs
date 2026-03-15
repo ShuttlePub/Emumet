@@ -172,33 +172,13 @@ impl DependOnRemoteAccountRepository for PostgresDatabase {
 
 #[cfg(test)]
 mod test {
-    use kernel::prelude::entity::{RemoteAccountAcct, RemoteAccountUrl};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn acct_url(name: Option<&str>) -> (RemoteAccountAcct, RemoteAccountUrl) {
-        if let Some(name) = name {
-            (
-                RemoteAccountAcct::new(format!("{}@example.com", name)),
-                RemoteAccountUrl::new(format!("https://example.com/users/{}", name)),
-            )
-        } else {
-            static COUNTER: AtomicUsize = AtomicUsize::new(0);
-            let c = COUNTER.fetch_add(1, Ordering::Relaxed);
-            (
-                RemoteAccountAcct::new(format!("example{}@example.com", c)),
-                RemoteAccountUrl::new(format!("https://example.com/users/example{}", c)),
-            )
-        }
-    }
-
     mod query {
-        use crate::database::postgres::remote_account::test::acct_url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{
             DependOnRemoteAccountRepository, RemoteAccountRepository,
         };
-        use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
+        use kernel::test_utils::{unique_remote_acct, RemoteAccountBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -207,9 +187,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId::new(kernel::generate_id());
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
+            let remote_account = RemoteAccountBuilder::new().build();
             database
                 .remote_account_repository()
                 .create(&mut transaction, &remote_account)
@@ -217,13 +195,13 @@ mod test {
                 .unwrap();
             let result = database
                 .remote_account_repository()
-                .find_by_id(&mut transaction, &id)
+                .find_by_id(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
-            assert_eq!(result, Some(remote_account));
+            assert_eq!(result, Some(remote_account.clone()));
             database
                 .remote_account_repository()
-                .delete(&mut transaction, &id)
+                .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
         }
@@ -235,13 +213,11 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(
-                RemoteAccountId::new(kernel::generate_id()),
-                acct.clone(),
-                url,
-                None,
-            );
+            let (acct, url) = unique_remote_acct();
+            let remote_account = RemoteAccountBuilder::new()
+                .acct(acct.as_ref())
+                .url(url.as_ref())
+                .build();
             database
                 .remote_account_repository()
                 .create(&mut transaction, &remote_account)
@@ -268,13 +244,11 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(
-                RemoteAccountId::new(kernel::generate_id()),
-                acct,
-                url.clone(),
-                None,
-            );
+            let (acct, url) = unique_remote_acct();
+            let remote_account = RemoteAccountBuilder::new()
+                .acct(acct.as_ref())
+                .url(url.as_ref())
+                .build();
             database
                 .remote_account_repository()
                 .create(&mut transaction, &remote_account)
@@ -295,13 +269,13 @@ mod test {
     }
 
     mod modify {
-        use crate::database::postgres::remote_account::test::acct_url;
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::repository::{
             DependOnRemoteAccountRepository, RemoteAccountRepository,
         };
-        use kernel::prelude::entity::{RemoteAccount, RemoteAccountId};
+        use kernel::prelude::entity::RemoteAccountId;
+        use kernel::test_utils::RemoteAccountBuilder;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -310,9 +284,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId::new(kernel::generate_id());
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id, acct, url, None);
+            let remote_account = RemoteAccountBuilder::new().build();
             database
                 .remote_account_repository()
                 .create(&mut transaction, &remote_account)
@@ -333,16 +305,14 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let id = RemoteAccountId::new(kernel::generate_id());
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
+            let remote_account = RemoteAccountBuilder::new().id(id.clone()).build();
             database
                 .remote_account_repository()
                 .create(&mut transaction, &remote_account)
                 .await
                 .unwrap();
 
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
+            let remote_account = RemoteAccountBuilder::new().id(id.clone()).build();
             database
                 .remote_account_repository()
                 .update(&mut transaction, &remote_account)
@@ -368,9 +338,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let id = RemoteAccountId::new(kernel::generate_id());
-            let (acct, url) = acct_url(None);
-            let remote_account = RemoteAccount::new(id.clone(), acct, url, None);
+            let remote_account = RemoteAccountBuilder::new().build();
             database
                 .remote_account_repository()
                 .create(&mut transaction, &remote_account)
@@ -379,12 +347,12 @@ mod test {
 
             database
                 .remote_account_repository()
-                .delete(&mut transaction, &id)
+                .delete(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
             let result = database
                 .remote_account_repository()
-                .find_by_id(&mut transaction, &id)
+                .find_by_id(&mut transaction, remote_account.id())
                 .await
                 .unwrap();
             assert_eq!(result, None);

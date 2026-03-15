@@ -34,37 +34,16 @@ impl ProfileDto {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kernel::prelude::entity::{
-        AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
-        ProfileSummary,
-    };
+    use kernel::test_utils::{ProfileBuilder, DEFAULT_DISPLAY_NAME, DEFAULT_SUMMARY};
 
     #[test]
     fn test_profile_dto_with_all_fields() {
-        kernel::ensure_generator_initialized();
-        let profile_id = ProfileId::new(kernel::generate_id());
-        let account_id = AccountId::new(kernel::generate_id());
-        let nanoid = Nanoid::default();
-        let display_name = ProfileDisplayName::new("Test User".to_string());
-        let summary = ProfileSummary::new("A test summary".to_string());
-        let icon_id = ImageId::new(kernel::generate_id());
-        let banner_id = ImageId::new(kernel::generate_id());
-        let version = EventVersion::new(kernel::generate_id());
+        let profile = ProfileBuilder::new().build();
         let account_nanoid = "acc-nanoid-123".to_string();
-
-        let profile = Profile::new(
-            profile_id,
-            account_id,
-            Some(display_name.clone()),
-            Some(summary.clone()),
-            Some(icon_id),
-            Some(banner_id),
-            version,
-            nanoid.clone(),
-        );
 
         let icon_url = "https://example.com/icon.png".to_string();
         let banner_url = "https://example.com/banner.png".to_string();
+        let nanoid_str = profile.nanoid().as_ref().to_string();
         let dto = ProfileDto::new(
             profile,
             account_nanoid.clone(),
@@ -73,37 +52,26 @@ mod tests {
         );
 
         assert_eq!(dto.account_nanoid, account_nanoid);
-        assert_eq!(dto.nanoid, nanoid.as_ref().to_string());
-        assert_eq!(dto.display_name, Some(display_name.as_ref().to_string()));
-        assert_eq!(dto.summary, Some(summary.as_ref().to_string()));
+        assert_eq!(dto.nanoid, nanoid_str);
+        assert_eq!(dto.display_name, Some(DEFAULT_DISPLAY_NAME.to_string()));
+        assert_eq!(dto.summary, Some(DEFAULT_SUMMARY.to_string()));
         assert_eq!(dto.icon_url, Some(icon_url));
         assert_eq!(dto.banner_url, Some(banner_url));
     }
 
     #[test]
     fn test_profile_dto_with_no_optional_fields() {
-        kernel::ensure_generator_initialized();
-        let profile_id = ProfileId::new(kernel::generate_id());
-        let account_id = AccountId::new(kernel::generate_id());
-        let nanoid = Nanoid::default();
-        let version = EventVersion::new(kernel::generate_id());
+        let profile = ProfileBuilder::new()
+            .display_name(None::<String>)
+            .summary(None::<String>)
+            .build();
         let account_nanoid = "acc-nanoid-456".to_string();
-
-        let profile = Profile::new(
-            profile_id,
-            account_id,
-            None,
-            None,
-            None,
-            None,
-            version,
-            nanoid.clone(),
-        );
+        let nanoid_str = profile.nanoid().as_ref().to_string();
 
         let dto = ProfileDto::new(profile, account_nanoid.clone(), None, None);
 
         assert_eq!(dto.account_nanoid, account_nanoid);
-        assert_eq!(dto.nanoid, nanoid.as_ref().to_string());
+        assert_eq!(dto.nanoid, nanoid_str);
         assert!(dto.display_name.is_none());
         assert!(dto.summary.is_none());
         assert!(dto.icon_url.is_none());

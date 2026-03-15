@@ -490,10 +490,8 @@ mod test {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            AuthAccountId, CreatedAt, DeletedAt, EventVersion, Nanoid,
-        };
+        use kernel::prelude::entity::{Account, AccountId, AuthAccountId, DeletedAt, Nanoid};
+        use kernel::test_utils::{unique_account_name, AccountBuilder};
         use sqlx::types::time::OffsetDateTime;
 
         #[test_with::env(DATABASE_URL)]
@@ -504,18 +502,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let id = AccountId::default();
-            let account = Account::new(
-                id.clone(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let account = AccountBuilder::new().id(id.clone()).build();
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
@@ -551,19 +538,8 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let name = AccountName::new(nanoid::nanoid!());
-            let account = Account::new(
-                AccountId::default(),
-                name.clone(),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let name = unique_account_name();
+            let account = AccountBuilder::new().name(name.as_ref()).build();
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
@@ -591,18 +567,7 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let nanoid = Nanoid::default();
-            let account = Account::new(
-                AccountId::default(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                nanoid.clone(),
-                CreatedAt::now(),
-            );
+            let account = AccountBuilder::new().nanoid(nanoid.clone()).build();
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
@@ -629,18 +594,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let account = Account::new(
-                AccountId::default(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let account = AccountBuilder::new().build();
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
@@ -662,35 +616,19 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let account = Account::new(
-                AccountId::default(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let account = AccountBuilder::new().build();
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
                 .await
                 .unwrap();
-            let updated_account = Account::new(
-                account.id().clone(),
-                AccountName::new("test2"),
-                AccountPrivateKey::new("test2"),
-                AccountPublicKey::new("test2"),
-                AccountIsBot::new(true),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let updated_account = AccountBuilder::new()
+                .id(account.id().clone())
+                .name("test2")
+                .private_key("test2")
+                .public_key("test2")
+                .is_bot(true)
+                .build();
             database
                 .account_read_model()
                 .update(&mut transaction, &updated_account)
@@ -711,18 +649,7 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
 
-            let account = Account::new(
-                AccountId::default(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let account = AccountBuilder::new().build();
             database
                 .account_read_model()
                 .create(&mut transaction, &account)
@@ -742,18 +669,9 @@ mod test {
             assert!(result.is_none());
 
             // Ignore if the account is already deleted
-            let account = Account::new(
-                AccountId::default(),
-                AccountName::new("test"),
-                AccountPrivateKey::new("test"),
-                AccountPublicKey::new("test"),
-                AccountIsBot::new(false),
-                Default::default(),
-                Some(DeletedAt::new(OffsetDateTime::now_utc())),
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let account = AccountBuilder::new()
+                .deleted_at(Some(DeletedAt::new(OffsetDateTime::now_utc())))
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &account)

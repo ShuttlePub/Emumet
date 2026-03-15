@@ -200,20 +200,8 @@ mod test {
     use crate::database::PostgresDatabase;
     use kernel::interfaces::database::DatabaseConnection;
     use kernel::interfaces::event_store::{AuthAccountEventStore, DependOnAuthAccountEventStore};
-    use kernel::prelude::entity::{
-        AuthAccount, AuthAccountClientId, AuthAccountEvent, AuthAccountId, AuthHostId,
-        CommandEnvelope, EventId,
-    };
-
-    fn create_auth_account_command(
-        id: AuthAccountId,
-    ) -> CommandEnvelope<AuthAccountEvent, AuthAccount> {
-        AuthAccount::create(
-            id,
-            AuthHostId::default(),
-            AuthAccountClientId::new("test_client"),
-        )
-    }
+    use kernel::prelude::entity::{AuthAccountId, EventId};
+    use kernel::test_utils::auth_account_create_command;
 
     mod query {
         use super::*;
@@ -233,7 +221,7 @@ mod test {
                 .unwrap();
             assert_eq!(events.len(), 0);
 
-            let created = create_auth_account_command(id.clone());
+            let created = auth_account_create_command(id.clone());
             db.auth_account_event_store()
                 .persist_and_transform(&mut transaction, created.clone())
                 .await
@@ -257,7 +245,7 @@ mod test {
             let id = AuthAccountId::default();
             let event_id = EventId::from(id.clone());
 
-            let created = create_auth_account_command(id.clone());
+            let created = auth_account_create_command(id.clone());
             let create_envelope = db
                 .auth_account_event_store()
                 .persist_and_transform(&mut transaction, created.clone())
@@ -290,7 +278,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let id = AuthAccountId::default();
-            let created = create_auth_account_command(id.clone());
+            let created = auth_account_create_command(id.clone());
             db.auth_account_event_store()
                 .persist(&mut transaction, &created)
                 .await
@@ -310,7 +298,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let id = AuthAccountId::default();
-            let created = create_auth_account_command(id.clone());
+            let created = auth_account_create_command(id.clone());
 
             let event_envelope = db
                 .auth_account_event_store()
@@ -337,13 +325,13 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let id = AuthAccountId::default();
-            let created = create_auth_account_command(id.clone());
+            let created = auth_account_create_command(id.clone());
             db.auth_account_event_store()
                 .persist(&mut transaction, &created)
                 .await
                 .unwrap();
 
-            let duplicate = create_auth_account_command(id.clone());
+            let duplicate = auth_account_create_command(id.clone());
             let result = db
                 .auth_account_event_store()
                 .persist(&mut transaction, &duplicate)

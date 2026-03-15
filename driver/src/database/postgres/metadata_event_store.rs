@@ -202,26 +202,9 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::event_store::{DependOnMetadataEventStore, MetadataEventStore};
         use kernel::prelude::entity::{
-            AccountId, CommandEnvelope, EventId, KnownEventVersion, Metadata, MetadataContent,
-            MetadataEvent, MetadataId, MetadataLabel, Nanoid,
+            CommandEnvelope, EventId, MetadataContent, MetadataEvent, MetadataId, MetadataLabel,
         };
-
-        fn create_metadata_command(
-            metadata_id: MetadataId,
-        ) -> CommandEnvelope<MetadataEvent, Metadata> {
-            let event = MetadataEvent::Created {
-                account_id: AccountId::default(),
-                label: MetadataLabel::new("label".to_string()),
-                content: MetadataContent::new("content".to_string()),
-                nanoid: Nanoid::default(),
-            };
-            CommandEnvelope::new(
-                EventId::from(metadata_id),
-                event.name(),
-                event,
-                Some(KnownEventVersion::Nothing),
-            )
-        }
+        use kernel::test_utils::metadata_create_command;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -237,7 +220,7 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(events.len(), 0);
-            let created_metadata = create_metadata_command(metadata_id.clone());
+            let created_metadata = metadata_create_command(metadata_id.clone());
             let update_event = MetadataEvent::Updated {
                 label: MetadataLabel::new("new_label".to_string()),
                 content: MetadataContent::new("new_content".to_string()),
@@ -288,7 +271,7 @@ mod test {
             let metadata_id = MetadataId::new(kernel::generate_id());
             let event_id = EventId::from(metadata_id.clone());
 
-            let created_metadata = create_metadata_command(metadata_id.clone());
+            let created_metadata = metadata_create_command(metadata_id.clone());
             let update_event = MetadataEvent::Updated {
                 label: MetadataLabel::new("new_label".to_string()),
                 content: MetadataContent::new("new_content".to_string()),
@@ -352,27 +335,8 @@ mod test {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::event_store::{DependOnMetadataEventStore, MetadataEventStore};
-        use kernel::prelude::entity::{
-            AccountId, CommandEnvelope, EventId, KnownEventVersion, Metadata, MetadataContent,
-            MetadataEvent, MetadataId, MetadataLabel, Nanoid,
-        };
-
-        fn create_metadata_command(
-            metadata_id: MetadataId,
-        ) -> CommandEnvelope<MetadataEvent, Metadata> {
-            let event = MetadataEvent::Created {
-                account_id: AccountId::default(),
-                label: MetadataLabel::new("label".to_string()),
-                content: MetadataContent::new("content".to_string()),
-                nanoid: Nanoid::default(),
-            };
-            CommandEnvelope::new(
-                EventId::from(metadata_id),
-                event.name(),
-                event,
-                Some(KnownEventVersion::Nothing),
-            )
-        }
+        use kernel::prelude::entity::{EventId, MetadataId};
+        use kernel::test_utils::metadata_create_command;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -381,7 +345,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let metadata_id = MetadataId::new(kernel::generate_id());
-            let created_metadata = create_metadata_command(metadata_id.clone());
+            let created_metadata = metadata_create_command(metadata_id.clone());
             db.metadata_event_store()
                 .persist(&mut transaction, &created_metadata)
                 .await
@@ -401,7 +365,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let metadata_id = MetadataId::new(kernel::generate_id());
-            let created_metadata = create_metadata_command(metadata_id.clone());
+            let created_metadata = metadata_create_command(metadata_id.clone());
 
             let event_envelope = db
                 .metadata_event_store()
@@ -428,7 +392,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let metadata_id = MetadataId::new(kernel::generate_id());
-            let created_metadata = create_metadata_command(metadata_id.clone());
+            let created_metadata = metadata_create_command(metadata_id.clone());
 
             // First persist should succeed
             db.metadata_event_store()

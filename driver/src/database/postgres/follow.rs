@@ -224,10 +224,8 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
-        };
+        use kernel::prelude::entity::{AccountId, FollowApprovedAt, FollowTargetId};
+        use kernel::test_utils::{AccountBuilder, FollowBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -236,48 +234,29 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
             let follower_id = AccountId::default();
-            let follower_account = Account::new(
-                follower_id.clone(),
-                AccountName::new("follower".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let follower_account = AccountBuilder::new()
+                .id(follower_id.clone())
+                .name("follower")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
-            let followee_account = Account::new(
-                followee_id.clone(),
-                AccountName::new("followee".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let followee_account = AccountBuilder::new()
+                .id(followee_id.clone())
+                .name("followee")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
-            let follow = Follow::new(
-                FollowId::new(kernel::generate_id()),
-                FollowTargetId::from(follower_id.clone()),
-                FollowTargetId::from(followee_id.clone()),
-                None,
-            )
-            .unwrap();
+            let follow = FollowBuilder::new()
+                .source_local(follower_id.clone())
+                .destination_local(followee_id.clone())
+                .build();
 
             database
                 .follow_repository()
@@ -322,48 +301,30 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
             let follower_id = AccountId::default();
-            let follower_account = Account::new(
-                follower_id.clone(),
-                AccountName::new("follower".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let follower_account = AccountBuilder::new()
+                .id(follower_id.clone())
+                .name("follower")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
-            let followee_account = Account::new(
-                followee_id.clone(),
-                AccountName::new("followee".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let followee_account = AccountBuilder::new()
+                .id(followee_id.clone())
+                .name("followee")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
-            let follow = Follow::new(
-                FollowId::new(kernel::generate_id()),
-                FollowTargetId::from(follower_id.clone()),
-                FollowTargetId::from(followee_id.clone()),
-                Some(FollowApprovedAt::default()),
-            )
-            .unwrap();
+            let follow = FollowBuilder::new()
+                .source_local(follower_id.clone())
+                .destination_local(followee_id.clone())
+                .approved_at(Some(FollowApprovedAt::default()))
+                .build();
 
             database
                 .follow_repository()
@@ -407,10 +368,8 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
-        use kernel::prelude::entity::{
-            Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-            CreatedAt, EventVersion, Follow, FollowApprovedAt, FollowId, FollowTargetId, Nanoid,
-        };
+        use kernel::prelude::entity::{AccountId, Follow, FollowApprovedAt, FollowTargetId};
+        use kernel::test_utils::{AccountBuilder, FollowBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -419,48 +378,30 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
             let follower_id = AccountId::default();
-            let follower_account = Account::new(
-                follower_id.clone(),
-                AccountName::new("follower".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let follower_account = AccountBuilder::new()
+                .id(follower_id.clone())
+                .name("follower")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
-            let followee_account = Account::new(
-                followee_id.clone(),
-                AccountName::new("followee".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let followee_account = AccountBuilder::new()
+                .id(followee_id.clone())
+                .name("followee")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
-            let follow = Follow::new(
-                FollowId::new(kernel::generate_id()),
-                FollowTargetId::from(follower_id),
-                FollowTargetId::from(followee_id),
-                Some(FollowApprovedAt::default()),
-            )
-            .unwrap();
+            let follow = FollowBuilder::new()
+                .source_local(follower_id)
+                .destination_local(followee_id)
+                .approved_at(Some(FollowApprovedAt::default()))
+                .build();
 
             database
                 .follow_repository()
@@ -492,48 +433,29 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let follower_id = AccountId::default();
-            let follower_account = Account::new(
-                follower_id.clone(),
-                AccountName::new("follower".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let follower_account = AccountBuilder::new()
+                .id(follower_id.clone())
+                .name("follower")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
-            let followee_account = Account::new(
-                followee_id.clone(),
-                AccountName::new("followee".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let followee_account = AccountBuilder::new()
+                .id(followee_id.clone())
+                .name("followee")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
-            let follow = Follow::new(
-                FollowId::new(kernel::generate_id()),
-                FollowTargetId::from(follower_id.clone()),
-                FollowTargetId::from(followee_id.clone()),
-                None,
-            )
-            .unwrap();
+            let follow = FollowBuilder::new()
+                .source_local(follower_id.clone())
+                .destination_local(followee_id.clone())
+                .build();
 
             let following = database
                 .follow_repository()
@@ -591,48 +513,29 @@ mod test {
             let database = PostgresDatabase::new().await.unwrap();
             let mut transaction = database.begin_transaction().await.unwrap();
             let follower_id = AccountId::default();
-            let follower_account = Account::new(
-                follower_id.clone(),
-                AccountName::new("follower".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let follower_account = AccountBuilder::new()
+                .id(follower_id.clone())
+                .name("follower")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
-            let followee_account = Account::new(
-                followee_id.clone(),
-                AccountName::new("followee".to_string()),
-                AccountPrivateKey::new("key".to_string()),
-                AccountPublicKey::new("key".to_string()),
-                AccountIsBot::new(false),
-                Default::default(),
-                None,
-                EventVersion::default(),
-                Nanoid::default(),
-                CreatedAt::now(),
-            );
+            let followee_account = AccountBuilder::new()
+                .id(followee_id.clone())
+                .name("followee")
+                .build();
             database
                 .account_read_model()
                 .create(&mut transaction, &followee_account)
                 .await
                 .unwrap();
-            let follow = Follow::new(
-                FollowId::new(kernel::generate_id()),
-                FollowTargetId::from(follower_id.clone()),
-                FollowTargetId::from(followee_id),
-                None,
-            )
-            .unwrap();
+            let follow = FollowBuilder::new()
+                .source_local(follower_id.clone())
+                .destination_local(followee_id)
+                .build();
 
             database
                 .follow_repository()

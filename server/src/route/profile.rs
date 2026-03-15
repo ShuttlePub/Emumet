@@ -158,14 +158,15 @@ impl ProfileRouter for Router<AppModule> {
 mod tests {
     use crate::schema::profile::{ProfileResponse, UpdateProfileRequest};
     use application::transfer::profile::ProfileDto;
+    use kernel::test_utils::{DEFAULT_DISPLAY_NAME, DEFAULT_SUMMARY};
 
     #[test]
     fn test_profile_response_from_dto_with_all_fields() {
         let dto = ProfileDto {
             account_nanoid: "acc-123".to_string(),
-            nanoid: "test-nanoid".to_string(),
-            display_name: Some("Test User".to_string()),
-            summary: Some("A test summary".to_string()),
+            nanoid: "prf-nanoid-1".to_string(),
+            display_name: Some(DEFAULT_DISPLAY_NAME.to_string()),
+            summary: Some(DEFAULT_SUMMARY.to_string()),
             icon_url: Some("https://example.com/icon.png".to_string()),
             banner_url: Some("https://example.com/banner.png".to_string()),
         };
@@ -173,9 +174,12 @@ mod tests {
         let response = ProfileResponse::from(dto);
 
         assert_eq!(response.account_id, "acc-123");
-        assert_eq!(response.nanoid, "test-nanoid");
-        assert_eq!(response.display_name, Some("Test User".to_string()));
-        assert_eq!(response.summary, Some("A test summary".to_string()));
+        assert_eq!(response.nanoid, "prf-nanoid-1");
+        assert_eq!(
+            response.display_name,
+            Some(DEFAULT_DISPLAY_NAME.to_string())
+        );
+        assert_eq!(response.summary, Some(DEFAULT_SUMMARY.to_string()));
         assert_eq!(
             response.icon_url,
             Some("https://example.com/icon.png".to_string())
@@ -190,7 +194,7 @@ mod tests {
     fn test_profile_response_from_dto_with_no_optional_fields() {
         let dto = ProfileDto {
             account_nanoid: "acc-456".to_string(),
-            nanoid: "test-nanoid-2".to_string(),
+            nanoid: "prf-nanoid-2".to_string(),
             display_name: None,
             summary: None,
             icon_url: None,
@@ -200,7 +204,7 @@ mod tests {
         let response = ProfileResponse::from(dto);
 
         assert_eq!(response.account_id, "acc-456");
-        assert_eq!(response.nanoid, "test-nanoid-2");
+        assert_eq!(response.nanoid, "prf-nanoid-2");
         assert!(response.display_name.is_none());
         assert!(response.summary.is_none());
         assert!(response.icon_url.is_none());
@@ -209,8 +213,8 @@ mod tests {
 
     #[test]
     fn test_update_request_absent_fields() {
-        let json = r#"{"display_name": "test"}"#;
-        let req: UpdateProfileRequest = serde_json::from_str(json).unwrap();
+        let json = serde_json::json!({"display_name": DEFAULT_DISPLAY_NAME}).to_string();
+        let req: UpdateProfileRequest = serde_json::from_str(&json).unwrap();
         assert!(req.icon_url.is_none());
         assert!(req.banner_url.is_none());
     }

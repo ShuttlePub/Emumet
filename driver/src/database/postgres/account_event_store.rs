@@ -201,26 +201,9 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
         use kernel::prelude::entity::{
-            Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
-            AccountPublicKey, AuthAccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
+            AccountEvent, AccountId, AccountIsBot, CommandEnvelope, EventId,
         };
-
-        fn create_account_command(account_id: AccountId) -> CommandEnvelope<AccountEvent, Account> {
-            let event = AccountEvent::Created {
-                name: AccountName::new("test"),
-                private_key: AccountPrivateKey::new("test"),
-                public_key: AccountPublicKey::new("test"),
-                is_bot: AccountIsBot::new(false),
-                nanoid: Nanoid::default(),
-                auth_account_id: AuthAccountId::default(),
-            };
-            CommandEnvelope::new(
-                EventId::from(account_id),
-                event.name(),
-                event,
-                Some(KnownEventVersion::Nothing),
-            )
-        }
+        use kernel::test_utils::account_create_command;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -236,7 +219,7 @@ mod test {
                 .await
                 .unwrap();
             assert_eq!(events.len(), 0);
-            let created_account = create_account_command(account_id.clone());
+            let created_account = account_create_command(account_id.clone());
             let update_event = AccountEvent::Updated {
                 is_bot: AccountIsBot::new(true),
             };
@@ -286,7 +269,7 @@ mod test {
             let account_id = AccountId::default();
             let event_id = EventId::from(account_id.clone());
 
-            let created_account = create_account_command(account_id.clone());
+            let created_account = account_create_command(account_id.clone());
             let update_event = AccountEvent::Updated {
                 is_bot: AccountIsBot::new(true),
             };
@@ -349,27 +332,8 @@ mod test {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
-        use kernel::prelude::entity::{
-            Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
-            AccountPublicKey, AuthAccountId, CommandEnvelope, EventId, KnownEventVersion, Nanoid,
-        };
-
-        fn create_account_command(account_id: AccountId) -> CommandEnvelope<AccountEvent, Account> {
-            let event = AccountEvent::Created {
-                name: AccountName::new("test"),
-                private_key: AccountPrivateKey::new("test"),
-                public_key: AccountPublicKey::new("test"),
-                is_bot: AccountIsBot::new(false),
-                nanoid: Nanoid::default(),
-                auth_account_id: AuthAccountId::default(),
-            };
-            CommandEnvelope::new(
-                EventId::from(account_id),
-                event.name(),
-                event,
-                Some(KnownEventVersion::Nothing),
-            )
-        }
+        use kernel::prelude::entity::{AccountId, EventId};
+        use kernel::test_utils::account_create_command;
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -378,7 +342,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let account_id = AccountId::default();
-            let created_account = create_account_command(account_id.clone());
+            let created_account = account_create_command(account_id.clone());
             db.account_event_store()
                 .persist(&mut transaction, &created_account)
                 .await
@@ -398,7 +362,7 @@ mod test {
             let db = PostgresDatabase::new().await.unwrap();
             let mut transaction = db.begin_transaction().await.unwrap();
             let account_id = AccountId::default();
-            let created_account = create_account_command(account_id.clone());
+            let created_account = account_create_command(account_id.clone());
 
             let event_envelope = db
                 .account_event_store()

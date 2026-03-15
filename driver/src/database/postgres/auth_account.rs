@@ -153,10 +153,8 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::read_model::{AuthAccountReadModel, DependOnAuthAccountReadModel};
         use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
-        use kernel::prelude::entity::{
-            AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
-            EventVersion,
-        };
+        use kernel::prelude::entity::{AuthAccountId, AuthHostId};
+        use kernel::test_utils::{AuthAccountBuilder, AuthHostBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -166,22 +164,18 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let auth_host_id = AuthHostId::default();
-            let auth_host = AuthHost::new(
-                auth_host_id.clone(),
-                AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id())),
-            );
+            let auth_host = AuthHostBuilder::new().id(auth_host_id.clone()).build();
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
             let account_id = AuthAccountId::default();
-            let auth_account = AuthAccount::new(
-                account_id.clone(),
-                auth_host_id,
-                AuthAccountClientId::new("client_id".to_string()),
-                EventVersion::default(),
-            );
+            let auth_account = AuthAccountBuilder::new()
+                .id(account_id.clone())
+                .host(auth_host_id)
+                .client_id("client_id")
+                .build();
 
             database
                 .auth_account_read_model()
@@ -207,10 +201,8 @@ mod test {
         use kernel::interfaces::database::DatabaseConnection;
         use kernel::interfaces::read_model::{AuthAccountReadModel, DependOnAuthAccountReadModel};
         use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
-        use kernel::prelude::entity::{
-            AuthAccount, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
-            EventVersion,
-        };
+        use kernel::prelude::entity::{AuthAccountId, AuthHostId};
+        use kernel::test_utils::{AuthAccountBuilder, AuthHostBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -221,21 +213,17 @@ mod test {
 
             let host_id = AuthHostId::default();
             let account_id = AuthAccountId::default();
-            let auth_host = AuthHost::new(
-                host_id.clone(),
-                AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id())),
-            );
+            let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
-            let auth_account = AuthAccount::new(
-                account_id.clone(),
-                host_id,
-                AuthAccountClientId::new("client_id".to_string()),
-                EventVersion::default(),
-            );
+            let auth_account = AuthAccountBuilder::new()
+                .id(account_id.clone())
+                .host(host_id)
+                .client_id("client_id")
+                .build();
             database
                 .auth_account_read_model()
                 .create(&mut transaction, &auth_account)
@@ -263,32 +251,27 @@ mod test {
 
             let host_id = AuthHostId::default();
             let account_id = AuthAccountId::default();
-            let auth_host = AuthHost::new(
-                host_id.clone(),
-                AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id())),
-            );
+            let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
-            let auth_account = AuthAccount::new(
-                account_id.clone(),
-                host_id.clone(),
-                AuthAccountClientId::new("client_id".to_string()),
-                EventVersion::default(),
-            );
+            let auth_account = AuthAccountBuilder::new()
+                .id(account_id.clone())
+                .host(host_id.clone())
+                .client_id("client_id")
+                .build();
             database
                 .auth_account_read_model()
                 .create(&mut transaction, &auth_account)
                 .await
                 .unwrap();
-            let updated_auth_account = AuthAccount::new(
-                account_id.clone(),
-                host_id,
-                AuthAccountClientId::new("updated_client_id".to_string()),
-                EventVersion::default(),
-            );
+            let updated_auth_account = AuthAccountBuilder::new()
+                .id(account_id.clone())
+                .host(host_id)
+                .client_id("updated_client_id")
+                .build();
             database
                 .auth_account_read_model()
                 .update(&mut transaction, &updated_auth_account)
@@ -315,22 +298,18 @@ mod test {
             let mut transaction = database.begin_transaction().await.unwrap();
 
             let host_id = AuthHostId::default();
-            let auth_host = AuthHost::new(
-                host_id.clone(),
-                AuthHostUrl::new(format!("https://{}.example.com", kernel::generate_id())),
-            );
+            let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
             database
                 .auth_host_repository()
                 .create(&mut transaction, &auth_host)
                 .await
                 .unwrap();
             let account_id = AuthAccountId::default();
-            let auth_account = AuthAccount::new(
-                account_id.clone(),
-                host_id,
-                AuthAccountClientId::new("client_id".to_string()),
-                EventVersion::default(),
-            );
+            let auth_account = AuthAccountBuilder::new()
+                .id(account_id.clone())
+                .host(host_id)
+                .client_id("client_id")
+                .build();
             database
                 .auth_account_read_model()
                 .create(&mut transaction, &auth_account)

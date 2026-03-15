@@ -176,6 +176,7 @@ mod test {
         ProfileDisplayName, ProfileId, ProfileSummary,
     };
     use crate::event::EventApplier;
+    use crate::test_utils::ProfileBuilder;
 
     #[test]
     fn create_profile() {
@@ -216,16 +217,13 @@ mod test {
         let account_id = AccountId::default();
         let id = ProfileId::new(crate::generate_id());
         let nano_id = Nanoid::default();
-        let profile = Profile::new(
-            id.clone(),
-            account_id.clone(),
-            None,
-            None,
-            None,
-            None,
-            EventVersion::default(),
-            nano_id.clone(),
-        );
+        let profile = ProfileBuilder::new()
+            .id(id.clone())
+            .account_id(account_id.clone())
+            .display_name(None::<String>)
+            .summary(None::<String>)
+            .nanoid(nano_id.clone())
+            .build();
         let display_name = ProfileDisplayName::new("display_name".to_string());
         let summary = ProfileSummary::new("summary".to_string());
         let icon = ImageId::new(crate::generate_id());
@@ -262,22 +260,17 @@ mod test {
     #[test]
     fn clear_icon_and_banner() {
         crate::ensure_generator_initialized();
-        let account_id = AccountId::default();
         let id = ProfileId::new(crate::generate_id());
-        let nano_id = Nanoid::default();
         let icon = ImageId::new(crate::generate_id());
         let banner = ImageId::new(crate::generate_id());
-        let version = EventVersion::default();
-        let profile = Profile::new(
-            id.clone(),
-            account_id,
-            None,
-            None,
-            Some(icon),
-            Some(banner),
-            version.clone(),
-            nano_id,
-        );
+        let profile = ProfileBuilder::new()
+            .id(id.clone())
+            .display_name(None::<String>)
+            .summary(None::<String>)
+            .icon(Some(icon))
+            .banner(Some(banner))
+            .build();
+        let version = profile.version().clone();
 
         // Clear both icon and banner with FieldAction::Clear
         let update_event = Profile::update(

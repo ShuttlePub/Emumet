@@ -153,6 +153,7 @@ mod test {
         MetadataLabel, Nanoid,
     };
     use crate::event::EventApplier;
+    use crate::test_utils::MetadataBuilder;
 
     #[test]
     fn create_metadata() {
@@ -190,17 +191,12 @@ mod test {
         crate::ensure_generator_initialized();
         let account_id = AccountId::default();
         let id = MetadataId::new(crate::generate_id());
-        let label = MetadataLabel::new("label".to_string());
-        let content = MetadataContent::new("content".to_string());
         let nano_id = Nanoid::default();
-        let metadata = Metadata::new(
-            id.clone(),
-            account_id.clone(),
-            label.clone(),
-            content.clone(),
-            EventVersion::default(),
-            nano_id.clone(),
-        );
+        let metadata = MetadataBuilder::new()
+            .id(id.clone())
+            .account_id(account_id.clone())
+            .nanoid(nano_id.clone())
+            .build();
         let label = MetadataLabel::new("new_label".to_string());
         let content = MetadataContent::new("new_content".to_string());
         let current_version = metadata.version().clone();
@@ -227,19 +223,8 @@ mod test {
     #[test]
     fn delete_metadata() {
         crate::ensure_generator_initialized();
-        let account_id = AccountId::default();
         let id = MetadataId::new(crate::generate_id());
-        let label = MetadataLabel::new("label".to_string());
-        let content = MetadataContent::new("content".to_string());
-        let nano_id = Nanoid::default();
-        let metadata = Metadata::new(
-            id.clone(),
-            account_id.clone(),
-            label.clone(),
-            content.clone(),
-            EventVersion::default(),
-            nano_id.clone(),
-        );
+        let metadata = MetadataBuilder::new().id(id.clone()).build();
         let current_version = metadata.version().clone();
         let delete_event = Metadata::delete(id.clone(), current_version);
         let envelope = EventEnvelope::new(
