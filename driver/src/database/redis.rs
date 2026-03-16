@@ -18,6 +18,15 @@ pub struct RedisDatabase {
 }
 
 impl RedisDatabase {
+    /// Creates a dummy instance with an unreachable URL. For tests that never actually access Redis.
+    pub fn new_noop() -> error_stack::Result<RedisDatabase, KernelError> {
+        let config = Config::from_url("redis://invalid");
+        let pool = config
+            .create_pool(Some(Runtime::Tokio1))
+            .change_context_lazy(|| KernelError::Internal)?;
+        Ok(Self { pool })
+    }
+
     pub fn new() -> error_stack::Result<RedisDatabase, KernelError> {
         let url = if let Some(env) = env(REDIS_URL)? {
             env
