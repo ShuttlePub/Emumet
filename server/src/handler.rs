@@ -292,6 +292,31 @@ impl Handler {
 }
 
 #[cfg(test)]
+impl Handler {
+    async fn init_for_oauth2_test(
+        hydra_admin_url: String,
+        kratos_public_url: String,
+        keto_read_url: String,
+        keto_write_url: String,
+    ) -> error_stack::Result<Self, KernelError> {
+        let pgpool = PostgresDatabase::new().await?;
+        let redis = RedisDatabase::new_noop()?;
+        Ok(Self {
+            pgpool,
+            redis,
+            password_provider: FilePasswordProvider::new(),
+            raw_key_generator: Rsa2048RawGenerator,
+            key_encryptor: Argon2Encryptor::default(),
+            signer: Rsa2048Signer,
+            verifier: Rsa2048Verifier,
+            hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
+            kratos_client: KratosClient::new(kratos_public_url),
+            keto_client: KetoClient::new(keto_read_url, keto_write_url),
+        })
+    }
+}
+
+#[cfg(test)]
 impl AppModule {
     pub(crate) async fn new_for_oauth2_test(
         hydra_admin_url: String,
@@ -302,7 +327,7 @@ impl AppModule {
         let keto_write_url =
             dotenvy::var("KETO_WRITE_URL").unwrap_or_else(|_| "http://localhost:4467".to_string());
         let handler = Arc::new(
-            Handler::init_with_urls(
+            Handler::init_for_oauth2_test(
                 hydra_admin_url,
                 kratos_public_url,
                 keto_read_url,
