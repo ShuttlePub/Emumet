@@ -25,6 +25,13 @@ base64 = "0.22"
 rand = "0.8"
 zeroize = "1.7"
 
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+http-msgsign = { workspace = true }
+http-msgsign-draft = { workspace = true }
+ed25519-dalek = { workspace = true }
+
 kernel = { path = "../kernel" }
 
 [dev-dependencies]

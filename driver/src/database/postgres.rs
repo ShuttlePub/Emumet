@@ -10,6 +10,7 @@ mod metadata_event_store;
 mod profile;
 mod profile_event_store;
 mod remote_account;
+mod signing_key;
 
 use crate::database::env;
 use crate::ConvertError;

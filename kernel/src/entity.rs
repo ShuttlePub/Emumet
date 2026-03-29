@@ -8,6 +8,7 @@ mod image;
 mod metadata;
 mod profile;
 mod remote_account;
+mod signing_key;
 
 pub use self::account::*;
 pub use self::auth_account::*;
@@ -19,3 +20,4 @@ pub use self::image::*;
 pub use self::metadata::*;
 pub use self::profile::*;
 pub use self::remote_account::*;
+pub use self::signing_key::*;
