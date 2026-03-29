@@ -46,6 +46,8 @@ impl Modify for SecurityAddon {
         crate::route::oauth2::login,
         crate::route::oauth2::get_consent,
         crate::route::oauth2::post_consent,
+        crate::route::signing::sign_request,
+        crate::route::signing::get_public_key,
     ),
     components(schemas(
         crate::schema::account::CreateAccountRequest,
@@ -63,6 +65,9 @@ impl Modify for SecurityAddon {
         crate::schema::metadata::MetadataResponse,
         crate::schema::oauth2::OAuth2Response,
         crate::schema::oauth2::ConsentDecision,
+        crate::route::signing::SignRequestBody,
+        crate::route::signing::SignResponse,
+        crate::route::signing::PublicKeyResponse,
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -70,6 +75,7 @@ impl Modify for SecurityAddon {
         (name = "Profile", description = "Profile management"),
         (name = "Metadata", description = "Metadata management"),
         (name = "OAuth2", description = "OAuth2 Login/Consent Provider"),
+        (name = "Signing", description = "HTTP Signature signing"),
     )
 )]
 #[allow(dead_code)] // utoipa OpenApiマクロ内部で使用される
@@ -99,13 +105,26 @@ mod tests {
     }
 
     #[test]
-    fn openapi_spec_is_valid_json() {
-        let json = generate_openapi_json();
-        let parsed: serde_json::Value = serde_json::from_str(&json).expect("Invalid JSON");
+    fn openapi_spec_matches_committed_file() {
+        let generated = generate_openapi_json();
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&generated).expect("Generated spec is not valid JSON");
         assert_eq!(parsed["info"]["title"], "Emumet Account Service API");
-        assert!(parsed["paths"]["/accounts"].is_object());
-        assert!(parsed["paths"]["/oauth2/login"].is_object());
-        assert!(parsed["components"]["schemas"]["AccountResponse"].is_object());
-        assert!(parsed["components"]["securitySchemes"]["bearer_auth"].is_object());
+
+        let committed_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("openapi.json");
+        let committed = std::fs::read_to_string(&committed_path).unwrap_or_else(|_| {
+            panic!(
+                "openapi.json not found at {}. Generate with: cargo test -p server write_openapi_spec_to_file -- --ignored",
+                committed_path.display()
+            )
+        });
+        assert_eq!(
+            committed, generated,
+            "openapi.json is out of date. Regenerate with: cargo test -p server write_openapi_spec_to_file -- --ignored"
+        );
     }
 }

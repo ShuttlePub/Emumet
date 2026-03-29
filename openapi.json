@@ -472,6 +472,100 @@
         ]
       }
     },
+    "/accounts/{id}/public-key": {
+      "get": {
+        "tags": [
+          "Signing"
+        ],
+        "description": "Retrieve the public key for an account.",
+        "operationId": "get_public_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public key info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicKeyResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account or signing key not found"
+          }
+        }
+      }
+    },
+    "/accounts/{id}/sign": {
+      "post": {
+        "tags": [
+          "Signing"
+        ],
+        "description": "Sign an HTTP request using the account's signing key.",
+        "operationId": "sign_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Signed headers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient permissions"
+          },
+          "404": {
+            "description": "Account or signing key not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/accounts/{id}/suspend": {
       "post": {
         "tags": [
@@ -1072,6 +1166,84 @@
           }
         }
       },
+      "PublicKeyResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "owner",
+          "publicKeyPem"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "publicKeyPem": {
+            "type": "string"
+          }
+        }
+      },
+      "SignRequestBody": {
+        "type": "object",
+        "required": [
+          "method",
+          "url",
+          "headers"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base64-encoded request body (optional)"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "method": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "SignResponse": {
+        "type": "object",
+        "required": [
+          "cavage",
+          "rfc9421"
+        ],
+        "properties": {
+          "cavage": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "rfc9421": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "SuspendAccountRequest": {
         "type": "object",
         "required": [
@@ -1174,6 +1346,10 @@
     {
       "name": "OAuth2",
       "description": "OAuth2 Login/Consent Provider"
+    },
+    {
+      "name": "Signing",
+      "description": "HTTP Signature signing"
     }
   ]
 }
