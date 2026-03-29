@@ -9,12 +9,15 @@ use driver::crypto::{
     Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
 };
 use driver::database::{PostgresDatabase, RedisDatabase};
+use driver::http_signing::HttpSignerImpl;
 use driver::keto::KetoClient;
+use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
     DependOnSignatureVerifier, DependOnSigner,
 };
 use kernel::interfaces::database::DependOnDatabaseConnection;
+use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::permission::{DependOnPermissionChecker, DependOnPermissionWriter};
 use kernel::KernelError;
 use std::sync::Arc;
@@ -229,6 +232,29 @@ impl DependOnPermissionWriter for AppModule {
     }
 }
 
+impl kernel::interfaces::repository::DependOnSigningKeyRepository for AppModule {
+    type SigningKeyRepository =
+        <PostgresDatabase as kernel::interfaces::repository::DependOnSigningKeyRepository>::SigningKeyRepository;
+    fn signing_key_repository(&self) -> &Self::SigningKeyRepository {
+        kernel::interfaces::repository::DependOnSigningKeyRepository::signing_key_repository(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl DependOnHttpSigner for AppModule {
+    type HttpSigner = HttpSignerImpl;
+    fn http_signer(&self) -> &Self::HttpSigner {
+        self.handler.as_ref().http_signer()
+    }
+}
+
+impl DependOnPublicBaseUrl for AppModule {
+    fn public_base_url(&self) -> &PublicBaseUrl {
+        self.handler.as_ref().public_base_url()
+    }
+}
+
 // Note: DependOnSigningKeyGenerator, DependOnAccountCommandProcessor,
 // DependOnAccountQueryProcessor, and all UseCase traits are provided
 // automatically via blanket impls in adapter.
@@ -243,6 +269,10 @@ pub struct Handler {
     key_encryptor: Argon2Encryptor,
     signer: Rsa2048Signer,
     verifier: Rsa2048Verifier,
+    // HTTP signing
+    http_signer: HttpSignerImpl,
+    // Config
+    public_base_url: PublicBaseUrl,
     // Ory clients
     pub(crate) hydra_admin_client: HydraAdminClient,
     pub(crate) kratos_client: KratosClient,
@@ -276,6 +306,9 @@ impl Handler {
     ) -> error_stack::Result<Self, KernelError> {
         let pgpool = PostgresDatabase::new().await?;
         let redis = RedisDatabase::new()?;
+        let public_base_url = PublicBaseUrl::new(
+            dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
+        );
         Ok(Self {
             pgpool,
             redis,
@@ -284,6 +317,8 @@ impl Handler {
             key_encryptor: Argon2Encryptor::default(),
             signer: Rsa2048Signer,
             verifier: Rsa2048Verifier,
+            http_signer: HttpSignerImpl,
+            public_base_url,
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_client: KratosClient::new(kratos_public_url),
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
@@ -301,6 +336,9 @@ impl Handler {
     ) -> error_stack::Result<Self, KernelError> {
         let pgpool = PostgresDatabase::new().await?;
         let redis = RedisDatabase::new_noop()?;
+        let public_base_url = PublicBaseUrl::new(
+            dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
+        );
         Ok(Self {
             pgpool,
             redis,
@@ -309,6 +347,8 @@ impl Handler {
             key_encryptor: Argon2Encryptor::default(),
             signer: Rsa2048Signer,
             verifier: Rsa2048Verifier,
+            http_signer: HttpSignerImpl,
+            public_base_url,
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_client: KratosClient::new(kratos_public_url),
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
@@ -395,5 +435,18 @@ impl DependOnPermissionWriter for Handler {
     type PermissionWriter = KetoClient;
     fn permission_writer(&self) -> &Self::PermissionWriter {
         &self.keto_client
+    }
+}
+
+impl DependOnHttpSigner for Handler {
+    type HttpSigner = HttpSignerImpl;
+    fn http_signer(&self) -> &Self::HttpSigner {
+        &self.http_signer
+    }
+}
+
+impl DependOnPublicBaseUrl for Handler {
+    fn public_base_url(&self) -> &PublicBaseUrl {
+        &self.public_base_url
     }
 }

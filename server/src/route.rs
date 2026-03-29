@@ -6,6 +6,7 @@ pub mod account;
 pub mod metadata;
 pub mod oauth2;
 pub mod profile;
+pub mod signing;
 
 const MAX_BATCH_SIZE: usize = 100;
 

@@ -15,6 +15,7 @@ use crate::route::account::AccountRouter;
 use crate::route::metadata::MetadataRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile::ProfileRouter;
+use crate::route::signing::{SigningAuthedRouter, SigningPublicRouter};
 use axum::http::{header, HeaderValue, Method};
 use error_stack::ResultExt;
 use kernel::KernelError;
@@ -74,13 +75,14 @@ async fn main() -> Result<(), StackTrace> {
         .route_account()
         .route_profile()
         .route_metadata()
+        .route_signing_authed()
         .layer(axum::middleware::from_fn_with_state(
             (oidc_config, jwks_cache),
             auth::auth_middleware,
         ));
 
     // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider)
-    let public_routes = axum::Router::new().route_oauth2();
+    let public_routes = axum::Router::new().route_oauth2().route_signing_public();
 
     let router = authed_routes
         .merge(public_routes)

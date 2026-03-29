@@ -1,6 +1,7 @@
 use crate::permission::{
     account_deactivate, account_edit, account_view, check_permission, instance_moderate,
 };
+use crate::signing_key::CreateSigningKeyUseCase;
 use crate::transfer::account::{AccountDto, CreateAccountDto, UpdateAccountDto};
 use crate::transfer::pagination::{apply_pagination, Pagination};
 use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
@@ -12,7 +13,8 @@ use adapter::processor::profile::{
     CreateProfileParam, DependOnProfileCommandProcessor, ProfileCommandProcessor,
 };
 use error_stack::Report;
-use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider};
+use kernel::interfaces::config::DependOnPublicBaseUrl;
+use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider, SigningAlgorithm};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
@@ -20,6 +22,7 @@ use kernel::interfaces::permission::{
     AccountRelation, DependOnPermissionChecker, DependOnPermissionWriter, PermissionWriter,
     RelationTarget,
 };
+use kernel::interfaces::repository::DependOnSigningKeyRepository;
 use kernel::prelude::entity::{
     Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
     AuthAccountId, EventId, EventVersion, Nanoid, Profile, ProfileDisplayName,
@@ -106,6 +109,8 @@ pub trait CreateAccountUseCase:
     + DependOnPasswordProvider
     + DependOnSigningKeyGenerator
     + DependOnPermissionWriter
+    + DependOnSigningKeyRepository
+    + DependOnPublicBaseUrl
 {
     fn create_account(
         &self,
@@ -170,6 +175,13 @@ pub trait CreateAccountUseCase:
                 )
                 .await?;
 
+            self.create(
+                account.id().clone(),
+                account.nanoid(),
+                SigningAlgorithm::Rsa2048,
+            )
+            .await?;
+
             Ok(AccountDto::from(account))
         }
     }
@@ -182,6 +194,8 @@ impl<T> CreateAccountUseCase for T where
         + DependOnPasswordProvider
         + DependOnSigningKeyGenerator
         + DependOnPermissionWriter
+        + DependOnSigningKeyRepository
+        + DependOnPublicBaseUrl
 {
 }
 
