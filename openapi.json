@@ -611,7 +611,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Consent result",
+            "description": "Consent details for user approval",
             "content": {
               "application/json": {
                 "schema": {
@@ -619,6 +619,9 @@
                 }
               }
             }
+          },
+          "302": {
+            "description": "Redirect (auto-accepted or skipped)"
           },
           "502": {
             "description": "Bad gateway (Hydra error)"
@@ -642,15 +645,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Consent decision result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OAuth2Response"
-                }
-              }
-            }
+          "302": {
+            "description": "Redirect after consent decision"
           },
           "400": {
             "description": "Invalid scope requested"
@@ -680,15 +676,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Login result (redirect on success or reject)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OAuth2Response"
-                }
-              }
-            }
+          "302": {
+            "description": "Redirect to Hydra callback"
           },
           "502": {
             "description": "Bad gateway (Hydra/Kratos error)"
