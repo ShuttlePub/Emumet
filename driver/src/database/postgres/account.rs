@@ -514,9 +514,17 @@ mod test {
     mod read_model {
         use crate::database::PostgresDatabase;
         use kernel::interfaces::database::DatabaseConnection;
-        use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
-        use kernel::prelude::entity::{Account, AccountId, AuthAccountId, DeletedAt, Nanoid};
-        use kernel::test_utils::{unique_account_name, AccountBuilder};
+        use kernel::interfaces::read_model::{
+            AccountReadModel, AuthAccountReadModel, DependOnAccountReadModel,
+            DependOnAuthAccountReadModel,
+        };
+        use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
+        use kernel::prelude::entity::{
+            Account, AccountId, AuthAccountId, AuthHostId, DeletedAt, Nanoid,
+        };
+        use kernel::test_utils::{
+            unique_account_name, AccountBuilder, AuthAccountBuilder, AuthHostBuilder,
+        };
         use sqlx::types::time::OffsetDateTime;
 
         #[test_with::env(DATABASE_URL)]
@@ -554,6 +562,65 @@ mod test {
                 .await
                 .unwrap();
             assert!(accounts.is_empty());
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn find_by_auth_id_after_create_and_link() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut transaction = database.get_executor().await.unwrap();
+
+            let host_id = AuthHostId::default();
+            let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
+            database
+                .auth_host_repository()
+                .create(&mut transaction, &auth_host)
+                .await
+                .unwrap();
+
+            let auth_account_id = AuthAccountId::default();
+            let auth_account = AuthAccountBuilder::new()
+                .id(auth_account_id.clone())
+                .host(host_id)
+                .build();
+            database
+                .auth_account_read_model()
+                .create(&mut transaction, &auth_account)
+                .await
+                .unwrap();
+
+            let account = AccountBuilder::new().build();
+            database
+                .account_read_model()
+                .create(&mut transaction, &account)
+                .await
+                .unwrap();
+
+            database
+                .account_read_model()
+                .link_auth_account(&mut transaction, account.id(), &auth_account_id)
+                .await
+                .unwrap();
+
+            let accounts = database
+                .account_read_model()
+                .find_by_auth_id(&mut transaction, &auth_account_id)
+                .await
+                .unwrap();
+            assert_eq!(accounts.len(), 1);
+            assert_eq!(accounts[0].id(), account.id());
+
+            database
+                .account_read_model()
+                .unlink_all_auth_accounts(&mut transaction, account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut transaction, account.id())
+                .await
+                .unwrap();
         }
 
         #[test_with::env(DATABASE_URL)]
