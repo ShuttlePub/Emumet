@@ -143,7 +143,7 @@ Query Flow:
 
 **application** provides use case services and event appliers:
 - `GetAccountUseCase` / `CreateAccountUseCase` / `UpdateAccountUseCase` / `DeactivateAccountUseCase` / `SuspendAccountUseCase` / `UnsuspendAccountUseCase` / `BanAccountUseCase` — Account CRUD + moderation orchestration via CommandProcessor/QueryProcessor
-- `GetProfileUseCase` / `CreateProfileUseCase` / `UpdateProfileUseCase` — Profile CRUD
+- `GetProfileUseCase` / `UpdateProfileUseCase` — Profile read/update (Profile is auto-created during Account creation)
 - `GetMetadataUseCase` / `CreateMetadataUseCase` / `UpdateMetadataUseCase` / `DeleteMetadataUseCase` — Metadata CRUD
 - `UpdateAuthAccount` / `UpdateProfile` / `UpdateMetadata` — event appliers that replay events from EventStore, update ReadModel projections
 

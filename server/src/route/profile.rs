@@ -2,15 +2,11 @@ use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use crate::route::parse_comma_ids;
-use crate::schema::profile::{
-    CreateProfileRequest, GetProfilesQuery, ProfileResponse, UpdateProfileRequest,
-};
-use application::service::profile::{
-    CreateProfileUseCase, GetProfileUseCase, UpdateProfileUseCase,
-};
+use crate::schema::profile::{GetProfilesQuery, ProfileResponse, UpdateProfileRequest};
+use application::service::profile::{GetProfileUseCase, UpdateProfileUseCase};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{get, put};
 use axum::{Extension, Json, Router};
 
 pub trait ProfileRouter {
@@ -50,64 +46,6 @@ pub(crate) async fn get_profiles_batch(
     Ok(Json(
         profiles.into_iter().map(ProfileResponse::from).collect(),
     ))
-}
-
-#[utoipa::path(
-    post,
-    path = "/accounts/{account_id}/profile",
-    description = "Create a profile for the specified account.",
-    params(("account_id" = String, Path, description = "Account nanoid")),
-    request_body = CreateProfileRequest,
-    responses(
-        (status = 201, description = "Profile created", body = ProfileResponse),
-        (status = 400, description = "Invalid request"),
-    ),
-    security(("bearer_auth" = [])),
-    tag = "Profile",
-)]
-pub(crate) async fn create_profile(
-    Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
-    Path(account_id): Path<String>,
-    Json(body): Json<CreateProfileRequest>,
-) -> Result<(StatusCode, Json<ProfileResponse>), ErrorStatus> {
-    let auth_info = OidcAuthInfo::from(claims);
-
-    if account_id.trim().is_empty() {
-        return Err(ErrorStatus::from((
-            StatusCode::BAD_REQUEST,
-            "Account ID cannot be empty".to_string(),
-        )));
-    }
-
-    if let Some(ref dn) = body.display_name {
-        if dn.len() > 100 {
-            return Err(ErrorStatus::from((
-                StatusCode::BAD_REQUEST,
-                "display_name must not exceed 100 characters".to_string(),
-            )));
-        }
-    }
-
-    if let Some(ref s) = body.summary {
-        if s.len() > 1000 {
-            return Err(ErrorStatus::from((
-                StatusCode::BAD_REQUEST,
-                "summary must not exceed 1000 characters".to_string(),
-            )));
-        }
-    }
-
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
-        .await
-        .map_err(ErrorStatus::from)?;
-
-    let profile = module
-        .create_profile(&auth_account_id, body.into_dto(account_id))
-        .await
-        .map_err(ErrorStatus::from)?;
-
-    Ok((StatusCode::CREATED, Json(ProfileResponse::from(profile))))
 }
 
 #[utoipa::path(
@@ -170,10 +108,8 @@ pub(crate) async fn update_profile(
 
 impl ProfileRouter for Router<AppModule> {
     fn route_profile(self) -> Self {
-        self.route("/profiles", get(get_profiles_batch)).route(
-            "/accounts/{account_id}/profile",
-            post(create_profile).put(update_profile),
-        )
+        self.route("/profiles", get(get_profiles_batch))
+            .route("/accounts/{account_id}/profile", put(update_profile))
     }
 }
 

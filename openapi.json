@@ -305,54 +305,6 @@
             "bearer_auth": []
           }
         ]
-      },
-      "post": {
-        "tags": [
-          "Profile"
-        ],
-        "description": "Create a profile for the specified account.",
-        "operationId": "create_profile",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateProfileRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Profile created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
       }
     },
     "/accounts/{id}": {
@@ -857,35 +809,6 @@
           },
           "label": {
             "type": "string"
-          }
-        }
-      },
-      "CreateProfileRequest": {
-        "type": "object",
-        "properties": {
-          "banner_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "display_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "icon_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "summary": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         }
       },

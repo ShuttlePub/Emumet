@@ -1,9 +1,9 @@
 use crate::permission::{account_edit, account_view, check_permission};
-use crate::transfer::profile::{CreateProfileDto, ProfileDto, UpdateProfileDto};
+use crate::transfer::profile::{ProfileDto, UpdateProfileDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use adapter::processor::profile::{
-    CreateProfileParam, DependOnProfileCommandProcessor, DependOnProfileQueryProcessor,
-    ProfileCommandProcessor, ProfileQueryProcessor, UpdateProfileParam,
+    DependOnProfileCommandProcessor, DependOnProfileQueryProcessor, ProfileCommandProcessor,
+    ProfileQueryProcessor, UpdateProfileParam,
 };
 use error_stack::Report;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
@@ -199,99 +199,6 @@ impl<T> GetProfileUseCase for T where
 {
 }
 
-pub trait CreateProfileUseCase:
-    'static
-    + Sync
-    + Send
-    + DependOnProfileCommandProcessor
-    + DependOnProfileQueryProcessor
-    + DependOnAccountQueryProcessor
-    + DependOnImageRepository
-    + DependOnPermissionChecker
-{
-    fn create_profile(
-        &self,
-        auth_account_id: &AuthAccountId,
-        dto: CreateProfileDto,
-    ) -> impl Future<Output = error_stack::Result<ProfileDto, KernelError>> + Send {
-        async move {
-            let mut transaction = self.database_connection().get_executor().await?;
-
-            let nanoid = kernel::prelude::entity::Nanoid::<Account>::new(dto.account_nanoid);
-            let account = self
-                .account_query_processor()
-                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
-                .await?
-                .ok_or_else(|| {
-                    Report::new(KernelError::NotFound).attach_printable(format!(
-                        "Account not found with nanoid: {}",
-                        nanoid.as_ref()
-                    ))
-                })?;
-
-            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
-
-            if !account.status().is_active() {
-                return Err(Report::new(KernelError::Rejected)
-                    .attach_printable("Cannot create profile for a suspended or banned account"));
-            }
-
-            let existing_profile = self
-                .profile_query_processor()
-                .find_by_account_id(&mut transaction, account.id())
-                .await?;
-            if existing_profile.is_some() {
-                return Err(Report::new(KernelError::Concurrency)
-                    .attach_printable("Profile already exists for this account"));
-            }
-
-            let icon = resolve_image_id(self, &mut transaction, dto.icon_url.as_deref()).await?;
-            let banner =
-                resolve_image_id(self, &mut transaction, dto.banner_url.as_deref()).await?;
-
-            let account_nanoid_str = account.nanoid().as_ref().to_string();
-            let profile = self
-                .profile_command_processor()
-                .create(
-                    &mut transaction,
-                    CreateProfileParam {
-                        account_id: account.id().clone(),
-                        display_name: dto.display_name.map(ProfileDisplayName::new),
-                        summary: dto.summary.map(ProfileSummary::new),
-                        icon,
-                        banner,
-                        nano_id: Nanoid::<Profile>::default(),
-                    },
-                )
-                .await?;
-
-            let icon_url =
-                resolve_image_url(self, &mut transaction, profile.icon().as_ref()).await?;
-            let banner_url =
-                resolve_image_url(self, &mut transaction, profile.banner().as_ref()).await?;
-
-            Ok(ProfileDto::new(
-                profile,
-                account_nanoid_str,
-                icon_url,
-                banner_url,
-            ))
-        }
-    }
-}
-
-impl<T> CreateProfileUseCase for T where
-    T: 'static
-        + Sync
-        + Send
-        + DependOnProfileCommandProcessor
-        + DependOnProfileQueryProcessor
-        + DependOnAccountQueryProcessor
-        + DependOnImageRepository
-        + DependOnPermissionChecker
-{
-}
-
 pub trait UpdateProfileUseCase:
     'static
     + Sync
@@ -371,21 +278,6 @@ impl<T> UpdateProfileUseCase for T where
         + DependOnImageRepository
         + DependOnPermissionChecker
 {
-}
-
-async fn resolve_image_url<T: DependOnImageRepository + ?Sized>(
-    deps: &T,
-    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
-    image_id: Option<&ImageId>,
-) -> error_stack::Result<Option<String>, KernelError> {
-    let Some(id) = image_id else {
-        return Ok(None);
-    };
-    let image = deps.image_repository().find_by_id(executor, id).await?;
-    if image.is_none() {
-        tracing::warn!(?id, "Image record not found for referenced ImageId");
-    }
-    Ok(image.map(|img| img.url().as_ref().to_string()))
 }
 
 async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(

@@ -8,6 +8,9 @@ use adapter::processor::account::{
     AccountCommandProcessor, AccountQueryProcessor, CreateAccountParam,
     DependOnAccountCommandProcessor, DependOnAccountQueryProcessor, UpdateAccountParam,
 };
+use adapter::processor::profile::{
+    CreateProfileParam, DependOnProfileCommandProcessor, ProfileCommandProcessor,
+};
 use error_stack::Report;
 use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider};
 use kernel::interfaces::database::DatabaseConnection;
@@ -17,6 +20,7 @@ use kernel::interfaces::permission::{
 };
 use kernel::prelude::entity::{
     Account, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey, AuthAccountId, Nanoid,
+    Profile, ProfileDisplayName,
 };
 use kernel::KernelError;
 use serde_json;
@@ -96,6 +100,7 @@ pub trait CreateAccountUseCase:
     + Sync
     + Send
     + DependOnAccountCommandProcessor
+    + DependOnProfileCommandProcessor
     + DependOnPasswordProvider
     + DependOnSigningKeyGenerator
     + DependOnPermissionWriter
@@ -123,6 +128,8 @@ pub trait CreateAccountUseCase:
             let account_name = AccountName::new(dto.name);
             let account_is_bot = AccountIsBot::new(dto.is_bot);
 
+            let display_name = ProfileDisplayName::new(account_name.as_ref().to_string());
+
             let account = self
                 .account_command_processor()
                 .create(
@@ -133,6 +140,20 @@ pub trait CreateAccountUseCase:
                         public_key,
                         is_bot: account_is_bot,
                         auth_account_id: auth_account_id.clone(),
+                    },
+                )
+                .await?;
+
+            self.profile_command_processor()
+                .create(
+                    &mut transaction,
+                    CreateProfileParam {
+                        account_id: account.id().clone(),
+                        display_name: Some(display_name),
+                        summary: None,
+                        icon: None,
+                        banner: None,
+                        nano_id: Nanoid::<Profile>::default(),
                     },
                 )
                 .await?;
@@ -155,6 +176,7 @@ pub trait CreateAccountUseCase:
 impl<T> CreateAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
+        + DependOnProfileCommandProcessor
         + DependOnPasswordProvider
         + DependOnSigningKeyGenerator
         + DependOnPermissionWriter
