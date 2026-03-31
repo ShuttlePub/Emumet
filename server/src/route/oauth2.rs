@@ -1,5 +1,5 @@
 use crate::handler::AppModule;
-use crate::hydra::{AcceptConsentRequest, AcceptLoginRequest, RejectRequest};
+use crate::hydra::{AcceptConsentRequest, AcceptLoginRequest, ConsentSession, RejectRequest};
 use crate::kratos::KratosClient;
 use crate::schema::oauth2::{ConsentDecision, ConsentQuery, LoginQuery, OAuth2Response};
 use axum::extract::{Query, State};
@@ -52,6 +52,7 @@ pub(crate) async fn login(
                     subject: login_request.subject.clone(),
                     remember: Some(true),
                     remember_for: Some(REMEMBER_FOR_SECS),
+                    context: None,
                 },
             )
             .await
@@ -104,6 +105,10 @@ pub(crate) async fn login(
                 subject: kratos_session.identity_id,
                 remember: Some(true),
                 remember_for: Some(REMEMBER_FOR_SECS),
+                context: kratos_session
+                    .email
+                    .as_ref()
+                    .map(|e| serde_json::json!({ "email": e })),
             },
         )
         .await
@@ -120,6 +125,7 @@ pub(crate) async fn login(
 
 struct VerifiedSession {
     identity_id: String,
+    email: Option<String>,
 }
 
 /// Verify Kratos session via cookie, returning the identity ID on success.
@@ -152,11 +158,39 @@ async fn verify_kratos_session(
     match session {
         Some(s) => Ok(VerifiedSession {
             identity_id: s.identity.id,
+            email: s
+                .identity
+                .traits
+                .get("email")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         }),
         None => {
             tracing::warn!("oauth2/login: Kratos session invalid or expired");
             Err(StatusCode::UNAUTHORIZED)
         }
+    }
+}
+
+fn build_consent_session(
+    context: &serde_json::Value,
+    granted_scopes: &[String],
+) -> Option<ConsentSession> {
+    let mut id_token = serde_json::Map::new();
+
+    if granted_scopes.iter().any(|s| s == "email") {
+        if let Some(email) = context.get("email").and_then(|v| v.as_str()) {
+            id_token.insert("email".to_string(), serde_json::json!(email));
+        }
+    }
+
+    if id_token.is_empty() {
+        None
+    } else {
+        Some(ConsentSession {
+            id_token: Some(serde_json::Value::Object(id_token)),
+            access_token: None,
+        })
     }
 }
 
@@ -208,7 +242,10 @@ pub(crate) async fn get_consent(
                         .clone(),
                     remember: Some(true),
                     remember_for: Some(REMEMBER_FOR_SECS),
-                    session: None,
+                    session: build_consent_session(
+                        &consent_request.context,
+                        &consent_request.requested_scope,
+                    ),
                 },
             )
             .await
@@ -285,6 +322,7 @@ pub(crate) async fn post_consent(
             }
         }
 
+        let session = build_consent_session(&consent_request.context, &grant_scope);
         let redirect = hydra
             .accept_consent(
                 &decision.consent_challenge,
@@ -293,7 +331,7 @@ pub(crate) async fn post_consent(
                     grant_access_token_audience: consent_request.requested_access_token_audience,
                     remember: Some(true),
                     remember_for: Some(REMEMBER_FOR_SECS),
-                    session: None,
+                    session,
                 },
             )
             .await

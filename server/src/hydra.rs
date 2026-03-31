@@ -169,6 +169,8 @@ pub struct AcceptLoginRequest {
     pub remember: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remember_for: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +182,8 @@ pub struct ConsentRequest {
     pub client: Option<OAuth2Client>,
     pub requested_scope: Vec<String>,
     pub requested_access_token_audience: Vec<String>,
+    #[serde(default)]
+    pub context: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
