@@ -111,11 +111,11 @@ pub(crate) async fn create_metadata(
 
 #[utoipa::path(
     put,
-    path = "/accounts/{account_id}/metadata/{id}",
+    path = "/accounts/{account_id}/metadata/{metadata_id}",
     description = "Update a metadata entry.",
     params(
         ("account_id" = String, Path, description = "Account nanoid"),
-        ("id" = String, Path, description = "Metadata nanoid"),
+        ("metadata_id" = String, Path, description = "Metadata nanoid"),
     ),
     request_body = UpdateMetadataRequest,
     responses(
@@ -175,11 +175,11 @@ pub(crate) async fn update_metadata(
 
 #[utoipa::path(
     delete,
-    path = "/accounts/{account_id}/metadata/{id}",
+    path = "/accounts/{account_id}/metadata/{metadata_id}",
     description = "Delete a metadata entry.",
     params(
         ("account_id" = String, Path, description = "Account nanoid"),
-        ("id" = String, Path, description = "Metadata nanoid"),
+        ("metadata_id" = String, Path, description = "Metadata nanoid"),
     ),
     responses(
         (status = 204, description = "Metadata deleted"),
@@ -226,7 +226,7 @@ impl MetadataRouter for Router<AppModule> {
         self.route("/metadata", get(get_metadata_batch))
             .route("/accounts/{account_id}/metadata", post(create_metadata))
             .route(
-                "/accounts/{account_id}/metadata/{id}",
+                "/accounts/{account_id}/metadata/{metadata_id}",
                 put(update_metadata).delete(delete_metadata),
             )
     }

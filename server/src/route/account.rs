@@ -132,9 +132,9 @@ pub(crate) async fn create_account(
 
 #[utoipa::path(
     put,
-    path = "/accounts/{id}",
+    path = "/accounts/{account_id}",
     description = "Update account properties.",
-    params(("id" = String, Path, description = "Account nanoid")),
+    params(("account_id" = String, Path, description = "Account nanoid")),
     request_body = UpdateAccountRequest,
     responses(
         (status = 204, description = "Account updated"),
@@ -146,12 +146,12 @@ pub(crate) async fn create_account(
 pub(crate) async fn update_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(account_id): Path<String>,
     Json(request): Json<UpdateAccountRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
-    if id.trim().is_empty() {
+    if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
             "Account ID cannot be empty".to_string(),
@@ -163,7 +163,7 @@ pub(crate) async fn update_account_by_id(
         .map_err(ErrorStatus::from)?;
 
     module
-        .update_account(&auth_account_id, request.into_dto(id))
+        .update_account(&auth_account_id, request.into_dto(account_id))
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -172,9 +172,9 @@ pub(crate) async fn update_account_by_id(
 
 #[utoipa::path(
     delete,
-    path = "/accounts/{id}",
+    path = "/accounts/{account_id}",
     description = "Deactivate an account and cascade-delete related resources.",
-    params(("id" = String, Path, description = "Account nanoid")),
+    params(("account_id" = String, Path, description = "Account nanoid")),
     responses(
         (status = 204, description = "Account deactivated"),
         (status = 400, description = "Invalid request"),
@@ -185,11 +185,11 @@ pub(crate) async fn update_account_by_id(
 pub(crate) async fn deactivate_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(account_id): Path<String>,
 ) -> Result<StatusCode, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
-    if id.trim().is_empty() {
+    if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
             "Account ID cannot be empty".to_string(),
@@ -201,7 +201,7 @@ pub(crate) async fn deactivate_account_by_id(
         .map_err(ErrorStatus::from)?;
 
     module
-        .deactivate_account(&auth_account_id, id)
+        .deactivate_account(&auth_account_id, account_id)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -210,9 +210,9 @@ pub(crate) async fn deactivate_account_by_id(
 
 #[utoipa::path(
     post,
-    path = "/accounts/{id}/suspend",
+    path = "/accounts/{account_id}/suspend",
     description = "Suspend an account with a reason and optional expiry.",
-    params(("id" = String, Path, description = "Account nanoid")),
+    params(("account_id" = String, Path, description = "Account nanoid")),
     request_body = SuspendAccountRequest,
     responses(
         (status = 204, description = "Account suspended"),
@@ -224,12 +224,12 @@ pub(crate) async fn deactivate_account_by_id(
 pub(crate) async fn suspend_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(account_id): Path<String>,
     Json(request): Json<SuspendAccountRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
-    if id.trim().is_empty() {
+    if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
             "Account ID cannot be empty".to_string(),
@@ -248,7 +248,12 @@ pub(crate) async fn suspend_account_by_id(
         .map_err(ErrorStatus::from)?;
 
     module
-        .suspend_account(&auth_account_id, id, request.reason, request.expires_at)
+        .suspend_account(
+            &auth_account_id,
+            account_id,
+            request.reason,
+            request.expires_at,
+        )
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -257,9 +262,9 @@ pub(crate) async fn suspend_account_by_id(
 
 #[utoipa::path(
     post,
-    path = "/accounts/{id}/unsuspend",
+    path = "/accounts/{account_id}/unsuspend",
     description = "Remove suspension from an account.",
-    params(("id" = String, Path, description = "Account nanoid")),
+    params(("account_id" = String, Path, description = "Account nanoid")),
     responses(
         (status = 204, description = "Account unsuspended"),
         (status = 400, description = "Invalid request"),
@@ -270,11 +275,11 @@ pub(crate) async fn suspend_account_by_id(
 pub(crate) async fn unsuspend_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(account_id): Path<String>,
 ) -> Result<StatusCode, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
-    if id.trim().is_empty() {
+    if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
             "Account ID cannot be empty".to_string(),
@@ -286,7 +291,7 @@ pub(crate) async fn unsuspend_account_by_id(
         .map_err(ErrorStatus::from)?;
 
     module
-        .unsuspend_account(&auth_account_id, id)
+        .unsuspend_account(&auth_account_id, account_id)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -295,9 +300,9 @@ pub(crate) async fn unsuspend_account_by_id(
 
 #[utoipa::path(
     post,
-    path = "/accounts/{id}/ban",
+    path = "/accounts/{account_id}/ban",
     description = "Permanently ban an account.",
-    params(("id" = String, Path, description = "Account nanoid")),
+    params(("account_id" = String, Path, description = "Account nanoid")),
     request_body = BanAccountRequest,
     responses(
         (status = 204, description = "Account banned"),
@@ -309,12 +314,12 @@ pub(crate) async fn unsuspend_account_by_id(
 pub(crate) async fn ban_account_by_id(
     Extension(claims): Extension<AuthClaims>,
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(account_id): Path<String>,
     Json(request): Json<BanAccountRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
-    if id.trim().is_empty() {
+    if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
             "Account ID cannot be empty".to_string(),
@@ -333,7 +338,7 @@ pub(crate) async fn ban_account_by_id(
         .map_err(ErrorStatus::from)?;
 
     module
-        .ban_account(&auth_account_id, id, request.reason)
+        .ban_account(&auth_account_id, account_id, request.reason)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -344,10 +349,16 @@ impl AccountRouter for Router<AppModule> {
     fn route_account(self) -> Self {
         self.route("/accounts", get(get_accounts))
             .route("/accounts", post(create_account))
-            .route("/accounts/{id}", put(update_account_by_id))
-            .route("/accounts/{id}", delete(deactivate_account_by_id))
-            .route("/accounts/{id}/suspend", post(suspend_account_by_id))
-            .route("/accounts/{id}/unsuspend", post(unsuspend_account_by_id))
-            .route("/accounts/{id}/ban", post(ban_account_by_id))
+            .route("/accounts/{account_id}", put(update_account_by_id))
+            .route("/accounts/{account_id}", delete(deactivate_account_by_id))
+            .route(
+                "/accounts/{account_id}/suspend",
+                post(suspend_account_by_id),
+            )
+            .route(
+                "/accounts/{account_id}/unsuspend",
+                post(unsuspend_account_by_id),
+            )
+            .route("/accounts/{account_id}/ban", post(ban_account_by_id))
     }
 }
