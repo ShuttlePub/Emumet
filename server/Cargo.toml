@@ -16,8 +16,8 @@ tracing = { workspace = true }
 tracing-appender = "0.2.3"
 tracing-subscriber = { workspace = true }
 
-axum = { version = "0.7.4", features = ["json", "tracing"] }
-tower-http = { version = "0.5.1", features = ["tokio", "cors"] }
+axum = { version = "0.8", features = ["json", "tracing"] }
+tower-http = { version = "0.6", features = ["tokio", "cors"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 
 jsonwebtoken = "9"
