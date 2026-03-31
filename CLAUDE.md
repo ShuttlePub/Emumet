@@ -6,6 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Emumet is an Account Service for ShuttlePub, implementing Event Sourcing with CQRS pattern. The name derives from EMU (Extravehicular Mobility Unit) + Helmet.
 
+## Git Commit Convention
+
+コミットメッセージには [gitmoji](https://gitmoji.dev/) をプレフィックスとして付けること。
+
+形式: `:gitmoji: Subject line`
+
+例:
+- `:sparkles: Add user registration endpoint` (新機能)
+- `:bug: Fix race condition in event store` (バグ修正)
+- `:recycle: Refactor DependOn trait hierarchy` (リファクタリング)
+- `:memo: Update API spec` (ドキュメント)
+- `:white_check_mark: Add integration tests for profile` (テスト)
+- `:zap: Optimize batch query for profiles` (パフォーマンス)
+- `:wrench: Update environment config` (設定)
+
 ## Build & Development Commands
 
 ```bash
