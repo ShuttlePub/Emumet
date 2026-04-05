@@ -71,11 +71,16 @@ impl PermissionChecker for KetoClient {
                 .change_context_lazy(|| KernelError::Internal)
                 .attach_printable("Failed to check permission with Keto")?;
 
-            if !response.status().is_success() {
-                return Err(Report::new(KernelError::Internal).attach_printable(format!(
-                    "Keto returned unexpected status: {}",
-                    response.status()
-                )));
+            let status = response.status();
+
+            // Keto v0.12 returns 403 for "not allowed" — treat as allowed=false
+            if status == reqwest::StatusCode::FORBIDDEN {
+                continue;
+            }
+
+            if !status.is_success() {
+                return Err(Report::new(KernelError::Internal)
+                    .attach_printable(format!("Keto returned unexpected status: {}", status)));
             }
 
             {
