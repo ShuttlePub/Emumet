@@ -1,48 +1,28 @@
 use error_stack::Report;
 use kernel::interfaces::permission::{
-    AccountRelation, DependOnPermissionChecker, InstanceRole, Permission, PermissionChecker,
-    PermissionReq,
+    DependOnPermissionChecker, Permission, PermissionChecker, PermissionReq,
 };
 use kernel::prelude::entity::{AccountId, AuthAccountId};
 use kernel::KernelError;
 
 pub fn account_view(account_id: &AccountId) -> Permission {
-    Permission::new(PermissionReq::account(
-        account_id.clone(),
-        [
-            AccountRelation::Owner,
-            AccountRelation::Editor,
-            AccountRelation::Signer,
-        ],
-    ))
+    Permission::new(PermissionReq::account(account_id.clone(), "view"))
 }
 
 pub fn account_edit(account_id: &AccountId) -> Permission {
-    Permission::new(PermissionReq::account(
-        account_id.clone(),
-        [AccountRelation::Owner, AccountRelation::Editor],
-    ))
+    Permission::new(PermissionReq::account(account_id.clone(), "edit"))
 }
 
 pub fn account_deactivate(account_id: &AccountId) -> Permission {
-    Permission::new(PermissionReq::account(
-        account_id.clone(),
-        [AccountRelation::Owner],
-    ))
+    Permission::new(PermissionReq::account(account_id.clone(), "deactivate"))
 }
 
 pub fn account_sign(account_id: &AccountId) -> Permission {
-    Permission::new(PermissionReq::account(
-        account_id.clone(),
-        [AccountRelation::Owner, AccountRelation::Signer],
-    ))
+    Permission::new(PermissionReq::account(account_id.clone(), "sign"))
 }
 
 pub fn instance_moderate() -> Permission {
-    Permission::new(PermissionReq::instance([
-        InstanceRole::Admin,
-        InstanceRole::Moderator,
-    ]))
+    Permission::new(PermissionReq::instance("moderate"))
 }
 
 pub async fn check_permission<T: DependOnPermissionChecker + ?Sized>(

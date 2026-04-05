@@ -52,51 +52,41 @@ impl PermissionChecker for KetoClient {
         subject: &AuthAccountId,
         req: &PermissionReq,
     ) -> error_stack::Result<bool, KernelError> {
-        let subject_id = subject.as_ref().to_string();
+        let body = CheckRequest {
+            namespace: req.namespace().to_string(),
+            object: req.object_id(),
+            relation: req.permission_name().to_string(),
+            subject_id: subject.as_ref().to_string(),
+        };
 
-        for relation in req.relation_strs() {
-            let body = CheckRequest {
-                namespace: req.namespace().to_string(),
-                object: req.object_id(),
-                relation: relation.to_string(),
-                subject_id: subject_id.clone(),
-            };
+        let response = self
+            .http_client
+            .post(format!("{}/relation-tuples/check", self.read_url))
+            .json(&body)
+            .send()
+            .await
+            .change_context_lazy(|| KernelError::Internal)
+            .attach_printable("Failed to check permission with Keto")?;
 
-            let response = self
-                .http_client
-                .post(format!("{}/relation-tuples/check", self.read_url))
-                .json(&body)
-                .send()
-                .await
-                .change_context_lazy(|| KernelError::Internal)
-                .attach_printable("Failed to check permission with Keto")?;
+        let status = response.status();
 
-            let status = response.status();
-
-            // Keto v0.12 returns 403 for "not allowed" — treat as allowed=false
-            if status == reqwest::StatusCode::FORBIDDEN {
-                continue;
-            }
-
-            if !status.is_success() {
-                return Err(Report::new(KernelError::Internal)
-                    .attach_printable(format!("Keto returned unexpected status: {}", status)));
-            }
-
-            {
-                let check: CheckResponse = response
-                    .json()
-                    .await
-                    .change_context_lazy(|| KernelError::Internal)
-                    .attach_printable("Failed to parse Keto check response")?;
-
-                if check.allowed {
-                    return Ok(true);
-                }
-            }
+        // Keto v0.12 returns 403 for "not allowed" — treat as allowed=false
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Ok(false);
         }
 
-        Ok(false)
+        if !status.is_success() {
+            return Err(Report::new(KernelError::Internal)
+                .attach_printable(format!("Keto returned unexpected status: {}", status)));
+        }
+
+        let check: CheckResponse = response
+            .json()
+            .await
+            .change_context_lazy(|| KernelError::Internal)
+            .attach_printable("Failed to parse Keto check response")?;
+
+        Ok(check.allowed)
     }
 }
 

@@ -1,10 +1,7 @@
 version: v0.12.0
 
 namespaces:
-  - id: 0
-    name: accounts
-  - id: 1
-    name: instance
+  location: file:///etc/config/keto/namespaces.ts
 
 serve:
   read:
