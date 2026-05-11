@@ -90,6 +90,9 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:develop@localhost:5432/postgres
 
+      - name: Pre-build server binary
+        run: cargo build -p server
+
       - name: Run E2E tests
         run: cargo test -p server --test e2e_basic_flow -- --ignored --test-threads=1 --nocapture
 

@@ -48,7 +48,7 @@ impl EmumetServer {
     }
 
     async fn wait_until_ready(&mut self) {
-        let ready = timeout(Duration::from_secs(30), async {
+        let ready = timeout(Duration::from_secs(60), async {
             loop {
                 if self
                     .child
