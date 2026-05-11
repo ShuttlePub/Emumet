@@ -83,7 +83,7 @@ jobs:
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install sqlx-cli
-        run: cargo binstall sqlx-cli --no-confirm --no-default-features --features postgres
+        run: cargo binstall sqlx-cli --no-confirm
 
       - name: Run database migrations
         run: sqlx migrate run
