@@ -17,52 +17,23 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install sqlx-cli
+        run: cargo binstall sqlx-cli --no-confirm
 
       - name: Create master-key-password file
         run: |
           echo -n "ci-test-master-key-password" > master-key-password
           chmod 600 master-key-password
-
-      - name: Start services via docker compose
-        run: docker compose up -d
-
-      - name: Wait for postgres
-        run: |
-          n=0
-          until docker compose exec -T postgres pg_isready -U postgres > /dev/null 2>&1; do
-            n=$((n+1))
-            if [ $n -ge 30 ]; then echo "ERROR: postgres not ready"; exit 1; fi
-            echo "Waiting for postgres... ($n)"
-            sleep 2
-          done
-
-      - name: Wait for redis
-        run: |
-          n=0
-          until docker compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG; do
-            n=$((n+1))
-            if [ $n -ge 30 ]; then echo "ERROR: redis not ready"; exit 1; fi
-            echo "Waiting for redis... ($n)"
-            sleep 2
-          done
-
-      - name: Wait for Ory services (Kratos, Hydra, Keto)
-        run: |
-          for port in 4433 4444 4445 4466 4467; do
-            n=0
-            until curl -sf http://localhost:$port/health/alive > /dev/null 2>&1; do
-              n=$((n+1))
-              if [ $n -ge 30 ]; then echo "ERROR: port $port not ready"; exit 1; fi
-              echo "Waiting for port $port... ($n)"
-              sleep 2
-            done
-            echo "Port $port is ready"
-          done
 
       - name: Create .env file
         run: |
@@ -79,22 +50,8 @@ jobs:
             echo "CORS_ALLOWED_ORIGINS=*"
           } > .env
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
-      - name: Install sqlx-cli
-        run: cargo binstall sqlx-cli --no-confirm
-
-      - name: Run database migrations
-        run: sqlx migrate run
-        env:
-          DATABASE_URL: postgres://postgres:develop@localhost:5432/postgres
-
-      - name: Pre-build server binary
-        run: cargo build -p server
-
       - name: Run E2E tests
-        run: cargo test -p server --test e2e_basic_flow -- --ignored --test-threads=1 --nocapture
+        run: just e2e
 
       - name: Collect docker logs on failure
         if: failure()
@@ -102,4 +59,4 @@ jobs:
 
       - name: Stop services
         if: always()
-        run: docker compose down -v
+        run: just down
