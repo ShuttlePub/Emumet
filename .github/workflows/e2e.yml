@@ -1,0 +1,62 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, fix/signin]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install sqlx-cli
+        run: cargo binstall sqlx-cli --no-confirm
+
+      - name: Create master-key-password file
+        run: |
+          echo -n "ci-test-master-key-password" > master-key-password
+          chmod 600 master-key-password
+
+      - name: Create .env file
+        run: |
+          {
+            echo "DATABASE_URL=postgres://postgres:develop@localhost:5432/postgres"
+            echo "HYDRA_ISSUER_URL=http://localhost:4444/"
+            echo "HYDRA_ADMIN_URL=http://localhost:4445/"
+            echo "KRATOS_PUBLIC_URL=http://localhost:4433/"
+            echo "EXPECTED_AUDIENCE=account"
+            echo "KETO_READ_URL=http://localhost:4466"
+            echo "KETO_WRITE_URL=http://localhost:4467"
+            echo "REDIS_URL=redis://localhost:6379"
+            echo "WORKER_ID=0"
+            echo "CORS_ALLOWED_ORIGINS=*"
+          } > .env
+
+      - name: Run E2E tests
+        run: just e2e
+
+      - name: Collect docker logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Stop services
+        if: always()
+        run: just down

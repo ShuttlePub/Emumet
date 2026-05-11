@@ -43,6 +43,7 @@ impl UpdateAccountRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SuspendAccountRequest {
     pub reason: String,
+    #[serde(default, with = "time::serde::rfc3339::option")]
     pub expires_at: Option<OffsetDateTime>,
 }
 
@@ -57,6 +58,7 @@ pub struct AccountResponse {
     pub name: String,
     pub public_key: String,
     pub is_bot: bool,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moderation: Option<ModerationResponse>,
@@ -67,12 +69,17 @@ pub struct AccountResponse {
 pub enum ModerationResponse {
     Suspended {
         reason: String,
+        #[serde(with = "time::serde::rfc3339")]
         suspended_at: OffsetDateTime,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            with = "time::serde::rfc3339::option"
+        )]
         expires_at: Option<OffsetDateTime>,
     },
     Banned {
         reason: String,
+        #[serde(with = "time::serde::rfc3339")]
         banned_at: OffsetDateTime,
     },
 }

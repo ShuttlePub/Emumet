@@ -1,3 +1,6 @@
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -22,6 +25,19 @@ pub enum OAuth2Response {
         client_name: Option<String>,
         requested_scope: Vec<String>,
     },
+}
+
+impl IntoResponse for OAuth2Response {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            OAuth2Response::Redirect { redirect_to } => (
+                StatusCode::FOUND,
+                [(axum::http::header::LOCATION, redirect_to)],
+            )
+                .into_response(),
+            show_consent @ OAuth2Response::ShowConsent { .. } => Json(show_consent).into_response(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

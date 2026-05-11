@@ -86,7 +86,12 @@ pub trait AccountCommandProcessor: Send + Sync + 'static {
 
 impl<T> AccountCommandProcessor for T
 where
-    T: DependOnAccountEventStore + DependOnAccountSignal + Send + Sync + 'static,
+    T: DependOnAccountEventStore
+        + DependOnAccountReadModel
+        + DependOnAccountSignal
+        + Send
+        + Sync
+        + 'static,
 {
     type Executor =
         <<T as DependOnAccountEventStore>::AccountEventStore as AccountEventStore>::Executor;
@@ -112,7 +117,7 @@ where
             public_key,
             is_bot,
             nanoid,
-            auth_account_id,
+            auth_account_id.clone(),
         );
 
         let event_envelope = self
@@ -126,6 +131,28 @@ where
             Report::new(KernelError::Internal)
                 .attach_printable("Failed to construct account from created event")
         })?;
+
+        if let Err(e) = self.account_read_model().create(executor, &account).await {
+            tracing::error!(
+                ?e,
+                "Failed to create account read model, emitting signal for recovery"
+            );
+            let _ = self.account_signal().emit(account_id).await;
+            return Err(e);
+        }
+
+        if let Err(e) = self
+            .account_read_model()
+            .link_auth_account(executor, &account_id, &auth_account_id)
+            .await
+        {
+            tracing::error!(
+                ?e,
+                "Failed to link auth account, emitting signal for recovery"
+            );
+            let _ = self.account_signal().emit(account_id).await;
+            return Err(e);
+        }
 
         if let Err(e) = self.account_signal().emit(account_id).await {
             tracing::error!(?e, "Failed to emit account signal");
@@ -246,6 +273,7 @@ pub trait DependOnAccountCommandProcessor: DependOnDatabaseConnection + Send + S
 impl<T> DependOnAccountCommandProcessor for T
 where
     T: DependOnAccountEventStore
+        + DependOnAccountReadModel
         + DependOnAccountSignal
         + DependOnDatabaseConnection
         + Send

@@ -6,6 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Emumet is an Account Service for ShuttlePub, implementing Event Sourcing with CQRS pattern. The name derives from EMU (Extravehicular Mobility Unit) + Helmet.
 
+## Git Commit Convention
+
+コミットメッセージには [gitmoji](https://gitmoji.dev/) をプレフィックスとして付けること。
+
+形式: `:gitmoji: Subject line`
+
+例:
+- `:sparkles: Add user registration endpoint` (新機能)
+- `:bug: Fix race condition in event store` (バグ修正)
+- `:recycle: Refactor DependOn trait hierarchy` (リファクタリング)
+- `:memo: Update API spec` (ドキュメント)
+- `:white_check_mark: Add integration tests for profile` (テスト)
+- `:zap: Optimize batch query for profiles` (パフォーマンス)
+- `:wrench: Update environment config` (設定)
+
 ## Build & Development Commands
 
 ```bash
@@ -128,7 +143,7 @@ Query Flow:
 
 **application** provides use case services and event appliers:
 - `GetAccountUseCase` / `CreateAccountUseCase` / `UpdateAccountUseCase` / `DeactivateAccountUseCase` / `SuspendAccountUseCase` / `UnsuspendAccountUseCase` / `BanAccountUseCase` — Account CRUD + moderation orchestration via CommandProcessor/QueryProcessor
-- `GetProfileUseCase` / `CreateProfileUseCase` / `UpdateProfileUseCase` — Profile CRUD
+- `GetProfileUseCase` / `UpdateProfileUseCase` — Profile read/update (Profile is auto-created during Account creation)
 - `GetMetadataUseCase` / `CreateMetadataUseCase` / `UpdateMetadataUseCase` / `DeleteMetadataUseCase` — Metadata CRUD
 - `UpdateAuthAccount` / `UpdateProfile` / `UpdateMetadata` — event appliers that replay events from EventStore, update ReadModel projections
 

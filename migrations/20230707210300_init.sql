@@ -150,3 +150,18 @@ ALTER TABLE "follows" ADD FOREIGN KEY ("follower_remote_id") REFERENCES "remote_
 ALTER TABLE "follows" ADD FOREIGN KEY ("followee_local_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;
 
 ALTER TABLE "follows" ADD FOREIGN KEY ("followee_remote_id") REFERENCES "remote_accounts" ("id") ON DELETE CASCADE;
+
+CREATE TABLE "signing_keys" (
+  "id" BIGINT PRIMARY KEY NOT NULL,
+  "account_id" BIGINT NOT NULL,
+  "algorithm" TEXT NOT NULL,
+  "encrypted_private_key" JSONB NOT NULL,
+  "public_key_pem" TEXT NOT NULL,
+  "key_id_uri" TEXT NOT NULL,
+  "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "revoked_at" TIMESTAMPTZ
+);
+
+CREATE INDEX idx_signing_keys_account_id ON signing_keys (account_id);
+
+ALTER TABLE "signing_keys" ADD FOREIGN KEY ("account_id") REFERENCES "accounts" ("id") ON DELETE CASCADE;

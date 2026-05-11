@@ -1,15 +1,6 @@
 use kernel::prelude::entity::{FieldAction, Profile};
 
 #[derive(Debug)]
-pub struct CreateProfileDto {
-    pub account_nanoid: String,
-    pub display_name: Option<String>,
-    pub summary: Option<String>,
-    pub icon_url: Option<String>,
-    pub banner_url: Option<String>,
-}
-
-#[derive(Debug)]
 pub struct UpdateProfileDto {
     pub account_nanoid: String,
     pub display_name: FieldAction<String>,

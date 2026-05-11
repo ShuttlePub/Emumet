@@ -1,9 +1,10 @@
 use crate::handler::AppModule;
-use crate::hydra::{AcceptConsentRequest, AcceptLoginRequest, RejectRequest};
+use crate::hydra::{AcceptConsentRequest, AcceptLoginRequest, ConsentSession, RejectRequest};
 use crate::kratos::KratosClient;
 use crate::schema::oauth2::{ConsentDecision, ConsentQuery, LoginQuery, OAuth2Response};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use std::collections::HashSet;
@@ -20,7 +21,7 @@ const REMEMBER_FOR_SECS: i64 = 3600;
     description = "Handle OAuth2 login flow. Verifies Kratos session and accepts Hydra login.",
     params(("login_challenge" = String, Query, description = "Hydra login challenge")),
     responses(
-        (status = 200, description = "Login result (redirect on success or reject)", body = OAuth2Response),
+        (status = 302, description = "Redirect to Hydra callback"),
         (status = 502, description = "Bad gateway (Hydra/Kratos error)"),
     ),
     tag = "OAuth2",
@@ -29,7 +30,7 @@ pub(crate) async fn login(
     State(module): State<AppModule>,
     Query(LoginQuery { login_challenge }): Query<LoginQuery>,
     headers: axum::http::HeaderMap,
-) -> Result<Json<OAuth2Response>, StatusCode> {
+) -> Result<Response, StatusCode> {
     let hydra = module.hydra_admin_client();
     let kratos = module.kratos_client();
 
@@ -51,6 +52,7 @@ pub(crate) async fn login(
                     subject: login_request.subject.clone(),
                     remember: Some(true),
                     remember_for: Some(REMEMBER_FOR_SECS),
+                    context: None,
                 },
             )
             .await
@@ -59,9 +61,10 @@ pub(crate) async fn login(
                 StatusCode::BAD_GATEWAY
             })?;
 
-        return Ok(Json(OAuth2Response::Redirect {
+        return Ok(OAuth2Response::Redirect {
             redirect_to: redirect.redirect_to,
-        }));
+        }
+        .into_response());
     }
 
     // 3. Verify user has a valid Kratos session via cookie.
@@ -87,9 +90,10 @@ pub(crate) async fn login(
                     StatusCode::BAD_GATEWAY
                 })?;
 
-            return Ok(Json(OAuth2Response::Redirect {
+            return Ok(OAuth2Response::Redirect {
                 redirect_to: redirect.redirect_to,
-            }));
+            }
+            .into_response());
         }
     };
 
@@ -101,6 +105,10 @@ pub(crate) async fn login(
                 subject: kratos_session.identity_id,
                 remember: Some(true),
                 remember_for: Some(REMEMBER_FOR_SECS),
+                context: kratos_session
+                    .email
+                    .as_ref()
+                    .map(|e| serde_json::json!({ "email": e })),
             },
         )
         .await
@@ -109,13 +117,15 @@ pub(crate) async fn login(
             StatusCode::BAD_GATEWAY
         })?;
 
-    Ok(Json(OAuth2Response::Redirect {
+    Ok(OAuth2Response::Redirect {
         redirect_to: redirect.redirect_to,
-    }))
+    }
+    .into_response())
 }
 
 struct VerifiedSession {
     identity_id: String,
+    email: Option<String>,
 }
 
 /// Verify Kratos session via cookie, returning the identity ID on success.
@@ -148,11 +158,39 @@ async fn verify_kratos_session(
     match session {
         Some(s) => Ok(VerifiedSession {
             identity_id: s.identity.id,
+            email: s
+                .identity
+                .traits
+                .get("email")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         }),
         None => {
             tracing::warn!("oauth2/login: Kratos session invalid or expired");
             Err(StatusCode::UNAUTHORIZED)
         }
+    }
+}
+
+fn build_consent_session(
+    context: &serde_json::Value,
+    granted_scopes: &[String],
+) -> Option<ConsentSession> {
+    let mut id_token = serde_json::Map::new();
+
+    if granted_scopes.iter().any(|s| s == "email") {
+        if let Some(email) = context.get("email").and_then(|v| v.as_str()) {
+            id_token.insert("email".to_string(), serde_json::json!(email));
+        }
+    }
+
+    if id_token.is_empty() {
+        None
+    } else {
+        Some(ConsentSession {
+            id_token: Some(serde_json::Value::Object(id_token)),
+            access_token: None,
+        })
     }
 }
 
@@ -166,7 +204,8 @@ async fn verify_kratos_session(
     description = "Retrieve consent request details or auto-accept if skip is configured.",
     params(("consent_challenge" = String, Query, description = "Hydra consent challenge")),
     responses(
-        (status = 200, description = "Consent result", body = OAuth2Response),
+        (status = 200, description = "Consent details for user approval", body = OAuth2Response),
+        (status = 302, description = "Redirect (auto-accepted or skipped)"),
         (status = 502, description = "Bad gateway (Hydra error)"),
     ),
     tag = "OAuth2",
@@ -174,7 +213,7 @@ async fn verify_kratos_session(
 pub(crate) async fn get_consent(
     State(module): State<AppModule>,
     Query(ConsentQuery { consent_challenge }): Query<ConsentQuery>,
-) -> Result<Json<OAuth2Response>, StatusCode> {
+) -> Result<Response, StatusCode> {
     let hydra = module.hydra_admin_client();
 
     let consent_request = hydra
@@ -203,7 +242,10 @@ pub(crate) async fn get_consent(
                         .clone(),
                     remember: Some(true),
                     remember_for: Some(REMEMBER_FOR_SECS),
-                    session: None,
+                    session: build_consent_session(
+                        &consent_request.context,
+                        &consent_request.requested_scope,
+                    ),
                 },
             )
             .await
@@ -212,9 +254,10 @@ pub(crate) async fn get_consent(
                 StatusCode::BAD_GATEWAY
             })?;
 
-        return Ok(Json(OAuth2Response::Redirect {
+        return Ok(OAuth2Response::Redirect {
             redirect_to: redirect.redirect_to,
-        }));
+        }
+        .into_response());
     }
 
     // Non-skip: return consent details for frontend to display.
@@ -223,11 +266,12 @@ pub(crate) async fn get_consent(
         .as_ref()
         .and_then(|c| c.client_name.clone());
 
-    Ok(Json(OAuth2Response::ShowConsent {
+    Ok(OAuth2Response::ShowConsent {
         consent_challenge,
         client_name,
         requested_scope: consent_request.requested_scope,
-    }))
+    }
+    .into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -240,7 +284,7 @@ pub(crate) async fn get_consent(
     description = "Submit consent decision (accept or reject).",
     request_body = ConsentDecision,
     responses(
-        (status = 200, description = "Consent decision result", body = OAuth2Response),
+        (status = 302, description = "Redirect after consent decision"),
         (status = 400, description = "Invalid scope requested"),
         (status = 502, description = "Bad gateway (Hydra error)"),
     ),
@@ -249,7 +293,7 @@ pub(crate) async fn get_consent(
 pub(crate) async fn post_consent(
     State(module): State<AppModule>,
     Json(decision): Json<ConsentDecision>,
-) -> Result<Json<OAuth2Response>, StatusCode> {
+) -> Result<Response, StatusCode> {
     let hydra = module.hydra_admin_client();
 
     if decision.accept {
@@ -278,6 +322,7 @@ pub(crate) async fn post_consent(
             }
         }
 
+        let session = build_consent_session(&consent_request.context, &grant_scope);
         let redirect = hydra
             .accept_consent(
                 &decision.consent_challenge,
@@ -286,7 +331,7 @@ pub(crate) async fn post_consent(
                     grant_access_token_audience: consent_request.requested_access_token_audience,
                     remember: Some(true),
                     remember_for: Some(REMEMBER_FOR_SECS),
-                    session: None,
+                    session,
                 },
             )
             .await
@@ -295,9 +340,10 @@ pub(crate) async fn post_consent(
                 StatusCode::BAD_GATEWAY
             })?;
 
-        Ok(Json(OAuth2Response::Redirect {
+        Ok(OAuth2Response::Redirect {
             redirect_to: redirect.redirect_to,
-        }))
+        }
+        .into_response())
     } else {
         let redirect = hydra
             .reject_consent(
@@ -313,9 +359,10 @@ pub(crate) async fn post_consent(
                 StatusCode::BAD_GATEWAY
             })?;
 
-        Ok(Json(OAuth2Response::Redirect {
+        Ok(OAuth2Response::Redirect {
             redirect_to: redirect.redirect_to,
-        }))
+        }
+        .into_response())
     }
 }
 
@@ -350,6 +397,17 @@ mod tests {
             .await
             .unwrap();
         Router::new().route_oauth2().with_state(app)
+    }
+
+    fn assert_redirect(resp: &axum::http::Response<Body>, expected_url: &str) {
+        assert_eq!(resp.status(), StatusCode::FOUND);
+        let location = resp
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .expect("missing Location header")
+            .to_str()
+            .unwrap();
+        assert_eq!(location, expected_url);
     }
 
     async fn response_json(resp: axum::http::Response<Body>) -> serde_json::Value {
@@ -407,10 +465,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = response_json(resp).await;
-        assert_eq!(json["action"], "redirect");
-        assert_eq!(json["redirect_to"], "http://example.com/callback");
+        assert_redirect(&resp, "http://example.com/callback");
     }
 
     #[test_with::env(DATABASE_URL)]
@@ -468,10 +523,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = response_json(resp).await;
-        assert_eq!(json["action"], "redirect");
-        assert_eq!(json["redirect_to"], "http://example.com/consent");
+        assert_redirect(&resp, "http://example.com/consent");
     }
 
     #[test_with::env(DATABASE_URL)]
@@ -515,10 +567,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = response_json(resp).await;
-        assert_eq!(json["action"], "redirect");
-        assert_eq!(json["redirect_to"], "http://example.com/login-rejected");
+        assert_redirect(&resp, "http://example.com/login-rejected");
     }
 
     #[test_with::env(DATABASE_URL)]
@@ -569,10 +618,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = response_json(resp).await;
-        assert_eq!(json["action"], "redirect");
-        assert_eq!(json["redirect_to"], "http://example.com/login-rejected");
+        assert_redirect(&resp, "http://example.com/login-rejected");
     }
 
     // -----------------------------------------------------------------------
@@ -619,10 +665,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = response_json(resp).await;
-        assert_eq!(json["action"], "redirect");
-        assert_eq!(json["redirect_to"], "http://example.com/token");
+        assert_redirect(&resp, "http://example.com/token");
     }
 
     #[test_with::env(DATABASE_URL)]
@@ -669,10 +712,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = response_json(resp).await;
-        assert_eq!(json["action"], "redirect");
-        assert_eq!(json["redirect_to"], "http://example.com/token2");
+        assert_redirect(&resp, "http://example.com/token2");
     }
 
     #[test_with::env(DATABASE_URL)]
@@ -773,10 +813,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = response_json(resp).await;
-        assert_eq!(json["action"], "redirect");
-        assert_eq!(json["redirect_to"], "http://example.com/done");
+        assert_redirect(&resp, "http://example.com/done");
     }
 
     #[test_with::env(DATABASE_URL)]
@@ -855,9 +892,6 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::OK);
-        let json = response_json(resp).await;
-        assert_eq!(json["action"], "redirect");
-        assert_eq!(json["redirect_to"], "http://example.com/denied");
+        assert_redirect(&resp, "http://example.com/denied");
     }
 }

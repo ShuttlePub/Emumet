@@ -1,6 +1,5 @@
 use crate::entity::{AccountId, AuthAccountId};
 use crate::KernelError;
-use std::collections::HashSet;
 use std::future::Future;
 use std::ops::Add;
 
@@ -14,9 +13,9 @@ pub enum AccountRelation {
 impl AccountRelation {
     pub fn as_str(&self) -> &'static str {
         match self {
-            AccountRelation::Owner => "owner",
-            AccountRelation::Editor => "editor",
-            AccountRelation::Signer => "signer",
+            AccountRelation::Owner => "owners",
+            AccountRelation::Editor => "editors",
+            AccountRelation::Signer => "signers",
         }
     }
 }
@@ -30,42 +29,37 @@ pub enum InstanceRole {
 impl InstanceRole {
     pub fn as_str(&self) -> &'static str {
         match self {
-            InstanceRole::Admin => "admin",
-            InstanceRole::Moderator => "moderator",
+            InstanceRole::Admin => "admins",
+            InstanceRole::Moderator => "moderators",
         }
     }
 }
 
-const ACCOUNT_NAMESPACE: &str = "accounts";
-const INSTANCE_NAMESPACE: &str = "instance";
+const ACCOUNT_NAMESPACE: &str = "Account";
+const INSTANCE_NAMESPACE: &str = "Instance";
 const INSTANCE_OBJECT_ID: &str = "singleton";
 
 #[derive(Debug, Clone)]
 pub enum PermissionReq {
     Account {
         account_id: AccountId,
-        relations: HashSet<AccountRelation>,
+        permission: &'static str,
     },
     Instance {
-        roles: HashSet<InstanceRole>,
+        permission: &'static str,
     },
 }
 
 impl PermissionReq {
-    pub fn account(
-        account_id: AccountId,
-        relations: impl IntoIterator<Item = AccountRelation>,
-    ) -> Self {
+    pub fn account(account_id: AccountId, permission: &'static str) -> Self {
         Self::Account {
             account_id,
-            relations: relations.into_iter().collect(),
+            permission,
         }
     }
 
-    pub fn instance(roles: impl IntoIterator<Item = InstanceRole>) -> Self {
-        Self::Instance {
-            roles: roles.into_iter().collect(),
-        }
+    pub fn instance(permission: &'static str) -> Self {
+        Self::Instance { permission }
     }
 
     pub fn namespace(&self) -> &'static str {
@@ -82,12 +76,10 @@ impl PermissionReq {
         }
     }
 
-    pub fn relation_strs(&self) -> Vec<&'static str> {
+    pub fn permission_name(&self) -> &'static str {
         match self {
-            PermissionReq::Account { relations, .. } => {
-                relations.iter().map(|r| r.as_str()).collect()
-            }
-            PermissionReq::Instance { roles, .. } => roles.iter().map(|r| r.as_str()).collect(),
+            PermissionReq::Account { permission, .. } => permission,
+            PermissionReq::Instance { permission, .. } => permission,
         }
     }
 }

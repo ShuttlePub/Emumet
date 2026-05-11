@@ -122,6 +122,123 @@
         ]
       }
     },
+    "/accounts/{account_id}": {
+      "put": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Update account properties.",
+        "operationId": "update_account_by_id",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Account updated"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Deactivate an account and cascade-delete related resources.",
+        "operationId": "deactivate_account_by_id",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Account deactivated"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/accounts/{account_id}/ban": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Permanently ban an account.",
+        "operationId": "ban_account_by_id",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BanAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Account banned"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/accounts/{account_id}/metadata": {
       "post": {
         "tags": [
@@ -172,7 +289,7 @@
         ]
       }
     },
-    "/accounts/{account_id}/metadata/{id}": {
+    "/accounts/{account_id}/metadata/{metadata_id}": {
       "put": {
         "tags": [
           "Metadata"
@@ -190,7 +307,7 @@
             }
           },
           {
-            "name": "id",
+            "name": "metadata_id",
             "in": "path",
             "description": "Metadata nanoid",
             "required": true,
@@ -240,7 +357,7 @@
             }
           },
           {
-            "name": "id",
+            "name": "metadata_id",
             "in": "path",
             "description": "Metadata nanoid",
             "required": true,
@@ -305,174 +422,9 @@
             "bearer_auth": []
           }
         ]
-      },
-      "post": {
-        "tags": [
-          "Profile"
-        ],
-        "description": "Create a profile for the specified account.",
-        "operationId": "create_profile",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateProfileRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Profile created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
       }
     },
-    "/accounts/{id}": {
-      "put": {
-        "tags": [
-          "Account"
-        ],
-        "description": "Update account properties.",
-        "operationId": "update_account_by_id",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateAccountRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Account updated"
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "Account"
-        ],
-        "description": "Deactivate an account and cascade-delete related resources.",
-        "operationId": "deactivate_account_by_id",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Account deactivated"
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/accounts/{id}/ban": {
-      "post": {
-        "tags": [
-          "Account"
-        ],
-        "description": "Permanently ban an account.",
-        "operationId": "ban_account_by_id",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BanAccountRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Account banned"
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/accounts/{id}/suspend": {
+    "/accounts/{account_id}/suspend": {
       "post": {
         "tags": [
           "Account"
@@ -481,7 +433,7 @@
         "operationId": "suspend_account_by_id",
         "parameters": [
           {
-            "name": "id",
+            "name": "account_id",
             "in": "path",
             "description": "Account nanoid",
             "required": true,
@@ -515,7 +467,7 @@
         ]
       }
     },
-    "/accounts/{id}/unsuspend": {
+    "/accounts/{account_id}/unsuspend": {
       "post": {
         "tags": [
           "Account"
@@ -524,7 +476,7 @@
         "operationId": "unsuspend_account_by_id",
         "parameters": [
           {
-            "name": "id",
+            "name": "account_id",
             "in": "path",
             "description": "Account nanoid",
             "required": true,
@@ -611,7 +563,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Consent result",
+            "description": "Consent details for user approval",
             "content": {
               "application/json": {
                 "schema": {
@@ -619,6 +571,9 @@
                 }
               }
             }
+          },
+          "302": {
+            "description": "Redirect (auto-accepted or skipped)"
           },
           "502": {
             "description": "Bad gateway (Hydra error)"
@@ -642,15 +597,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Consent decision result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OAuth2Response"
-                }
-              }
-            }
+          "302": {
+            "description": "Redirect after consent decision"
           },
           "400": {
             "description": "Invalid scope requested"
@@ -680,15 +628,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Login result (redirect on success or reject)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OAuth2Response"
-                }
-              }
-            }
+          "302": {
+            "description": "Redirect to Hydra callback"
           },
           "502": {
             "description": "Bad gateway (Hydra/Kratos error)"
@@ -868,35 +809,6 @@
           },
           "label": {
             "type": "string"
-          }
-        }
-      },
-      "CreateProfileRequest": {
-        "type": "object",
-        "properties": {
-          "banner_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "display_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "icon_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "summary": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         }
       },

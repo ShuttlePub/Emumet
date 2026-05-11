@@ -1,27 +1,7 @@
-use application::transfer::profile::{CreateProfileDto, UpdateProfileDto};
+use application::transfer::profile::UpdateProfileDto;
 use kernel::prelude::entity::FieldAction;
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
-
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct CreateProfileRequest {
-    pub display_name: Option<String>,
-    pub summary: Option<String>,
-    pub icon_url: Option<String>,
-    pub banner_url: Option<String>,
-}
-
-impl CreateProfileRequest {
-    pub fn into_dto(self, account_nanoid: String) -> CreateProfileDto {
-        CreateProfileDto {
-            account_nanoid,
-            display_name: self.display_name,
-            summary: self.summary,
-            icon_url: self.icon_url,
-            banner_url: self.banner_url,
-        }
-    }
-}
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateProfileRequest {

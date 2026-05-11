@@ -60,7 +60,12 @@ pub trait ProfileCommandProcessor: Send + Sync + 'static {
 
 impl<T> ProfileCommandProcessor for T
 where
-    T: DependOnProfileEventStore + DependOnProfileSignal + Send + Sync + 'static,
+    T: DependOnProfileEventStore
+        + DependOnProfileReadModel
+        + DependOnProfileSignal
+        + Send
+        + Sync
+        + 'static,
 {
     type Executor =
         <<T as DependOnProfileEventStore>::ProfileEventStore as ProfileEventStore>::Executor;
@@ -92,6 +97,15 @@ where
             Report::new(KernelError::Internal)
                 .attach_printable("Failed to construct profile from created event")
         })?;
+
+        if let Err(e) = self.profile_read_model().create(executor, &profile).await {
+            tracing::error!(
+                ?e,
+                "Failed to create profile read model, emitting signal for recovery"
+            );
+            let _ = self.profile_signal().emit(profile_id).await;
+            return Err(e);
+        }
 
         if let Err(e) = self.profile_signal().emit(profile_id).await {
             tracing::error!(?e, "Failed to emit profile signal");
@@ -136,6 +150,7 @@ pub trait DependOnProfileCommandProcessor: DependOnDatabaseConnection + Send + S
 impl<T> DependOnProfileCommandProcessor for T
 where
     T: DependOnProfileEventStore
+        + DependOnProfileReadModel
         + DependOnProfileSignal
         + DependOnDatabaseConnection
         + Send
