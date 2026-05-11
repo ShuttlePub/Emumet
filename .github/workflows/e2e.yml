@@ -25,7 +25,7 @@ jobs:
 
       - name: Create master-key-password file
         run: |
-          echo -n "${{ secrets.MASTER_KEY_PASSWORD }}" > master-key-password
+          echo -n "ci-test-master-key-password" > master-key-password
           chmod 600 master-key-password
 
       - name: Start services via docker compose
