@@ -258,7 +258,6 @@ pub trait UpdateProfileUseCase:
                         summary: dto.summary.map(ProfileSummary::new),
                         icon,
                         banner,
-                        current_version: profile.version().clone(),
                     },
                 )
                 .await?;

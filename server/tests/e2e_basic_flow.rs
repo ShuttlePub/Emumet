@@ -63,6 +63,63 @@ async fn login_create_account_and_verify_profile() {
             .expect("profile missing display_name"),
         "E2E Test Account"
     );
+
+    let update_url = format!("http://localhost:8080/accounts/{account_id}/profile");
+    let resp1 = client
+        .put(&update_url)
+        .bearer_auth(&jwt)
+        .json(&serde_json::json!({"display_name": "Updated Name 1"}))
+        .send()
+        .await
+        .expect("first profile update failed");
+    let status1 = resp1.status();
+    let body1 = resp1.text().await.unwrap_or_default();
+    assert_eq!(
+        status1,
+        reqwest::StatusCode::NO_CONTENT,
+        "first update failed: {body1}"
+    );
+
+    let resp2 = client
+        .put(&update_url)
+        .bearer_auth(&jwt)
+        .json(&serde_json::json!({"display_name": "Updated Name 2"}))
+        .send()
+        .await
+        .expect("second profile update failed");
+    let status2 = resp2.status();
+    let body2 = resp2.text().await.unwrap_or_default();
+    assert_eq!(
+        status2,
+        reqwest::StatusCode::NO_CONTENT,
+        "second update failed (LWW regression - version mismatch?): {body2}"
+    );
+
+    assert_concurrent_account_updates_succeed(&client, &jwt, account_id).await;
+}
+
+async fn assert_concurrent_account_updates_succeed(
+    client: &reqwest::Client,
+    jwt: &str,
+    account_id: &str,
+) {
+    let account_update_url = format!("http://localhost:8080/accounts/{account_id}");
+    for (n, expected_is_bot) in [(1u32, true), (2u32, false)] {
+        let resp = client
+            .put(&account_update_url)
+            .bearer_auth(jwt)
+            .json(&serde_json::json!({"is_bot": expected_is_bot}))
+            .send()
+            .await
+            .expect("account update failed");
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        assert_eq!(
+            status,
+            reqwest::StatusCode::NO_CONTENT,
+            "account update #{n} failed: {body}"
+        );
+    }
 }
 
 async fn poll_profiles(
@@ -104,3 +161,4 @@ async fn poll_profiles(
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }
+

@@ -229,6 +229,7 @@ pub trait UpdateMetadataUseCase:
     + Send
     + DependOnMetadataCommandProcessor
     + DependOnMetadataQueryProcessor
+    + DependOnMetadataEventStore
     + DependOnAccountQueryProcessor
     + DependOnPermissionChecker
 {
@@ -275,7 +276,8 @@ pub trait UpdateMetadataUseCase:
                 })?;
 
             let metadata_id = metadata.id().clone();
-            let current_version = metadata.version().clone();
+            let (_metadata, current_version) =
+                rehydrate_metadata(self, &mut transaction, &metadata_id).await?;
             self.metadata_command_processor()
                 .update(
                     &mut transaction,
@@ -299,6 +301,7 @@ impl<T> UpdateMetadataUseCase for T where
         + Send
         + DependOnMetadataCommandProcessor
         + DependOnMetadataQueryProcessor
+        + DependOnMetadataEventStore
         + DependOnAccountQueryProcessor
         + DependOnPermissionChecker
 {
@@ -311,6 +314,7 @@ pub trait DeleteMetadataUseCase:
     + DependOnMetadataCommandProcessor
     + DependOnMetadataQueryProcessor
     + DependOnAccountQueryProcessor
+    + DependOnMetadataEventStore
     + DependOnPermissionChecker
 {
     fn delete_metadata(
@@ -357,7 +361,8 @@ pub trait DeleteMetadataUseCase:
                 })?;
 
             let metadata_id = metadata.id().clone();
-            let current_version = metadata.version().clone();
+            let (_metadata, current_version) =
+                rehydrate_metadata(self, &mut transaction, &metadata_id).await?;
             self.metadata_command_processor()
                 .delete(&mut transaction, metadata_id, current_version)
                 .await?;
@@ -369,11 +374,43 @@ pub trait DeleteMetadataUseCase:
 
 impl<T> DeleteMetadataUseCase for T where
     T: 'static
-        + Sync
-        + Send
         + DependOnMetadataCommandProcessor
         + DependOnMetadataQueryProcessor
         + DependOnAccountQueryProcessor
+        + DependOnMetadataEventStore
         + DependOnPermissionChecker
 {
+}
+
+async fn rehydrate_metadata<T>(
+    deps: &T,
+    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    metadata_id: &MetadataId,
+) -> error_stack::Result<(Metadata, kernel::prelude::entity::EventVersion<Metadata>), KernelError>
+where
+    T: DependOnMetadataEventStore + ?Sized,
+{
+    let event_id = EventId::from(metadata_id.clone());
+    let events = deps
+        .metadata_event_store()
+        .find_by_id(executor, &event_id, None)
+        .await?;
+    if events.is_empty() {
+        return Err(Report::new(KernelError::NotFound).attach_printable(format!(
+            "No events found for metadata: {}",
+            metadata_id.as_ref()
+        )));
+    }
+    let mut metadata: Option<Metadata> = None;
+    for event in events {
+        Metadata::apply(&mut metadata, event)?;
+    }
+    let metadata = metadata.ok_or_else(|| {
+        Report::new(KernelError::NotFound).attach_printable(format!(
+            "Metadata aggregate could not be reconstructed (already deleted?): {}",
+            metadata_id.as_ref()
+        ))
+    })?;
+    let current_version = metadata.version().clone();
+    Ok((metadata, current_version))
 }

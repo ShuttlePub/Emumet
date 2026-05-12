@@ -82,13 +82,13 @@ impl Profile {
         )
     }
 
+    /// Last-write-wins: no optimistic concurrency check.
     pub fn update(
         id: ProfileId,
         display_name: FieldAction<ProfileDisplayName>,
         summary: FieldAction<ProfileSummary>,
         icon: FieldAction<ImageId>,
         banner: FieldAction<ImageId>,
-        current_version: EventVersion<Profile>,
     ) -> CommandEnvelope<ProfileEvent, Profile> {
         let event = ProfileEvent::Updated {
             display_name,
@@ -96,12 +96,7 @@ impl Profile {
             icon,
             banner,
         };
-        CommandEnvelope::new(
-            EventId::from(id),
-            event.name(),
-            event,
-            Some(KnownEventVersion::Prev(current_version)),
-        )
+        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
     }
 }
 
@@ -234,14 +229,12 @@ mod test {
         let summary = ProfileSummary::new("summary".to_string());
         let icon = ImageId::new(crate::generate_id());
         let banner = ImageId::new(crate::generate_id());
-        let current_version = profile.version().clone();
         let update_event = Profile::update(
             id.clone(),
             FieldAction::Set(display_name.clone()),
             FieldAction::Set(summary.clone()),
             FieldAction::Set(icon.clone()),
             FieldAction::Set(banner.clone()),
-            current_version,
         );
         let version = EventVersion::default();
         let envelope = EventEnvelope::new(
@@ -276,16 +269,13 @@ mod test {
             .icon(Some(icon))
             .banner(Some(banner))
             .build();
-        let version = profile.version().clone();
 
-        // Clear both icon and banner with FieldAction::Clear
         let update_event = Profile::update(
             id,
             FieldAction::Unchanged,
             FieldAction::Unchanged,
             FieldAction::Clear,
             FieldAction::Clear,
-            version,
         );
         let new_version = EventVersion::default();
         let envelope = EventEnvelope::new(
