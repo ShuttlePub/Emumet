@@ -161,4 +161,3 @@ async fn poll_profiles(
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }
-
