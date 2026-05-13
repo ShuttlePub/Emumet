@@ -6,7 +6,7 @@ use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel}
 use kernel::interfaces::signal::Signal;
 use kernel::prelude::entity::{
     Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-    AuthAccountId, Nanoid,
+    AuthAccountId, EventVersion, Nanoid,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -25,7 +25,7 @@ pub struct CreateAccountParam {
 pub struct UpdateAccountParam {
     pub account_id: AccountId,
     pub is_bot: AccountIsBot,
-    pub current_version: kernel::prelude::entity::EventVersion<Account>,
+    pub current_version: EventVersion<Account>,
 }
 
 // --- Signal DI trait (adapter-specific) ---

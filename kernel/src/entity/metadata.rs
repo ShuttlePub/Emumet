@@ -199,9 +199,12 @@ mod test {
             .build();
         let label = MetadataLabel::new("new_label".to_string());
         let content = MetadataContent::new("new_content".to_string());
-        let current_version = metadata.version().clone();
-        let update_event =
-            Metadata::update(id.clone(), label.clone(), content.clone(), current_version);
+        let update_event = Metadata::update(
+            id.clone(),
+            label.clone(),
+            content.clone(),
+            EventVersion::default(),
+        );
         let version = EventVersion::default();
         let envelope = EventEnvelope::new(
             update_event.id().clone(),

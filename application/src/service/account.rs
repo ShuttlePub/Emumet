@@ -14,13 +14,15 @@ use adapter::processor::profile::{
 use error_stack::Report;
 use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider};
 use kernel::interfaces::database::DatabaseConnection;
+use kernel::interfaces::event::EventApplier;
+use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
 use kernel::interfaces::permission::{
     AccountRelation, DependOnPermissionChecker, DependOnPermissionWriter, PermissionWriter,
     RelationTarget,
 };
 use kernel::prelude::entity::{
-    Account, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey, AuthAccountId, Nanoid,
-    Profile, ProfileDisplayName,
+    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
+    AuthAccountId, EventId, EventVersion, Nanoid, Profile, ProfileDisplayName,
 };
 use kernel::KernelError;
 use serde_json;
@@ -189,6 +191,7 @@ pub trait UpdateAccountUseCase:
     + Send
     + DependOnAccountCommandProcessor
     + DependOnAccountQueryProcessor
+    + DependOnAccountEventStore
     + DependOnPermissionChecker
 {
     fn update_account(
@@ -200,7 +203,7 @@ pub trait UpdateAccountUseCase:
             let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(dto.account_nanoid);
-            let account = self
+            let projection = self
                 .account_query_processor()
                 .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
@@ -211,20 +214,29 @@ pub trait UpdateAccountUseCase:
                     ))
                 })?;
 
-            check_permission(self, auth_account_id, &account_edit(account.id())).await?;
+            check_permission(self, auth_account_id, &account_edit(projection.id())).await?;
+
+            let account_id = projection.id().clone();
+            let (account, current_version) =
+                rehydrate_account(self, &mut transaction, &account_id).await?;
 
             if !account.status().is_active() {
                 return Err(Report::new(KernelError::Rejected)
                     .attach_printable("Cannot modify a suspended or banned account"));
+            }
+            if account.deleted_at().is_some() {
+                return Err(
+                    Report::new(KernelError::Rejected).attach_printable("Account is deactivated")
+                );
             }
 
             self.account_command_processor()
                 .update(
                     &mut transaction,
                     UpdateAccountParam {
-                        account_id: account.id().clone(),
+                        account_id,
                         is_bot: AccountIsBot::new(dto.is_bot),
-                        current_version: account.version().clone(),
+                        current_version,
                     },
                 )
                 .await?;
@@ -238,6 +250,7 @@ impl<T> UpdateAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
         + DependOnAccountQueryProcessor
+        + DependOnAccountEventStore
         + DependOnPermissionChecker
 {
 }
@@ -248,6 +261,7 @@ pub trait DeactivateAccountUseCase:
     + Send
     + DependOnAccountCommandProcessor
     + DependOnAccountQueryProcessor
+    + DependOnAccountEventStore
     + DependOnPermissionChecker
     + DependOnPermissionWriter
 {
@@ -260,7 +274,7 @@ pub trait DeactivateAccountUseCase:
             let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
-            let account = self
+            let projection = self
                 .account_query_processor()
                 .find_by_nanoid(&mut transaction, &nanoid)
                 .await?
@@ -271,10 +285,11 @@ pub trait DeactivateAccountUseCase:
                     ))
                 })?;
 
-            check_permission(self, auth_account_id, &account_deactivate(account.id())).await?;
+            check_permission(self, auth_account_id, &account_deactivate(projection.id())).await?;
 
-            let account_id = account.id().clone();
-            let current_version = account.version().clone();
+            let account_id = projection.id().clone();
+            let (_account, current_version) =
+                rehydrate_account(self, &mut transaction, &account_id).await?;
             self.account_command_processor()
                 .deactivate(&mut transaction, account_id.clone(), current_version)
                 .await?;
@@ -304,6 +319,7 @@ impl<T> DeactivateAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
         + DependOnAccountQueryProcessor
+        + DependOnAccountEventStore
         + DependOnPermissionChecker
         + DependOnPermissionWriter
 {
@@ -315,6 +331,7 @@ pub trait SuspendAccountUseCase:
     + Send
     + DependOnAccountCommandProcessor
     + DependOnAccountQueryProcessor
+    + DependOnAccountEventStore
     + DependOnPermissionChecker
 {
     fn suspend_account(
@@ -328,7 +345,7 @@ pub trait SuspendAccountUseCase:
             let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
-            let account = self
+            let projection = self
                 .account_query_processor()
                 .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
@@ -348,6 +365,10 @@ pub trait SuspendAccountUseCase:
                 }
             }
 
+            let account_id = projection.id().clone();
+            let (account, current_version) =
+                rehydrate_account(self, &mut transaction, &account_id).await?;
+
             if !account.status().is_active() {
                 return Err(
                     Report::new(KernelError::Rejected).attach_printable("Account is not active")
@@ -359,8 +380,6 @@ pub trait SuspendAccountUseCase:
                 );
             }
 
-            let account_id = account.id().clone();
-            let current_version = account.version().clone();
             self.account_command_processor()
                 .suspend(
                     &mut transaction,
@@ -380,6 +399,7 @@ impl<T> SuspendAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
         + DependOnAccountQueryProcessor
+        + DependOnAccountEventStore
         + DependOnPermissionChecker
 {
 }
@@ -390,6 +410,7 @@ pub trait UnsuspendAccountUseCase:
     + Send
     + DependOnAccountCommandProcessor
     + DependOnAccountQueryProcessor
+    + DependOnAccountEventStore
     + DependOnPermissionChecker
 {
     fn unsuspend_account(
@@ -401,7 +422,7 @@ pub trait UnsuspendAccountUseCase:
             let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
-            let account = self
+            let projection = self
                 .account_query_processor()
                 .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
@@ -414,14 +435,16 @@ pub trait UnsuspendAccountUseCase:
 
             check_permission(self, auth_account_id, &instance_moderate()).await?;
 
+            let account_id = projection.id().clone();
+            let (account, current_version) =
+                rehydrate_account(self, &mut transaction, &account_id).await?;
+
             if !account.status().is_suspended() {
                 return Err(
                     Report::new(KernelError::Rejected).attach_printable("Account is not suspended")
                 );
             }
 
-            let account_id = account.id().clone();
-            let current_version = account.version().clone();
             self.account_command_processor()
                 .unsuspend(&mut transaction, account_id, current_version)
                 .await?;
@@ -435,6 +458,7 @@ impl<T> UnsuspendAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
         + DependOnAccountQueryProcessor
+        + DependOnAccountEventStore
         + DependOnPermissionChecker
 {
 }
@@ -445,6 +469,7 @@ pub trait BanAccountUseCase:
     + Send
     + DependOnAccountCommandProcessor
     + DependOnAccountQueryProcessor
+    + DependOnAccountEventStore
     + DependOnPermissionChecker
 {
     fn ban_account(
@@ -457,7 +482,7 @@ pub trait BanAccountUseCase:
             let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
-            let account = self
+            let projection = self
                 .account_query_processor()
                 .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
                 .await?
@@ -470,6 +495,10 @@ pub trait BanAccountUseCase:
 
             check_permission(self, auth_account_id, &instance_moderate()).await?;
 
+            let account_id = projection.id().clone();
+            let (account, current_version) =
+                rehydrate_account(self, &mut transaction, &account_id).await?;
+
             if account.status().is_banned() {
                 return Err(Report::new(KernelError::Rejected)
                     .attach_printable("Account is already banned"));
@@ -480,8 +509,6 @@ pub trait BanAccountUseCase:
                 );
             }
 
-            let account_id = account.id().clone();
-            let current_version = account.version().clone();
             self.account_command_processor()
                 .ban(&mut transaction, account_id, reason, current_version)
                 .await?;
@@ -495,6 +522,40 @@ impl<T> BanAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
         + DependOnAccountQueryProcessor
+        + DependOnAccountEventStore
         + DependOnPermissionChecker
 {
+}
+
+async fn rehydrate_account<T>(
+    deps: &T,
+    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    account_id: &AccountId,
+) -> error_stack::Result<(Account, EventVersion<Account>), KernelError>
+where
+    T: DependOnAccountEventStore + ?Sized,
+{
+    let event_id = EventId::from(account_id.clone());
+    let events = deps
+        .account_event_store()
+        .find_by_id(executor, &event_id, None)
+        .await?;
+    if events.is_empty() {
+        return Err(Report::new(KernelError::NotFound).attach_printable(format!(
+            "No events found for account: {}",
+            account_id.as_ref()
+        )));
+    }
+    let mut account: Option<Account> = None;
+    for event in events {
+        Account::apply(&mut account, event)?;
+    }
+    let account = account.ok_or_else(|| {
+        Report::new(KernelError::NotFound).attach_printable(format!(
+            "Account aggregate could not be reconstructed for: {}",
+            account_id.as_ref()
+        ))
+    })?;
+    let current_version = account.version().clone();
+    Ok((account, current_version))
 }

@@ -237,6 +237,7 @@ impl AccountApplier {
                 Ok(())
             },
         );
+        queue.start_workers();
         AccountApplier(queue)
     }
 }

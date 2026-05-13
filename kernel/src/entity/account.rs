@@ -386,8 +386,7 @@ mod test {
             .id(id.clone())
             .nanoid(nano_id.clone())
             .build();
-        let version = account.version().clone();
-        let event = Account::update(id.clone(), AccountIsBot::new(true), version);
+        let event = Account::update(id.clone(), AccountIsBot::new(true), EventVersion::default());
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),
@@ -405,8 +404,7 @@ mod test {
     fn update_not_exist_account() {
         crate::ensure_generator_initialized();
         let id = AccountId::default();
-        let version = EventVersion::default();
-        let event = Account::update(id.clone(), AccountIsBot::new(true), version);
+        let event = Account::update(id.clone(), AccountIsBot::new(true), EventVersion::default());
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),

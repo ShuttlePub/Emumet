@@ -26,6 +26,7 @@ impl ProfileApplier {
                     .map_err(|e| rikka_mq::error::ErrorOperation::Delay(format!("{:?}", e)))
             },
         );
+        queue.start_workers();
         ProfileApplier(queue)
     }
 }
