@@ -96,6 +96,117 @@ async fn login_create_account_and_verify_profile() {
     );
 
     assert_concurrent_account_updates_succeed(&client, &jwt, account_id).await;
+
+    assert_metadata_lifecycle(&client, &jwt, account_id).await;
+}
+
+async fn assert_metadata_lifecycle(client: &reqwest::Client, jwt: &str, account_id: &str) {
+    let create_url = format!("http://localhost:8080/accounts/{account_id}/metadata");
+    let resp = client
+        .post(&create_url)
+        .bearer_auth(jwt)
+        .json(&serde_json::json!({"label": "website", "content": "https://example.com"}))
+        .send()
+        .await
+        .expect("failed to create metadata");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::CREATED,
+        "metadata create failed: {body}"
+    );
+    let created: serde_json::Value =
+        serde_json::from_str(&body).expect("failed to parse metadata response");
+    let metadata_nanoid = created
+        .get("nanoid")
+        .and_then(|v| v.as_str())
+        .expect("metadata response missing nanoid")
+        .to_string();
+
+    let metadata = poll_metadata(client, jwt, account_id, true).await;
+    assert_eq!(metadata.len(), 1, "expected single metadata after create");
+    assert_eq!(
+        metadata[0]
+            .get("nanoid")
+            .and_then(|v| v.as_str())
+            .expect("metadata projection missing nanoid"),
+        metadata_nanoid
+    );
+
+    let resource_url =
+        format!("http://localhost:8080/accounts/{account_id}/metadata/{metadata_nanoid}");
+    let resp = client
+        .delete(&resource_url)
+        .bearer_auth(jwt)
+        .send()
+        .await
+        .expect("metadata delete failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::NO_CONTENT,
+        "metadata delete failed: {body}"
+    );
+
+    let metadata = poll_metadata(client, jwt, account_id, false).await;
+    assert!(
+        metadata.is_empty(),
+        "metadata projection still visible after delete: {metadata:?}"
+    );
+
+    let resp = client
+        .put(&resource_url)
+        .bearer_auth(jwt)
+        .json(&serde_json::json!({"label": "website", "content": "https://other.example.com"}))
+        .send()
+        .await
+        .expect("metadata update-after-delete request failed");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "expected 404 on update-after-delete (bug 2 regression)"
+    );
+}
+
+async fn poll_metadata(
+    client: &reqwest::Client,
+    jwt: &str,
+    account_id: &str,
+    expect_present: bool,
+) -> Vec<serde_json::Value> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut attempts = 0u32;
+    loop {
+        attempts += 1;
+        let resp = client
+            .get(format!(
+                "http://localhost:8080/metadata?account_ids={account_id}"
+            ))
+            .bearer_auth(jwt)
+            .send()
+            .await
+            .expect("failed to query metadata");
+        let status = resp.status();
+        let body = resp.text().await.expect("failed to read metadata response");
+        assert_eq!(
+            status,
+            reqwest::StatusCode::OK,
+            "metadata query failed (attempt {attempts}): {body}"
+        );
+        let metadata: Vec<serde_json::Value> =
+            serde_json::from_str(&body).expect("failed to parse metadata response");
+        let has = !metadata.is_empty();
+        if has == expect_present {
+            return metadata;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for metadata projection (expect_present={expect_present}) after {attempts} attempts"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
 }
 
 async fn assert_concurrent_account_updates_succeed(
