@@ -3,6 +3,7 @@ use application::transfer::pagination::Direction;
 use axum::http::StatusCode;
 
 pub mod account;
+pub mod activitypub;
 pub mod metadata;
 pub mod oauth2;
 pub mod profile;
@@ -51,9 +52,11 @@ impl DirectionConverter for Option<String> {
 pub(crate) fn build_test_router(app: crate::handler::AppModule) -> axum::Router {
     use crate::auth::{JwksCache, OidcConfig};
     use crate::route::account::AccountRouter;
+    use crate::route::activitypub::ActivityPubRouter;
     use crate::route::metadata::MetadataRouter;
     use crate::route::oauth2::OAuth2Router;
     use crate::route::profile::ProfileRouter;
+    use crate::route::signing::{SigningAuthedRouter, SigningPublicRouter};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -71,12 +74,16 @@ pub(crate) fn build_test_router(app: crate::handler::AppModule) -> axum::Router 
         .route_account()
         .route_profile()
         .route_metadata()
+        .route_signing_authed()
         .layer(axum::middleware::from_fn_with_state(
             (oidc_config, jwks_cache),
             crate::auth::auth_middleware,
         ));
 
-    let public_routes = axum::Router::new().route_oauth2();
+    let public_routes = axum::Router::new()
+        .route_oauth2()
+        .route_signing_public()
+        .route_activitypub();
 
     authed_routes.merge(public_routes).with_state(app)
 }
@@ -107,6 +114,8 @@ mod route_smoke_tests {
         method: String,
         uri: String,
         requires_auth: bool,
+        allows_not_found: bool,
+        accept: Option<&'static str>,
     }
 
     fn replace_path_params(template: &str) -> String {
@@ -128,6 +137,22 @@ mod route_smoke_tests {
             Some(arr) => arr.as_array().is_some_and(|a| !a.is_empty()),
             None => false,
         }
+    }
+
+    fn has_not_found_response(operation: &serde_json::Value) -> bool {
+        operation
+            .get("responses")
+            .and_then(|responses| responses.as_object())
+            .is_some_and(|responses| responses.contains_key("404"))
+    }
+
+    fn is_activitypub_operation(operation: &serde_json::Value) -> bool {
+        operation
+            .get("tags")
+            .and_then(|tags| tags.as_array())
+            .into_iter()
+            .flatten()
+            .any(|tag| tag.as_str() == Some("ActivityPub"))
     }
 
     fn load_routes_from_openapi() -> Vec<RouteCase> {
@@ -168,6 +193,9 @@ mod route_smoke_tests {
                     method: key.to_uppercase(),
                     uri,
                     requires_auth,
+                    allows_not_found: !requires_auth && has_not_found_response(operation),
+                    accept: is_activitypub_operation(operation)
+                        .then_some("application/activity+json"),
                 });
             }
         }
@@ -184,23 +212,27 @@ mod route_smoke_tests {
         let router = app().await;
 
         for case in &cases {
-            let request = Request::builder()
+            let mut request = Request::builder()
                 .method(case.method.as_str())
                 .uri(&case.uri)
-                .header("content-type", "application/json")
-                .body(Body::from("{}"))
-                .unwrap();
+                .header("content-type", "application/json");
+            if let Some(accept) = case.accept {
+                request = request.header("accept", accept);
+            }
+            let request = request.body(Body::from("{}")).unwrap();
 
             let response = router.clone().oneshot(request).await.unwrap();
             let status = response.status();
 
-            assert_ne!(
-                status,
-                StatusCode::NOT_FOUND,
-                "Route {} {} returned 404 — is it registered?",
-                case.method,
-                case.uri,
-            );
+            if !case.allows_not_found {
+                assert_ne!(
+                    status,
+                    StatusCode::NOT_FOUND,
+                    "Route {} {} returned 404 — is it registered?",
+                    case.method,
+                    case.uri,
+                );
+            }
             assert_ne!(
                 status,
                 StatusCode::METHOD_NOT_ALLOWED,

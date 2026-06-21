@@ -13,6 +13,44 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/.well-known/webfinger": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "WebFinger account discovery for ActivityPub.",
+        "operationId": "webfinger",
+        "parameters": [
+          {
+            "name": "resource",
+            "in": "query",
+            "description": "Resource URI (acct:user@domain)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "WebFinger response",
+            "content": {
+              "application/jrd+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebFingerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid resource format"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
     "/accounts": {
       "get": {
         "tags": [
@@ -500,6 +538,217 @@
         ]
       }
     },
+    "/accounts/{id}": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub Actor document for a local account.",
+        "operationId": "get_actor",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ActivityPub Actor",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Actor not found or ActivityPub media type not requested"
+          }
+        }
+      }
+    },
+    "/accounts/{id}/followers": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub followers OrderedCollection for a local account.",
+        "operationId": "get_followers",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Followers collection",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderedCollectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account ID"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
+    "/accounts/{id}/following": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub following OrderedCollection for a local account.",
+        "operationId": "get_following",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Following collection",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderedCollectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account ID"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
+    "/accounts/{id}/inbox": {
+      "post": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "ActivityPub inbox for signed inbound federation activities.",
+        "operationId": "post_inbox",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/activity+json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Activity accepted or ignored"
+          },
+          "400": {
+            "description": "Malformed ActivityPub activity"
+          },
+          "401": {
+            "description": "Missing or invalid HTTP Signature"
+          },
+          "404": {
+            "description": "Local actor not found"
+          }
+        }
+      }
+    },
+    "/accounts/{id}/outbox": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub outbox OrderedCollection for a local account.",
+        "operationId": "get_outbox",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of activities to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Return activities with IDs older than this cursor",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Outbox collection",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderedCollectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account ID or pagination parameter"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
     "/accounts/{id}/public-key": {
       "get": {
         "tags": [
@@ -841,6 +1090,72 @@
           }
         }
       },
+      "ActorResponse": {
+        "type": "object",
+        "required": [
+          "@context",
+          "id",
+          "type",
+          "preferredUsername",
+          "inbox",
+          "outbox",
+          "followers",
+          "following",
+          "publicKey"
+        ],
+        "properties": {
+          "@context": {
+            "type": "array",
+            "items": {}
+          },
+          "followers": {
+            "type": "string"
+          },
+          "following": {
+            "type": "string"
+          },
+          "icon": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageObject"
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "inbox": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outbox": {
+            "type": "string"
+          },
+          "preferredUsername": {
+            "type": "string"
+          },
+          "publicKey": {
+            "$ref": "#/components/schemas/PublicKey"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
       "BanAccountRequest": {
         "type": "object",
         "required": [
@@ -903,6 +1218,29 @@
           },
           "label": {
             "type": "string"
+          }
+        }
+      },
+      "ImageObject": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "mediaType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -1039,6 +1377,55 @@
           }
         ]
       },
+      "OrderedCollectionResponse": {
+        "type": "object",
+        "required": [
+          "@context",
+          "id",
+          "type"
+        ],
+        "properties": {
+          "@context": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "first": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "last": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "orderedItems": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {}
+          },
+          "totalItems": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
       "ProfileResponse": {
         "type": "object",
         "required": [
@@ -1075,6 +1462,25 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PublicKey": {
+        "type": "object",
+        "required": [
+          "id",
+          "owner",
+          "publicKeyPem"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "publicKeyPem": {
+            "type": "string"
           }
         }
       },
@@ -1232,6 +1638,54 @@
             "description": "Absent = no change, null = clear, string = set"
           }
         }
+      },
+      "WebFingerLink": {
+        "type": "object",
+        "required": [
+          "rel",
+          "type",
+          "href"
+        ],
+        "properties": {
+          "href": {
+            "type": "string"
+          },
+          "rel": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "WebFingerResponse": {
+        "type": "object",
+        "required": [
+          "subject"
+        ],
+        "properties": {
+          "aliases": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "links": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/WebFingerLink"
+            }
+          },
+          "subject": {
+            "type": "string"
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -1262,6 +1716,10 @@
     {
       "name": "Signing",
       "description": "HTTP Signature signing"
+    },
+    {
+      "name": "ActivityPub",
+      "description": "ActivityPub discovery and actor endpoints"
     }
   ]
 }

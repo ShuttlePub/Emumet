@@ -15,4 +15,6 @@ pub struct RemoteAccount {
     acct: RemoteAccountAcct,
     url: RemoteAccountUrl,
     icon_id: Option<ImageId>,
+    inbox_url: Option<String>,
+    public_key_pem: Option<String>,
 }

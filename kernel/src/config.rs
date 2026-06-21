@@ -3,6 +3,7 @@ pub struct PublicBaseUrl(pub String);
 
 impl PublicBaseUrl {
     pub fn new(url: String) -> Self {
+        let url = url.trim_end_matches('/').to_string();
         Self(url)
     }
 

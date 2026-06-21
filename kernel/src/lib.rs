@@ -1,3 +1,4 @@
+pub mod activitypub;
 mod config;
 mod crypto;
 mod database;
@@ -161,6 +162,13 @@ macro_rules! impl_database_delegation {
             type FollowRepository = <$db_type as $crate::interfaces::repository::DependOnFollowRepository>::FollowRepository;
             fn follow_repository(&self) -> &Self::FollowRepository {
                 $crate::interfaces::repository::DependOnFollowRepository::follow_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnOutboxActivityRepository for $impl_type {
+            type OutboxActivityRepository = <$db_type as $crate::interfaces::repository::DependOnOutboxActivityRepository>::OutboxActivityRepository;
+            fn outbox_activity_repository(&self) -> &Self::OutboxActivityRepository {
+                $crate::interfaces::repository::DependOnOutboxActivityRepository::outbox_activity_repository(&self.$field)
             }
         }
 

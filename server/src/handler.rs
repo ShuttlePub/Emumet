@@ -9,7 +9,7 @@ use driver::crypto::{
     Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
 };
 use driver::database::{PostgresDatabase, RedisDatabase};
-use driver::http_signing::HttpSignerImpl;
+use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
 use driver::keto::KetoClient;
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
@@ -17,7 +17,7 @@ use kernel::interfaces::crypto::{
     DependOnSignatureVerifier, DependOnSigner,
 };
 use kernel::interfaces::database::DependOnDatabaseConnection;
-use kernel::interfaces::http_signing::DependOnHttpSigner;
+use kernel::interfaces::http_signing::{DependOnHttpSignatureVerifier, DependOnHttpSigner};
 use kernel::interfaces::permission::{DependOnPermissionChecker, DependOnPermissionWriter};
 use kernel::KernelError;
 use std::sync::Arc;
@@ -198,6 +198,16 @@ impl kernel::interfaces::repository::DependOnFollowRepository for AppModule {
     }
 }
 
+impl kernel::interfaces::repository::DependOnOutboxActivityRepository for AppModule {
+    type OutboxActivityRepository =
+        <PostgresDatabase as kernel::interfaces::repository::DependOnOutboxActivityRepository>::OutboxActivityRepository;
+    fn outbox_activity_repository(&self) -> &Self::OutboxActivityRepository {
+        kernel::interfaces::repository::DependOnOutboxActivityRepository::outbox_activity_repository(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
 impl kernel::interfaces::repository::DependOnRemoteAccountRepository for AppModule {
     type RemoteAccountRepository =
         <PostgresDatabase as kernel::interfaces::repository::DependOnRemoteAccountRepository>::RemoteAccountRepository;
@@ -249,6 +259,13 @@ impl DependOnHttpSigner for AppModule {
     }
 }
 
+impl DependOnHttpSignatureVerifier for AppModule {
+    type HttpSignatureVerifier = HttpSignatureVerifierImpl;
+    fn http_signature_verifier(&self) -> &Self::HttpSignatureVerifier {
+        self.handler.as_ref().http_signature_verifier()
+    }
+}
+
 impl DependOnPublicBaseUrl for AppModule {
     fn public_base_url(&self) -> &PublicBaseUrl {
         self.handler.as_ref().public_base_url()
@@ -271,6 +288,7 @@ pub struct Handler {
     verifier: Rsa2048Verifier,
     // HTTP signing
     http_signer: HttpSignerImpl,
+    http_signature_verifier: HttpSignatureVerifierImpl,
     // Config
     public_base_url: PublicBaseUrl,
     // Ory clients
@@ -318,6 +336,7 @@ impl Handler {
             signer: Rsa2048Signer,
             verifier: Rsa2048Verifier,
             http_signer: HttpSignerImpl,
+            http_signature_verifier: HttpSignatureVerifierImpl::new()?,
             public_base_url,
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_client: KratosClient::new(kratos_public_url),
@@ -348,6 +367,7 @@ impl Handler {
             signer: Rsa2048Signer,
             verifier: Rsa2048Verifier,
             http_signer: HttpSignerImpl,
+            http_signature_verifier: HttpSignatureVerifierImpl::new()?,
             public_base_url,
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_client: KratosClient::new(kratos_public_url),
@@ -442,6 +462,13 @@ impl DependOnHttpSigner for Handler {
     type HttpSigner = HttpSignerImpl;
     fn http_signer(&self) -> &Self::HttpSigner {
         &self.http_signer
+    }
+}
+
+impl DependOnHttpSignatureVerifier for Handler {
+    type HttpSignatureVerifier = HttpSignatureVerifierImpl;
+    fn http_signature_verifier(&self) -> &Self::HttpSignatureVerifier {
+        &self.http_signature_verifier
     }
 }
 

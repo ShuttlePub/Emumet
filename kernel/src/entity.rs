@@ -1,4 +1,5 @@
 mod account;
+mod activitypub;
 mod auth_account;
 mod auth_host;
 mod common;
@@ -11,6 +12,7 @@ mod remote_account;
 mod signing_key;
 
 pub use self::account::*;
+pub use self::activitypub::*;
 pub use self::auth_account::*;
 pub use self::auth_host::*;
 pub use self::common::*;

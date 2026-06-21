@@ -47,6 +47,12 @@ impl Modify for SecurityAddon {
         crate::route::oauth2::post_consent,
         crate::route::signing::sign_request,
         crate::route::signing::get_public_key,
+        crate::route::activitypub::webfinger,
+        crate::route::activitypub::get_actor,
+        crate::route::activitypub::post_inbox,
+        crate::route::activitypub::get_outbox,
+        crate::route::activitypub::get_followers,
+        crate::route::activitypub::get_following,
     ),
     components(schemas(
         crate::schema::account::CreateAccountRequest,
@@ -66,6 +72,12 @@ impl Modify for SecurityAddon {
         crate::route::signing::SignRequestBody,
         crate::route::signing::SignResponse,
         crate::route::signing::PublicKeyResponse,
+        crate::schema::activitypub::WebFingerResponse,
+        crate::schema::activitypub::WebFingerLink,
+        crate::schema::activitypub::ActorResponse,
+        crate::schema::activitypub::OrderedCollectionResponse,
+        crate::schema::activitypub::PublicKey,
+        crate::schema::activitypub::ImageObject,
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -74,6 +86,7 @@ impl Modify for SecurityAddon {
         (name = "Metadata", description = "Metadata management"),
         (name = "OAuth2", description = "OAuth2 Login/Consent Provider"),
         (name = "Signing", description = "HTTP Signature signing"),
+        (name = "ActivityPub", description = "ActivityPub discovery and actor endpoints"),
     )
 )]
 #[allow(dead_code)] // utoipa OpenApiマクロ内部で使用される

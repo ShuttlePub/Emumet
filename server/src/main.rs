@@ -12,6 +12,7 @@ use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
 use crate::handler::AppModule;
 use crate::route::account::AccountRouter;
+use crate::route::activitypub::ActivityPubRouter;
 use crate::route::metadata::MetadataRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile::ProfileRouter;
@@ -82,7 +83,10 @@ async fn main() -> Result<(), StackTrace> {
         ));
 
     // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider)
-    let public_routes = axum::Router::new().route_oauth2().route_signing_public();
+    let public_routes = axum::Router::new()
+        .route_oauth2()
+        .route_signing_public()
+        .route_activitypub();
 
     let router = authed_routes
         .merge(public_routes)

@@ -14,6 +14,8 @@ struct RemoteAccountRow {
     acct: String,
     url: String,
     icon_id: Option<i64>,
+    inbox_url: Option<String>,
+    public_key_pem: Option<String>,
 }
 
 impl From<RemoteAccountRow> for RemoteAccount {
@@ -23,6 +25,8 @@ impl From<RemoteAccountRow> for RemoteAccount {
             RemoteAccountAcct::new(row.acct),
             RemoteAccountUrl::new(row.url),
             row.icon_id.map(ImageId::new),
+            row.inbox_url,
+            row.public_key_pem,
         )
     }
 }
@@ -41,7 +45,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
         sqlx::query_as::<_, RemoteAccountRow>(
             // language=postgresql
             r#"
-            SELECT id, acct, url, icon_id
+            SELECT id, acct, url, icon_id, inbox_url, public_key_pem
             FROM remote_accounts
             WHERE id = $1
             "#,
@@ -62,7 +66,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
         sqlx::query_as::<_, RemoteAccountRow>(
             // language=postgresql
             r#"
-            SELECT id, acct, url, icon_id
+            SELECT id, acct, url, icon_id, inbox_url, public_key_pem
             FROM remote_accounts
             WHERE acct = $1
             "#,
@@ -83,7 +87,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
         sqlx::query_as::<_, RemoteAccountRow>(
             // language=postgresql
             r#"
-            SELECT id, acct, url, icon_id
+            SELECT id, acct, url, icon_id, inbox_url, public_key_pem
             FROM remote_accounts
             WHERE url = $1
             "#,
@@ -104,14 +108,16 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
         sqlx::query(
             // language=postgresql
             r#"
-            INSERT INTO remote_accounts (id, acct, url, icon_id)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO remote_accounts (id, acct, url, icon_id, inbox_url, public_key_pem)
+            VALUES ($1, $2, $3, $4, $5, $6)
             "#,
         )
         .bind(account.id().as_ref())
         .bind(account.acct().as_ref())
         .bind(account.url().as_ref())
         .bind(account.icon_id().as_ref().map(ImageId::as_ref))
+        .bind(account.inbox_url())
+        .bind(account.public_key_pem())
         .execute(con)
         .await
         .convert_error()?;
@@ -128,7 +134,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
             // language=postgresql
             r#"
             UPDATE remote_accounts
-            SET acct = $2, url = $3, icon_id = $4
+            SET acct = $2, url = $3, icon_id = $4, inbox_url = $5, public_key_pem = $6
             WHERE id = $1
             "#,
         )
@@ -136,6 +142,8 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
         .bind(account.acct().as_ref())
         .bind(account.url().as_ref())
         .bind(account.icon_id().as_ref().map(ImageId::as_ref))
+        .bind(account.inbox_url())
+        .bind(account.public_key_pem())
         .execute(con)
         .await
         .convert_error()?;
