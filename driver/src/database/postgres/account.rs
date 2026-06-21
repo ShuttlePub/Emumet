@@ -716,7 +716,7 @@ mod test {
                 .unwrap();
             let updated_account = AccountBuilder::new()
                 .id(account.id().clone())
-                .name("test2")
+                .name(unique_account_name())
                 .private_key("test2")
                 .public_key("test2")
                 .is_bot(true)

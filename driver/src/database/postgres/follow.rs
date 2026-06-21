@@ -233,7 +233,7 @@ mod test {
         use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
         use kernel::prelude::entity::{AccountId, FollowApprovedAt, FollowTargetId};
-        use kernel::test_utils::{AccountBuilder, FollowBuilder};
+        use kernel::test_utils::{unique_account_name, AccountBuilder, FollowBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -244,7 +244,7 @@ mod test {
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
-                .name("follower")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()
@@ -254,7 +254,7 @@ mod test {
             let followee_id = AccountId::default();
             let followee_account = AccountBuilder::new()
                 .id(followee_id.clone())
-                .name("followee")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()
@@ -311,7 +311,7 @@ mod test {
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
-                .name("follower")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()
@@ -321,7 +321,7 @@ mod test {
             let followee_id = AccountId::default();
             let followee_account = AccountBuilder::new()
                 .id(followee_id.clone())
-                .name("followee")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()
@@ -377,7 +377,7 @@ mod test {
         use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
         use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
         use kernel::prelude::entity::{AccountId, Follow, FollowApprovedAt, FollowTargetId};
-        use kernel::test_utils::{AccountBuilder, FollowBuilder};
+        use kernel::test_utils::{unique_account_name, AccountBuilder, FollowBuilder};
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -388,7 +388,7 @@ mod test {
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
-                .name("follower")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()
@@ -398,7 +398,7 @@ mod test {
             let followee_id = AccountId::default();
             let followee_account = AccountBuilder::new()
                 .id(followee_id.clone())
-                .name("followee")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()
@@ -443,7 +443,7 @@ mod test {
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
-                .name("follower")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()
@@ -453,7 +453,7 @@ mod test {
             let followee_id = AccountId::default();
             let followee_account = AccountBuilder::new()
                 .id(followee_id.clone())
-                .name("followee")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()
@@ -523,7 +523,7 @@ mod test {
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
-                .name("follower")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()
@@ -533,7 +533,7 @@ mod test {
             let followee_id = AccountId::default();
             let followee_account = AccountBuilder::new()
                 .id(followee_id.clone())
-                .name("followee")
+                .name(unique_account_name())
                 .build();
             database
                 .account_read_model()

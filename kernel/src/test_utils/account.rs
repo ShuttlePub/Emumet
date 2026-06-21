@@ -3,7 +3,7 @@ use crate::entity::{
     AccountStatus, CreatedAt, DeletedAt, EventVersion, Nanoid,
 };
 
-use super::{DEFAULT_ACCOUNT_NAME, DEFAULT_PRIVATE_KEY, DEFAULT_PUBLIC_KEY};
+use super::{unique_account_name, DEFAULT_PRIVATE_KEY, DEFAULT_PUBLIC_KEY};
 
 pub struct AccountBuilder {
     id: Option<AccountId>,
@@ -95,7 +95,7 @@ impl AccountBuilder {
         Account::new(
             self.id.unwrap_or_default(),
             self.name
-                .unwrap_or_else(|| AccountName::new(DEFAULT_ACCOUNT_NAME)),
+                .unwrap_or_else(|| AccountName::new(unique_account_name())),
             self.private_key
                 .unwrap_or_else(|| AccountPrivateKey::new(DEFAULT_PRIVATE_KEY)),
             self.public_key

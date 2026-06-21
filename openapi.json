@@ -161,6 +161,47 @@
       }
     },
     "/accounts/{account_id}": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub Actor document for a local account.",
+        "operationId": "get_actor",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ActivityPub Actor",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Actor not found or ActivityPub media type not requested"
+          }
+        }
+      },
       "put": {
         "tags": [
           "Account"
@@ -275,6 +316,148 @@
             "bearer_auth": []
           }
         ]
+      }
+    },
+    "/accounts/{account_id}/followers": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub followers OrderedCollection for a local account.",
+        "operationId": "get_followers",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Followers collection",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderedCollectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account ID"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/following": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub following OrderedCollection for a local account.",
+        "operationId": "get_following",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Following collection",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderedCollectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account ID"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/inbox": {
+      "post": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "ActivityPub inbox for signed inbound federation activities.",
+        "operationId": "post_inbox",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/activity+json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Activity accepted or ignored"
+          },
+          "400": {
+            "description": "Malformed ActivityPub activity"
+          },
+          "401": {
+            "description": "Missing or invalid HTTP Signature"
+          },
+          "404": {
+            "description": "Local actor not found"
+          }
+        }
       }
     },
     "/accounts/{account_id}/metadata": {
@@ -419,6 +602,72 @@
         ]
       }
     },
+    "/accounts/{account_id}/outbox": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub outbox OrderedCollection for a local account.",
+        "operationId": "get_outbox",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of activities to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Return activities with IDs older than this cursor",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Outbox collection",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderedCollectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account ID or pagination parameter"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
     "/accounts/{account_id}/profile": {
       "put": {
         "tags": [
@@ -536,217 +785,6 @@
             "bearer_auth": []
           }
         ]
-      }
-    },
-    "/accounts/{id}": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub Actor document for a local account.",
-        "operationId": "get_actor",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "ActivityPub Actor",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ActorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Actor not found or ActivityPub media type not requested"
-          }
-        }
-      }
-    },
-    "/accounts/{id}/followers": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub followers OrderedCollection for a local account.",
-        "operationId": "get_followers",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Followers collection",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderedCollectionResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid account ID"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        }
-      }
-    },
-    "/accounts/{id}/following": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub following OrderedCollection for a local account.",
-        "operationId": "get_following",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Following collection",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderedCollectionResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid account ID"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        }
-      }
-    },
-    "/accounts/{id}/inbox": {
-      "post": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "ActivityPub inbox for signed inbound federation activities.",
-        "operationId": "post_inbox",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/activity+json": {
-              "schema": {}
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Activity accepted or ignored"
-          },
-          "400": {
-            "description": "Malformed ActivityPub activity"
-          },
-          "401": {
-            "description": "Missing or invalid HTTP Signature"
-          },
-          "404": {
-            "description": "Local actor not found"
-          }
-        }
-      }
-    },
-    "/accounts/{id}/outbox": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub outbox OrderedCollection for a local account.",
-        "operationId": "get_outbox",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of activities to return",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Return activities with IDs older than this cursor",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Outbox collection",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderedCollectionResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid account ID or pagination parameter"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        }
       }
     },
     "/accounts/{id}/public-key": {

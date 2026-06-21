@@ -35,14 +35,14 @@ pub trait ActivityPubRouter {
 impl ActivityPubRouter for Router<AppModule> {
     fn route_activitypub(self) -> Self {
         self.route("/.well-known/webfinger", get(webfinger))
-            .route("/accounts/{id}", get(get_actor))
+            .route("/accounts/{account_id}", get(get_actor))
             .route(
-                "/accounts/{id}/inbox",
+                "/accounts/{account_id}/inbox",
                 post(post_inbox).layer(DefaultBodyLimit::max(1024 * 1024)),
             )
-            .route("/accounts/{id}/outbox", get(get_outbox))
-            .route("/accounts/{id}/followers", get(get_followers))
-            .route("/accounts/{id}/following", get(get_following))
+            .route("/accounts/{account_id}/outbox", get(get_outbox))
+            .route("/accounts/{account_id}/followers", get(get_followers))
+            .route("/accounts/{account_id}/following", get(get_following))
     }
 }
 
@@ -80,10 +80,10 @@ pub(crate) async fn webfinger(
 }
 
 #[utoipa::path(
-    get,
-    path = "/accounts/{id}",
-    description = "Retrieve an ActivityPub Actor document for a local account.",
-    params(("id" = String, Path, description = "Account nanoid")),
+        get,
+        path = "/accounts/{account_id}",
+        description = "Retrieve an ActivityPub Actor document for a local account.",
+        params(("id" = String, Path, description = "Account nanoid")),
     responses(
         (status = 200, description = "ActivityPub Actor", body = crate::schema::activitypub::ActorResponse, content_type = "application/activity+json"),
         (status = 404, description = "Actor not found or ActivityPub media type not requested"),
@@ -92,13 +92,13 @@ pub(crate) async fn webfinger(
 )]
 pub(crate) async fn get_actor(
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(account_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ErrorStatus> {
     if !accepts_activitypub(&headers) {
         return Err(ErrorStatus::from(StatusCode::NOT_FOUND));
     }
-    if id.trim().is_empty() {
+    if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
             "Account ID cannot be empty".to_string(),
@@ -107,11 +107,11 @@ pub(crate) async fn get_actor(
 
     let actor = module
         .get_actor(GetActorDto {
-            account_nanoid: id.clone(),
+            account_nanoid: account_id.clone(),
         })
         .await
         .map_err(|e| {
-            tracing::debug!(nanoid = %id, error = ?e, "Actor not found");
+            tracing::debug!(nanoid = %account_id, error = ?e, "Actor not found");
             ErrorStatus::from(e)
         })?;
 
@@ -119,10 +119,10 @@ pub(crate) async fn get_actor(
 }
 
 #[utoipa::path(
-    get,
-    path = "/accounts/{id}/followers",
-    description = "Retrieve an ActivityPub followers OrderedCollection for a local account.",
-    params(("id" = String, Path, description = "Account nanoid")),
+        get,
+        path = "/accounts/{account_id}/followers",
+        description = "Retrieve an ActivityPub followers OrderedCollection for a local account.",
+        params(("id" = String, Path, description = "Account nanoid")),
     responses(
         (status = 200, description = "Followers collection", body = crate::schema::activitypub::OrderedCollectionResponse, content_type = "application/activity+json"),
         (status = 400, description = "Invalid account ID"),
@@ -132,12 +132,12 @@ pub(crate) async fn get_actor(
 )]
 pub(crate) async fn get_followers(
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(account_id): Path<String>,
 ) -> Result<Response, ErrorStatus> {
-    let account_id = find_account_id_by_nanoid(&module, id.clone())
+    let account_id = find_account_id_by_nanoid(&module, account_id.clone())
         .await
         .map_err(|e| {
-            tracing::debug!(nanoid = %id, error = ?e, "Followers collection not found");
+            tracing::debug!(nanoid = %account_id, error = ?e, "Followers collection not found");
             e
         })?;
     let collection = module
@@ -149,10 +149,10 @@ pub(crate) async fn get_followers(
 }
 
 #[utoipa::path(
-    get,
-    path = "/accounts/{id}/following",
-    description = "Retrieve an ActivityPub following OrderedCollection for a local account.",
-    params(("id" = String, Path, description = "Account nanoid")),
+        get,
+        path = "/accounts/{account_id}/following",
+        description = "Retrieve an ActivityPub following OrderedCollection for a local account.",
+        params(("id" = String, Path, description = "Account nanoid")),
     responses(
         (status = 200, description = "Following collection", body = crate::schema::activitypub::OrderedCollectionResponse, content_type = "application/activity+json"),
         (status = 400, description = "Invalid account ID"),
@@ -162,12 +162,12 @@ pub(crate) async fn get_followers(
 )]
 pub(crate) async fn get_following(
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(account_id): Path<String>,
 ) -> Result<Response, ErrorStatus> {
-    let account_id = find_account_id_by_nanoid(&module, id.clone())
+    let account_id = find_account_id_by_nanoid(&module, account_id.clone())
         .await
         .map_err(|e| {
-            tracing::debug!(nanoid = %id, error = ?e, "Following collection not found");
+            tracing::debug!(nanoid = %account_id, error = ?e, "Following collection not found");
             e
         })?;
     let collection = module
@@ -179,11 +179,11 @@ pub(crate) async fn get_following(
 }
 
 #[utoipa::path(
-    get,
-    path = "/accounts/{id}/outbox",
-    description = "Retrieve an ActivityPub outbox OrderedCollection for a local account.",
-    params(
-        ("id" = String, Path, description = "Account nanoid"),
+        get,
+        path = "/accounts/{account_id}/outbox",
+        description = "Retrieve an ActivityPub outbox OrderedCollection for a local account.",
+        params(
+            ("id" = String, Path, description = "Account nanoid"),
         ("limit" = Option<usize>, Query, description = "Maximum number of activities to return"),
         ("cursor" = Option<i64>, Query, description = "Return activities with IDs older than this cursor")
     ),
@@ -196,13 +196,13 @@ pub(crate) async fn get_following(
 )]
 pub(crate) async fn get_outbox(
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(account_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, ErrorStatus> {
-    let account_id = find_account_id_by_nanoid(&module, id.clone())
+    let account_id = find_account_id_by_nanoid(&module, account_id.clone())
         .await
         .map_err(|e| {
-            tracing::debug!(nanoid = %id, error = ?e, "Outbox collection not found");
+            tracing::debug!(nanoid = %account_id, error = ?e, "Outbox collection not found");
             e
         })?;
     let limit = parse_limit(params.get("limit"))?;
@@ -216,10 +216,10 @@ pub(crate) async fn get_outbox(
 }
 
 #[utoipa::path(
-    post,
-    path = "/accounts/{id}/inbox",
-    description = "ActivityPub inbox for signed inbound federation activities.",
-    params(("id" = String, Path, description = "Account nanoid")),
+        post,
+        path = "/accounts/{account_id}/inbox",
+        description = "ActivityPub inbox for signed inbound federation activities.",
+        params(("id" = String, Path, description = "Account nanoid")),
     request_body(content = serde_json::Value, content_type = "application/activity+json"),
     responses(
         (status = 202, description = "Activity accepted or ignored"),
@@ -231,7 +231,7 @@ pub(crate) async fn get_outbox(
 )]
 pub(crate) async fn post_inbox(
     State(module): State<AppModule>,
-    Path(id): Path<String>,
+    Path(nanoid): Path<String>,
     OriginalUri(original_uri): OriginalUri,
     method: Method,
     headers: HeaderMap,
@@ -239,7 +239,7 @@ pub(crate) async fn post_inbox(
 ) -> Result<Response, ErrorStatus> {
     let content_type = headers
         .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
+        .and_then(|value| value.to_str().ok())
         .unwrap_or("");
     if content_type != "application/activity+json" {
         return Err(ErrorStatus::from((
@@ -247,7 +247,7 @@ pub(crate) async fn post_inbox(
             "Content-Type must be application/activity+json".to_string(),
         )));
     }
-    let account_id = find_account_id_by_nanoid(&module, id.clone()).await?;
+    let account_id = find_account_id_by_nanoid(&module, nanoid.clone()).await?;
     let verification_input = HttpSignatureVerificationInput {
         method: method.as_str().to_string(),
         url: format!(
@@ -285,7 +285,7 @@ pub(crate) async fn post_inbox(
     module
         .handle_inbox_activity(InboxActivityDto {
             account_id,
-            account_nanoid: id,
+            account_nanoid: nanoid,
             activity,
         })
         .await
