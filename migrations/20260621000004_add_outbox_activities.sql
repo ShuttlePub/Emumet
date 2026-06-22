@@ -1,4 +1,4 @@
-CREATE TABLE outbox_activities (
+CREATE TABLE IF NOT EXISTS outbox_activities (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT NOT NULL,
     activity_id TEXT UNIQUE NOT NULL,
@@ -7,5 +7,5 @@ CREATE TABLE outbox_activities (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_outbox_activities_account_id ON outbox_activities(account_id);
-CREATE INDEX idx_outbox_activities_created_at ON outbox_activities(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_outbox_activities_account_id ON outbox_activities(account_id);
+CREATE INDEX IF NOT EXISTS idx_outbox_activities_created_at ON outbox_activities(created_at DESC);

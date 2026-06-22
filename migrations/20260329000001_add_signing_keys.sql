@@ -1,4 +1,4 @@
-CREATE TABLE "signing_keys" (
+CREATE TABLE IF NOT EXISTS "signing_keys" (
   "id" BIGINT PRIMARY KEY,
   "account_id" BIGINT NOT NULL REFERENCES "accounts" ("id"),
   "algorithm" TEXT NOT NULL,
@@ -9,4 +9,4 @@ CREATE TABLE "signing_keys" (
   "revoked_at" TIMESTAMPTZ
 );
 
-CREATE INDEX idx_signing_keys_account_id ON signing_keys (account_id);
+CREATE INDEX IF NOT EXISTS idx_signing_keys_account_id ON signing_keys (account_id);
