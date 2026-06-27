@@ -73,3 +73,18 @@ pub struct OrderedCollectionResponse {
     #[serde(rename = "orderedItems")]
     pub ordered_items: Option<Vec<serde_json::Value>>,
 }
+
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct FollowAccountRequest {
+    /// Remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain
+    pub target: String,
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowAccountResponse {
+    pub follow_id: String,
+    pub remote_actor_url: String,
+    pub activity_id: String,
+    pub approved: bool,
+}

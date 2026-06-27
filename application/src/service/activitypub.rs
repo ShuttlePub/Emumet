@@ -1,4 +1,6 @@
-use crate::transfer::activitypub::{GetActorDto, GetWebFingerDto, InboxActivityDto};
+use crate::transfer::activitypub::{
+    GetActorDto, GetWebFingerDto, InboxActivityDto, SendFollowDto, SendFollowResultDto,
+};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use base64::{engine::general_purpose, Engine as _};
 use error_stack::Report;
@@ -9,6 +11,7 @@ use kernel::interfaces::crypto::{
 };
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::http_signing::{DependOnHttpSigner, HttpSigner, HttpSigningRequest};
+use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::interfaces::repository::{
     DependOnFollowRepository, DependOnOutboxActivityRepository, DependOnRemoteAccountRepository,
@@ -333,6 +336,174 @@ impl<T> GetOutboxUseCase for T where
 {
 }
 
+pub trait SendFollowUseCase:
+    'static
+    + Sync
+    + Send
+    + DependOnAccountQueryProcessor
+    + DependOnFollowRepository
+    + DependOnRemoteAccountRepository
+    + DependOnSigningKeyRepository
+    + DependOnHttpSigner
+    + DependOnPasswordProvider
+    + DependOnKeyEncryptor
+    + DependOnPublicBaseUrl
+    + DependOnOutboxActivityRepository
+    + DependOnPermissionChecker
+    + StoreOutboxActivityUseCase
+{
+    fn send_follow(
+        &self,
+        auth_account_id: kernel::prelude::entity::AuthAccountId,
+        dto: SendFollowDto,
+    ) -> impl Future<Output = error_stack::Result<SendFollowResultDto, KernelError>> + Send
+    where
+        Self: Sized,
+    {
+        async move {
+            let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
+            let mut executor = self.database_connection().get_executor().await?;
+            let account = self
+                .account_query_processor()
+                .find_by_nanoid(&mut executor, &account_nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Account not found with nanoid: {}",
+                        account_nanoid.as_ref()
+                    ))
+                })?;
+
+            crate::permission::check_permission(
+                self,
+                &auth_account_id,
+                &crate::permission::account_sign(account.id()),
+            )
+            .await?;
+
+            let remote_actor = resolve_remote_actor_identifier(&dto.target).await?;
+            let remote_account = upsert_remote_account(
+                self.remote_account_repository(),
+                &mut executor,
+                remote_actor,
+            )
+            .await?;
+
+            let source = FollowTargetId::from(account.id().clone());
+            let destination = FollowTargetId::from(remote_account.id().clone());
+
+            if let Some(_existing) = find_existing_following(
+                self.follow_repository(),
+                &mut executor,
+                &source,
+                &destination,
+            )
+            .await?
+            {
+                return Err(Report::new(KernelError::Rejected).attach_printable(format!(
+                    "Already following {}",
+                    remote_account.url().as_ref()
+                )));
+            }
+
+            let follow = Follow::new(
+                FollowId::new(kernel::generate_id()),
+                source,
+                destination,
+                None,
+            )?;
+            self.follow_repository()
+                .create(&mut executor, &follow)
+                .await?;
+
+            let local_actor_url =
+                local_actor_url(self.public_base_url(), account.nanoid().as_ref());
+            let follow_activity = follow_activity(
+                self.public_base_url(),
+                &follow,
+                &local_actor_url,
+                remote_account.url().as_ref(),
+            )?;
+
+            if let Err(error) = self
+                .deliver_follow(account.id(), remote_account.inbox_url(), &follow_activity)
+                .await
+            {
+                self.follow_repository()
+                    .delete(&mut executor, follow.id())
+                    .await?;
+                return Err(error
+                    .change_context(KernelError::Rejected)
+                    .attach_printable("Follow delivery failed, rolled back follow record"));
+            }
+
+            let outbox_entry = OutboxActivity {
+                id: OutboxActivityId::default(),
+                account_id: account.id().clone(),
+                activity_id: follow_activity.id.clone(),
+                activity_type: "Follow".to_string(),
+                object_json: serde_json::to_string(&follow_activity).unwrap_or_default(),
+                created_at: time::OffsetDateTime::now_utc(),
+            };
+            let _ = self.store_outbox_activity(&outbox_entry).await;
+
+            Ok(SendFollowResultDto {
+                follow_id: follow.id().as_ref().to_string(),
+                remote_actor_url: remote_account.url().as_ref().to_string(),
+                activity_id: follow_activity.id.clone(),
+                approved: false,
+            })
+        }
+    }
+
+    fn deliver_follow(
+        &self,
+        account_id: &AccountId,
+        inbox_url: &Option<String>,
+        activity: &Activity,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send
+    where
+        Self: Sized,
+    {
+        async move {
+            let inbox_url = inbox_url.as_deref().ok_or_else(|| {
+                Report::new(KernelError::Rejected)
+                    .attach_printable("Remote actor does not expose an inbox URL")
+            })?;
+            deliver_activity_to_inbox(
+                self.database_connection(),
+                self.signing_key_repository(),
+                self.password_provider(),
+                self.key_encryptor(),
+                self.http_signer(),
+                account_id,
+                inbox_url,
+                activity,
+                "Follow",
+            )
+            .await
+        }
+    }
+}
+
+impl<T> SendFollowUseCase for T where
+    T: 'static
+        + Sync
+        + Send
+        + DependOnAccountQueryProcessor
+        + DependOnFollowRepository
+        + DependOnRemoteAccountRepository
+        + DependOnSigningKeyRepository
+        + DependOnHttpSigner
+        + DependOnPasswordProvider
+        + DependOnKeyEncryptor
+        + DependOnPublicBaseUrl
+        + DependOnOutboxActivityRepository
+        + DependOnPermissionChecker
+        + StoreOutboxActivityUseCase
+{
+}
+
 pub trait InboxUseCase:
     'static
     + Sync
@@ -354,6 +525,7 @@ pub trait InboxUseCase:
         async move {
             match dto.activity.type_.as_str() {
                 "Follow" => self.handle_follow_activity(dto).await,
+                "Accept" => self.handle_accept_activity(dto).await,
                 "Undo" if undo_object_is_follow(&dto.activity) => {
                     self.handle_undo_follow(dto).await
                 }
@@ -495,6 +667,95 @@ pub trait InboxUseCase:
         }
     }
 
+    fn handle_accept_activity(
+        &self,
+        dto: InboxActivityDto,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+        async move {
+            let accept = &dto.activity;
+            let nested_follow = accept
+                .object
+                .as_ref()
+                .and_then(|obj| serde_json::from_value::<Activity>(obj.clone()).ok())
+                .filter(|a| a.type_ == "Follow")
+                .ok_or_else(|| {
+                    Report::new(KernelError::Rejected)
+                        .attach_printable("Accept object must be a Follow activity")
+                })?;
+
+            let follow_actor_url = nested_follow.actor.trim_end_matches('/').to_string();
+            let expected_local = local_actor_url(self.public_base_url(), &dto.account_nanoid);
+            if follow_actor_url != expected_local.trim_end_matches('/') {
+                tracing::debug!(
+                    follow_actor = %nested_follow.actor,
+                    expected = %expected_local,
+                    "Accept Follow actor does not match local actor"
+                );
+                return Ok(());
+            }
+
+            let remote_actor_url = activity_object_id(&nested_follow).ok_or_else(|| {
+                Report::new(KernelError::Rejected)
+                    .attach_printable("Accept Follow object must have an actor id")
+            })?;
+
+            let accept_actor = accept.actor.trim_end_matches('/').to_string();
+            if accept_actor != remote_actor_url.trim_end_matches('/') {
+                tracing::debug!(
+                    accept_actor = %accept.actor,
+                    remote_actor = %remote_actor_url,
+                    "Accept actor does not match Follow object"
+                );
+                return Ok(());
+            }
+
+            let mut executor = self.database_connection().get_executor().await?;
+            let remote_url = RemoteAccountUrl::new(remote_actor_url.clone());
+            let remote_account = self
+                .remote_account_repository()
+                .find_by_url(&mut executor, &remote_url)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Remote account not found for {remote_actor_url}"
+                    ))
+                })?;
+
+            let source = FollowTargetId::from(dto.account_id.clone());
+            let destination = FollowTargetId::from(remote_account.id().clone());
+            if let Some(existing) = find_existing_following(
+                self.follow_repository(),
+                &mut executor,
+                &source,
+                &destination,
+            )
+            .await?
+            {
+                if existing.approved_at().is_none() {
+                    let approved = Follow::new(
+                        existing.id().clone(),
+                        existing.source().clone(),
+                        existing.destination().clone(),
+                        Some(FollowApprovedAt::default()),
+                    )?;
+                    self.follow_repository()
+                        .update(&mut executor, &approved)
+                        .await?;
+                    tracing::info!(
+                        remote_actor = %remote_actor_url,
+                        "Follow approved via Accept activity"
+                    );
+                }
+            } else {
+                tracing::debug!(
+                    remote_actor = %remote_actor_url,
+                    "No pending follow found for Accept activity"
+                );
+            }
+            Ok(())
+        }
+    }
+
     fn deliver_accept(
         &self,
         account_id: &AccountId,
@@ -506,79 +767,18 @@ pub trait InboxUseCase:
                 Report::new(KernelError::Rejected)
                     .attach_printable("Remote actor does not expose an inbox URL")
             })?;
-            let body = serde_json::to_vec(accept).map_err(|e| {
-                Report::from(e)
-                    .change_context(KernelError::Internal)
-                    .attach_printable("Failed to serialize Accept activity")
-            })?;
-            let url = reqwest::Url::parse(inbox_url).map_err(|e| {
-                Report::new(KernelError::Rejected)
-                    .attach_printable(format!("Remote inbox URL is invalid: {e}"))
-            })?;
-            let resolved_addresses = validate_fetch_url(&url).await?;
-            let host = host_header(&url)?;
-            let digest = format!(
-                "SHA-256={}",
-                general_purpose::STANDARD.encode(sha2::Sha256::digest(&body))
-            );
-            let date = httpdate::fmt_http_date(std::time::SystemTime::now());
-            let mut headers = std::collections::HashMap::new();
-            headers.insert("host".to_string(), host.clone());
-            headers.insert("date".to_string(), date.clone());
-            headers.insert("digest".to_string(), digest.clone());
-            headers.insert("content-type".to_string(), ACTIVITY_JSON.to_string());
-
-            let signing_request = HttpSigningRequest {
-                method: "POST".to_string(),
-                url: inbox_url.to_string(),
-                headers,
-                body: Some(body.clone()),
-            };
-            let mut executor = self.database_connection().get_executor().await?;
-            let signing_key = self
-                .signing_key_repository()
-                .find_active_by_account_id(&mut executor, account_id)
-                .await?
-                .into_iter()
-                .next()
-                .ok_or_else(|| {
-                    Report::new(KernelError::NotFound)
-                        .attach_printable("No active signing key found for account")
-                })?;
-            let password = self.password_provider().get_password()?;
-            let private_key_pem = self
-                .key_encryptor()
-                .decrypt(signing_key.encrypted_private_key(), &password)?;
-            let signature = self
-                .http_signer()
-                .sign(
-                    &signing_request,
-                    &private_key_pem,
-                    &signing_key.key_id_uri,
-                    signing_key.algorithm(),
-                )
-                .await?;
-
-            let client = client_for_url(&url, &resolved_addresses)?;
-            let mut request = client
-                .post(url)
-                .header(HOST, host)
-                .header(DATE, date)
-                .header("Digest", digest)
-                .header(CONTENT_TYPE, ACTIVITY_JSON)
-                .body(body);
-            for (name, value) in signature.cavage_headers {
-                request = request.header(name, value);
-            }
-            let response = request.send().await.map_err(|e| {
-                Report::new(KernelError::Rejected)
-                    .attach_printable(format!("Accept delivery failed: {e}"))
-            })?;
-            if !response.status().is_success() {
-                return Err(Report::new(KernelError::Rejected)
-                    .attach_printable(format!("Accept delivery returned {}", response.status())));
-            }
-            Ok(())
+            deliver_activity_to_inbox(
+                self.database_connection(),
+                self.signing_key_repository(),
+                self.password_provider(),
+                self.key_encryptor(),
+                self.http_signer(),
+                account_id,
+                inbox_url,
+                accept,
+                "Accept",
+            )
+            .await
         }
     }
 }
@@ -687,6 +887,108 @@ async fn resolve_remote_actor(
     })
 }
 
+async fn resolve_remote_actor_identifier(
+    identifier: &str,
+) -> error_stack::Result<ResolvedRemoteActor, KernelError> {
+    if let Some((user, domain)) = identifier
+        .strip_prefix("acct:")
+        .and_then(|s| s.split_once('@'))
+    {
+        if user.is_empty() || domain.is_empty() {
+            return Err(Report::new(KernelError::Rejected)
+                .attach_printable("Invalid acct: format, expected acct:user@domain"));
+        }
+        return resolve_remote_webfinger(user, domain).await;
+    }
+    resolve_remote_actor(identifier).await
+}
+
+async fn resolve_remote_webfinger(
+    user: &str,
+    domain: &str,
+) -> error_stack::Result<ResolvedRemoteActor, KernelError> {
+    if !user
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
+    {
+        return Err(Report::new(KernelError::Rejected)
+            .attach_printable("Invalid characters in WebFinger user"));
+    }
+    if !domain
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '-')
+        || domain.starts_with('-')
+        || domain.ends_with('-')
+    {
+        return Err(Report::new(KernelError::Rejected)
+            .attach_printable("Invalid characters in WebFinger domain"));
+    }
+    let webfinger_url = format!(
+        "https://{}/.well-known/webfinger?resource=acct:{}@{}",
+        domain, user, domain
+    );
+    let url = reqwest::Url::parse(&webfinger_url).map_err(|e| {
+        Report::new(KernelError::Rejected).attach_printable(format!("Invalid WebFinger URL: {e}"))
+    })?;
+    let resolved_addresses = validate_fetch_url(&url).await?;
+    let response = client_for_url(&url, &resolved_addresses)?
+        .get(url)
+        .header(ACCEPT, "application/jrd+json")
+        .header(USER_AGENT, "Emumet/0.1 WebFinger resolver")
+        .send()
+        .await
+        .map_err(|e| {
+            Report::new(KernelError::Rejected)
+                .attach_printable(format!("WebFinger request failed: {e}"))
+        })?;
+    if !response.status().is_success() {
+        return Err(Report::new(KernelError::Rejected).attach_printable(format!(
+            "WebFinger returned {} for {}@{}",
+            response.status(),
+            user,
+            domain
+        )));
+    }
+    let jrd: serde_json::Value = response.json().await.map_err(|e| {
+        Report::new(KernelError::Rejected)
+            .attach_printable(format!("WebFinger response is not valid JSON: {e}"))
+    })?;
+    let subject = jrd.get("subject").and_then(|s| s.as_str()).ok_or_else(|| {
+        Report::new(KernelError::Rejected)
+            .attach_printable("WebFinger response missing subject field")
+    })?;
+    let expected_subject = format!("acct:{}@{}", user, domain);
+    if subject != expected_subject {
+        return Err(Report::new(KernelError::Rejected).attach_printable(format!(
+            "WebFinger subject mismatch: expected {expected_subject}, got {subject}"
+        )));
+    }
+    let actor_url = jrd
+        .get("links")
+        .and_then(|links| links.as_array())
+        .and_then(|links| {
+            links.iter().find_map(|link| {
+                let rel = link.get("rel").and_then(|r| r.as_str())?;
+                let type_ = link.get("type").and_then(|t| t.as_str())?;
+                let href = link.get("href").and_then(|h| h.as_str())?;
+                if rel == "self"
+                    && (type_ == "application/activity+json" || type_ == "application/ld+json")
+                {
+                    Some(href.to_string())
+                } else {
+                    None
+                }
+            })
+        })
+        .ok_or_else(|| {
+            Report::new(KernelError::NotFound).attach_printable(format!(
+                "No ActivityPub link found in WebFinger response for {}@{}",
+                user, domain
+            ))
+        })?;
+    resolve_remote_actor(&actor_url).await
+}
+
 async fn upsert_remote_account<R, E>(
     repository: &R,
     executor: &mut E,
@@ -733,6 +1035,22 @@ where
 {
     let followers = repository.find_followers(executor, destination).await?;
     Ok(followers
+        .into_iter()
+        .find(|follow| follow.source() == source && follow.destination() == destination))
+}
+
+async fn find_existing_following<R, E>(
+    repository: &R,
+    executor: &mut E,
+    source: &FollowTargetId,
+    destination: &FollowTargetId,
+) -> error_stack::Result<Option<Follow>, KernelError>
+where
+    R: FollowRepository<Executor = E>,
+    E: kernel::interfaces::database::Executor,
+{
+    let followings = repository.find_followings(executor, source).await?;
+    Ok(followings
         .into_iter()
         .find(|follow| follow.source() == source && follow.destination() == destination))
 }
@@ -789,7 +1107,10 @@ fn accept_activity(
     actor: &str,
     original_follow: Activity,
 ) -> error_stack::Result<Activity, KernelError> {
-    let object = serde_json::to_value(original_follow).map_err(|e| {
+    // The Accept activity must be directed TO the follower (original Follow's actor),
+    // not to the local actor who is sending the Accept.
+    let remote_follower_url = &original_follow.actor;
+    let object = serde_json::to_value(original_follow.clone()).map_err(|e| {
         Report::from(e)
             .change_context(KernelError::Internal)
             .attach_printable("Failed to serialize original Follow activity")
@@ -805,7 +1126,29 @@ fn accept_activity(
         actor: actor.to_string(),
         object: Some(object),
         target: None,
-        to: Some(vec![actor.to_string()]),
+        to: Some(vec![remote_follower_url.to_string()]),
+        cc: None,
+    })
+}
+
+fn follow_activity(
+    public_base_url: &PublicBaseUrl,
+    follow: &Follow,
+    local_actor_url: &str,
+    remote_actor_url: &str,
+) -> error_stack::Result<Activity, KernelError> {
+    Ok(Activity {
+        context: Some(Value::String(ACTIVITYSTREAMS_CONTEXT.to_string())),
+        id: format!(
+            "{}/activities/{}",
+            public_base_url.as_str().trim_end_matches('/'),
+            follow.id().as_ref()
+        ),
+        type_: "Follow".to_string(),
+        actor: local_actor_url.to_string(),
+        object: Some(serde_json::Value::String(remote_actor_url.to_string())),
+        target: None,
+        to: Some(vec![remote_actor_url.to_string()]),
         cc: None,
     })
 }
@@ -890,6 +1233,94 @@ fn client_for_url(
         Report::new(KernelError::Internal)
             .attach_printable(format!("Failed to build pinned HTTP client: {e}"))
     })
+}
+
+async fn deliver_activity_to_inbox<D, S>(
+    database_connection: &D,
+    signing_key_repository: &S,
+    password_provider: &impl PasswordProvider,
+    key_encryptor: &impl KeyEncryptor,
+    http_signer: &impl HttpSigner,
+    account_id: &AccountId,
+    inbox_url: &str,
+    activity: &Activity,
+    activity_name: &str,
+) -> error_stack::Result<(), KernelError>
+where
+    D: DatabaseConnection,
+    S: SigningKeyRepository<Executor = D::Executor>,
+{
+    let body = serde_json::to_vec(activity).map_err(|e| {
+        Report::from(e)
+            .change_context(KernelError::Internal)
+            .attach_printable(format!("Failed to serialize {activity_name} activity"))
+    })?;
+    let url = reqwest::Url::parse(inbox_url).map_err(|e| {
+        Report::new(KernelError::Rejected)
+            .attach_printable(format!("Remote inbox URL is invalid: {e}"))
+    })?;
+    let resolved_addresses = validate_fetch_url(&url).await?;
+    let host = host_header(&url)?;
+    let digest = format!(
+        "SHA-256={}",
+        general_purpose::STANDARD.encode(sha2::Sha256::digest(&body))
+    );
+    let date = httpdate::fmt_http_date(std::time::SystemTime::now());
+    let mut headers = std::collections::HashMap::new();
+    headers.insert("host".to_string(), host.clone());
+    headers.insert("date".to_string(), date.clone());
+    headers.insert("digest".to_string(), digest.clone());
+    headers.insert("content-type".to_string(), ACTIVITY_JSON.to_string());
+
+    let signing_request = HttpSigningRequest {
+        method: "POST".to_string(),
+        url: inbox_url.to_string(),
+        headers,
+        body: Some(body.clone()),
+    };
+    let mut executor = database_connection.get_executor().await?;
+    let signing_key = signing_key_repository
+        .find_active_by_account_id(&mut executor, account_id)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            Report::new(KernelError::NotFound)
+                .attach_printable("No active signing key found for account")
+        })?;
+    let password = password_provider.get_password()?;
+    let private_key_pem = key_encryptor.decrypt(signing_key.encrypted_private_key(), &password)?;
+    let signature = http_signer
+        .sign(
+            &signing_request,
+            &private_key_pem,
+            &signing_key.key_id_uri,
+            signing_key.algorithm(),
+        )
+        .await?;
+
+    let client = client_for_url(&url, &resolved_addresses)?;
+    let mut request = client
+        .post(url)
+        .header(HOST, host)
+        .header(DATE, date)
+        .header("Digest", digest)
+        .header(CONTENT_TYPE, ACTIVITY_JSON)
+        .body(body);
+    for (name, value) in signature.cavage_headers {
+        request = request.header(name, value);
+    }
+    let response = request.send().await.map_err(|e| {
+        Report::new(KernelError::Rejected)
+            .attach_printable(format!("{activity_name} delivery failed: {e}"))
+    })?;
+    if !response.status().is_success() {
+        return Err(Report::new(KernelError::Rejected).attach_printable(format!(
+            "{activity_name} delivery returned {}",
+            response.status()
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(not(test))]
@@ -1308,6 +1739,13 @@ mod tests {
         assert_eq!(
             accept.object.as_ref().and_then(|value| value.get("type")),
             Some(&serde_json::Value::String("Follow".to_string()))
+        );
+        // Accept must be directed TO the follower (original Follow's actor),
+        // not to the local actor who is sending the Accept.
+        assert_eq!(
+            accept.to,
+            Some(vec!["https://remote.example/users/bob".to_string()]),
+            "Accept.to should target the remote follower, not the local actor"
         );
     }
 

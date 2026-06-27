@@ -318,6 +318,62 @@
         ]
       }
     },
+    "/accounts/{account_id}/follow": {
+      "post": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Follow a remote ActivityPub account.",
+        "operationId": "follow_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Follow initiated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowAccountResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "404": {
+            "description": "Account not found"
+          },
+          "409": {
+            "description": "Already following"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/accounts/{account_id}/followers": {
       "get": {
         "tags": [
@@ -1255,6 +1311,41 @@
             "type": "string"
           },
           "label": {
+            "type": "string"
+          }
+        }
+      },
+      "FollowAccountRequest": {
+        "type": "object",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain"
+          }
+        }
+      },
+      "FollowAccountResponse": {
+        "type": "object",
+        "required": [
+          "followId",
+          "remoteActorUrl",
+          "activityId",
+          "approved"
+        ],
+        "properties": {
+          "activityId": {
+            "type": "string"
+          },
+          "approved": {
+            "type": "boolean"
+          },
+          "followId": {
+            "type": "string"
+          },
+          "remoteActorUrl": {
             "type": "string"
           }
         }

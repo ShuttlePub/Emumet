@@ -36,6 +36,7 @@ impl Modify for SecurityAddon {
         crate::route::account::suspend_account_by_id,
         crate::route::account::unsuspend_account_by_id,
         crate::route::account::ban_account_by_id,
+        crate::route::account::follow_account,
         crate::route::profile::get_profiles_batch,
         crate::route::profile::update_profile,
         crate::route::metadata::get_metadata_batch,
@@ -78,6 +79,8 @@ impl Modify for SecurityAddon {
         crate::schema::activitypub::OrderedCollectionResponse,
         crate::schema::activitypub::PublicKey,
         crate::schema::activitypub::ImageObject,
+        crate::schema::activitypub::FollowAccountRequest,
+        crate::schema::activitypub::FollowAccountResponse,
     )),
     modifiers(&SecurityAddon),
     tags(

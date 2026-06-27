@@ -144,7 +144,7 @@ impl FollowRepository for PostgresFollowRepository {
         let con: &mut PgConnection = executor;
         let (follower_local_id, follower_remote_id) = split_follow_target_id(follow.source());
         let (followee_local_id, followee_remote_id) = split_follow_target_id(follow.destination());
-        sqlx::query(
+        let result = sqlx::query(
             //language=postgresql
             r#"
             INSERT INTO follows (id, follower_local_id, follower_remote_id, followee_local_id, followee_remote_id, approved_at)
@@ -157,9 +157,17 @@ impl FollowRepository for PostgresFollowRepository {
             .bind(followee_remote_id)
             .bind(follow.approved_at().as_ref().map(FollowApprovedAt::as_ref))
             .execute(con)
-            .await
-            .convert_error()?;
-        Ok(())
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(sqlx::Error::Database(db_err))
+                if db_err.code().is_some_and(|code| code == "23505") =>
+            {
+                Err(Report::new(KernelError::Rejected)
+                    .attach_printable("Duplicate follow: this follow relationship already exists"))
+            }
+            Err(e) => Err(Report::from(e).change_context(KernelError::Internal)),
+        }
     }
 
     async fn update(
