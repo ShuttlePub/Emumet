@@ -1184,18 +1184,22 @@ async fn validate_fetch_url(
     })?;
     let host_lc = host.trim_end_matches('.').to_ascii_lowercase();
 
-    #[cfg(not(test))]
-    if host_lc == "localhost" || host_lc.ends_with(".localhost") {
-        return Err(Report::new(KernelError::Rejected)
-            .attach_printable("SsrfBlocked: localhost URL is not allowed"));
+    if cfg!(not(any(test, feature = "test-mode"))) {
+        if !is_fetch_host_allowed(&host_lc)
+            && (host_lc == "localhost" || host_lc.ends_with(".localhost"))
+        {
+            return Err(Report::new(KernelError::Rejected)
+                .attach_printable("SsrfBlocked: localhost URL is not allowed"));
+        }
     }
 
     let port = url.port_or_known_default().ok_or_else(|| {
         Report::new(KernelError::Rejected).attach_printable("SsrfBlocked: URL has no usable port")
     })?;
     if let Ok(ip) = host_lc.parse::<IpAddr>() {
-        #[cfg(not(test))]
-        validate_public_ip(ip)?;
+        if cfg!(not(any(test, feature = "test-mode"))) {
+            validate_public_ip(ip)?;
+        }
         return Ok(vec![SocketAddr::new(ip, port)]);
     }
 
@@ -1210,9 +1214,10 @@ async fn validate_fetch_url(
         return Err(Report::new(KernelError::Rejected)
             .attach_printable("SsrfBlocked: DNS resolution returned no addresses"));
     }
-    #[cfg(not(test))]
-    for address in &addresses {
-        validate_public_ip(address.ip())?;
+    if cfg!(not(any(test, feature = "test-mode"))) {
+        for address in &addresses {
+            validate_public_ip(address.ip())?;
+        }
     }
     Ok(addresses)
 }
@@ -1224,6 +1229,10 @@ fn client_for_url(
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(10));
+    #[cfg(any(test, feature = "test-mode"))]
+    if std::env::var("AP_TEST_ACCEPT_INVALID_CERTS").as_deref() == Ok("1") {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
     if let Some(host) = url.host_str() {
         if host.parse::<IpAddr>().is_err() {
             builder = builder.resolve_to_addrs(host, resolved_addresses);
@@ -1233,6 +1242,20 @@ fn client_for_url(
         Report::new(KernelError::Internal)
             .attach_printable(format!("Failed to build pinned HTTP client: {e}"))
     })
+}
+
+/// Checks whether a host is allowlisted for test-mode AP fetch operations.
+///
+/// Reads the `AP_TEST_ALLOWED_FETCH_HOSTS` environment variable (comma-separated,
+/// trimmed, lowercase) and returns true if `host_lc` matches any entry.
+/// Returns false when the env var is unset or empty.
+fn is_fetch_host_allowed(host_lc: &str) -> bool {
+    std::env::var("AP_TEST_ALLOWED_FETCH_HOSTS")
+        .ok()
+        .is_some_and(|val| {
+            val.split(',')
+                .any(|entry| entry.trim().eq_ignore_ascii_case(host_lc))
+        })
 }
 
 async fn deliver_activity_to_inbox<D, S>(

@@ -180,14 +180,17 @@ pub struct HttpSignatureVerifierImpl {
 
 impl HttpSignatureVerifierImpl {
     pub fn new() -> Result<Self, KernelError> {
-        let client = reqwest::Client::builder()
+        let mut client_builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|e| {
-                Report::new(KernelError::Internal)
-                    .attach_printable(format!("Failed to build HTTP client: {e}"))
-            })?;
+            .timeout(Duration::from_secs(10));
+        #[cfg(any(test, feature = "test-mode"))]
+        if std::env::var("AP_TEST_ACCEPT_INVALID_CERTS").as_deref() == Ok("1") {
+            client_builder = client_builder.danger_accept_invalid_certs(true);
+        }
+        let client = client_builder.build().map_err(|e| {
+            Report::new(KernelError::Internal)
+                .attach_printable(format!("Failed to build HTTP client: {e}"))
+        })?;
 
         Ok(Self {
             client,
@@ -380,9 +383,14 @@ impl HttpSignatureVerifierImpl {
             return Ok(self.client.clone());
         }
 
-        reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(10));
+        #[cfg(any(test, feature = "test-mode"))]
+        if std::env::var("AP_TEST_ACCEPT_INVALID_CERTS").as_deref() == Ok("1") {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+        builder
             .resolve_to_addrs(host, resolved_addresses)
             .build()
             .map_err(|e| {
@@ -697,6 +705,20 @@ fn get_header<'a>(headers: &'a HashMap<String, String>, name: &str) -> Option<&'
         .map(|(_, value)| value.as_str())
 }
 
+/// Checks whether a host is allowlisted for test-mode AP key fetch operations.
+///
+/// Reads the `AP_TEST_ALLOWED_FETCH_HOSTS` environment variable (comma-separated,
+/// trimmed, lowercase) and returns true if `host_lc` matches any entry.
+/// Returns false when the env var is unset or empty.
+fn is_fetch_host_allowed(host_lc: &str) -> bool {
+    std::env::var("AP_TEST_ALLOWED_FETCH_HOSTS")
+        .ok()
+        .is_some_and(|val| {
+            val.split(',')
+                .any(|entry| entry.trim().eq_ignore_ascii_case(host_lc))
+        })
+}
+
 async fn validate_fetch_url(url: &reqwest::Url) -> Result<Vec<SocketAddr>, KernelError> {
     match url.scheme() {
         "http" | "https" => {}
@@ -717,42 +739,64 @@ async fn validate_fetch_url(url: &reqwest::Url) -> Result<Vec<SocketAddr>, Kerne
     })?;
     let host_lc = host.trim_end_matches('.').to_ascii_lowercase();
 
-    if host_lc == "localhost" || host_lc.ends_with(".localhost") {
-        return Err(Report::new(KernelError::Rejected)
-            .attach_printable("SsrfBlocked: localhost keyId URL is not allowed"));
-    }
+    let ssrf_bypassed = cfg!(any(test, feature = "test-mode")) && is_fetch_host_allowed(&host_lc);
 
-    if let Ok(ip) = host_lc.parse::<IpAddr>() {
-        validate_public_ip(ip)?;
+    if !ssrf_bypassed {
+        if host_lc == "localhost" || host_lc.ends_with(".localhost") {
+            return Err(Report::new(KernelError::Rejected)
+                .attach_printable("SsrfBlocked: localhost keyId URL is not allowed"));
+        }
+
+        if let Ok(ip) = host_lc.parse::<IpAddr>() {
+            validate_public_ip(ip)?;
+            let port = url.port_or_known_default().ok_or_else(|| {
+                Report::new(KernelError::Rejected)
+                    .attach_printable("SsrfBlocked: keyId URL does not have a usable port")
+            })?;
+            return Ok(vec![SocketAddr::new(ip, port)]);
+        }
+
         let port = url.port_or_known_default().ok_or_else(|| {
             Report::new(KernelError::Rejected)
                 .attach_printable("SsrfBlocked: keyId URL does not have a usable port")
         })?;
-        return Ok(vec![SocketAddr::new(ip, port)]);
-    }
+        let addresses = tokio::net::lookup_host((host_lc.as_str(), port))
+            .await
+            .map_err(|e| {
+                Report::new(KernelError::Rejected)
+                    .attach_printable(format!("SsrfBlocked: DNS resolution failed: {e}"))
+            })?
+            .collect::<Vec<_>>();
 
-    let port = url.port_or_known_default().ok_or_else(|| {
-        Report::new(KernelError::Rejected)
-            .attach_printable("SsrfBlocked: keyId URL does not have a usable port")
-    })?;
-    let addresses = tokio::net::lookup_host((host_lc.as_str(), port))
-        .await
-        .map_err(|e| {
+        if addresses.is_empty() {
+            return Err(Report::new(KernelError::Rejected)
+                .attach_printable("SsrfBlocked: DNS resolution returned no addresses"));
+        }
+
+        for address in &addresses {
+            validate_public_ip(address.ip())?;
+        }
+
+        Ok(addresses)
+    } else {
+        let port = url.port_or_known_default().ok_or_else(|| {
             Report::new(KernelError::Rejected)
-                .attach_printable(format!("SsrfBlocked: DNS resolution failed: {e}"))
-        })?
-        .collect::<Vec<_>>();
+                .attach_printable("SsrfBlocked: keyId URL does not have a usable port")
+        })?;
+        let addresses = tokio::net::lookup_host((host_lc.as_str(), port))
+            .await
+            .map_err(|e| {
+                Report::new(KernelError::Rejected)
+                    .attach_printable(format!("SsrfBlocked: DNS resolution failed: {e}"))
+            })?
+            .collect::<Vec<_>>();
 
-    if addresses.is_empty() {
-        return Err(Report::new(KernelError::Rejected)
-            .attach_printable("SsrfBlocked: DNS resolution returned no addresses"));
+        if addresses.is_empty() {
+            return Err(Report::new(KernelError::Rejected)
+                .attach_printable("SsrfBlocked: DNS resolution returned no addresses"));
+        }
+        Ok(addresses)
     }
-
-    for address in &addresses {
-        validate_public_ip(address.ip())?;
-    }
-
-    Ok(addresses)
 }
 
 fn validate_public_ip(ip: IpAddr) -> Result<(), KernelError> {

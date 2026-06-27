@@ -6,6 +6,9 @@ authors.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+test-mode = []
+
 [dependencies]
 time = { workspace = true }
 vodca = { workspace = true }

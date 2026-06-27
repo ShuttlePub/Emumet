@@ -17,6 +17,8 @@ use crate::route::metadata::MetadataRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile::ProfileRouter;
 use crate::route::signing::{SigningAuthedRouter, SigningPublicRouter};
+#[cfg(feature = "test-mode")]
+use crate::route::test_mode::TestModeRouter;
 use axum::http::{header, HeaderValue, Method};
 use error_stack::ResultExt;
 use kernel::KernelError;
@@ -87,6 +89,9 @@ async fn main() -> Result<(), StackTrace> {
         .route_oauth2()
         .route_signing_public()
         .route_activitypub();
+
+    #[cfg(feature = "test-mode")]
+    let public_routes = public_routes.route_test_mode();
 
     let router = authed_routes
         .merge(public_routes)

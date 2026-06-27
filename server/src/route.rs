@@ -9,6 +9,9 @@ pub mod oauth2;
 pub mod profile;
 pub mod signing;
 
+#[cfg(feature = "test-mode")]
+pub mod test_mode;
+
 const MAX_BATCH_SIZE: usize = 100;
 
 fn parse_comma_ids(raw: &str) -> Result<Vec<String>, ErrorStatus> {
