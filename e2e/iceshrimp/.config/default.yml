@@ -1,0 +1,19 @@
+url: https://iceshrimp.127.0.0.1.nip.io:8443/
+port: 3000
+
+db:
+  host: iceshrimp-db
+  port: 5432
+  db: iceshrimp
+  user: iceshrimp
+  pass: iceshrimp-pass
+
+redis:
+  host: redis
+  port: 6379
+
+id: 'aidx'
+
+allowedPrivateNetworks:
+  - '172.16.0.0/12'
+  - '10.0.0.0/8'
