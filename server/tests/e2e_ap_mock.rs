@@ -6,13 +6,13 @@ use std::time::Duration;
 
 use support::account_helper::{
     assert_collection_has_items, assert_content_type, assert_signature_header, fetch_collection,
-    post_follow, post_signed_follow, setup_test_account, start_server_with_peer,
+    post_follow, post_signed_accept, post_signed_follow, setup_test_account,
+    setup_test_account_details, start_server_with_peer,
 };
 use support::ap_peer::{wait_for_activity, ApPeer};
 use support::auth;
 use support::config::ap_e2e_config;
 use support::db;
-use support::server::EmumetServer;
 
 fn config() -> support::config::ApE2eConfig {
     ap_e2e_config()
@@ -23,11 +23,11 @@ fn config() -> support::config::ApE2eConfig {
 async fn webfinger_resolves_account() {
     db::reset_test_data().await;
     let cfg = config();
-    let account_nanoid = setup_test_account().await;
+    let account = setup_test_account_details().await;
 
     let resp = reqwest::Client::new()
         .get(format!("{}/.well-known/webfinger", cfg.server_base_url))
-        .query(&[("resource", &format!("acct:{account_nanoid}@localhost:8080"))])
+        .query(&[("resource", &format!("acct:{}@localhost", account.name))])
         .send()
         .await
         .expect("WebFinger request failed");
@@ -43,8 +43,8 @@ async fn webfinger_resolves_account() {
         .as_str()
         .expect("WebFinger response missing subject");
     assert!(
-        subject.contains(&account_nanoid),
-        "subject should contain account nanoid: {subject}"
+        subject.contains(&account.name),
+        "subject should contain account name: {subject}"
     );
 
     let links = body["links"]
@@ -57,7 +57,7 @@ async fn webfinger_resolves_account() {
     assert_eq!(self_link["type"], "application/activity+json");
     let href = self_link["href"].as_str().expect("self link missing href");
     assert!(
-        href.contains(&account_nanoid),
+        href.contains(&account.id),
         "self link href should contain account ID: {href}"
     );
 }
@@ -161,14 +161,14 @@ async fn inbound_follow_creates_follower_and_sends_accept() {
     let followers = fetch_collection(&cfg.server_base_url, &account_nanoid, "followers").await;
     assert_collection_has_items(&followers, 1);
 
-    let accept = wait_for_activity(&peer, "Accept", Duration::from_secs(15)).await;
-    if let Some(accept) = accept {
-        assert_eq!(accept.body["type"], "Accept");
-        assert_eq!(
-            accept.body["object"]["type"],
-            serde_json::Value::String("Follow".to_string())
-        );
-    }
+    let accept = wait_for_activity(&peer, "Accept", Duration::from_secs(15))
+        .await
+        .expect("Emumet should send Accept activity within timeout after receiving signed Follow");
+    assert_eq!(accept.body["type"], "Accept");
+    assert_eq!(
+        accept.body["object"]["type"],
+        serde_json::Value::String("Follow".to_string())
+    );
 }
 
 #[tokio::test]
@@ -184,8 +184,26 @@ async fn followers_and_following_collections_are_accurate() {
     let resp = post_follow(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
-    let _ = wait_for_activity(&peer, "Follow", Duration::from_secs(15)).await;
+    // Wait for the mock peer to receive the Follow activity
+    let follow_activity = wait_for_activity(&peer, "Follow", Duration::from_secs(15))
+        .await
+        .expect("mock peer did not receive Follow activity");
 
+    // Send a signed Accept back to Emumet to approve the follow
+    let follow_activity_id = follow_activity.body["id"]
+        .as_str()
+        .expect("Follow activity missing id");
+    let target_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/accounts/{account_nanoid}", cfg.server_base_url);
+    let accept_resp =
+        post_signed_accept(&peer, &target_inbox, follow_activity_id, &target_actor).await;
+    assert_eq!(
+        accept_resp.status(),
+        reqwest::StatusCode::ACCEPTED,
+        "signed Accept should be accepted with 202"
+    );
+
+    // Now the following collection should show the approved follow
     let following = fetch_collection(&cfg.server_base_url, &account_nanoid, "following").await;
     assert_collection_has_items(&following, 1);
 

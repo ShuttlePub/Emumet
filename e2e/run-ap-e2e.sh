@@ -81,6 +81,17 @@ cargo build -p server --features test-mode
 info "Starting Docker Compose infrastructure..."
 info "  compose files: compose.yml + compose.ap-e2e.yml"
 info "  profile: ap-e2e"
+
+# Ensure cleanup on exit
+cleanup() {
+    info "Cleaning up..."
+    kill $SERVER_PID 2>/dev/null || true
+    wait $SERVER_PID 2>/dev/null || true
+    $COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml --profile ap-e2e down
+    info "Cleanup complete"
+}
+trap cleanup EXIT
+
 $COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml --profile ap-e2e up -d
 
 # ── 6. Wait for services ───────────────────────────────────────────────────
@@ -125,12 +136,13 @@ echo "    iceshrimp is ready"
 # ── 7. Set AP E2E environment ──────────────────────────────────────────────
 # These override any values from .env
 export AP_TEST_ALLOWED_FETCH_HOSTS="127.0.0.1,iceshrimp.127.0.0.1.nip.io"
-export AP_TEST_ACCEPT_INVALID_CERTS="true"
+export AP_TEST_ACCEPT_INVALID_CERTS="1"
 export EMUMET_E2E_EXTERNAL_SERVER="1"
 export EMUMET_E2E_SERVER_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
 export EMUMET_E2E_PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
 export PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
 export ICESHRIMP_BASE_URL="https://iceshrimp.127.0.0.1.nip.io:8443"
+export EMUMET_TEST_MODE_TOKEN="${EMUMET_TEST_MODE_TOKEN:-e2e-test-token}"
 
 info "AP E2E environment configured:"
 echo "  AP_TEST_ALLOWED_FETCH_HOSTS=$AP_TEST_ALLOWED_FETCH_HOSTS"
@@ -138,6 +150,7 @@ echo "  EMUMET_E2E_EXTERNAL_SERVER=$EMUMET_E2E_EXTERNAL_SERVER"
 echo "  EMUMET_E2E_SERVER_BASE_URL=$EMUMET_E2E_SERVER_BASE_URL"
 echo "  PUBLIC_BASE_URL=$PUBLIC_BASE_URL"
 echo "  ICESHRIMP_BASE_URL=$ICESHRIMP_BASE_URL"
+echo "  EMUMET_TEST_MODE_TOKEN=$EMUMET_TEST_MODE_TOKEN"
 
 # ── 8. Start Emumet server ─────────────────────────────────────────────────
 info "Starting Emumet server in test-mode (host process)..."

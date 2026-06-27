@@ -136,7 +136,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       ES_ENABLED: "false"
-      SECRET_KEY_BASE: dummy_secret_key_base_for_development_1234567890abcdef1234567890abcdef
+      SECRET_KEY_BASE: d7e7c8ed52831fd9d44b995de3485aa5ab7ca40c8ef06db3a4b421fa3f86b0cd6cb43d5d048474738a54719c122bed8017eb4655b75443ba1afe4cacc9d6fe7c
       OTP_SECRET: dummy_otp_secret_for_development_1234567890abcdef
       VAPID_PRIVATE_KEY: yJ5e1i3H2k8W7pQuL9mN0bV6cX4zA1rF3tG7vB2nM8k
       VAPID_PUBLIC_KEY: BK4pR8sT2wY5nL9mX1cV7bN0jH3kF6dA8sD9gH2jK4lZ1xP5oR7tW0yU3iE6aQ8cV2bN4mX7k
@@ -184,5 +184,5 @@ services:
       DB_PASS: mastodon-pass
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      SECRET_KEY_BASE: dummy_secret_key_base_for_development_1234567890abcdef1234567890abcdef
+      SECRET_KEY_BASE: d7e7c8ed52831fd9d44b995de3485aa5ab7ca40c8ef06db3a4b421fa3f86b0cd6cb43d5d048474738a54719c122bed8017eb4655b75443ba1afe4cacc9d6fe7c
       OTP_SECRET: dummy_otp_secret_for_development_1234567890abcdef

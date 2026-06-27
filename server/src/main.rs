@@ -73,6 +73,17 @@ async fn main() -> Result<(), StackTrace> {
 
     let app = AppModule::new().await?;
 
+    #[cfg(feature = "test-mode")]
+    {
+        let token = std::env::var("EMUMET_TEST_MODE_TOKEN");
+        if token.as_deref().unwrap_or("").is_empty() {
+            eprintln!(
+                "FATAL: EMUMET_TEST_MODE_TOKEN must be set when running with test-mode feature"
+            );
+            std::process::exit(1);
+        }
+    }
+
     // Routes that require JWT auth
     let authed_routes = axum::Router::new()
         .route_account()

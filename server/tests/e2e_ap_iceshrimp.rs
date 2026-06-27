@@ -51,6 +51,10 @@ async fn iceshrimp_follows_emumet_account() {
         .as_str()
         .expect("signup response missing 'i' token")
         .to_string();
+    let local_iceshrimp_user_id = signup_result["id"]
+        .as_str()
+        .expect("signup response missing local user 'id'")
+        .to_string();
 
     // ── 5. Resolve Emumet account via WebFinger / AP ──────────────
     let emumet_acct = format!("acct:{emumet_account_id}@emumet.127.0.0.1.nip.io:8443");
@@ -68,37 +72,41 @@ async fn iceshrimp_follows_emumet_account() {
         .await
         .expect("failed to follow Emumet account from Iceshrimp");
 
-    // ── 7. Wait for federation processing ─────────────────────────
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-
-    // ── 8. Verify Emumet's followers collection ───────────────────
+    // ── 7. Wait for and verify Emumet's followers collection ──────
+    let followers_client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .expect("failed to build followers client");
     let followers_url = format!(
         "{}/accounts/{emumet_account_id}/followers",
         cfg.public_base_url
     );
-    let followers_resp = reqwest::Client::new()
-        .get(&followers_url)
-        .header("accept", "application/activity+json")
-        .send()
-        .await
-        .expect("followers collection request failed");
-    assert_eq!(
-        followers_resp.status(),
-        200,
-        "Emumet followers endpoint should return 200"
-    );
-    let followers: serde_json::Value = followers_resp
-        .json()
-        .await
-        .expect("followers response not valid JSON");
+
+    let mut followers_verified = false;
+    for _ in 1..=30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(resp) = followers_client
+            .get(&followers_url)
+            .header("accept", "application/activity+json")
+            .send()
+            .await
+        {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                if body["totalItems"].as_u64().unwrap_or(0) >= 1 {
+                    followers_verified = true;
+                    break;
+                }
+            }
+        }
+    }
     assert!(
-        followers["totalItems"].as_u64().unwrap_or(0) >= 1,
-        "Emumet followers should include the Iceshrimp user, got: {followers:?}"
+        followers_verified,
+        "Emumet followers should include the Iceshrimp user within timeout"
     );
 
     // ── 9. Verify Iceshrimp's following list ─────────────────────
     let following = ics
-        .get_following(&remote_user_id, &ics_token)
+        .get_following(&local_iceshrimp_user_id, &ics_token)
         .await
         .expect("failed to get Iceshrimp following list");
     assert!(

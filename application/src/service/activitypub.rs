@@ -3,7 +3,7 @@ use crate::transfer::activitypub::{
 };
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use base64::{engine::general_purpose, Engine as _};
-use error_stack::Report;
+use error_stack::{Report, ResultExt};
 use kernel::activitypub::{Activity, Actor, OrderedCollection, WebFingerLink, WebFingerResponse};
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
@@ -442,10 +442,17 @@ pub trait SendFollowUseCase:
                 account_id: account.id().clone(),
                 activity_id: follow_activity.id.clone(),
                 activity_type: "Follow".to_string(),
-                object_json: serde_json::to_string(&follow_activity).unwrap_or_default(),
+                object_json: serde_json::to_string(&follow_activity).map_err(|e| {
+                    Report::new(KernelError::Internal).attach_printable(format!(
+                        "Failed to serialize Follow activity to JSON: {e}"
+                    ))
+                })?,
                 created_at: time::OffsetDateTime::now_utc(),
             };
-            let _ = self.store_outbox_activity(&outbox_entry).await;
+            self.store_outbox_activity(&outbox_entry)
+                .await
+                .change_context_lazy(|| KernelError::Internal)
+                .attach_printable("Failed to store outbox activity")?;
 
             Ok(SendFollowResultDto {
                 follow_id: follow.id().as_ref().to_string(),
@@ -611,10 +618,17 @@ pub trait InboxUseCase:
                 account_id: dto.account_id.clone(),
                 activity_id: accept.id.clone(),
                 activity_type: "Accept".to_string(),
-                object_json: serde_json::to_string(&accept).unwrap_or_default(),
+                object_json: serde_json::to_string(&accept).map_err(|e| {
+                    Report::new(KernelError::Internal).attach_printable(format!(
+                        "Failed to serialize Accept activity to JSON: {e}"
+                    ))
+                })?,
                 created_at: time::OffsetDateTime::now_utc(),
             };
-            let _ = self.store_outbox_activity(&outbox_entry).await;
+            self.store_outbox_activity(&outbox_entry)
+                .await
+                .change_context_lazy(|| KernelError::Internal)
+                .attach_printable("Failed to store outbox activity")?;
 
             Ok(())
         }

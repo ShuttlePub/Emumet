@@ -69,7 +69,7 @@ pub(crate) async fn webfinger(
         ))
     })?;
     let dto = parse_webfinger_resource(resource)?;
-    let expected_domain = public_base_host(module.public_base_url().as_str())?;
+    let expected_domain = public_base_host_header(module.public_base_url().as_str())?;
     if !dto.domain.eq_ignore_ascii_case(&expected_domain) {
         tracing::debug!(resource, expected_domain, "WebFinger domain mismatch");
         return Err(ErrorStatus::from(StatusCode::NOT_FOUND));
@@ -470,21 +470,6 @@ fn parse_cursor(cursor: Option<&String>) -> Result<Option<i64>, ErrorStatus> {
                 "Invalid cursor parameter".to_string(),
             ))
         })
-    })
-}
-
-fn public_base_host(base_url: &str) -> Result<String, ErrorStatus> {
-    let url = url::Url::parse(base_url).map_err(|e| {
-        ErrorStatus::from((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Invalid PUBLIC_BASE_URL: {e}"),
-        ))
-    })?;
-    url.host_str().map(str::to_string).ok_or_else(|| {
-        ErrorStatus::from((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "PUBLIC_BASE_URL must include a host".to_string(),
-        ))
     })
 }
 

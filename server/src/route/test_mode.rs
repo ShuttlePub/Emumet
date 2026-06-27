@@ -1,10 +1,8 @@
 use crate::error::ErrorStatus;
-use axum::extract::Query;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
-use std::collections::HashMap;
 
 async fn get_pool() -> Result<sqlx::PgPool, ErrorStatus> {
     let url = std::env::var("DATABASE_URL").map_err(|_| {
@@ -21,16 +19,23 @@ async fn get_pool() -> Result<sqlx::PgPool, ErrorStatus> {
     })
 }
 
-fn verify_token(params: &HashMap<String, String>) -> Result<(), ErrorStatus> {
-    let token = params.get("token").ok_or_else(|| {
+fn verify_token(headers: &HeaderMap) -> Result<(), ErrorStatus> {
+    let token = headers
+        .get("x-emumet-test-token")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            ErrorStatus::from((
+                StatusCode::UNAUTHORIZED,
+                "Missing X-Emumet-Test-Token header".to_string(),
+            ))
+        })?;
+    let expected = std::env::var("EMUMET_TEST_MODE_TOKEN").map_err(|_| {
         ErrorStatus::from((
-            StatusCode::UNAUTHORIZED,
-            "Missing token parameter".to_string(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "EMUMET_TEST_MODE_TOKEN is not set".to_string(),
         ))
     })?;
-    let expected = std::env::var("EMUMET_TEST_MODE_TOKEN")
-        .unwrap_or_else(|_| "unsafe-default-test-token".to_string());
-    if token != &expected {
+    if token != expected {
         return Err(ErrorStatus::from((
             StatusCode::UNAUTHORIZED,
             "Invalid token".to_string(),
@@ -55,8 +60,8 @@ async fn health() -> StatusCode {
     StatusCode::OK
 }
 
-async fn reset(Query(params): Query<HashMap<String, String>>) -> Result<StatusCode, ErrorStatus> {
-    verify_token(&params)?;
+async fn reset(headers: HeaderMap) -> Result<StatusCode, ErrorStatus> {
+    verify_token(&headers)?;
     let pool = get_pool().await?;
 
     sqlx::query(
@@ -91,10 +96,8 @@ struct InboxResponse {
     activities: Vec<InboxActivity>,
 }
 
-async fn inbox(
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<InboxResponse>, ErrorStatus> {
-    verify_token(&params)?;
+async fn inbox(headers: HeaderMap) -> Result<Json<InboxResponse>, ErrorStatus> {
+    verify_token(&headers)?;
     let pool = get_pool().await?;
 
     use sqlx::Row;

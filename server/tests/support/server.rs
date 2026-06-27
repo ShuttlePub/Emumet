@@ -37,7 +37,7 @@ impl EmumetServer {
         } else {
             let env_overrides: &[(&str, &str)] = &[
                 ("AP_TEST_ALLOWED_FETCH_HOSTS", mock_peer_host),
-                ("AP_TEST_ACCEPT_INVALID_CERTS", "true"),
+                ("AP_TEST_ACCEPT_INVALID_CERTS", "1"),
             ];
             Self::start_inner(Some("test-mode"), env_overrides).await
         }

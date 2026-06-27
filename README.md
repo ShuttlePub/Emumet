@@ -88,7 +88,8 @@ docker compose --profile ap-e2e -f compose.yml -f compose.ap-e2e.yml up -d
 
 # 5. サーバー起動
 export AP_TEST_ALLOWED_FETCH_HOSTS="127.0.0.1,iceshrimp.127.0.0.1.nip.io"
-export AP_TEST_ACCEPT_INVALID_CERTS="true"
+export AP_TEST_ACCEPT_INVALID_CERTS=1
+export EMUMET_TEST_MODE_TOKEN=<your-token>
 export EMUMET_E2E_EXTERNAL_SERVER=1
 export PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
 export ICESHRIMP_BASE_URL="https://iceshrimp.127.0.0.1.nip.io:8443"
