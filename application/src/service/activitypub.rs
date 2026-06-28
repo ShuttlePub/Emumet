@@ -28,10 +28,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE, DATE, HOST, USER_AGENT};
 use serde_json::Value;
 use sha2::Digest;
 use std::future::Future;
-#[cfg(not(test))]
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-#[cfg(test)]
-use std::net::{IpAddr, SocketAddr};
 
 const ACTIVITY_JSON: &str = "application/activity+json";
 const ACTIVITYSTREAMS_CONTEXT: &str = "https://www.w3.org/ns/activitystreams";
@@ -1366,7 +1363,6 @@ where
     Ok(())
 }
 
-#[cfg(not(test))]
 fn validate_public_ip(ip: IpAddr) -> error_stack::Result<(), KernelError> {
     let blocked = match ip {
         IpAddr::V4(ip) => is_blocked_ipv4(ip),
@@ -1381,7 +1377,6 @@ fn validate_public_ip(ip: IpAddr) -> error_stack::Result<(), KernelError> {
     }
 }
 
-#[cfg(not(test))]
 fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
     let octets = ip.octets();
     ip.is_private()
@@ -1398,7 +1393,6 @@ fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
         || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
 }
 
-#[cfg(not(test))]
 fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
     if let Some(ipv4) = ip.to_ipv4_mapped() {
         return is_blocked_ipv4(ipv4);
