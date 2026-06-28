@@ -79,14 +79,22 @@ async fn iceshrimp_follows_emumet_account() {
     let ics_actor_data = resolve_local["object"]
         .as_object()
         .or_else(|| resolve_local.as_object())
-        .expect("/api/ap/show response should contain actor object");
-    let ics_public_key_pem = ics_actor_data["publicKey"]["publicKeyPem"]
-        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "/api/ap/show response is not an object. Full response: {}",
+                serde_json::to_string_pretty(&resolve_local).unwrap_or_default()
+            )
+        });
+    let ics_public_key_pem = ics_actor_data
+        .get("publicKey")
+        .and_then(|v| v.get("publicKeyPem"))
+        .and_then(|v| v.as_str())
         .unwrap_or_else(|| {
             let keys: Vec<String> = ics_actor_data.keys().cloned().collect();
             panic!(
-                "Resolved Iceshrimp actor missing publicKey. Keys in response: {:?}",
-                keys
+                "Resolved Iceshrimp actor missing publicKey. Actor keys: {:?}, full resolve response: {}",
+                keys,
+                serde_json::to_string_pretty(&resolve_local).unwrap_or_default()
             )
         })
         .to_string();
