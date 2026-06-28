@@ -62,23 +62,31 @@ async fn iceshrimp_follows_emumet_account() {
     // Iceshrimp v2026.5.1 returns 401 for its ActivityPub actor endpoint,
     // so we retrieve the public key via the authenticated API and inject
     // it into Emumet's HTTP Signature verifier to bypass the remote fetch.
-    let ics_user_info = ics
-        .show_user(&local_iceshrimp_user_id, &ics_token)
+    //
+    // The Iceshrimp REST API (/api/users/show) does not include the publicKey
+    // until the key is generated (first AP activity triggers it). We use
+    // /api/ap/show to resolve the user's own actor URL, which triggers key
+    // generation and returns the full actor document including the public key.
+    let ics_actor_url = format!(
+        "{}/users/{}",
+        iceshrimp_base_url.trim_end_matches('/'),
+        local_iceshrimp_user_id
+    );
+    let resolve_local = ics
+        .resolve_remote_user(&ics_actor_url, &ics_token)
         .await
-        .expect("failed to get Iceshrimp user info");
-    // Debug: dump response keys to find the publicKey path
-    let response_keys: Vec<String> = ics_user_info
+        .expect("failed to resolve own Iceshrimp actor URL");
+    let ics_actor_data = resolve_local["object"]
         .as_object()
-        .map(|obj| obj.keys().cloned().collect())
-        .unwrap_or_default();
-    // Iceshrimp may use a different field name than upstream Misskey.
-    let ics_public_key_pem = ics_user_info["publicKey"]["publicKeyPem"]
+        .or_else(|| resolve_local.as_object())
+        .expect("/api/ap/show response should contain actor object");
+    let ics_public_key_pem = ics_actor_data["publicKey"]["publicKeyPem"]
         .as_str()
-        .or_else(|| ics_user_info["key"]["publicKeyPem"].as_str())
         .unwrap_or_else(|| {
+            let keys: Vec<String> = ics_actor_data.keys().cloned().collect();
             panic!(
-                "Iceshrimp user info missing public key. Keys in response: {:?}",
-                response_keys
+                "Resolved Iceshrimp actor missing publicKey. Keys in response: {:?}",
+                keys
             )
         })
         .to_string();
