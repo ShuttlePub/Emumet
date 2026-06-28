@@ -390,7 +390,9 @@ fn ensure_host_matches_public_base_url(
     // instead of through the nginx reverse proxy). HTTP Signature verification
     // remains the primary security guard for inbox requests.
     if cfg!(any(test, feature = "test-mode")) {
-        if actual == "localhost" || actual.starts_with("localhost:") {
+        if actual.eq_ignore_ascii_case("localhost")
+            || actual.to_ascii_lowercase().starts_with("localhost:")
+        {
             tracing::debug!(
                 expected,
                 actual,
