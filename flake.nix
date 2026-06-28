@@ -30,6 +30,7 @@
         packages = [
           nodePackages.pnpm
           sqlx-cli
+          psmisc
         ];
         env = {
             LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;

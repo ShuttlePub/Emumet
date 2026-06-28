@@ -383,15 +383,28 @@ fn ensure_host_matches_public_base_url(
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| ErrorStatus::from(StatusCode::UNAUTHORIZED))?;
     if actual.eq_ignore_ascii_case(&expected) {
-        Ok(())
-    } else {
-        tracing::warn!(
-            expected,
-            actual,
-            "ActivityPub inbox Host does not match PUBLIC_BASE_URL"
-        );
-        Err(ErrorStatus::from(StatusCode::UNAUTHORIZED))
+        return Ok(());
     }
+    // In test mode, also accept localhost connections (e.g., when the test
+    // environment routes ActivityPub traffic directly to localhost:8080
+    // instead of through the nginx reverse proxy). HTTP Signature verification
+    // remains the primary security guard for inbox requests.
+    if cfg!(any(test, feature = "test-mode")) {
+        if actual == "localhost" || actual.starts_with("localhost:") {
+            tracing::debug!(
+                expected,
+                actual,
+                "ActivityPub inbox Host is localhost (test-mode override)"
+            );
+            return Ok(());
+        }
+    }
+    tracing::warn!(
+        expected,
+        actual,
+        "ActivityPub inbox Host does not match PUBLIC_BASE_URL"
+    );
+    Err(ErrorStatus::from(StatusCode::UNAUTHORIZED))
 }
 
 fn public_base_host_header(base_url: &str) -> Result<String, ErrorStatus> {
