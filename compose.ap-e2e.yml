@@ -1,5 +1,5 @@
 # AP E2E testing override
-# Provides nginx HTTPS reverse proxy for ActivityPub E2E tests.
+# Provides nginx HTTPS reverse proxy for ActivityPub E2E tests with Iceshrimp.
 #
 # Usage:
 #   # Generate certificates first:
@@ -7,19 +7,9 @@
 #
 #   # Start with Emumet and mock peer running on the host:
 #   docker compose --profile ap-e2e -f compose.yml -f compose.ap-e2e.yml up -d
-#
-# Verify Mastodon health:
-#   bash e2e/check-mastodon.sh
-#
-#   # Or manually:
-#   curl -sk https://mastodon.127.0.0.1.nip.io:8443/api/v1/instance | head -c 200
-#
-#   Expected JSON response: { "uri": "mastodon.127.0.0.1.nip.io", "title": "...", ... }
-#   Mastodon may take 30-60s on first boot (DB migration + assets precompile; auto-run on startup).
 
 volumes:
   iceshrimp_db_data:
-  mastodon_db_data:
 
 services:
   nginx:
@@ -43,18 +33,18 @@ services:
         bind:
           selinux: z
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # Use DOCKER_HOST_IP for rootless Docker compatibility
+      # (rootless Docker's host-gateway resolves to an unreachable bridge IP).
+      # The runner script (e2e/run-ap-e2e.sh) auto-detects and sets this.
+      - "host.docker.internal:${DOCKER_HOST_IP:-host-gateway}"
     networks:
       default:
         aliases:
           - emumet.127.0.0.1.nip.io
           - peer.127.0.0.1.nip.io
           - iceshrimp.127.0.0.1.nip.io
-          - mastodon.127.0.0.1.nip.io
     depends_on:
       iceshrimp:
-        condition: service_started
-      mastodon-web:
         condition: service_started
 
   iceshrimp-db:
@@ -94,95 +84,3 @@ services:
         read_only: true
     expose:
       - "3000"
-
-  mastodon-db:
-    image: docker.io/postgres:16-alpine
-    container_name: emumet-ap-e2e-mastodon-db
-    profiles:
-      - ap-e2e
-    environment:
-      POSTGRES_DB: mastodon_production
-      POSTGRES_USER: mastodon
-      POSTGRES_PASSWORD: mastodon-pass
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mastodon"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - mastodon_db_data:/var/lib/postgresql/data
-
-  mastodon-web:
-    image: ghcr.io/mastodon/mastodon:latest
-    container_name: emumet-ap-e2e-mastodon-web
-    profiles:
-      - ap-e2e
-    command: bundle exec puma -C config/puma.rb
-    depends_on:
-      mastodon-db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      RAILS_ENV: production
-      LOCAL_DOMAIN: mastodon.127.0.0.1.nip.io
-      LOCAL_HTTPS: "true"
-      ALLOWED_PRIVATE_ADDRESSES: 172.16.0.0/12,10.0.0.0/8
-      DB_HOST: mastodon-db
-      DB_PORT: "5432"
-      DB_NAME: mastodon_production
-      DB_USER: mastodon
-      DB_PASS: mastodon-pass
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      ES_ENABLED: "false"
-      SECRET_KEY_BASE: d7e7c8ed52831fd9d44b995de3485aa5ab7ca40c8ef06db3a4b421fa3f86b0cd6cb43d5d048474738a54719c122bed8017eb4655b75443ba1afe4cacc9d6fe7c
-      OTP_SECRET: dummy_otp_secret_for_development_1234567890abcdef
-      VAPID_PRIVATE_KEY: yJ5e1i3H2k8W7pQuL9mN0bV6cX4zA1rF3tG7vB2nM8k
-      VAPID_PUBLIC_KEY: BK4pR8sT2wY5nL9mX1cV7bN0jH3kF6dA8sD9gH2jK4lZ1xP5oR7tW0yU3iE6aQ8cV2bN4mX7k
-    expose:
-      - "3000"
-
-  mastodon-streaming:
-    image: ghcr.io/mastodon/mastodon-streaming:latest
-    container_name: emumet-ap-e2e-mastodon-streaming
-    profiles:
-      - ap-e2e
-    depends_on:
-      mastodon-db:
-        condition: service_started
-      redis:
-        condition: service_started
-    environment:
-      NODE_ENV: production
-      LOCAL_DOMAIN: mastodon.127.0.0.1.nip.io
-      ALLOWED_PRIVATE_ADDRESSES: 172.16.0.0/12,10.0.0.0/8
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-    expose:
-      - "4000"
-
-  mastodon-sidekiq:
-    image: ghcr.io/mastodon/mastodon:latest
-    container_name: emumet-ap-e2e-mastodon-sidekiq
-    profiles:
-      - ap-e2e
-    command: bundle exec sidekiq
-    depends_on:
-      mastodon-db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    environment:
-      RAILS_ENV: production
-      LOCAL_DOMAIN: mastodon.127.0.0.1.nip.io
-      ALLOWED_PRIVATE_ADDRESSES: 172.16.0.0/12,10.0.0.0/8
-      DB_HOST: mastodon-db
-      DB_PORT: "5432"
-      DB_NAME: mastodon_production
-      DB_USER: mastodon
-      DB_PASS: mastodon-pass
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      SECRET_KEY_BASE: d7e7c8ed52831fd9d44b995de3485aa5ab7ca40c8ef06db3a4b421fa3f86b0cd6cb43d5d048474738a54719c122bed8017eb4655b75443ba1afe4cacc9d6fe7c
-      OTP_SECRET: dummy_otp_secret_for_development_1234567890abcdef

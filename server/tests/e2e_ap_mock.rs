@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use support::account_helper::{
     assert_collection_has_items, assert_content_type, assert_signature_header, e2e_http_client,
-    fetch_collection, post_follow, post_signed_accept, post_signed_follow,
+    fetch_collection, post_follow, post_signed_accept_direct, post_signed_follow_direct,
     setup_test_account_details, start_server_with_peer,
 };
 use support::ap_peer::{wait_for_activity, ApPeer};
@@ -140,8 +140,8 @@ async fn outbound_follow_sends_activity_to_remote_inbox() {
 
     let body: serde_json::Value = resp.json().await.expect("follow response not valid JSON");
     assert!(
-        body["activity_id"].as_str().is_some(),
-        "response should contain activity_id"
+        body["activityId"].as_str().is_some(),
+        "response should contain activityId"
     );
 
     let activity = wait_for_activity(&peer, "Follow", Duration::from_secs(15))
@@ -150,7 +150,7 @@ async fn outbound_follow_sends_activity_to_remote_inbox() {
 
     assert_eq!(
         activity.body["actor"],
-        format!("{}/accounts/{account_nanoid}", cfg.server_base_url)
+        format!("{}/accounts/{account_nanoid}", cfg.public_base_url)
     );
     assert_eq!(activity.body["object"], peer.actor_url);
     assert_signature_header(&activity);
@@ -167,9 +167,10 @@ async fn inbound_follow_creates_follower_and_sends_accept() {
     let cfg = config();
     let account_nanoid = setup_test_account_details().await.id;
 
-    let target_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.server_base_url);
-    let target_actor = format!("{}/accounts/{account_nanoid}", cfg.server_base_url);
-    let resp = post_signed_follow(&peer, &target_inbox, &target_actor).await;
+    let sign_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/accounts/{account_nanoid}", cfg.public_base_url);
+    let resp = post_signed_follow_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
     assert_eq!(
         resp.status(),
         reqwest::StatusCode::ACCEPTED,
@@ -211,10 +212,17 @@ async fn followers_and_following_collections_are_accurate() {
     let follow_activity_id = follow_activity.body["id"]
         .as_str()
         .expect("Follow activity missing id");
-    let target_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.server_base_url);
-    let target_actor = format!("{}/accounts/{account_nanoid}", cfg.server_base_url);
-    let accept_resp =
-        post_signed_accept(&peer, &target_inbox, follow_activity_id, &target_actor).await;
+    let sign_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/accounts/{account_nanoid}", cfg.public_base_url);
+    let accept_resp = post_signed_accept_direct(
+        &peer,
+        &sign_inbox,
+        &send_inbox,
+        follow_activity_id,
+        &target_actor,
+    )
+    .await;
     assert_eq!(
         accept_resp.status(),
         reqwest::StatusCode::ACCEPTED,

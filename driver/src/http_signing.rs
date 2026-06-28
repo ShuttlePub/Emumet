@@ -180,13 +180,16 @@ pub struct HttpSignatureVerifierImpl {
 
 impl HttpSignatureVerifierImpl {
     pub fn new() -> Result<Self, KernelError> {
-        let mut client_builder = reqwest::Client::builder()
+        let client_builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(10));
         #[cfg(any(test, feature = "test-mode"))]
-        if std::env::var("AP_TEST_ACCEPT_INVALID_CERTS").as_deref() == Ok("1") {
-            client_builder = client_builder.danger_accept_invalid_certs(true);
-        }
+        let client_builder = if std::env::var("AP_TEST_ACCEPT_INVALID_CERTS").as_deref() == Ok("1")
+        {
+            client_builder.danger_accept_invalid_certs(true)
+        } else {
+            client_builder
+        };
         let client = client_builder.build().map_err(|e| {
             Report::new(KernelError::Internal)
                 .attach_printable(format!("Failed to build HTTP client: {e}"))
@@ -383,13 +386,15 @@ impl HttpSignatureVerifierImpl {
             return Ok(self.client.clone());
         }
 
-        let mut builder = reqwest::Client::builder()
+        let builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(10));
         #[cfg(any(test, feature = "test-mode"))]
-        if std::env::var("AP_TEST_ACCEPT_INVALID_CERTS").as_deref() == Ok("1") {
-            builder = builder.danger_accept_invalid_certs(true);
-        }
+        let builder = if std::env::var("AP_TEST_ACCEPT_INVALID_CERTS").as_deref() == Ok("1") {
+            builder.danger_accept_invalid_certs(true)
+        } else {
+            builder
+        };
         builder
             .resolve_to_addrs(host, resolved_addresses)
             .build()

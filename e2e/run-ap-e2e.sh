@@ -21,8 +21,12 @@
 #   - docker (compose v2 plugin)
 #   - cargo
 #   - openssl
+#   - curl
 
 set -euo pipefail
+
+# ── Constants ────────────────────────────────────────────────────────────────
+SERVICE_TIMEOUT=120  # Max seconds to wait per service readiness
 
 # ── Colors ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; NC='\033[0m'
@@ -43,6 +47,9 @@ command -v docker >/dev/null 2>&1 || { err "docker not found"; exit 1; }
 command -v cargo >/dev/null 2>&1 || { err "cargo not found"; exit 1; }
 command -v openssl >/dev/null 2>&1 || { err "openssl not found"; exit 1; }
 command -v curl >/dev/null 2>&1 || { err "curl not found (required for readiness checks)"; exit 1; }
+command -v timeout >/dev/null 2>&1 || { err "timeout not found (required for probe timeouts)"; exit 1; }
+command -v fuser >/dev/null 2>&1 || { err "fuser not found (required for port cleanup)"; exit 1; }
+command -v ss >/dev/null 2>&1 || { err "ss not found (required for port checks)"; exit 1; }
 
 # Detect compose subcommand (compose v2 plugin or legacy docker-compose)
 if docker compose version >/dev/null 2>&1; then
@@ -57,6 +64,8 @@ info "Using: $COMPOSE_CMD"
 
 # Detect host IP for rootless Docker (host.docker.internal doesn't resolve correctly)
 HOST_IP=$(ip -4 route get 1 | head -1 | awk '{print $7}')
+# Allow user override via DOCKER_HOST_IP env var
+export DOCKER_HOST_IP="${DOCKER_HOST_IP:-$HOST_IP}"
 info "Detected host IP: $HOST_IP"
 
 # ── 1. Certificates ────────────────────────────────────────────────────────
@@ -90,74 +99,81 @@ info "Starting Docker Compose infrastructure..."
 info "  compose files: compose.yml + compose.ap-e2e.yml"
 info "  profile: ap-e2e"
 
-# Ensure cleanup on exit
+# Check port 8080 is free before starting our own server
+if ss -tlnp 'sport = :8080' 2>/dev/null | grep -q LISTEN; then
+    warn "Port 8080 is already in use. A stale server may be running."
+    warn "Run: kill \$(lsof -t -i:8080)  or  pkill -f 'target/debug/server'"
+    err "Port 8080 is occupied — aborting"
+    exit 1
+fi
+
 cleanup() {
     info "Cleaning up..."
-    kill $SERVER_PID 2>/dev/null || true
-    wait $SERVER_PID 2>/dev/null || true
-    rm -f "$COMPOSE_OVERRIDE"
+    if [ -n "$SERVER_PID" ]; then
+        kill $SERVER_PID 2>/dev/null || true
+        wait $SERVER_PID 2>/dev/null || true
+    fi
+    if ss -tlnp 'sport = :8080' 2>/dev/null | grep -q LISTEN; then
+        fuser -k 8080/tcp 2>/dev/null || true
+        sleep 1
+    fi
     $COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml --profile ap-e2e down
     info "Cleanup complete"
 }
 trap cleanup EXIT
 
-# Rootless Docker workaround: create temp override with correct host IP for extra_hosts
-COMPOSE_OVERRIDE=$(mktemp)
-cat > "$COMPOSE_OVERRIDE" <<EOF
-services:
-  nginx:
-    extra_hosts:
-      - "host.docker.internal:${HOST_IP}"
-EOF
-$COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml -f "$COMPOSE_OVERRIDE" --profile ap-e2e up -d
+$COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml --profile ap-e2e up -d
 
-# ── 6. Wait for services ───────────────────────────────────────────────────
+# ── 6. Wait for services (with timeout) ─────────────────────────────────────
 info "Waiting for infrastructure services..."
 
+wait_for_service() {
+    local name="$1" max=$SERVICE_TIMEOUT cmd="$2"
+    if ! timeout "$max" bash -c "
+        while true; do
+            if timeout 5s bash -c '$cmd' 2>/dev/null; then
+                echo '    $name is ready'
+                exit 0
+            fi
+            sleep 2
+        done
+    " 2>/dev/null; then
+        err "$name did not become ready within ${max}s"
+        exit 1
+    fi
+}
+
 echo "  - postgres..."
-until $COMPOSE_CMD exec postgres pg_isready -U postgres 2>/dev/null; do
-    sleep 2
-done
-echo "    postgres is ready"
+wait_for_service "postgres" "$COMPOSE_CMD exec postgres pg_isready -U postgres"
 
 echo "  - kratos..."
-until curl -sf http://localhost:4433/health/alive >/dev/null 2>&1; do
-    sleep 2
-done
-echo "    kratos is ready"
+wait_for_service "kratos" "curl -sf --connect-timeout 2 --max-time 5 http://localhost:4433/health/alive"
 
 echo "  - hydra..."
-until curl -sf http://localhost:4444/health/alive >/dev/null 2>&1; do
-    sleep 2
-done
-echo "    hydra is ready"
+wait_for_service "hydra" "curl -sf --connect-timeout 2 --max-time 5 http://localhost:4444/health/alive"
 
 echo "  - redis..."
-until $COMPOSE_CMD exec redis redis-cli ping 2>/dev/null | grep -q PONG; do
-    sleep 2
-done
-echo "    redis is ready"
+wait_for_service "redis" "$COMPOSE_CMD exec redis redis-cli ping 2>/dev/null | grep -q PONG"
 
 echo "  - nginx (port 8443)..."
-until echo >/dev/tcp/localhost/8443 2>/dev/null; do
-    sleep 2
-done
-echo "    nginx is accepting connections"
+wait_for_service "nginx" "echo >/dev/tcp/localhost/8443 2>/dev/null"
 
 echo "  - iceshrimp..."
-until curl -sk https://iceshrimp.127.0.0.1.nip.io:8443/api/endpoint >/dev/null 2>&1; do
-    sleep 2
-done
-echo "    iceshrimp is ready"
+wait_for_service "iceshrimp" "curl -sk --connect-timeout 2 --max-time 5 https://iceshrimp.127.0.0.1.nip.io:8443/api/endpoint"
 
 # ── 7. Set AP E2E environment ──────────────────────────────────────────────
 # These override any values from .env
 export AP_TEST_ALLOWED_FETCH_HOSTS="127.0.0.1,iceshrimp.127.0.0.1.nip.io"
 export AP_TEST_ACCEPT_INVALID_CERTS="1"
 export EMUMET_E2E_EXTERNAL_SERVER="1"
-export EMUMET_E2E_SERVER_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
-export EMUMET_E2E_PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
-export PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
+# Use direct HTTP for the server API (bypasses nginx to avoid potential
+# HTTPS proxy issues), while using the public HTTPS URL for ActivityPub
+# signing and ID generation. This separation was found necessary because
+# nginx 1.31.2 can return 400 (upstream=-) for certain HTTPS POST requests
+# from reqwest (see e2e/certs/nginx.conf for details).
+export EMUMET_E2E_SERVER_BASE_URL="http://localhost:8080"
+export EMUMET_E2E_PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io"
+export PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io"
 export ICESHRIMP_BASE_URL="https://iceshrimp.127.0.0.1.nip.io:8443"
 if [ -z "${EMUMET_TEST_MODE_TOKEN:-}" ]; then
     EMUMET_TEST_MODE_TOKEN=$(openssl rand -hex 32)
@@ -181,10 +197,11 @@ cargo run -p server --features test-mode &
 SERVER_PID=$!
 info "  Server PID: $SERVER_PID"
 
-# Wait for server to be ready (via test-mode health endpoint)
+# Wait for server to be ready (via test-mode health endpoint on direct HTTP)
 info "Waiting for Emumet server..."
 for i in $(seq 1 30); do
-    if curl -skf "https://emumet.127.0.0.1.nip.io:8443/__test__/health" >/dev/null 2>&1; then
+    if curl -sf "http://localhost:8080/__test__/health" \
+         -H "X-Emumet-Test-Token: ${EMUMET_TEST_MODE_TOKEN}" >/dev/null 2>&1; then
         info "  Emumet server is ready (after ${i}s)"
         break
     fi
@@ -196,7 +213,18 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
-# ── 9. Run mock AP E2E tests ───────────────────────────────────────────────
+# ── 9. Run basic flow E2E tests ──────────────────────────────────────────────
+# These test core CRUD operations through the external server.
+info "Running basic flow E2E tests (e2e_basic_flow)..."
+if cargo test -p server --test e2e_basic_flow -- --ignored --test-threads=1 --nocapture; then
+    info "  Basic flow tests: PASSED"
+else
+    err "Basic flow tests failed"
+    kill $SERVER_PID 2>/dev/null
+    exit 1
+fi
+
+# ── 10. Run mock AP E2E tests ──────────────────────────────────────────────
 info "Running mock AP E2E tests (e2e_ap_mock)..."
 if cargo test -p server --test e2e_ap_mock -- --ignored --test-threads=1 --nocapture; then
     info "  Mock AP tests: PASSED"
@@ -206,7 +234,7 @@ else
     exit 1
 fi
 
-# ── 10. Run Iceshrimp federation test ───────────────────────────────────────
+# ── 11. Run Iceshrimp federation test ───────────────────────────────────────
 info "Running Iceshrimp federation test (e2e_ap_iceshrimp)..."
 if cargo test -p server --test e2e_ap_iceshrimp -- --ignored --test-threads=1 --nocapture; then
     info "  Iceshrimp federation test: PASSED"
@@ -216,7 +244,7 @@ else
     exit 1
 fi
 
-# ── 11. Cleanup ─────────────────────────────────────────────────────────────
+# ── 12. Cleanup ─────────────────────────────────────────────────────────────
 info "Stopping Emumet server..."
 kill $SERVER_PID 2>/dev/null || true
 wait $SERVER_PID 2>/dev/null || true

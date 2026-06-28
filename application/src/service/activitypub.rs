@@ -1344,8 +1344,14 @@ where
         .header("Digest", digest)
         .header(CONTENT_TYPE, ACTIVITY_JSON)
         .body(body);
-    for (name, value) in signature.cavage_headers {
-        request = request.header(name, value);
+    for (name, value) in &signature.cavage_headers {
+        // Skip headers already set explicitly above to avoid duplicates.
+        // nginx returns 400 for duplicate Host headers.
+        let lower = name.to_ascii_lowercase();
+        if lower == "host" || lower == "date" || lower == "digest" || lower == "content-type" {
+            continue;
+        }
+        request = request.header(name.as_str(), value.as_str());
     }
     let response = request.send().await.map_err(|e| {
         Report::new(KernelError::Rejected)

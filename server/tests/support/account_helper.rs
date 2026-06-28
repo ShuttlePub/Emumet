@@ -158,6 +158,44 @@ pub async fn post_signed_follow(
         .expect("signed inbox POST failed")
 }
 
+/// Like [`post_signed_follow`] but sends the request to a different URL than
+/// the one used for signing.  The signing uses `signing_inbox` (should match
+/// PUBLIC_BASE_URL for correct Host in signature), while the actual HTTP
+/// request goes to `send_inbox` (e.g. a direct localhost URL bypassing nginx).
+pub async fn post_signed_follow_direct(
+    peer: &ApPeer,
+    sign_inbox: &str,
+    send_inbox: &str,
+    target_actor: &str,
+) -> reqwest::Response {
+    let follow_activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "type": "Follow",
+        "actor": peer.actor_url,
+        "object": target_actor,
+        "id": format!("{}/activities/{}", peer.actor_url, uuid::Uuid::new_v4()),
+    });
+    let body_bytes = serde_json::to_vec(&follow_activity).expect("serialize follow activity");
+    let key_id = format!("{}#main-key", peer.actor_url);
+    let signature_headers = generate_cavage_signature(
+        "POST",
+        sign_inbox,
+        &body_bytes,
+        &peer.private_key_pem,
+        &key_id,
+    )
+    .await;
+    let mut request = e2e_http_client().post(send_inbox);
+    for (k, v) in &signature_headers {
+        request = request.header(k.as_str(), v.as_str());
+    }
+    request
+        .body(body_bytes)
+        .send()
+        .await
+        .expect("signed inbox POST failed")
+}
+
 pub async fn post_signed_accept(
     peer: &ApPeer,
     target_inbox: &str,
@@ -187,6 +225,46 @@ pub async fn post_signed_accept(
     )
     .await;
     let mut request = e2e_http_client().post(target_inbox);
+    for (k, v) in &signature_headers {
+        request = request.header(k.as_str(), v.as_str());
+    }
+    request
+        .body(body_bytes)
+        .send()
+        .await
+        .expect("signed Accept POST failed")
+}
+
+pub async fn post_signed_accept_direct(
+    peer: &ApPeer,
+    sign_inbox: &str,
+    send_inbox: &str,
+    follow_activity_id: &str,
+    target_actor: &str,
+) -> reqwest::Response {
+    let accept_activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "type": "Accept",
+        "actor": peer.actor_url,
+        "object": {
+            "type": "Follow",
+            "id": follow_activity_id,
+            "actor": target_actor,
+            "object": peer.actor_url,
+        },
+        "id": format!("{}/activities/accept/{}", peer.actor_url, uuid::Uuid::new_v4()),
+    });
+    let body_bytes = serde_json::to_vec(&accept_activity).expect("serialize accept activity");
+    let key_id = format!("{}#main-key", peer.actor_url);
+    let signature_headers = generate_cavage_signature(
+        "POST",
+        sign_inbox,
+        &body_bytes,
+        &peer.private_key_pem,
+        &key_id,
+    )
+    .await;
+    let mut request = e2e_http_client().post(send_inbox);
     for (k, v) in &signature_headers {
         request = request.header(k.as_str(), v.as_str());
     }
