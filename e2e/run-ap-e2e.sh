@@ -34,11 +34,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
+# PID placeholder — declared before `trap` so `set -u` does not crash cleanup
+SERVER_PID=""
+
 # ── 0. Prerequisites ────────────────────────────────────────────────────────
 info "Checking prerequisites..."
 command -v docker >/dev/null 2>&1 || { err "docker not found"; exit 1; }
 command -v cargo >/dev/null 2>&1 || { err "cargo not found"; exit 1; }
 command -v openssl >/dev/null 2>&1 || { err "openssl not found"; exit 1; }
+command -v curl >/dev/null 2>&1 || { err "curl not found (required for readiness checks)"; exit 1; }
 
 # Detect compose subcommand (compose v2 plugin or legacy docker-compose)
 if docker compose version >/dev/null 2>&1; then
@@ -50,6 +54,10 @@ else
     exit 1
 fi
 info "Using: $COMPOSE_CMD"
+
+# Detect host IP for rootless Docker (host.docker.internal doesn't resolve correctly)
+HOST_IP=$(ip -4 route get 1 | head -1 | awk '{print $7}')
+info "Detected host IP: $HOST_IP"
 
 # ── 1. Certificates ────────────────────────────────────────────────────────
 info "Generating self-signed certificates for nip.io domains..."
@@ -87,12 +95,21 @@ cleanup() {
     info "Cleaning up..."
     kill $SERVER_PID 2>/dev/null || true
     wait $SERVER_PID 2>/dev/null || true
+    rm -f "$COMPOSE_OVERRIDE"
     $COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml --profile ap-e2e down
     info "Cleanup complete"
 }
 trap cleanup EXIT
 
-$COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml --profile ap-e2e up -d
+# Rootless Docker workaround: create temp override with correct host IP for extra_hosts
+COMPOSE_OVERRIDE=$(mktemp)
+cat > "$COMPOSE_OVERRIDE" <<EOF
+services:
+  nginx:
+    extra_hosts:
+      - "host.docker.internal:${HOST_IP}"
+EOF
+$COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml -f "$COMPOSE_OVERRIDE" --profile ap-e2e up -d
 
 # ── 6. Wait for services ───────────────────────────────────────────────────
 info "Waiting for infrastructure services..."
@@ -142,7 +159,13 @@ export EMUMET_E2E_SERVER_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
 export EMUMET_E2E_PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
 export PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io:8443"
 export ICESHRIMP_BASE_URL="https://iceshrimp.127.0.0.1.nip.io:8443"
-export EMUMET_TEST_MODE_TOKEN="${EMUMET_TEST_MODE_TOKEN:-e2e-test-token}"
+if [ -z "${EMUMET_TEST_MODE_TOKEN:-}" ]; then
+    EMUMET_TEST_MODE_TOKEN=$(openssl rand -hex 32)
+    info "Generated random EMUMET_TEST_MODE_TOKEN"
+else
+    info "Using existing EMUMET_TEST_MODE_TOKEN"
+fi
+export EMUMET_TEST_MODE_TOKEN
 
 info "AP E2E environment configured:"
 echo "  AP_TEST_ALLOWED_FETCH_HOSTS=$AP_TEST_ALLOWED_FETCH_HOSTS"
@@ -150,7 +173,7 @@ echo "  EMUMET_E2E_EXTERNAL_SERVER=$EMUMET_E2E_EXTERNAL_SERVER"
 echo "  EMUMET_E2E_SERVER_BASE_URL=$EMUMET_E2E_SERVER_BASE_URL"
 echo "  PUBLIC_BASE_URL=$PUBLIC_BASE_URL"
 echo "  ICESHRIMP_BASE_URL=$ICESHRIMP_BASE_URL"
-echo "  EMUMET_TEST_MODE_TOKEN=$EMUMET_TEST_MODE_TOKEN"
+echo "  EMUMET_TEST_MODE_TOKEN=(set — value not logged)"
 
 # ── 8. Start Emumet server ─────────────────────────────────────────────────
 info "Starting Emumet server in test-mode (host process)..."

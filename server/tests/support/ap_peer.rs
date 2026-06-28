@@ -170,7 +170,9 @@ pub async fn generate_cavage_signature(
     use kernel::interfaces::http_signing::{HttpSigner, HttpSigningRequest};
 
     let parsed_url = url::Url::parse(url).expect("invalid URL");
-    let host = parsed_url.host_str().unwrap_or("localhost");
+    let host = parsed_url
+        .host_str()
+        .expect("signed request URL must include a host");
     let host_header = match parsed_url.port() {
         Some(p) => format!("{host}:{p}"),
         None => host.to_string(),
@@ -285,9 +287,21 @@ mod tests {
         let peer = ApPeer::new("alice").await;
         let client = reqwest::Client::new();
 
+        let domain = url::Url::parse(&peer.base_url)
+            .expect("valid peer base_url")
+            .host_str()
+            .map(|h| {
+                let port = url::Url::parse(&peer.base_url).ok().and_then(|u| u.port());
+                match port {
+                    Some(p) => format!("{h}:{p}"),
+                    None => h.to_string(),
+                }
+            })
+            .expect("peer base_url must include a host for WebFinger resource domain");
+
         let resp = client
             .get(&format!(
-                "{}/.well-known/webfinger?resource=acct:alice@localhost",
+                "{}/.well-known/webfinger?resource=acct:alice@{domain}",
                 peer.base_url
             ))
             .send()

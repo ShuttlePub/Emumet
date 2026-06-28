@@ -7,8 +7,10 @@
 //!   EMUMET_E2E_EXTERNAL_SERVER=1 cargo test -p server \
 //!     --test e2e_ap_iceshrimp -- --ignored --test-threads=1 --nocapture
 
+#[allow(dead_code)]
 mod support;
 
+use support::account_helper::e2e_http_client;
 use support::config::ap_e2e_config;
 use support::db;
 
@@ -29,11 +31,11 @@ async fn iceshrimp_follows_emumet_account() {
     db::reset_test_data().await;
 
     // ── 2. Create an account on Emumet ────────────────────────────
-    let emumet_account_id = support::account_helper::setup_test_account().await;
+    let emumet_account = support::account_helper::setup_test_account_details().await;
 
     // ── 3. Create Iceshrimp client ────────────────────────────────
     let iceshrimp_base_url = std::env::var("ICESHRIMP_BASE_URL")
-        .unwrap_or_else(|_| "https://iceshrimp.127.0.0.1.nip.io:8443".to_string());
+        .expect("ICESHRIMP_BASE_URL must be set for S7 Iceshrimp test");
     let ics = support::iceshrimp::IceshrimpClient::new(&iceshrimp_base_url);
 
     // ── 4. Sign up on Iceshrimp ───────────────────────────────────
@@ -57,14 +59,33 @@ async fn iceshrimp_follows_emumet_account() {
         .to_string();
 
     // ── 5. Resolve Emumet account via WebFinger / AP ──────────────
-    let emumet_acct = format!("acct:{emumet_account_id}@emumet.127.0.0.1.nip.io:8443");
+    let public_domain = url::Url::parse(&cfg.public_base_url)
+        .expect("valid public_base_url")
+        .host_str()
+        .map(|h| {
+            let port = url::Url::parse(&cfg.public_base_url)
+                .ok()
+                .and_then(|u| u.port());
+            match port {
+                Some(p) => format!("{h}:{p}"),
+                None => h.to_string(),
+            }
+        })
+        .expect("public_base_url must include a host for Iceshrimp WebFinger resolution");
+    let emumet_acct = format!("acct:{}@{public_domain}", emumet_account.name);
     let resolve_result = ics
         .resolve_remote_user(&emumet_acct, &ics_token)
         .await
         .expect("failed to resolve Emumet account from Iceshrimp");
-    let remote_user_id = resolve_result["id"]
+    // /api/ap/show returns { type, object } where object contains the remote actor
+    let remote_object = resolve_result["object"]
+        .as_object()
+        .or_else(|| resolve_result.as_object())
+        .expect("resolve response should be an object with 'object' field");
+    let remote_user_id = remote_object["id"]
         .as_str()
-        .expect("resolve response missing 'id'")
+        .or_else(|| resolve_result["id"].as_str())
+        .expect("resolve response missing actor 'id'")
         .to_string();
 
     // ── 6. Iceshrimp user follows the Emumet account ──────────────
@@ -73,13 +94,10 @@ async fn iceshrimp_follows_emumet_account() {
         .expect("failed to follow Emumet account from Iceshrimp");
 
     // ── 7. Wait for and verify Emumet's followers collection ──────
-    let followers_client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .expect("failed to build followers client");
+    let followers_client = e2e_http_client();
     let followers_url = format!(
-        "{}/accounts/{emumet_account_id}/followers",
-        cfg.public_base_url
+        "{}/accounts/{}/followers",
+        cfg.public_base_url, emumet_account.id
     );
 
     let mut followers_verified = false;
@@ -105,12 +123,28 @@ async fn iceshrimp_follows_emumet_account() {
     );
 
     // ── 9. Verify Iceshrimp's following list ─────────────────────
-    let following = ics
-        .get_following(&local_iceshrimp_user_id, &ics_token)
-        .await
-        .expect("failed to get Iceshrimp following list");
+    let mut following_verified = false;
+    for _ in 1..=30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(following) = ics
+            .get_following(&local_iceshrimp_user_id, &ics_token)
+            .await
+        {
+            // Each entry from /api/users/following has { followee: { id, uri, ... } }
+            if following.iter().any(|entry| {
+                let followee = &entry["followee"];
+                followee["uri"]
+                    .as_str()
+                    .is_some_and(|u| u == remote_user_id)
+                    || followee["id"].as_str().is_some_and(|i| i == remote_user_id)
+            }) {
+                following_verified = true;
+                break;
+            }
+        }
+    }
     assert!(
-        !following.is_empty(),
-        "Iceshrimp user should be following the Emumet account, got empty list"
+        following_verified,
+        "Iceshrimp user should be following the Emumet account (actor URL: {remote_user_id})"
     );
 }

@@ -1,12 +1,13 @@
 //! ActivityPub Federation E2E Tests — Mock Peer Scenarios (S1–S6)
 
+#[allow(dead_code)]
 mod support;
 
 use std::time::Duration;
 
 use support::account_helper::{
-    assert_collection_has_items, assert_content_type, assert_signature_header, fetch_collection,
-    post_follow, post_signed_accept, post_signed_follow, setup_test_account,
+    assert_collection_has_items, assert_content_type, assert_signature_header, e2e_http_client,
+    fetch_collection, post_follow, post_signed_accept, post_signed_follow,
     setup_test_account_details, start_server_with_peer,
 };
 use support::ap_peer::{wait_for_activity, ApPeer};
@@ -25,9 +26,26 @@ async fn webfinger_resolves_account() {
     let cfg = config();
     let account = setup_test_account_details().await;
 
-    let resp = reqwest::Client::new()
+    let public_domain = url::Url::parse(&cfg.public_base_url)
+        .expect("valid public_base_url")
+        .host_str()
+        .map(|h| {
+            let port = url::Url::parse(&cfg.public_base_url)
+                .ok()
+                .and_then(|u| u.port());
+            match port {
+                Some(p) => format!("{h}:{p}"),
+                None => h.to_string(),
+            }
+        })
+        .expect("public_base_url must include a host for WebFinger resource domain");
+
+    let resp = e2e_http_client()
         .get(format!("{}/.well-known/webfinger", cfg.server_base_url))
-        .query(&[("resource", &format!("acct:{}@localhost", account.name))])
+        .query(&[(
+            "resource",
+            &format!("acct:{}@{public_domain}", account.name),
+        )])
         .send()
         .await
         .expect("WebFinger request failed");
@@ -67,9 +85,9 @@ async fn webfinger_resolves_account() {
 async fn actor_document_is_valid_activitypub() {
     db::reset_test_data().await;
     let cfg = config();
-    let account_nanoid = setup_test_account().await;
+    let account_nanoid = setup_test_account_details().await.id;
 
-    let resp = reqwest::Client::new()
+    let resp = e2e_http_client()
         .get(format!("{}/accounts/{account_nanoid}", cfg.server_base_url))
         .header(reqwest::header::ACCEPT, "application/activity+json")
         .send()
@@ -111,7 +129,7 @@ async fn outbound_follow_sends_activity_to_remote_inbox() {
     db::reset_test_data().await;
     let cfg = config();
     let jwt = auth::get_jwt_for_test_user().await;
-    let account_nanoid = setup_test_account().await;
+    let account_nanoid = setup_test_account_details().await.id;
 
     let resp = post_follow(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
     assert_eq!(
@@ -147,7 +165,7 @@ async fn inbound_follow_creates_follower_and_sends_accept() {
     let _server = start_server_with_peer(&peer).await;
     db::reset_test_data().await;
     let cfg = config();
-    let account_nanoid = setup_test_account().await;
+    let account_nanoid = setup_test_account_details().await.id;
 
     let target_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.server_base_url);
     let target_actor = format!("{}/accounts/{account_nanoid}", cfg.server_base_url);
@@ -179,7 +197,7 @@ async fn followers_and_following_collections_are_accurate() {
     db::reset_test_data().await;
     let cfg = config();
     let jwt = auth::get_jwt_for_test_user().await;
-    let account_nanoid = setup_test_account().await;
+    let account_nanoid = setup_test_account_details().await.id;
 
     let resp = post_follow(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
@@ -220,9 +238,9 @@ async fn followers_and_following_collections_are_accurate() {
 async fn inbox_rejects_unsigned_requests() {
     db::reset_test_data().await;
     let cfg = config();
-    let account_nanoid = setup_test_account().await;
+    let account_nanoid = setup_test_account_details().await.id;
 
-    let resp = reqwest::Client::new()
+    let resp = e2e_http_client()
         .post(format!(
             "{}/accounts/{account_nanoid}/inbox",
             cfg.server_base_url

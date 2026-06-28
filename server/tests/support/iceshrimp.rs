@@ -5,6 +5,8 @@
 
 use reqwest::Client;
 
+use super::account_helper::e2e_http_client;
+
 /// Client for interacting with an Iceshrimp instance via its REST API.
 pub struct IceshrimpClient {
     pub base_url: String,
@@ -13,16 +15,10 @@ pub struct IceshrimpClient {
 
 impl IceshrimpClient {
     /// Create a new client that connects to the given base URL.
-    ///
-    /// TLS certificate validation is disabled because the E2E environment uses
-    /// self-signed certificates on nip.io domains.
     pub fn new(base_url: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            client: Client::builder()
-                .danger_accept_invalid_certs(true)
-                .build()
-                .expect("failed to build reqwest client for Iceshrimp"),
+            client: e2e_http_client(),
         }
     }
 
@@ -117,7 +113,7 @@ impl IceshrimpClient {
         self.post_json_array("/api/users/followers", &body).await
     }
 
-    /// POST /api/following/list — get the list of users this user follows.
+    /// POST /api/users/following — get the list of users this user follows.
     pub async fn get_following(
         &self,
         user_id: &str,
@@ -127,7 +123,7 @@ impl IceshrimpClient {
             "userId": user_id,
             "i": token,
         });
-        self.post_json_array("/api/following/list", &body).await
+        self.post_json_array("/api/users/following", &body).await
     }
 
     // ── private helpers ──────────────────────────────────────────
