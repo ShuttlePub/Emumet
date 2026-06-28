@@ -344,6 +344,7 @@ impl HttpSignatureVerifierImpl {
                 let status = response.status();
                 let body_text = response.text().await.unwrap_or_default();
                 tracing::debug!(
+                    key_fetch_url = %url,
                     key_fetch_status = %status,
                     key_fetch_body = %body_text,
                     "KeyFetch failed with non-success status"
