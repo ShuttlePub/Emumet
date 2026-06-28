@@ -711,6 +711,7 @@ dependencies = [
  "test-with",
  "time",
  "tokio",
+ "tracing",
  "vodca",
  "zeroize",
 ]

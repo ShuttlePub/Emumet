@@ -37,6 +37,7 @@ bytes = "1"
 http-msgsign = { workspace = true }
 http-msgsign-draft = { workspace = true }
 ed25519-dalek = { workspace = true }
+tracing = { workspace = true }
 
 kernel = { path = "../kernel" }
 

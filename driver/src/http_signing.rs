@@ -317,7 +317,7 @@ impl HttpSignatureVerifierImpl {
                 .get(url.clone())
                 .header(
                     ACCEPT,
-                    "application/activity+json, application/ld+json, application/json;q=0.9",
+                    "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"",
                 )
                 .header(USER_AGENT, "Emumet/0.1 ActivityPub HTTP Signature verifier")
                 .send()
@@ -344,9 +344,16 @@ impl HttpSignatureVerifierImpl {
             }
 
             if !response.status().is_success() {
+                let status = response.status();
+                let body_text = response.text().await.unwrap_or_default();
+                tracing::debug!(
+                    key_fetch_status = %status,
+                    key_fetch_body = %body_text,
+                    "KeyFetch failed with non-success status"
+                );
                 return Err(Report::new(KernelError::Rejected).attach_printable(format!(
                     "KeyFetchFailed: actor key endpoint returned {}",
-                    response.status()
+                    status,
                 )));
             }
 
