@@ -58,6 +58,37 @@ async fn iceshrimp_follows_emumet_account() {
         .expect("signup response missing local user 'id'")
         .to_string();
 
+    // ── 4b. Inject Iceshrimp user's public key into Emumet cache ──
+    // Iceshrimp v2026.5.1 returns 401 for its ActivityPub actor endpoint,
+    // so we retrieve the public key via the authenticated API and inject
+    // it into Emumet's HTTP Signature verifier to bypass the remote fetch.
+    let ics_user_info = ics
+        .show_user(&local_iceshrimp_user_id, &ics_token)
+        .await
+        .expect("failed to get Iceshrimp user info");
+    // The Iceshrimp /api/users/show response includes publicKey.publicKeyPem
+    let ics_public_key_pem = ics_user_info["publicKey"]["publicKeyPem"]
+        .as_str()
+        .expect("Iceshrimp user info missing publicKey.publicKeyPem")
+        .to_string();
+    let cache_key_url = format!(
+        "{}/__test__/cache-actor-key",
+        cfg.server_base_url.trim_end_matches('/')
+    );
+    let emumet_client = e2e_http_client();
+    let test_token =
+        std::env::var("EMUMET_TEST_MODE_TOKEN").expect("EMUMET_TEST_MODE_TOKEN must be set");
+    emumet_client
+        .post(&cache_key_url)
+        .header("X-Emumet-Test-Token", &test_token)
+        .json(&serde_json::json!({
+            "key_id": format!("{}/users/{}#main-key", iceshrimp_base_url.trim_end_matches('/'), local_iceshrimp_user_id),
+            "public_key_pem": ics_public_key_pem,
+        }))
+        .send()
+        .await
+        .expect("failed to inject actor key into Emumet cache");
+
     // ── 5. Resolve Emumet account via Actor URL ───────────────────
     // Iceshrimp's ap/show node-fetch doesn't support acct: URIs,
     // so we pass the actor URL directly.

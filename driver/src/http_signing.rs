@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
 
 use base64::{engine::general_purpose, Engine as _};
@@ -170,6 +171,44 @@ impl HttpSigner for HttpSignerImpl {
     }
 }
 
+/// Test-only: global cache of actor public keys injected via the test-mode API.
+///
+/// `fetch_actor_key` checks this before making an HTTP request. Keys are
+/// inserted by the E2E test when the remote server (e.g. Iceshrimp) requires
+/// authentication for its ActivityPub actor endpoint.
+static TEST_STATIC_ACTOR_KEYS: LazyLock<Mutex<HashMap<String, ActorPublicKey>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Insert an actor public key into the test global cache so that
+/// `fetch_actor_key` returns it without making an HTTP request.
+#[cfg(any(test, feature = "test-mode"))]
+pub fn inject_test_actor_key(key_id: &str, public_key_pem: String) {
+    let mut map = TEST_STATIC_ACTOR_KEYS.lock().expect("poisoned lock");
+    let pem_clone = public_key_pem.clone();
+    map.insert(
+        key_id.to_string(),
+        ActorPublicKey {
+            id: key_id.to_string(),
+            owner: String::new(),
+            public_key_pem,
+        },
+    );
+    if let Ok(mut url) = reqwest::Url::parse(key_id) {
+        url.set_fragment(None);
+        let stripped = url.to_string();
+        if stripped != key_id {
+            map.insert(
+                stripped,
+                ActorPublicKey {
+                    id: key_id.to_string(),
+                    owner: String::new(),
+                    public_key_pem: pem_clone,
+                },
+            );
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HttpSignatureVerifierImpl {
     client: reqwest::Client,
@@ -201,6 +240,36 @@ impl HttpSignatureVerifierImpl {
             date_tolerance: Duration::from_secs(5 * 60),
             static_actor_keys: HashMap::new(),
         })
+    }
+
+    /// Register an actor key that will be returned from cache without an HTTP fetch.
+    ///
+    /// This is intended for test environments where the remote ActivityPub server
+    /// requires authentication for its actor endpoint. The calling test retrieves
+    /// the public key via an authenticated API and injects it here, allowing
+    /// HTTP Signature verification to succeed without a direct key fetch.
+    ///
+    /// `key_id` must match the full keyId URI (including the `#main-key` fragment
+    /// if present in the HTTP Signature). The method normalizes by checking both
+    /// the raw key and the fragment-stripped URL.
+    #[cfg(any(test, feature = "test-mode"))]
+    pub fn cache_actor_key(&mut self, key_id: &str, public_key_pem: String) {
+        let key = ActorPublicKey {
+            id: key_id.to_string(),
+            owner: String::new(),
+            public_key_pem,
+        };
+        self.static_actor_keys
+            .insert(key_id.to_string(), key.clone());
+
+        // Also index by fragment-stripped URL so fetch_actor_key can hit
+        // the cache even when the caller strips the fragment first.
+        if let Ok(mut url) = reqwest::Url::parse(key_id) {
+            url.set_fragment(None);
+            if url.as_str() != key_id {
+                self.static_actor_keys.insert(url.to_string(), key);
+            }
+        }
     }
 }
 
@@ -284,6 +353,23 @@ impl HttpSignatureVerifier for HttpSignatureVerifierImpl {
     }
 
     async fn fetch_actor_key(&self, key_id: &str) -> Result<ActorPublicKey, KernelError> {
+        // Check test-mode global cache first
+        if let Ok(map) = TEST_STATIC_ACTOR_KEYS.lock() {
+            if let Some(key) = map.get(key_id) {
+                return Ok(key.clone());
+            }
+            // Also try fragment-stripped URL
+            if let Ok(mut url) = reqwest::Url::parse(key_id) {
+                url.set_fragment(None);
+                let stripped = url.to_string();
+                if stripped != key_id {
+                    if let Some(key) = map.get(&stripped) {
+                        return Ok(key.clone());
+                    }
+                }
+            }
+        }
+
         if let Some(key) = self.static_actor_keys.get(key_id) {
             return Ok(key.clone());
         }

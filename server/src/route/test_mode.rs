@@ -1,8 +1,10 @@
 use crate::error::ErrorStatus;
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use driver::http_signing::inject_test_actor_key;
+use serde::{Deserialize, Serialize};
 
 async fn get_pool() -> Result<sqlx::PgPool, ErrorStatus> {
     let url = std::env::var("DATABASE_URL").map_err(|_| {
@@ -53,6 +55,7 @@ impl TestModeRouter for Router<crate::handler::AppModule> {
         self.route("/__test__/health", get(health))
             .route("/__test__/reset", post(reset))
             .route("/__test__/inbox", get(inbox))
+            .route("/__test__/cache-actor-key", post(cache_actor_key))
     }
 }
 
@@ -152,4 +155,26 @@ async fn inbox(headers: HeaderMap) -> Result<Json<InboxResponse>, ErrorStatus> {
         .collect();
 
     Ok(Json(InboxResponse { activities }))
+}
+
+#[derive(Deserialize)]
+struct CacheActorKeyRequest {
+    key_id: String,
+    public_key_pem: String,
+}
+
+/// Inject an actor public key into the global test cache so that the HTTP
+/// Signature verifier returns it without making a remote fetch.
+///
+/// This is needed for E2E tests against instances (e.g. Iceshrimp) whose
+/// ActivityPub actor endpoints require authentication.
+#[cfg(feature = "test-mode")]
+async fn cache_actor_key(
+    headers: HeaderMap,
+    State(_state): State<crate::handler::AppModule>,
+    Json(body): Json<CacheActorKeyRequest>,
+) -> Result<StatusCode, ErrorStatus> {
+    verify_token(&headers)?;
+    inject_test_actor_key(&body.key_id, body.public_key_pem);
+    Ok(StatusCode::NO_CONTENT)
 }
