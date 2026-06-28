@@ -87,6 +87,19 @@ impl IceshrimpClient {
         self.post_json("/api/ap/show", &body).await
     }
 
+    /// POST /api/i — get the authenticated user's full profile.
+    ///
+    /// This returns the full detail view including `publicKey` (if the key exists).
+    pub async fn my_profile(
+        &self,
+        token: &str,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        let body = serde_json::json!({
+            "i": token,
+        });
+        self.post_json("/api/i", &body).await
+    }
+
     /// POST /api/following/create — send a Follow activity to the given user.
     pub async fn follow_user(
         &self,

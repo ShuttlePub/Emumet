@@ -63,38 +63,25 @@ async fn iceshrimp_follows_emumet_account() {
     // so we retrieve the public key via the authenticated API and inject
     // it into Emumet's HTTP Signature verifier to bypass the remote fetch.
     //
-    // The Iceshrimp REST API (/api/users/show) does not include the publicKey
-    // until the key is generated (first AP activity triggers it). We use
-    // /api/ap/show to resolve the user's own actor URL, which triggers key
-    // generation and returns the full actor document including the public key.
-    let ics_actor_url = format!(
-        "{}/users/{}",
-        iceshrimp_base_url.trim_end_matches('/'),
-        local_iceshrimp_user_id
-    );
-    let resolve_local = ics
-        .resolve_remote_user(&ics_actor_url, &ics_token)
+    // The Iceshrimp REST API (/api/users/show, /api/ap/show) does not expose
+    // the publicKey in the response. We use /api/i which returns the full
+    // authenticated user profile including the ActivityPub key pair.
+    let ics_profile = ics
+        .my_profile(&ics_token)
         .await
-        .expect("failed to resolve own Iceshrimp actor URL");
-    let ics_actor_data = resolve_local["object"]
-        .as_object()
-        .or_else(|| resolve_local.as_object())
-        .unwrap_or_else(|| {
-            panic!(
-                "/api/ap/show response is not an object. Full response: {}",
-                serde_json::to_string_pretty(&resolve_local).unwrap_or_default()
-            )
-        });
-    let ics_public_key_pem = ics_actor_data
+        .expect("failed to get Iceshrimp user profile via /api/i");
+    let ics_public_key_pem = ics_profile
         .get("publicKey")
-        .and_then(|v| v.get("publicKeyPem"))
         .and_then(|v| v.as_str())
         .unwrap_or_else(|| {
-            let keys: Vec<String> = ics_actor_data.keys().cloned().collect();
+            let keys: Vec<String> = ics_profile
+                .as_object()
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default();
             panic!(
-                "Resolved Iceshrimp actor missing publicKey. Actor keys: {:?}, full resolve response: {}",
+                "Iceshrimp user profile missing publicKey. Profile keys: {:?}, full profile: {}",
                 keys,
-                serde_json::to_string_pretty(&resolve_local).unwrap_or_default()
+                serde_json::to_string_pretty(&ics_profile).unwrap_or_default()
             )
         })
         .to_string();
