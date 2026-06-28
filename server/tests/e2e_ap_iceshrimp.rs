@@ -66,10 +66,21 @@ async fn iceshrimp_follows_emumet_account() {
         .show_user(&local_iceshrimp_user_id, &ics_token)
         .await
         .expect("failed to get Iceshrimp user info");
-    // The Iceshrimp /api/users/show response includes publicKey.publicKeyPem
+    // Debug: dump response keys to find the publicKey path
+    let response_keys: Vec<String> = ics_user_info
+        .as_object()
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default();
+    // Iceshrimp may use a different field name than upstream Misskey.
     let ics_public_key_pem = ics_user_info["publicKey"]["publicKeyPem"]
         .as_str()
-        .expect("Iceshrimp user info missing publicKey.publicKeyPem")
+        .or_else(|| ics_user_info["key"]["publicKeyPem"].as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "Iceshrimp user info missing public key. Keys in response: {:?}",
+                response_keys
+            )
+        })
         .to_string();
     let cache_key_url = format!(
         "{}/__test__/cache-actor-key",
