@@ -315,10 +315,7 @@ impl HttpSignatureVerifierImpl {
             let response = self
                 .client_for_url(&url, &resolved_addresses)?
                 .get(url.clone())
-                .header(
-                    ACCEPT,
-                    "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"",
-                )
+                .header(ACCEPT, "application/activity+json")
                 .header(USER_AGENT, "Emumet/0.1 ActivityPub HTTP Signature verifier")
                 .send()
                 .await
