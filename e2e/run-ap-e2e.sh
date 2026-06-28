@@ -16,6 +16,7 @@
 #
 # Environment:
 #   Uses .env for base configuration, overrides for AP E2E mode.
+#   EMUMET_E2E_PAUSE_BEFORE_CLEANUP=1 — pause before cleanup for manual inspection.
 #
 # Required tools:
 #   - docker (compose v2 plugin)
@@ -122,6 +123,29 @@ if ss -tlnp 'sport = :8080' 2>/dev/null | grep -q LISTEN; then
 fi
 
 cleanup() {
+    # ── Pause before cleanup mode ──────────────────────────────────────────
+    # When EMUMET_E2E_PAUSE_BEFORE_CLEANUP=1, pause before killing services
+    # to allow manual inspection from the browser.
+    if [ "${EMUMET_E2E_PAUSE_BEFORE_CLEANUP:-0}" = "1" ]; then
+        echo ""
+        warn "========================================"
+        warn "  PAUSE BEFORE CLEANUP"
+        warn "========================================"
+        info "Infrastructure is still running. Access from your browser:"
+        echo ""
+        echo "  Iceshrimp:  https://iceshrimp.127.0.0.1.nip.io:8443"
+        echo "  Emumet:     https://emumet.127.0.0.1.nip.io:8443"
+        echo "  Peer:       https://peer.127.0.0.1.nip.io:8443"
+        echo ""
+        info "Iceshrimp test user credentials:"
+        echo "  Username: e2e_<timestamp>  (see test output above)"
+        echo "  Password: test-pass"
+        echo ""
+        info "Press ENTER to continue cleanup (docker compose down -v, kill server)..."
+        read -r
+        echo ""
+    fi
+
     info "Cleaning up..."
     if [ -n "$SERVER_PID" ]; then
         kill $SERVER_PID 2>/dev/null || true

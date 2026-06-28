@@ -107,6 +107,23 @@ kill %1 2>/dev/null; wait 2>/dev/null
 docker compose --profile ap-e2e -f compose.yml -f compose.ap-e2e.yml down
 ```
 
+### Pause Before Cleanup Mode
+
+テスト実行後、クリーンアップ（サーバー停止・コンテナ破棄）の直前に一時停止し、ブラウザから Iceshrimp の状態を確認できるモードです。
+
+```shell
+EMUMET_E2E_PAUSE_BEFORE_CLEANUP=1 bash e2e/run-ap-e2e.sh
+```
+
+停止中にアクセス可能なURL:
+
+| URL | 対象 |
+|-----|------|
+| `https://iceshrimp.127.0.0.1.nip.io:8443` | Iceshrimp |
+| `https://emumet.127.0.0.1.nip.io:8443` | Emumet |
+
+Iceshrimp のテストユーザー認証情報は `run-ap-e2e.sh` の出力から確認できます（ユーザー名は `e2e_<timestamp>` 形式、パスワードは `test-pass`）。確認が終わったら Enter キーを押すとクリーンアップが続行されます。
+
 ### テスト一覧
 
 | ID | テスト | 説明 |
