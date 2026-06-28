@@ -181,15 +181,31 @@ static TEST_STATIC_ACTOR_KEYS: LazyLock<Mutex<HashMap<String, ActorPublicKey>>> 
 
 /// Insert an actor public key into the test global cache so that
 /// `fetch_actor_key` returns it without making an HTTP request.
+///
+/// `owner` is the ActivityPub actor ID (URL) that owns this key. It is used
+/// by the ActivityPub route handler to verify that the signing key belongs to
+/// the actor who sent the activity. Pass an empty string if unknown.
 #[cfg(any(test, feature = "test-mode"))]
-pub fn inject_test_actor_key(key_id: &str, public_key_pem: String) {
+pub fn inject_test_actor_key(key_id: &str, public_key_pem: String, owner: &str) {
     let mut map = TEST_STATIC_ACTOR_KEYS.lock().expect("poisoned lock");
     let pem_clone = public_key_pem.clone();
+    let owner_val = if owner.is_empty() {
+        // Derive owner from key_id by stripping the fragment.
+        reqwest::Url::parse(key_id)
+            .ok()
+            .and_then(|mut url| {
+                url.set_fragment(None);
+                Some(url.to_string())
+            })
+            .unwrap_or_default()
+    } else {
+        owner.to_string()
+    };
     map.insert(
         key_id.to_string(),
         ActorPublicKey {
             id: key_id.to_string(),
-            owner: String::new(),
+            owner: owner_val.clone(),
             public_key_pem,
         },
     );
@@ -201,7 +217,7 @@ pub fn inject_test_actor_key(key_id: &str, public_key_pem: String) {
                 stripped,
                 ActorPublicKey {
                     id: key_id.to_string(),
-                    owner: String::new(),
+                    owner: owner_val,
                     public_key_pem: pem_clone,
                 },
             );

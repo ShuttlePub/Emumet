@@ -161,6 +161,9 @@ async fn inbox(headers: HeaderMap) -> Result<Json<InboxResponse>, ErrorStatus> {
 struct CacheActorKeyRequest {
     key_id: String,
     public_key_pem: String,
+    /// Optional ActivityPub actor ID that owns this key. When omitted or empty,
+    /// the owner is derived from the key_id URL by stripping the fragment.
+    owner: Option<String>,
 }
 
 /// Inject an actor public key into the global test cache so that the HTTP
@@ -175,6 +178,10 @@ async fn cache_actor_key(
     Json(body): Json<CacheActorKeyRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
     verify_token(&headers)?;
-    inject_test_actor_key(&body.key_id, body.public_key_pem);
+    inject_test_actor_key(
+        &body.key_id,
+        body.public_key_pem,
+        body.owner.as_deref().unwrap_or(""),
+    );
     Ok(StatusCode::NO_CONTENT)
 }

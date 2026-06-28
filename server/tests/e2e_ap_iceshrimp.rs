@@ -132,12 +132,18 @@ async fn iceshrimp_follows_emumet_account() {
     let emumet_client = e2e_http_client();
     let test_token =
         std::env::var("EMUMET_TEST_MODE_TOKEN").expect("EMUMET_TEST_MODE_TOKEN must be set");
+    let actor_url = format!(
+        "{}/users/{}",
+        iceshrimp_base_url.trim_end_matches('/'),
+        local_iceshrimp_user_id,
+    );
     emumet_client
         .post(&cache_key_url)
         .header("X-Emumet-Test-Token", &test_token)
         .json(&serde_json::json!({
-            "key_id": format!("{}/users/{}#main-key", iceshrimp_base_url.trim_end_matches('/'), local_iceshrimp_user_id),
+            "key_id": format!("{actor_url}#main-key"),
             "public_key_pem": ics_public_key_pem,
+            "owner": actor_url,
         }))
         .send()
         .await
