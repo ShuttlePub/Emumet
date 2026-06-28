@@ -59,32 +59,72 @@ async fn iceshrimp_follows_emumet_account() {
         .to_string();
 
     // ── 4b. Inject Iceshrimp user's public key into Emumet cache ──
-    // Iceshrimp v2026.5.1 returns 401 for its ActivityPub actor endpoint,
-    // so we retrieve the public key via the authenticated API and inject
-    // it into Emumet's HTTP Signature verifier to bypass the remote fetch.
+    // Iceshrimp v2026.5.1 returns 401 for its ActivityPub actor endpoint
+    // and does not expose the publicKey through any REST API. The key is
+    // stored in the `user_keypair` database table but not included in API
+    // responses (only in the ActivityPub actor document rendered on fetch).
     //
-    // The Iceshrimp REST API (/api/users/show, /api/ap/show) does not expose
-    // the publicKey in the response. We use /api/i which returns the full
-    // authenticated user profile including the ActivityPub key pair.
-    let ics_profile = ics
-        .my_profile(&ics_token)
-        .await
-        .expect("failed to get Iceshrimp user profile via /api/i");
-    let ics_public_key_pem = ics_profile
-        .get("publicKey")
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| {
-            let keys: Vec<String> = ics_profile
-                .as_object()
-                .map(|m| m.keys().cloned().collect())
-                .unwrap_or_default();
-            panic!(
-                "Iceshrimp user profile missing publicKey. Profile keys: {:?}, full profile: {}",
-                keys,
-                serde_json::to_string_pretty(&ics_profile).unwrap_or_default()
-            )
-        })
+    // We generate a known RSA key pair, inject it into Iceshrimp's
+    // database via docker exec psql, and inject the public key into
+    // Emumet's HTTP Signature verifier cache. This gives both sides a
+    // matching key pair without needing to fetch Iceshrimp's ActivityPub
+    // actor endpoint (which returns 401).
+    use rand::rngs::OsRng;
+    use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
+    use rsa::RsaPrivateKey;
+    use std::io::Write;
+
+    let mut rng = OsRng;
+    let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate RSA key pair");
+    let public_key = rsa::RsaPublicKey::from(&private_key);
+    let private_key_pem = private_key
+        .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+        .expect("failed to PEM-encode private key")
         .to_string();
+    let ics_public_key_pem = public_key
+        .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
+        .expect("failed to PEM-encode public key");
+
+    let sql = format!(
+        r#"UPDATE user_keypair SET "publicKey" = '{public_pem}', "privateKey" = '{private_pem}' WHERE "userId" = '{uid}';"#,
+        public_pem = &ics_public_key_pem.replace('\'', r"'\''"),
+        private_pem = &private_key_pem.replace('\'', r"'\''"),
+        uid = local_iceshrimp_user_id,
+    );
+    let docker_status = std::process::Command::new("docker")
+        .args([
+            "exec",
+            "-i",
+            "emumet-ap-e2e-iceshrimp-db",
+            "psql",
+            "-U",
+            "iceshrimp",
+            "-d",
+            "iceshrimp",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(sql.as_bytes())?;
+            }
+            child.wait()
+        })
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("docker exec psql exited with non-zero status: {status}"),
+                ))
+            }
+        });
+    docker_status
+        .expect("failed to inject RSA key pair into Iceshrimp user_keypair via docker exec psql");
+
     let cache_key_url = format!(
         "{}/__test__/cache-actor-key",
         cfg.server_base_url.trim_end_matches('/')
