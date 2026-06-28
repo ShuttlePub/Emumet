@@ -80,21 +80,35 @@ if [ ! -f master-key-password ]; then
     info "  Created: master-key-password (dev password)"
 fi
 
-# ── 3. Source .env (base config) ───────────────────────────────────────────
-if [ -f .env ]; then
-    info "Loading .env configuration..."
-    set -o allexport
-    source .env
-    set +o allexport
-else
-    warn ".env not found — relying on existing environment"
+# ── 3. Generate .env if missing ────────────────────────────────────────────
+if [ ! -f .env ]; then
+    info "Creating .env with default configuration..."
+    cat > .env <<- EOF
+DATABASE_URL=postgres://postgres:develop@localhost:5432/postgres
+HYDRA_ISSUER_URL=http://localhost:4444/
+HYDRA_ADMIN_URL=http://localhost:4445/
+KRATOS_PUBLIC_URL=http://localhost:4433/
+EXPECTED_AUDIENCE=account
+KETO_READ_URL=http://localhost:4466
+KETO_WRITE_URL=http://localhost:4467
+REDIS_URL=redis://localhost:6379
+WORKER_ID=0
+CORS_ALLOWED_ORIGINS=*
+EOF
+    info "  Created: .env with default service URLs"
 fi
 
-# ── 4. Build server ────────────────────────────────────────────────────────
+# ── 4. Source .env (base config) ──────────────────────────────────────────
+info "Loading .env configuration..."
+set -o allexport
+source .env
+set +o allexport
+
+# ── 5. Build server ────────────────────────────────────────────────────────
 info "Building Emumet server with test-mode features..."
 cargo build -p server --features test-mode
 
-# ── 5. Start compose infrastructure ────────────────────────────────────────
+# ── 6. Start compose infrastructure ────────────────────────────────────────
 info "Starting Docker Compose infrastructure..."
 info "  compose files: compose.yml + compose.ap-e2e.yml"
 info "  profile: ap-e2e"
@@ -117,14 +131,14 @@ cleanup() {
         fuser -k 8080/tcp 2>/dev/null || true
         sleep 1
     fi
-    $COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml --profile ap-e2e down
+    $COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml --profile ap-e2e down -v
     info "Cleanup complete"
 }
 trap cleanup EXIT
 
 $COMPOSE_CMD -f compose.yml -f compose.ap-e2e.yml --profile ap-e2e up -d
 
-# ── 6. Wait for services (with timeout) ─────────────────────────────────────
+# ── 7. Wait for services (with timeout) ─────────────────────────────────────
 info "Waiting for infrastructure services..."
 
 wait_for_service() {
@@ -161,7 +175,7 @@ wait_for_service "nginx" "echo >/dev/tcp/localhost/8443 2>/dev/null"
 echo "  - iceshrimp..."
 wait_for_service "iceshrimp" "curl -sk --connect-timeout 2 --max-time 5 https://iceshrimp.127.0.0.1.nip.io:8443/api/endpoint"
 
-# ── 7. Set AP E2E environment ──────────────────────────────────────────────
+# ── 8. Set AP E2E environment ──────────────────────────────────────────────
 # These override any values from .env
 export AP_TEST_ALLOWED_FETCH_HOSTS="127.0.0.1,iceshrimp.127.0.0.1.nip.io"
 export AP_TEST_ACCEPT_INVALID_CERTS="1"
@@ -191,7 +205,7 @@ echo "  PUBLIC_BASE_URL=$PUBLIC_BASE_URL"
 echo "  ICESHRIMP_BASE_URL=$ICESHRIMP_BASE_URL"
 echo "  EMUMET_TEST_MODE_TOKEN=(set — value not logged)"
 
-# ── 8. Start Emumet server ─────────────────────────────────────────────────
+# ── 9. Start Emumet server ─────────────────────────────────────────────────
 info "Starting Emumet server in test-mode (host process)..."
 cargo run -p server --features test-mode &
 SERVER_PID=$!
@@ -213,7 +227,7 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
-# ── 9. Run basic flow E2E tests ──────────────────────────────────────────────
+# ── 10. Run basic flow E2E tests ─────────────────────────────────────────────
 # These test core CRUD operations through the external server.
 info "Running basic flow E2E tests (e2e_basic_flow)..."
 if cargo test -p server --test e2e_basic_flow -- --ignored --test-threads=1 --nocapture; then
@@ -224,7 +238,7 @@ else
     exit 1
 fi
 
-# ── 10. Run mock AP E2E tests ──────────────────────────────────────────────
+# ── 11. Run mock AP E2E tests ──────────────────────────────────────────────
 info "Running mock AP E2E tests (e2e_ap_mock)..."
 if cargo test -p server --test e2e_ap_mock -- --ignored --test-threads=1 --nocapture; then
     info "  Mock AP tests: PASSED"
@@ -234,7 +248,7 @@ else
     exit 1
 fi
 
-# ── 11. Run Iceshrimp federation test ───────────────────────────────────────
+# ── 12. Run Iceshrimp federation test ───────────────────────────────────────
 info "Running Iceshrimp federation test (e2e_ap_iceshrimp)..."
 if cargo test -p server --test e2e_ap_iceshrimp -- --ignored --test-threads=1 --nocapture; then
     info "  Iceshrimp federation test: PASSED"
@@ -244,7 +258,7 @@ else
     exit 1
 fi
 
-# ── 12. Cleanup ─────────────────────────────────────────────────────────────
+# ── 13. Cleanup ─────────────────────────────────────────────────────────────
 info "Stopping Emumet server..."
 kill $SERVER_PID 2>/dev/null || true
 wait $SERVER_PID 2>/dev/null || true
