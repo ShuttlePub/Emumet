@@ -138,8 +138,8 @@ cleanup() {
         echo "  Peer:       https://peer.127.0.0.1.nip.io:8443"
         echo ""
         info "Iceshrimp test user credentials:"
-        echo "  Username: e2e_<timestamp>  (see test output above)"
         echo "  Password: test-pass"
+        echo "  Username: iceshrimp_username=...  (see test log output above, e.g. 'Signed up on Iceshrimp')"
         echo ""
         info "Press ENTER to continue cleanup (docker compose down -v, kill server)..."
         read -r

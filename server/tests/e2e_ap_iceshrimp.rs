@@ -14,9 +14,25 @@ use support::account_helper::e2e_http_client;
 use support::config::ap_e2e_config;
 use support::db;
 
+fn init_test_tracing() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "e2e_ap_iceshrimp=info".into()),
+            )
+            .with_test_writer()
+            .init();
+    });
+}
+
 #[tokio::test]
 #[ignore]
 async fn iceshrimp_follows_emumet_account() {
+    init_test_tracing();
+
     // This test requires the full compose environment to be running.
     if std::env::var("EMUMET_E2E_EXTERNAL_SERVER").as_deref() != Ok("1") {
         panic!(
@@ -32,6 +48,12 @@ async fn iceshrimp_follows_emumet_account() {
 
     // ── 2. Create an account on Emumet ────────────────────────────
     let emumet_account = support::account_helper::setup_test_account_details().await;
+
+    tracing::info!(
+        emumet_account_id = %emumet_account.id,
+        emumet_account_name = %emumet_account.name,
+        "Created Emumet test account"
+    );
 
     // ── 3. Create Iceshrimp client ────────────────────────────────
     let iceshrimp_base_url = std::env::var("ICESHRIMP_BASE_URL")
@@ -57,6 +79,13 @@ async fn iceshrimp_follows_emumet_account() {
         .as_str()
         .expect("signup response missing local user 'id'")
         .to_string();
+
+    tracing::info!(
+        iceshrimp_username = %ics_username,
+        iceshrimp_user_id = %local_iceshrimp_user_id,
+        iceshrimp_base_url = %iceshrimp_base_url,
+        "Signed up on Iceshrimp"
+    );
 
     // ── 4b. Inject Iceshrimp user's public key into Emumet cache ──
     // Iceshrimp v2026.5.1 returns 401 for its ActivityPub actor endpoint
