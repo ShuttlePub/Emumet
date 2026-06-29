@@ -182,7 +182,7 @@ wait_for_service() {
 }
 
 echo "  - postgres..."
-wait_for_service "postgres" "$COMPOSE_CMD exec postgres pg_isready -U postgres"
+wait_for_service "postgres" "$COMPOSE_CMD exec -T postgres pg_isready -U postgres </dev/null"
 
 echo "  - kratos..."
 wait_for_service "kratos" "curl -sf --connect-timeout 2 --max-time 5 http://localhost:4433/health/alive"
@@ -191,7 +191,7 @@ echo "  - hydra..."
 wait_for_service "hydra" "curl -sf --connect-timeout 2 --max-time 5 http://localhost:4444/health/alive"
 
 echo "  - redis..."
-wait_for_service "redis" "$COMPOSE_CMD exec redis redis-cli ping 2>/dev/null | grep -q PONG"
+wait_for_service "redis" "$COMPOSE_CMD exec -T redis redis-cli ping </dev/null 2>/dev/null | grep -q PONG"
 
 echo "  - nginx (port 8443)..."
 wait_for_service "nginx" "echo >/dev/tcp/localhost/8443 2>/dev/null"
