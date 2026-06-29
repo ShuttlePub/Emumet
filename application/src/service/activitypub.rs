@@ -845,10 +845,14 @@ pub fn inject_test_remote_actor(
     use kernel::prelude::entity::{RemoteAccountAcct, RemoteAccountUrl};
     let mut cache = TEST_STATIC_RESOLVED_ACTORS.lock().expect("poisoned lock");
     let actor_id_url = actor_url.trim_end_matches('/');
+    let host = reqwest::Url::parse(actor_id_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .unwrap_or_else(|| "local".to_string());
     cache.insert(
         actor_id_url.to_string(),
         ResolvedRemoteActor {
-            acct: RemoteAccountAcct::new(format!("{}@local", username)),
+            acct: RemoteAccountAcct::new(format!("{}@{}", username, host)),
             url: RemoteAccountUrl::new(actor_id_url.to_string()),
             inbox_url: Some(inbox_url.to_string()),
             public_key_pem: Some(public_key_pem.to_string()),

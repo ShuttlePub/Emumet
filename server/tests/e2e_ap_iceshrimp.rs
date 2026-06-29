@@ -137,7 +137,7 @@ async fn iceshrimp_follows_emumet_account() {
         iceshrimp_base_url.trim_end_matches('/'),
         local_iceshrimp_user_id,
     );
-    emumet_client
+    let cache_key_resp = emumet_client
         .post(&cache_key_url)
         .header("X-Emumet-Test-Token", &test_token)
         .json(&serde_json::json!({
@@ -147,7 +147,12 @@ async fn iceshrimp_follows_emumet_account() {
         }))
         .send()
         .await
-        .expect("failed to inject actor key into Emumet cache");
+        .expect("failed to send cache-actor-key request");
+    assert_eq!(
+        cache_key_resp.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "cache-actor-key should return 204"
+    );
 
     // ── 4c. Inject Iceshrimp actor data into Emumet resolver cache ─
     // Iceshrimp v2026.5.1 returns 401 for its ActivityPub actor endpoint
@@ -159,7 +164,7 @@ async fn iceshrimp_follows_emumet_account() {
         cfg.server_base_url.trim_end_matches('/')
     );
     let ics_inbox_url = format!("{actor_url}/inbox");
-    emumet_client
+    let cache_actor_resp = emumet_client
         .post(&cache_remote_actor_url)
         .header("X-Emumet-Test-Token", &test_token)
         .json(&serde_json::json!({
@@ -170,7 +175,12 @@ async fn iceshrimp_follows_emumet_account() {
         }))
         .send()
         .await
-        .expect("failed to inject remote actor data into Emumet cache");
+        .expect("failed to send cache-remote-actor request");
+    assert_eq!(
+        cache_actor_resp.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "cache-remote-actor should return 204"
+    );
 
     // ── 5. Resolve Emumet account via Actor URL ───────────────────
     // Iceshrimp's ap/show node-fetch doesn't support acct: URIs,
