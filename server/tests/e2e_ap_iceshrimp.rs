@@ -149,6 +149,29 @@ async fn iceshrimp_follows_emumet_account() {
         .await
         .expect("failed to inject actor key into Emumet cache");
 
+    // ── 4c. Inject Iceshrimp actor data into Emumet resolver cache ─
+    // Iceshrimp v2026.5.1 returns 401 for its ActivityPub actor endpoint
+    // when accessed without authentication. We inject the actor data
+    // (username, inbox URL, public key) into the test cache so that
+    // Emumet's resolve_remote_actor can use it without making an HTTP request.
+    let cache_remote_actor_url = format!(
+        "{}/__test__/cache-remote-actor",
+        cfg.server_base_url.trim_end_matches('/')
+    );
+    let ics_inbox_url = format!("{actor_url}/inbox");
+    emumet_client
+        .post(&cache_remote_actor_url)
+        .header("X-Emumet-Test-Token", &test_token)
+        .json(&serde_json::json!({
+            "actor_url": actor_url,
+            "username": ics_username,
+            "inbox_url": ics_inbox_url,
+            "public_key_pem": ics_public_key_pem,
+        }))
+        .send()
+        .await
+        .expect("failed to inject remote actor data into Emumet cache");
+
     // ── 5. Resolve Emumet account via Actor URL ───────────────────
     // Iceshrimp's ap/show node-fetch doesn't support acct: URIs,
     // so we pass the actor URL directly.

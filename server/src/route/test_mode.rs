@@ -1,4 +1,5 @@
 use crate::error::ErrorStatus;
+use application::service::activitypub::inject_test_remote_actor;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
@@ -56,6 +57,7 @@ impl TestModeRouter for Router<crate::handler::AppModule> {
             .route("/__test__/reset", post(reset))
             .route("/__test__/inbox", get(inbox))
             .route("/__test__/cache-actor-key", post(cache_actor_key))
+            .route("/__test__/cache-remote-actor", post(cache_remote_actor))
     }
 }
 
@@ -182,6 +184,35 @@ async fn cache_actor_key(
         &body.key_id,
         body.public_key_pem,
         body.owner.as_deref().unwrap_or(""),
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct CacheRemoteActorRequest {
+    actor_url: String,
+    username: String,
+    inbox_url: String,
+    public_key_pem: String,
+}
+
+/// Inject a remote actor's data into the test global cache so that
+/// `resolve_remote_actor` returns it without making a remote fetch.
+///
+/// This is needed for E2E tests against instances whose ActivityPub actor
+/// endpoints require authentication (e.g. Iceshrimp).
+#[cfg(feature = "test-mode")]
+async fn cache_remote_actor(
+    headers: HeaderMap,
+    State(_state): State<crate::handler::AppModule>,
+    Json(body): Json<CacheRemoteActorRequest>,
+) -> Result<StatusCode, ErrorStatus> {
+    verify_token(&headers)?;
+    inject_test_remote_actor(
+        &body.actor_url,
+        &body.username,
+        &body.inbox_url,
+        &body.public_key_pem,
     );
     Ok(StatusCode::NO_CONTENT)
 }

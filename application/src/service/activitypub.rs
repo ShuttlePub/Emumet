@@ -818,9 +818,60 @@ struct ResolvedRemoteActor {
     public_key_pem: Option<String>,
 }
 
+/// Test-only: global cache of resolved remote actor data.
+///
+/// `resolve_remote_actor` checks this before making an HTTP request.
+/// Keys are inserted by the E2E test when the remote server requires
+/// authentication for its ActivityPub actor endpoint.
+#[cfg(any(test, feature = "test-mode"))]
+use std::collections::HashMap;
+
+#[cfg(any(test, feature = "test-mode"))]
+use std::sync::{LazyLock, Mutex};
+
+#[cfg(any(test, feature = "test-mode"))]
+static TEST_STATIC_RESOLVED_ACTORS: LazyLock<Mutex<HashMap<String, ResolvedRemoteActor>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Insert a remote actor into the test global cache so that
+/// `resolve_remote_actor` returns it without making an HTTP request.
+#[cfg(any(test, feature = "test-mode"))]
+pub fn inject_test_remote_actor(
+    actor_url: &str,
+    username: &str,
+    inbox_url: &str,
+    public_key_pem: &str,
+) {
+    use kernel::prelude::entity::{RemoteAccountAcct, RemoteAccountUrl};
+    let mut cache = TEST_STATIC_RESOLVED_ACTORS.lock().expect("poisoned lock");
+    let actor_id_url = actor_url.trim_end_matches('/');
+    cache.insert(
+        actor_id_url.to_string(),
+        ResolvedRemoteActor {
+            acct: RemoteAccountAcct::new(format!("{}@local", username)),
+            url: RemoteAccountUrl::new(actor_id_url.to_string()),
+            inbox_url: Some(inbox_url.to_string()),
+            public_key_pem: Some(public_key_pem.to_string()),
+        },
+    );
+}
+
 async fn resolve_remote_actor(
     actor_url: &str,
 ) -> error_stack::Result<ResolvedRemoteActor, KernelError> {
+    // Check test-mode global cache first
+    #[cfg(any(test, feature = "test-mode"))]
+    if let Ok(cache) = TEST_STATIC_RESOLVED_ACTORS.lock() {
+        let key = actor_url.trim_end_matches('/');
+        if let Some(cached) = cache.get(key) {
+            return Ok(ResolvedRemoteActor {
+                acct: RemoteAccountAcct::new(cached.acct.as_ref().clone()),
+                url: RemoteAccountUrl::new(cached.url.as_ref().clone()),
+                inbox_url: cached.inbox_url.clone(),
+                public_key_pem: cached.public_key_pem.clone(),
+            });
+        }
+    }
     let mut url = reqwest::Url::parse(actor_url).map_err(|e| {
         Report::new(KernelError::Rejected).attach_printable(format!("Invalid actor URL: {e}"))
     })?;
@@ -833,10 +884,7 @@ async fn resolve_remote_actor(
         let resolved_addresses = validate_fetch_url(&url).await?;
         let response = client_for_url(&url, &resolved_addresses)?
             .get(url.clone())
-            .header(
-                ACCEPT,
-                "application/activity+json, application/ld+json, application/json;q=0.9",
-            )
+            .header(ACCEPT, ACTIVITY_JSON)
             .header(USER_AGENT, "Emumet/0.1 ActivityPub actor resolver")
             .send()
             .await
@@ -861,10 +909,16 @@ async fn resolve_remote_actor(
             continue;
         }
         if !response.status().is_success() {
-            return Err(Report::new(KernelError::Rejected).attach_printable(format!(
-                "Remote actor endpoint returned {}",
-                response.status()
-            )));
+            let status = response.status();
+            let body_text = response.text().await.unwrap_or_default();
+            tracing::debug!(
+                remote_actor_url = %url,
+                status = %status,
+                body = %body_text,
+                "Remote actor fetch failed with non-success status"
+            );
+            return Err(Report::new(KernelError::Rejected)
+                .attach_printable(format!("Remote actor endpoint returned {status}",)));
         }
         break response.json::<Actor>().await.map_err(|e| {
             Report::new(KernelError::Rejected)
