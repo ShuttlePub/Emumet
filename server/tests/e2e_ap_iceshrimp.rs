@@ -51,6 +51,16 @@ async fn iceshrimp_follows_emumet_account() {
     let emumet_account = setup_test_account_details().await;
     let (_cfg, fixture) = iceshrimp_setup::setup_iceshrimp_remote_actor().await;
 
+    tracing::info!(
+        iceshrimp_base_url = %fixture.client.base_url,
+        iceshrimp_username = %fixture.user.username,
+        iceshrimp_password = "test-pass",
+        iceshrimp_user_id = %fixture.user.user_id,
+        emumet_account_id = %emumet_account.id,
+        emumet_account_name = %emumet_account.name,
+        "S7: account credentials for manual verification via EMUMET_E2E_PAUSE_BEFORE_CLEANUP"
+    );
+
     let public_base_url = cfg.public_base_url.trim_end_matches('/');
     let emumet_actor_url = iceshrimp_setup::emumet_actor_url(public_base_url, &emumet_account.id);
 
@@ -105,6 +115,16 @@ async fn emumet_follows_iceshrimp_account() {
     let jwt = auth::get_jwt_for_test_user().await;
     let emumet_account = setup_test_account_details().await;
     let (_cfg, fixture) = iceshrimp_setup::setup_iceshrimp_remote_actor().await;
+
+    tracing::info!(
+        iceshrimp_base_url = %fixture.client.base_url,
+        iceshrimp_username = %fixture.user.username,
+        iceshrimp_password = "test-pass",
+        iceshrimp_user_id = %fixture.user.user_id,
+        emumet_account_id = %emumet_account.id,
+        emumet_account_name = %emumet_account.name,
+        "S8: account credentials for manual verification via EMUMET_E2E_PAUSE_BEFORE_CLEANUP"
+    );
 
     let follow_resp = post_follow(
         &jwt,
@@ -161,6 +181,16 @@ async fn emumet_sends_signed_create_note_to_iceshrimp() {
     let jwt = auth::get_jwt_for_test_user().await;
     let emumet_account = setup_test_account_details().await;
     let (_cfg, fixture) = iceshrimp_setup::setup_iceshrimp_remote_actor().await;
+
+    tracing::info!(
+        iceshrimp_base_url = %fixture.client.base_url,
+        iceshrimp_username = %fixture.user.username,
+        iceshrimp_password = "test-pass",
+        iceshrimp_user_id = %fixture.user.user_id,
+        emumet_account_id = %emumet_account.id,
+        emumet_account_name = %emumet_account.name,
+        "S9: account credentials for manual verification via EMUMET_E2E_PAUSE_BEFORE_CLEANUP"
+    );
 
     let public_base_url = cfg.public_base_url.trim_end_matches('/');
     let actor_url = format!("{public_base_url}/accounts/{}", emumet_account.id);
