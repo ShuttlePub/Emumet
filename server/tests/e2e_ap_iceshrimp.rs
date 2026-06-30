@@ -4,7 +4,11 @@
 //! and a real Iceshrimp instance running in a compose profile
 //! (compose.yml + compose.ap-e2e.yml).
 //!
-//! | Test | Direction | What is verified |
+//! S7-S9 are combined into a single test (`iceshrimp_full_federation_scenario`)
+//! so the final database state is available for manual inspection when run
+//! with `EMUMET_E2E_PAUSE_BEFORE_CLEANUP=1`.
+//!
+//! | Step | Direction | What is verified |
 //! |------|-----------|-----------------|
 //! | S7   | Iceshrimp → Emumet | Iceshrimp follows Emumet, both collections update |
 //! | S8   | Emumet → Iceshrimp | Emumet follows Iceshrimp, both collections update |
@@ -37,77 +41,14 @@ fn init_test_tracing() {
     });
 }
 
-// ── S7: Iceshrimp → Emumet Follow ────────────────────────────────
+// ── S7-S9: Combined Federation Scenario ────────────────────────────────
+// Iceshrimp → Emumet follow → Emumet → Iceshrimp follow → signed Create/Note
 
 #[tokio::test]
 #[ignore]
-async fn iceshrimp_follows_emumet_account() {
+async fn iceshrimp_full_federation_scenario() {
     init_test_tracing();
-    iceshrimp_setup::require_ap_e2e_external_server("S7");
-
-    let cfg = ap_e2e_config();
-    db::reset_test_data().await;
-
-    let emumet_account = setup_test_account_details().await;
-    let (_cfg, fixture) = iceshrimp_setup::setup_iceshrimp_remote_actor().await;
-
-    tracing::info!(
-        iceshrimp_base_url = %fixture.client.base_url,
-        iceshrimp_username = %fixture.user.username,
-        iceshrimp_password = "test-pass",
-        iceshrimp_user_id = %fixture.user.user_id,
-        emumet_account_id = %emumet_account.id,
-        emumet_account_name = %emumet_account.name,
-        "S7: account credentials for manual verification via EMUMET_E2E_PAUSE_BEFORE_CLEANUP"
-    );
-
-    let public_base_url = cfg.public_base_url.trim_end_matches('/');
-    let emumet_actor_url = iceshrimp_setup::emumet_actor_url(public_base_url, &emumet_account.id);
-
-    let resolve_result = fixture
-        .client
-        .resolve_remote_user(&emumet_actor_url, &fixture.user.token)
-        .await
-        .expect("failed to resolve Emumet account from Iceshrimp");
-
-    let remote_user_id = iceshrimp_setup::extract_resolved_remote_user_id(&resolve_result);
-
-    fixture
-        .client
-        .follow_user(&remote_user_id, &fixture.user.token)
-        .await
-        .expect("failed to follow Emumet account from Iceshrimp");
-
-    assert!(
-        iceshrimp_setup::wait_for_emumet_collection_count(
-            &cfg.server_base_url,
-            &emumet_account.id,
-            "followers",
-            1,
-        )
-        .await,
-        "Emumet followers should include the Iceshrimp user within timeout"
-    );
-
-    assert!(
-        iceshrimp_setup::wait_for_iceshrimp_following_contains(
-            &fixture.client,
-            &fixture.user.user_id,
-            &fixture.user.token,
-            &emumet_actor_url,
-        )
-        .await,
-        "Iceshrimp user should be following the Emumet account"
-    );
-}
-
-// ── S8: Emumet → Iceshrimp Follow ────────────────────────────────
-
-#[tokio::test]
-#[ignore]
-async fn emumet_follows_iceshrimp_account() {
-    init_test_tracing();
-    iceshrimp_setup::require_ap_e2e_external_server("S8");
+    iceshrimp_setup::require_ap_e2e_external_server("S7-S9");
 
     let cfg = ap_e2e_config();
     db::reset_test_data().await;
@@ -123,8 +64,50 @@ async fn emumet_follows_iceshrimp_account() {
         iceshrimp_user_id = %fixture.user.user_id,
         emumet_account_id = %emumet_account.id,
         emumet_account_name = %emumet_account.name,
-        "S8: account credentials for manual verification via EMUMET_E2E_PAUSE_BEFORE_CLEANUP"
+        "S7-S9: combined federation scenario — account credentials for manual verification"
     );
+
+    let public_base_url = cfg.public_base_url.trim_end_matches('/');
+    let emumet_actor_url = iceshrimp_setup::emumet_actor_url(public_base_url, &emumet_account.id);
+
+    // ── S7: Iceshrimp → Emumet Follow ────────────────────────────────
+
+    let resolve_result = fixture
+        .client
+        .resolve_remote_user(&emumet_actor_url, &fixture.user.token)
+        .await
+        .expect("S7: failed to resolve Emumet account from Iceshrimp");
+    let remote_user_id = iceshrimp_setup::extract_resolved_remote_user_id(&resolve_result);
+
+    fixture
+        .client
+        .follow_user(&remote_user_id, &fixture.user.token)
+        .await
+        .expect("S7: failed to follow Emumet account from Iceshrimp");
+
+    assert!(
+        iceshrimp_setup::wait_for_emumet_collection_count(
+            &cfg.server_base_url,
+            &emumet_account.id,
+            "followers",
+            1,
+        )
+        .await,
+        "S7: Emumet followers should include the Iceshrimp user within timeout"
+    );
+
+    assert!(
+        iceshrimp_setup::wait_for_iceshrimp_following_contains(
+            &fixture.client,
+            &fixture.user.user_id,
+            &fixture.user.token,
+            &emumet_actor_url,
+        )
+        .await,
+        "S7: Iceshrimp user should be following the Emumet account"
+    );
+
+    // ── S8: Emumet → Iceshrimp Follow ────────────────────────────────
 
     let follow_resp = post_follow(
         &jwt,
@@ -136,7 +119,7 @@ async fn emumet_follows_iceshrimp_account() {
 
     assert!(
         follow_resp.status().is_success(),
-        "Emumet follow request should succeed: {}",
+        "S8: Emumet follow request should succeed: {}",
         follow_resp.status()
     );
 
@@ -148,7 +131,7 @@ async fn emumet_follows_iceshrimp_account() {
             1,
         )
         .await,
-        "Emumet following should include the Iceshrimp user within timeout"
+        "S8: Emumet following should include the Iceshrimp user within timeout"
     );
 
     let expected_actor_url = iceshrimp_setup::emumet_actor_url(
@@ -163,79 +146,14 @@ async fn emumet_follows_iceshrimp_account() {
             &expected_actor_url,
         )
         .await,
-        "Iceshrimp followers should include the Emumet account within timeout"
-    );
-}
-
-// ── S9: Emumet → Iceshrimp Signed Create/Note ────────────────────
-
-#[tokio::test]
-#[ignore]
-async fn emumet_sends_signed_create_note_to_iceshrimp() {
-    init_test_tracing();
-    iceshrimp_setup::require_ap_e2e_external_server("S9");
-
-    let cfg = ap_e2e_config();
-    db::reset_test_data().await;
-
-    let jwt = auth::get_jwt_for_test_user().await;
-    let emumet_account = setup_test_account_details().await;
-    let (_cfg, fixture) = iceshrimp_setup::setup_iceshrimp_remote_actor().await;
-
-    tracing::info!(
-        iceshrimp_base_url = %fixture.client.base_url,
-        iceshrimp_username = %fixture.user.username,
-        iceshrimp_password = "test-pass",
-        iceshrimp_user_id = %fixture.user.user_id,
-        emumet_account_id = %emumet_account.id,
-        emumet_account_name = %emumet_account.name,
-        "S9: account credentials for manual verification via EMUMET_E2E_PAUSE_BEFORE_CLEANUP"
+        "S8: Iceshrimp followers should include the Emumet account within timeout"
     );
 
-    let public_base_url = cfg.public_base_url.trim_end_matches('/');
+    // ── S9: Emumet → Iceshrimp Signed Create/Note ────────────────────
+
     let actor_url = format!("{public_base_url}/accounts/{}", emumet_account.id);
     let followers_url = format!("{actor_url}/followers");
 
-    // ── 1. Establish follow (Iceshrimp → Emumet) ───────────────────
-    // So the delivered note appears in Iceshrimp's timeline.
-    let resolve_result = fixture
-        .client
-        .resolve_remote_user(&actor_url, &fixture.user.token)
-        .await
-        .expect("failed to resolve Emumet account from Iceshrimp");
-    let remote_user_id = iceshrimp_setup::extract_resolved_remote_user_id(&resolve_result);
-
-    fixture
-        .client
-        .follow_user(&remote_user_id, &fixture.user.token)
-        .await
-        .expect("failed to follow Emumet account from Iceshrimp");
-
-    assert!(
-        iceshrimp_setup::wait_for_emumet_collection_count(
-            &cfg.server_base_url,
-            &emumet_account.id,
-            "followers",
-            1,
-        )
-        .await,
-        "S9: Emumet should have the Iceshrimp follower before posting"
-    );
-
-    // Also verify Iceshrimp's following list shows the Emumet account
-    // before proceeding with delivery.
-    assert!(
-        iceshrimp_setup::wait_for_iceshrimp_following_contains(
-            &fixture.client,
-            &fixture.user.user_id,
-            &fixture.user.token,
-            &actor_url,
-        )
-        .await,
-        "S9: Iceshrimp should be following the Emumet account before posting"
-    );
-
-    // ── 2. Build the Create/Note activity ──────────────────────────
     let note_id = format!("{actor_url}/statuses/{}", uuid::Uuid::new_v4());
     let activity_id = format!("{note_id}/activity");
     let inbox_url = fixture.user.inbox_url.clone();
@@ -266,7 +184,6 @@ async fn emumet_sends_signed_create_note_to_iceshrimp() {
 
     let body = serde_json::to_vec(&create_activity).expect("serialize Create/Note activity");
 
-    // ── 3. Compute HTTP headers for signing ────────────────────────
     use sha2::Digest;
     let digest = format!(
         "SHA-256={}",
@@ -285,7 +202,7 @@ async fn emumet_sends_signed_create_note_to_iceshrimp() {
     };
     let base64_body = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &body);
 
-    // ── 4. Sign via Emumet's /accounts/{id}/sign endpoint ──────────
+    // Sign via Emumet's /accounts/{id}/sign endpoint
     let sign_resp = e2e_http_client()
         .post(format!(
             "{}/accounts/{}/sign",
@@ -305,24 +222,24 @@ async fn emumet_sends_signed_create_note_to_iceshrimp() {
         }))
         .send()
         .await
-        .expect("failed to sign Create/Note via /sign endpoint");
+        .expect("S9: failed to sign Create/Note via /sign endpoint");
 
     assert!(
         sign_resp.status().is_success(),
-        "Sign endpoint returned {}",
+        "S9: Sign endpoint returned {}",
         sign_resp.status()
     );
 
     let sign_body: serde_json::Value = sign_resp
         .json()
         .await
-        .expect("sign response should be valid JSON");
+        .expect("S9: sign response should be valid JSON");
     let cavage = sign_body["cavage"]
         .as_object()
-        .expect("sign response should contain 'cavage' object")
+        .expect("S9: sign response should contain 'cavage' object")
         .clone();
 
-    // ── 5. Deliver the signed activity to Iceshrimp's inbox ────────
+    // Deliver the signed activity to Iceshrimp's inbox
     let mut inbox_req = e2e_http_client()
         .post(&inbox_url)
         .header("host", &host_header)
@@ -343,15 +260,15 @@ async fn emumet_sends_signed_create_note_to_iceshrimp() {
         .body(body)
         .send()
         .await
-        .expect("signed Create/Note POST to Iceshrimp inbox failed");
+        .expect("S9: signed Create/Note POST to Iceshrimp inbox failed");
 
     assert!(
         delivery_resp.status().is_success(),
-        "Iceshrimp inbox should accept the signed Create/Note: {}",
+        "S9: Iceshrimp inbox should accept the signed Create/Note: {}",
         delivery_resp.status()
     );
 
-    // ── 6. Verify note appears in Iceshrimp's global timeline ──────
+    // Verify note appears in Iceshrimp's global timeline
     iceshrimp_setup::wait_for_iceshrimp_global_note_uri(
         &fixture.client,
         &fixture.user.token,
@@ -360,7 +277,7 @@ async fn emumet_sends_signed_create_note_to_iceshrimp() {
     .await
     .unwrap_or_else(|err| {
         panic!(
-            "Iceshrimp global timeline should contain the delivered note \
+            "S9: Iceshrimp global timeline should contain the delivered note \
              (uri: {note_id}). Reason: {err}"
         )
     });
