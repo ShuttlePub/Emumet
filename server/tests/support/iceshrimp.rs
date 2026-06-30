@@ -139,6 +139,38 @@ impl IceshrimpClient {
         self.post_json_array("/api/users/following", &body).await
     }
 
+    /// POST /api/notes/global-timeline — fetch public/global timeline notes.
+    ///
+    /// Returns the most recent notes visible on the global timeline
+    /// (up to `limit` items). Remote notes are included if the instance
+    /// knows about them.
+    pub async fn get_global_timeline(
+        &self,
+        token: &str,
+        limit: u32,
+    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+        let body = serde_json::json!({
+            "i": token,
+            "limit": limit,
+            "withRenotes": false,
+        });
+        self.post_json_array("/api/notes/global-timeline", &body)
+            .await
+    }
+
+    /// Check whether the global timeline contains a note with the given
+    /// ActivityPub `uri`.
+    pub async fn global_timeline_contains_uri(
+        &self,
+        token: &str,
+        uri: &str,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let notes = self.get_global_timeline(token, 20).await?;
+        Ok(notes
+            .iter()
+            .any(|note| note.get("uri").and_then(|v| v.as_str()) == Some(uri)))
+    }
+
     // ── private helpers ──────────────────────────────────────────
 
     /// Send a POST request and deserialize the body as a JSON value.

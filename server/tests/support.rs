@@ -18,3 +18,6 @@ pub mod account_helper;
 
 #[path = "support/iceshrimp.rs"]
 pub mod iceshrimp;
+
+#[path = "support/iceshrimp_setup.rs"]
+pub mod iceshrimp_setup;

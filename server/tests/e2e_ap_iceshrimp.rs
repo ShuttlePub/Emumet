@@ -1,7 +1,14 @@
-//! ActivityPub Federation E2E Tests — Iceshrimp Scenario (S7)
+//! ActivityPub Federation E2E Tests — Iceshrimp Scenarios (S7-S9)
 //!
-//! This test verifies cross-instance follow between Emumet and a real Iceshrimp
-//! instance running in a compose profile (compose.yml + compose.ap-e2e.yml).
+//! These tests verify cross-instance ActivityPub federation between Emumet
+//! and a real Iceshrimp instance running in a compose profile
+//! (compose.yml + compose.ap-e2e.yml).
+//!
+//! | Test | Direction | What is verified |
+//! |------|-----------|-----------------|
+//! | S7   | Iceshrimp → Emumet | Iceshrimp follows Emumet, both collections update |
+//! | S8   | Emumet → Iceshrimp | Emumet follows Iceshrimp, both collections update |
+//! | S9   | Emumet → Iceshrimp | Emumet signs and delivers a Create/Note activity |
 //!
 //! Run with:
 //!   EMUMET_E2E_EXTERNAL_SERVER=1 cargo test -p server \
@@ -10,9 +17,11 @@
 #[allow(dead_code)]
 mod support;
 
-use support::account_helper::e2e_http_client;
+use support::account_helper::{e2e_http_client, post_follow, setup_test_account_details};
+use support::auth;
 use support::config::ap_e2e_config;
 use support::db;
+use support::iceshrimp_setup;
 
 fn init_test_tracing() {
     use std::sync::Once;
@@ -28,276 +37,307 @@ fn init_test_tracing() {
     });
 }
 
+// ── S7: Iceshrimp → Emumet Follow ────────────────────────────────
+
 #[tokio::test]
 #[ignore]
 async fn iceshrimp_follows_emumet_account() {
     init_test_tracing();
+    iceshrimp_setup::require_ap_e2e_external_server("S7");
 
-    // This test requires the full compose environment to be running.
-    if std::env::var("EMUMET_E2E_EXTERNAL_SERVER").as_deref() != Ok("1") {
-        panic!(
-            "S7 Iceshrimp E2E test requires EMUMET_E2E_EXTERNAL_SERVER=1\n\
-             This test needs the compose environment (compose.yml + compose.ap-e2e.yml)\n\
-             and Emumet running in test-mode."
-        );
-    }
-
-    // ── 1. Setup ──────────────────────────────────────────────────
     let cfg = ap_e2e_config();
     db::reset_test_data().await;
 
-    // ── 2. Create an account on Emumet ────────────────────────────
-    let emumet_account = support::account_helper::setup_test_account_details().await;
+    let emumet_account = setup_test_account_details().await;
+    let (_cfg, fixture) = iceshrimp_setup::setup_iceshrimp_remote_actor().await;
 
-    tracing::info!(
-        emumet_account_id = %emumet_account.id,
-        emumet_account_name = %emumet_account.name,
-        "Created Emumet test account"
-    );
-
-    // ── 3. Create Iceshrimp client ────────────────────────────────
-    let iceshrimp_base_url = std::env::var("ICESHRIMP_BASE_URL")
-        .expect("ICESHRIMP_BASE_URL must be set for S7 Iceshrimp test");
-    let ics = support::iceshrimp::IceshrimpClient::new(&iceshrimp_base_url);
-
-    // ── 4. Sign up on Iceshrimp ───────────────────────────────────
-    let unique_suffix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let ics_username = format!("e2e_{unique_suffix}");
-
-    let signup_result = ics
-        .signup(&ics_username, "test-pass")
-        .await
-        .expect("Iceshrimp signup failed — is compose running?");
-    let ics_token = signup_result["token"]
-        .as_str()
-        .expect("signup response missing token")
-        .to_string();
-    let local_iceshrimp_user_id = signup_result["id"]
-        .as_str()
-        .expect("signup response missing local user 'id'")
-        .to_string();
-
-    tracing::info!(
-        iceshrimp_username = %ics_username,
-        iceshrimp_user_id = %local_iceshrimp_user_id,
-        iceshrimp_base_url = %iceshrimp_base_url,
-        "Signed up on Iceshrimp"
-    );
-
-    // ── 4b. Inject Iceshrimp user's public key into Emumet cache ──
-    // Iceshrimp v2026.5.1 returns 401 for its ActivityPub actor endpoint
-    // and does not expose the publicKey through any REST API. The key is
-    // stored in the `user_keypair` database table but not included in API
-    // responses (only in the ActivityPub actor document rendered on fetch).
-    //
-    // We generate a known RSA key pair, inject it into Iceshrimp's
-    // database via docker exec psql, and inject the public key into
-    // Emumet's HTTP Signature verifier cache. This gives both sides a
-    // matching key pair without needing to fetch Iceshrimp's ActivityPub
-    // actor endpoint (which returns 401).
-    use rand::rngs::OsRng;
-    use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
-    use rsa::RsaPrivateKey;
-    use std::io::Write;
-
-    let mut rng = OsRng;
-    let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate RSA key pair");
-    let public_key = rsa::RsaPublicKey::from(&private_key);
-    let private_key_pem = private_key
-        .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
-        .expect("failed to PEM-encode private key")
-        .to_string();
-    let ics_public_key_pem = public_key
-        .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
-        .expect("failed to PEM-encode public key");
-
-    let sql = format!(
-        r#"UPDATE user_keypair SET "publicKey" = '{public_pem}', "privateKey" = '{private_pem}' WHERE "userId" = '{uid}';"#,
-        public_pem = &ics_public_key_pem.replace('\'', r"'\''"),
-        private_pem = &private_key_pem.replace('\'', r"'\''"),
-        uid = local_iceshrimp_user_id,
-    );
-    let docker_status = std::process::Command::new("docker")
-        .args([
-            "exec",
-            "-i",
-            "emumet-ap-e2e-iceshrimp-db",
-            "psql",
-            "-U",
-            "iceshrimp",
-            "-d",
-            "iceshrimp",
-        ])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .and_then(|mut child| {
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(sql.as_bytes())?;
-            }
-            child.wait()
-        })
-        .and_then(|status| {
-            if status.success() {
-                Ok(())
-            } else {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("docker exec psql exited with non-zero status: {status}"),
-                ))
-            }
-        });
-    docker_status
-        .expect("failed to inject RSA key pair into Iceshrimp user_keypair via docker exec psql");
-
-    let cache_key_url = format!(
-        "{}/__test__/cache-actor-key",
-        cfg.server_base_url.trim_end_matches('/')
-    );
-    let emumet_client = e2e_http_client();
-    let test_token =
-        std::env::var("EMUMET_TEST_MODE_TOKEN").expect("EMUMET_TEST_MODE_TOKEN must be set");
-    let actor_url = format!(
-        "{}/users/{}",
-        iceshrimp_base_url.trim_end_matches('/'),
-        local_iceshrimp_user_id,
-    );
-    let cache_key_resp = emumet_client
-        .post(&cache_key_url)
-        .header("X-Emumet-Test-Token", &test_token)
-        .json(&serde_json::json!({
-            "key_id": format!("{actor_url}#main-key"),
-            "public_key_pem": ics_public_key_pem,
-            "owner": actor_url,
-        }))
-        .send()
-        .await
-        .expect("failed to send cache-actor-key request");
-    assert_eq!(
-        cache_key_resp.status(),
-        reqwest::StatusCode::NO_CONTENT,
-        "cache-actor-key should return 204"
-    );
-
-    // ── 4c. Inject Iceshrimp actor data into Emumet resolver cache ─
-    // Iceshrimp v2026.5.1 returns 401 for its ActivityPub actor endpoint
-    // when accessed without authentication. We inject the actor data
-    // (username, inbox URL, public key) into the test cache so that
-    // Emumet's resolve_remote_actor can use it without making an HTTP request.
-    let cache_remote_actor_url = format!(
-        "{}/__test__/cache-remote-actor",
-        cfg.server_base_url.trim_end_matches('/')
-    );
-    let ics_inbox_url = format!("{actor_url}/inbox");
-    let cache_actor_resp = emumet_client
-        .post(&cache_remote_actor_url)
-        .header("X-Emumet-Test-Token", &test_token)
-        .json(&serde_json::json!({
-            "actor_url": actor_url,
-            "username": ics_username,
-            "inbox_url": ics_inbox_url,
-            "public_key_pem": ics_public_key_pem,
-        }))
-        .send()
-        .await
-        .expect("failed to send cache-remote-actor request");
-    assert_eq!(
-        cache_actor_resp.status(),
-        reqwest::StatusCode::NO_CONTENT,
-        "cache-remote-actor should return 204"
-    );
-
-    // ── 5. Resolve Emumet account via Actor URL ───────────────────
-    // Iceshrimp's ap/show node-fetch doesn't support acct: URIs,
-    // so we pass the actor URL directly.
     let public_base_url = cfg.public_base_url.trim_end_matches('/');
-    let emumet_actor_url = format!("{public_base_url}/accounts/{}", emumet_account.id);
-    let resolve_result = ics
-        .resolve_remote_user(&emumet_actor_url, &ics_token)
+    let emumet_actor_url = iceshrimp_setup::emumet_actor_url(public_base_url, &emumet_account.id);
+
+    let resolve_result = fixture
+        .client
+        .resolve_remote_user(&emumet_actor_url, &fixture.user.token)
         .await
         .expect("failed to resolve Emumet account from Iceshrimp");
-    // /api/ap/show returns { type, object } where object contains the remote actor
-    let remote_object = resolve_result["object"]
-        .as_object()
-        .or_else(|| resolve_result.as_object())
-        .expect("resolve response should be an object with 'object' field");
-    let remote_user_id = remote_object
-        .get("id")
-        .and_then(|v| v.as_str())
-        .or_else(|| resolve_result.get("id").and_then(|v| v.as_str()))
-        .or_else(|| {
-            resolve_result
-                .get("object")
-                .and_then(|v| v.get("id").and_then(|v| v.as_str()))
-        })
-        .expect("resolve response missing actor 'id'")
-        .to_string();
 
-    // ── 6. Iceshrimp user follows the Emumet account ──────────────
-    ics.follow_user(&remote_user_id, &ics_token)
+    let remote_user_id = iceshrimp_setup::extract_resolved_remote_user_id(&resolve_result);
+
+    fixture
+        .client
+        .follow_user(&remote_user_id, &fixture.user.token)
         .await
         .expect("failed to follow Emumet account from Iceshrimp");
 
-    // ── 7. Wait for and verify Emumet's followers collection ──────
-    let followers_client = e2e_http_client();
-    // Use server_base_url (HTTP localhost) for direct server access;
-    // public_base_url uses HTTPS which requires port 443 mapping from the host.
-    let followers_url = format!(
-        "{}/accounts/{}/followers",
-        cfg.server_base_url, emumet_account.id
-    );
-
-    let mut followers_verified = false;
-    for _ in 1..=30 {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if let Ok(resp) = followers_client
-            .get(&followers_url)
-            .header("accept", "application/activity+json")
-            .send()
-            .await
-        {
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                if body["totalItems"].as_u64().unwrap_or(0) >= 1 {
-                    followers_verified = true;
-                    break;
-                }
-            }
-        }
-    }
     assert!(
-        followers_verified,
+        iceshrimp_setup::wait_for_emumet_collection_count(
+            &cfg.server_base_url,
+            &emumet_account.id,
+            "followers",
+            1,
+        )
+        .await,
         "Emumet followers should include the Iceshrimp user within timeout"
     );
 
-    // ── 9. Verify Iceshrimp's following list ─────────────────────
-    let mut following_verified = false;
-    for _ in 1..=30 {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if let Ok(following) = ics
-            .get_following(&local_iceshrimp_user_id, &ics_token)
-            .await
-        {
-            if following.iter().any(|entry| {
-                let followee = &entry["followee"];
-                followee["uri"]
-                    .as_str()
-                    .is_some_and(|u| u == emumet_actor_url)
-                    || followee["id"]
-                        .as_str()
-                        .is_some_and(|i| i == emumet_actor_url)
-            }) {
-                following_verified = true;
-                break;
+    assert!(
+        iceshrimp_setup::wait_for_iceshrimp_following_contains(
+            &fixture.client,
+            &fixture.user.user_id,
+            &fixture.user.token,
+            &emumet_actor_url,
+        )
+        .await,
+        "Iceshrimp user should be following the Emumet account"
+    );
+}
+
+// ── S8: Emumet → Iceshrimp Follow ────────────────────────────────
+
+#[tokio::test]
+#[ignore]
+async fn emumet_follows_iceshrimp_account() {
+    init_test_tracing();
+    iceshrimp_setup::require_ap_e2e_external_server("S8");
+
+    let cfg = ap_e2e_config();
+    db::reset_test_data().await;
+
+    let jwt = auth::get_jwt_for_test_user().await;
+    let emumet_account = setup_test_account_details().await;
+    let (_cfg, fixture) = iceshrimp_setup::setup_iceshrimp_remote_actor().await;
+
+    let follow_resp = post_follow(
+        &jwt,
+        &emumet_account.id,
+        &cfg.server_base_url,
+        &fixture.user.actor_url,
+    )
+    .await;
+
+    assert!(
+        follow_resp.status().is_success(),
+        "Emumet follow request should succeed: {}",
+        follow_resp.status()
+    );
+
+    assert!(
+        iceshrimp_setup::wait_for_emumet_collection_count(
+            &cfg.server_base_url,
+            &emumet_account.id,
+            "following",
+            1,
+        )
+        .await,
+        "Emumet following should include the Iceshrimp user within timeout"
+    );
+
+    let expected_actor_url = iceshrimp_setup::emumet_actor_url(
+        cfg.public_base_url.trim_end_matches('/'),
+        &emumet_account.id,
+    );
+    assert!(
+        iceshrimp_setup::wait_for_iceshrimp_followers_contains(
+            &fixture.client,
+            &fixture.user.user_id,
+            &fixture.user.token,
+            &expected_actor_url,
+        )
+        .await,
+        "Iceshrimp followers should include the Emumet account within timeout"
+    );
+}
+
+// ── S9: Emumet → Iceshrimp Signed Create/Note ────────────────────
+
+#[tokio::test]
+#[ignore]
+async fn emumet_sends_signed_create_note_to_iceshrimp() {
+    init_test_tracing();
+    iceshrimp_setup::require_ap_e2e_external_server("S9");
+
+    let cfg = ap_e2e_config();
+    db::reset_test_data().await;
+
+    let jwt = auth::get_jwt_for_test_user().await;
+    let emumet_account = setup_test_account_details().await;
+    let (_cfg, fixture) = iceshrimp_setup::setup_iceshrimp_remote_actor().await;
+
+    let public_base_url = cfg.public_base_url.trim_end_matches('/');
+    let actor_url = format!("{public_base_url}/accounts/{}", emumet_account.id);
+    let followers_url = format!("{actor_url}/followers");
+
+    // ── 1. Establish follow (Iceshrimp → Emumet) ───────────────────
+    // So the delivered note appears in Iceshrimp's timeline.
+    let resolve_result = fixture
+        .client
+        .resolve_remote_user(&actor_url, &fixture.user.token)
+        .await
+        .expect("failed to resolve Emumet account from Iceshrimp");
+    let remote_user_id = iceshrimp_setup::extract_resolved_remote_user_id(&resolve_result);
+
+    fixture
+        .client
+        .follow_user(&remote_user_id, &fixture.user.token)
+        .await
+        .expect("failed to follow Emumet account from Iceshrimp");
+
+    assert!(
+        iceshrimp_setup::wait_for_emumet_collection_count(
+            &cfg.server_base_url,
+            &emumet_account.id,
+            "followers",
+            1,
+        )
+        .await,
+        "S9: Emumet should have the Iceshrimp follower before posting"
+    );
+
+    // Also verify Iceshrimp's following list shows the Emumet account
+    // before proceeding with delivery.
+    assert!(
+        iceshrimp_setup::wait_for_iceshrimp_following_contains(
+            &fixture.client,
+            &fixture.user.user_id,
+            &fixture.user.token,
+            &actor_url,
+        )
+        .await,
+        "S9: Iceshrimp should be following the Emumet account before posting"
+    );
+
+    // ── 2. Build the Create/Note activity ──────────────────────────
+    let note_id = format!("{actor_url}/statuses/{}", uuid::Uuid::new_v4());
+    let activity_id = format!("{note_id}/activity");
+    let inbox_url = fixture.user.inbox_url.clone();
+
+    use time::format_description::well_known::Rfc3339;
+    let published = time::OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .expect("format published timestamp");
+
+    let create_activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": activity_id,
+        "type": "Create",
+        "actor": actor_url,
+        "published": published,
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "cc": [followers_url],
+        "object": {
+            "id": note_id,
+            "type": "Note",
+            "attributedTo": actor_url,
+            "content": "<p>Emumet AP E2E signed Create/Note</p>",
+            "published": published,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [followers_url]
+        }
+    });
+
+    let body = serde_json::to_vec(&create_activity).expect("serialize Create/Note activity");
+
+    // ── 3. Compute HTTP headers for signing ────────────────────────
+    use sha2::Digest;
+    let digest = format!(
+        "SHA-256={}",
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            sha2::Sha256::digest(&body),
+        )
+    );
+    let date = httpdate::fmt_http_date(std::time::SystemTime::now());
+
+    let inbox_parsed = url::Url::parse(&inbox_url).expect("invalid inbox URL");
+    let inbox_host = inbox_parsed.host_str().expect("inbox URL must have a host");
+    let host_header = match inbox_parsed.port() {
+        Some(p) => format!("{inbox_host}:{p}"),
+        None => inbox_host.to_string(),
+    };
+    let base64_body = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &body);
+
+    // ── 4. Sign via Emumet's /accounts/{id}/sign endpoint ──────────
+    let sign_resp = e2e_http_client()
+        .post(format!(
+            "{}/accounts/{}/sign",
+            cfg.server_base_url, emumet_account.id
+        ))
+        .bearer_auth(&jwt)
+        .json(&serde_json::json!({
+            "method": "POST",
+            "url": inbox_url,
+            "headers": {
+                "host": host_header,
+                "date": date,
+                "digest": digest,
+                "content-type": "application/activity+json"
+            },
+            "body": base64_body,
+        }))
+        .send()
+        .await
+        .expect("failed to sign Create/Note via /sign endpoint");
+
+    assert!(
+        sign_resp.status().is_success(),
+        "Sign endpoint returned {}",
+        sign_resp.status()
+    );
+
+    let sign_body: serde_json::Value = sign_resp
+        .json()
+        .await
+        .expect("sign response should be valid JSON");
+    let cavage = sign_body["cavage"]
+        .as_object()
+        .expect("sign response should contain 'cavage' object")
+        .clone();
+
+    // ── 5. Deliver the signed activity to Iceshrimp's inbox ────────
+    let mut inbox_req = e2e_http_client()
+        .post(&inbox_url)
+        .header("host", &host_header)
+        .header("date", &date)
+        .header("digest", &digest)
+        .header("content-type", "application/activity+json");
+
+    for (name, value) in &cavage {
+        let lower = name.to_ascii_lowercase();
+        if lower != "host" && lower != "date" && lower != "digest" && lower != "content-type" {
+            if let Some(val) = value.as_str() {
+                inbox_req = inbox_req.header(name.as_str(), val);
             }
         }
     }
 
+    let delivery_resp = inbox_req
+        .body(body)
+        .send()
+        .await
+        .expect("signed Create/Note POST to Iceshrimp inbox failed");
+
     assert!(
-        following_verified,
-        "Iceshrimp user should be following the Emumet account (actor URL: {emumet_actor_url})"
+        delivery_resp.status().is_success(),
+        "Iceshrimp inbox should accept the signed Create/Note: {}",
+        delivery_resp.status()
     );
+
+    // ── 6. Verify note appears in Iceshrimp's global timeline ──────
+    iceshrimp_setup::wait_for_iceshrimp_global_note_uri(
+        &fixture.client,
+        &fixture.user.token,
+        &note_id,
+    )
+    .await
+    .unwrap_or_else(|err| {
+        panic!(
+            "Iceshrimp global timeline should contain the delivered note \
+             (uri: {note_id}). Reason: {err}"
+        )
+    });
+
+    // Note: The Note `id` uses a URI path (`/statuses/{uuid}`) that is not
+    // currently a dereferenceable endpoint on Emumet.  Iceshrimp stores the
+    // embedded Note with this URI as its `uri` field without immediately
+    // dereferencing it.  If Iceshrimp changes to require a resolvable object
+    // endpoint, the Note `id` must be updated to a real URL.
 }
