@@ -10,6 +10,7 @@
 
 volumes:
   iceshrimp_db_data:
+  mastodon_db_data:
 
 services:
   nginx:
@@ -19,6 +20,7 @@ services:
       - ap-e2e
     ports:
       - "8443:8443"
+      - "18443:443"  # host port 18443 → container 443 (rootless Docker can't bind privileged port 443)
     volumes:
       - type: bind
         source: ./e2e/certs/nginx.conf
@@ -43,9 +45,13 @@ services:
           - emumet.127.0.0.1.nip.io
           - peer.127.0.0.1.nip.io
           - iceshrimp.127.0.0.1.nip.io
+          - mastodon.127.0.0.1.nip.io
     depends_on:
       iceshrimp:
         condition: service_started
+    # Note: mastodon-web is intentionally NOT in depends_on so that existing
+    # Iceshrimp-only AP E2E runs are not blocked by Mastodon boot failures.
+    # nginx will return 502 for mastodon upstream until mastodon-web is ready.
 
   iceshrimp-db:
     image: docker.io/postgres:16-alpine
@@ -84,3 +90,102 @@ services:
         read_only: true
     expose:
       - "3000"
+
+  mastodon-db:
+    image: docker.io/postgres:16-alpine
+    container_name: emumet-ap-e2e-mastodon-db
+    profiles:
+      - ap-e2e
+    environment:
+      POSTGRES_DB: mastodon
+      POSTGRES_USER: mastodon
+      POSTGRES_PASSWORD: mastodon-pass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mastodon"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - mastodon_db_data:/var/lib/postgresql/data
+
+  mastodon-setup:
+    image: ghcr.io/mastodon/mastodon:v4.6.2
+    container_name: emumet-ap-e2e-mastodon-setup
+    profiles:
+      - ap-e2e
+    env_file: ./e2e/mastodon/.config/.env.production
+    # Run as root to make tootctl happy (it needs HOME or runs root)
+    user: "0:0"
+    command: >
+      bash -c "
+        bundle exec rake db:migrate &&
+        bin/tootctl settings registrations open &&
+        echo 'Mastodon DB setup complete'
+      "
+    environment:
+      RAILS_ENV: production
+    depends_on:
+      mastodon-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  mastodon-web:
+    image: ghcr.io/mastodon/mastodon:v4.6.2
+    container_name: emumet-ap-e2e-mastodon-web
+    profiles:
+      - ap-e2e
+    env_file: ./e2e/mastodon/.config/.env.production
+    # Run as root to add E2E cert to system CA store, then switch to mastodon user (UID 991)
+    user: "0:0"
+    command: >
+      bash -c "
+        cp /etc/nginx/certs/cert.pem /usr/local/share/ca-certificates/e2e.crt &&
+        update-ca-certificates 2>/dev/null;
+        exec su -s /bin/bash -c 'exec bundle exec puma -C config/puma.rb' mastodon
+      "
+    environment:
+      RAILS_ENV: production
+    depends_on:
+      mastodon-setup:
+        condition: service_completed_successfully
+    volumes:
+      - type: bind
+        source: ./e2e/certs
+        target: /etc/nginx/certs
+        read_only: true
+        bind:
+          selinux: z
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s --noproxy localhost localhost:3000/health | grep -q 'OK' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  mastodon-sidekiq:
+    image: ghcr.io/mastodon/mastodon:v4.6.2
+    container_name: emumet-ap-e2e-mastodon-sidekiq
+    profiles:
+      - ap-e2e
+    env_file: ./e2e/mastodon/.config/.env.production
+    # Run as root to add E2E cert, then switch to mastodon user
+    user: "0:0"
+    command: >
+      bash -c "
+        cp /etc/nginx/certs/cert.pem /usr/local/share/ca-certificates/e2e.crt &&
+        update-ca-certificates 2>/dev/null;
+        exec su -s /bin/bash -c 'exec bundle exec sidekiq' mastodon
+      "
+    environment:
+      RAILS_ENV: production
+    depends_on:
+      mastodon-setup:
+        condition: service_completed_successfully
+    volumes:
+      - type: bind
+        source: ./e2e/certs
+        target: /etc/nginx/certs
+        read_only: true
+        bind:
+          selinux: z

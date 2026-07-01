@@ -13,7 +13,7 @@ openssl req -x509 \
   -days 365 \
   -nodes \
   -subj "/CN=emumet.127.0.0.1.nip.io" \
-  -addext "subjectAltName=DNS:emumet.127.0.0.1.nip.io,DNS:peer.127.0.0.1.nip.io,DNS:iceshrimp.127.0.0.1.nip.io"
+  -addext "subjectAltName=DNS:emumet.127.0.0.1.nip.io,DNS:peer.127.0.0.1.nip.io,DNS:iceshrimp.127.0.0.1.nip.io,DNS:mastodon.127.0.0.1.nip.io"
 
 echo "Generated:"
 echo "  ${CERT_DIR}/cert.pem"

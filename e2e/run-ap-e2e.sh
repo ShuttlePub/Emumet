@@ -134,6 +134,7 @@ cleanup() {
         info "Infrastructure is still running. Access from your browser:"
         echo ""
         echo "  Iceshrimp:  https://iceshrimp.127.0.0.1.nip.io:8443"
+        echo "  Mastodon:   https://mastodon.127.0.0.1.nip.io:8443"
         echo "  Emumet:     https://emumet.127.0.0.1.nip.io:8443"
         echo "  Peer:       https://peer.127.0.0.1.nip.io:8443"
         echo ""
@@ -199,9 +200,15 @@ wait_for_service "nginx" "echo >/dev/tcp/localhost/8443 2>/dev/null"
 echo "  - iceshrimp..."
 wait_for_service "iceshrimp" "curl -sk --connect-timeout 2 --max-time 5 https://iceshrimp.127.0.0.1.nip.io:8443/api/endpoint"
 
+echo "  - mastodon..."
+wait_for_service "mastodon" "curl -sk --connect-timeout 2 --max-time 5 https://mastodon.127.0.0.1.nip.io:8443/health"
+
+echo "  - mastodon-sidekiq..."
+wait_for_service "mastodon-sidekiq" "$COMPOSE_CMD exec -T mastodon-sidekiq test -f tmp/sidekiq_process_has_started_and_will_begin_processing_jobs 2>/dev/null"
+
 # ── 8. Set AP E2E environment ──────────────────────────────────────────────
 # These override any values from .env
-export AP_TEST_ALLOWED_FETCH_HOSTS="127.0.0.1,iceshrimp.127.0.0.1.nip.io"
+export AP_TEST_ALLOWED_FETCH_HOSTS="127.0.0.1,iceshrimp.127.0.0.1.nip.io,mastodon.127.0.0.1.nip.io"
 export AP_TEST_ACCEPT_INVALID_CERTS="1"
 export EMUMET_E2E_EXTERNAL_SERVER="1"
 # Use direct HTTP for the server API (bypasses nginx to avoid potential
@@ -213,6 +220,7 @@ export EMUMET_E2E_SERVER_BASE_URL="http://localhost:8080"
 export EMUMET_E2E_PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io"
 export PUBLIC_BASE_URL="https://emumet.127.0.0.1.nip.io"
 export ICESHRIMP_BASE_URL="https://iceshrimp.127.0.0.1.nip.io:8443"
+export MASTODON_BASE_URL="https://mastodon.127.0.0.1.nip.io:8443"
 if [ -z "${EMUMET_TEST_MODE_TOKEN:-}" ]; then
     EMUMET_TEST_MODE_TOKEN=$(openssl rand -hex 32)
     info "Generated random EMUMET_TEST_MODE_TOKEN"
@@ -227,6 +235,7 @@ echo "  EMUMET_E2E_EXTERNAL_SERVER=$EMUMET_E2E_EXTERNAL_SERVER"
 echo "  EMUMET_E2E_SERVER_BASE_URL=$EMUMET_E2E_SERVER_BASE_URL"
 echo "  PUBLIC_BASE_URL=$PUBLIC_BASE_URL"
 echo "  ICESHRIMP_BASE_URL=$ICESHRIMP_BASE_URL"
+echo "  MASTODON_BASE_URL=$MASTODON_BASE_URL"
 echo "  EMUMET_TEST_MODE_TOKEN=(set — value not logged)"
 
 # ── 9. Start Emumet server ─────────────────────────────────────────────────
@@ -282,7 +291,17 @@ else
     exit 1
 fi
 
-# ── 13. Cleanup ─────────────────────────────────────────────────────────────
+# ── 13. Run Mastodon federation test ────────────────────────────────────────
+info "Running Mastodon federation test (e2e_ap_mastodon)..."
+if cargo test -p server --test e2e_ap_mastodon -- --ignored --test-threads=1 --nocapture; then
+    info "  Mastodon federation test: PASSED"
+else
+    err "Mastodon federation test failed"
+    kill $SERVER_PID 2>/dev/null
+    exit 1
+fi
+
+# ── 14. Cleanup ─────────────────────────────────────────────────────────────
 info "Stopping Emumet server..."
 kill $SERVER_PID 2>/dev/null || true
 wait $SERVER_PID 2>/dev/null || true

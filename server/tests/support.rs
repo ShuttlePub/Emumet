@@ -21,3 +21,9 @@ pub mod iceshrimp;
 
 #[path = "support/iceshrimp_setup.rs"]
 pub mod iceshrimp_setup;
+
+#[path = "support/mastodon.rs"]
+pub mod mastodon;
+
+#[path = "support/mastodon_setup.rs"]
+pub mod mastodon_setup;
