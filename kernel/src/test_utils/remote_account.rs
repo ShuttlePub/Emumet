@@ -7,6 +7,8 @@ pub struct RemoteAccountBuilder {
     acct: Option<RemoteAccountAcct>,
     url: Option<RemoteAccountUrl>,
     icon_id: Option<Option<ImageId>>,
+    inbox_url: Option<Option<String>>,
+    public_key_pem: Option<Option<String>>,
 }
 
 impl Default for RemoteAccountBuilder {
@@ -22,6 +24,8 @@ impl RemoteAccountBuilder {
             acct: None,
             url: None,
             icon_id: None,
+            inbox_url: None,
+            public_key_pem: None,
         }
     }
 
@@ -45,6 +49,16 @@ impl RemoteAccountBuilder {
         self
     }
 
+    pub fn inbox_url(mut self, inbox_url: Option<impl Into<String>>) -> Self {
+        self.inbox_url = Some(inbox_url.map(Into::into));
+        self
+    }
+
+    pub fn public_key_pem(mut self, public_key_pem: Option<impl Into<String>>) -> Self {
+        self.public_key_pem = Some(public_key_pem.map(Into::into));
+        self
+    }
+
     pub fn build(self) -> RemoteAccount {
         crate::ensure_generator_initialized();
         let (default_acct, default_url) = unique_remote_acct();
@@ -54,6 +68,8 @@ impl RemoteAccountBuilder {
             self.acct.unwrap_or(default_acct),
             self.url.unwrap_or(default_url),
             self.icon_id.unwrap_or(None),
+            self.inbox_url.unwrap_or(None),
+            self.public_key_pem.unwrap_or(None),
         )
     }
 }

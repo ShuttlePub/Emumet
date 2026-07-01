@@ -1,9 +1,12 @@
+pub mod activitypub;
+mod config;
 mod crypto;
 mod database;
 mod entity;
 mod error;
 mod event;
 mod event_store;
+mod http_signing;
 pub mod id;
 mod permission;
 mod read_model;
@@ -42,6 +45,7 @@ pub mod interfaces {
         pub use crate::read_model::*;
     }
     pub mod repository {
+        pub use crate::entity::{DependOnSigningKeyRepository, SigningKeyRepository};
         pub use crate::repository::*;
     }
     pub mod permission {
@@ -49,6 +53,12 @@ pub mod interfaces {
     }
     pub mod signal {
         pub use crate::signal::*;
+    }
+    pub mod http_signing {
+        pub use crate::http_signing::*;
+    }
+    pub mod config {
+        pub use crate::config::*;
     }
 }
 
@@ -64,6 +74,7 @@ pub mod interfaces {
 /// - DependOnFollowRepository
 /// - DependOnRemoteAccountRepository
 /// - DependOnImageRepository
+/// - DependOnSigningKeyRepository
 ///
 /// # Usage
 /// ```ignore
@@ -154,6 +165,13 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnOutboxActivityRepository for $impl_type {
+            type OutboxActivityRepository = <$db_type as $crate::interfaces::repository::DependOnOutboxActivityRepository>::OutboxActivityRepository;
+            fn outbox_activity_repository(&self) -> &Self::OutboxActivityRepository {
+                $crate::interfaces::repository::DependOnOutboxActivityRepository::outbox_activity_repository(&self.$field)
+            }
+        }
+
         impl $crate::interfaces::repository::DependOnRemoteAccountRepository for $impl_type {
             type RemoteAccountRepository = <$db_type as $crate::interfaces::repository::DependOnRemoteAccountRepository>::RemoteAccountRepository;
             fn remote_account_repository(&self) -> &Self::RemoteAccountRepository {
@@ -165,6 +183,13 @@ macro_rules! impl_database_delegation {
             type ImageRepository = <$db_type as $crate::interfaces::repository::DependOnImageRepository>::ImageRepository;
             fn image_repository(&self) -> &Self::ImageRepository {
                 $crate::interfaces::repository::DependOnImageRepository::image_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnSigningKeyRepository for $impl_type {
+            type SigningKeyRepository = <$db_type as $crate::interfaces::repository::DependOnSigningKeyRepository>::SigningKeyRepository;
+            fn signing_key_repository(&self) -> &Self::SigningKeyRepository {
+                $crate::interfaces::repository::DependOnSigningKeyRepository::signing_key_repository(&self.$field)
             }
         }
 

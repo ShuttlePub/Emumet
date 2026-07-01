@@ -6,6 +6,9 @@ authors.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+test-mode = ["application/test-mode", "driver/test-mode", "sqlx/time"]
+
 [dependencies]
 time = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
@@ -30,6 +33,7 @@ error-stack = { workspace = true }
 vodca = { workspace = true }
 destructure = { workspace = true }
 serde = { workspace = true }
+base64 = "0.22"
 
 utoipa = { version = "5.4.0", features = ["axum_extras", "time"] }
 
@@ -37,11 +41,12 @@ adapter = { path = "../adapter" }
 application = { path = "../application" }
 driver = { path = "../driver" }
 kernel = { path = "../kernel" }
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "time"], optional = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 rand = "0.8"
-rsa = { version = "0.9" }
+rsa = { version = "0.9", features = ["sha2", "pem"] }
 base64 = "0.22"
 wiremock = "0.6"
 http-body-util = "0.1"
@@ -50,3 +55,5 @@ kernel = { path = "../kernel", features = ["test-utils"] }
 reqwest = { version = "0.12", features = ["json", "cookies"] }
 tokio = { workspace = true, features = ["process"] }
 sqlx = { version = "0.7", features = ["runtime-tokio", "postgres"] }
+sha2 = "0.10"
+httpdate = "1"

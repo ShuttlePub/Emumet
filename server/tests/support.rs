@@ -6,3 +6,24 @@ pub mod db;
 
 #[path = "support/server.rs"]
 pub mod server;
+
+#[path = "support/ap_peer.rs"]
+pub mod ap_peer;
+
+#[path = "support/config.rs"]
+pub mod config;
+
+#[path = "support/account_helper.rs"]
+pub mod account_helper;
+
+#[path = "support/iceshrimp.rs"]
+pub mod iceshrimp;
+
+#[path = "support/iceshrimp_setup.rs"]
+pub mod iceshrimp_setup;
+
+#[path = "support/mastodon.rs"]
+pub mod mastodon;
+
+#[path = "support/mastodon_setup.rs"]
+pub mod mastodon_setup;

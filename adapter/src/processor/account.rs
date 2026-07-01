@@ -303,6 +303,12 @@ pub trait AccountQueryProcessor: Send + Sync + 'static {
         auth_id: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
 
+    fn find_by_name(
+        &self,
+        executor: &mut Self::Executor,
+        name: &AccountName,
+    ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
+
     fn find_by_nanoid(
         &self,
         executor: &mut Self::Executor,
@@ -357,6 +363,14 @@ where
         self.account_read_model()
             .find_by_auth_id(executor, auth_id)
             .await
+    }
+
+    async fn find_by_name(
+        &self,
+        executor: &mut Self::Executor,
+        name: &AccountName,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        self.account_read_model().find_by_name(executor, name).await
     }
 
     async fn find_by_nanoid(

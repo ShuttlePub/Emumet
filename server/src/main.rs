@@ -12,9 +12,13 @@ use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
 use crate::handler::AppModule;
 use crate::route::account::AccountRouter;
+use crate::route::activitypub::ActivityPubRouter;
 use crate::route::metadata::MetadataRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile::ProfileRouter;
+use crate::route::signing::{SigningAuthedRouter, SigningPublicRouter};
+#[cfg(feature = "test-mode")]
+use crate::route::test_mode::TestModeRouter;
 use axum::http::{header, HeaderValue, Method};
 use error_stack::ResultExt;
 use kernel::KernelError;
@@ -69,18 +73,36 @@ async fn main() -> Result<(), StackTrace> {
 
     let app = AppModule::new().await?;
 
+    #[cfg(feature = "test-mode")]
+    {
+        let token = std::env::var("EMUMET_TEST_MODE_TOKEN");
+        if token.as_deref().unwrap_or("").is_empty() {
+            eprintln!(
+                "FATAL: EMUMET_TEST_MODE_TOKEN must be set when running with test-mode feature"
+            );
+            std::process::exit(1);
+        }
+    }
+
     // Routes that require JWT auth
     let authed_routes = axum::Router::new()
         .route_account()
         .route_profile()
         .route_metadata()
+        .route_signing_authed()
         .layer(axum::middleware::from_fn_with_state(
             (oidc_config, jwks_cache),
             auth::auth_middleware,
         ));
 
     // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider)
-    let public_routes = axum::Router::new().route_oauth2();
+    let public_routes = axum::Router::new()
+        .route_oauth2()
+        .route_signing_public()
+        .route_activitypub();
+
+    #[cfg(feature = "test-mode")]
+    let public_routes = public_routes.route_test_mode();
 
     let router = authed_routes
         .merge(public_routes)

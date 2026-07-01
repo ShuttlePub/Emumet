@@ -11,7 +11,7 @@ pub async fn truncate_tables() {
         .expect("failed to connect to postgres for e2e cleanup");
 
     sqlx::query(
-        "TRUNCATE accounts, account_events, auth_accounts, auth_account_events, auth_emumet_accounts, profiles, profile_events, metadatas, metadata_events, auth_hosts, follows, remote_accounts, images, signing_keys CASCADE",
+        "TRUNCATE accounts, account_events, auth_accounts, auth_account_events, auth_emumet_accounts, profiles, profile_events, metadatas, metadata_events, auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities CASCADE",
     )
     .execute(&pool)
     .await

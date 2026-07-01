@@ -10,6 +10,7 @@ authors.workspace = true
 destructure = { workspace = true }
 vodca = { workspace = true }
 serde = { workspace = true }
+serde_json = "1"
 ferroid = { workspace = true }
 time = { workspace = true }
 nanoid = { workspace = true }

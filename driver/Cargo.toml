@@ -6,6 +6,9 @@ authors.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+test-mode = []
+
 [dependencies]
 dotenvy = { workspace = true }
 deadpool-redis = "0.20.0"
@@ -24,6 +27,17 @@ aes-gcm = "0.10"
 base64 = "0.22"
 rand = "0.8"
 zeroize = "1.7"
+sha2 = "0.10"
+httpdate = "1"
+tokio = { workspace = true, features = ["net"] }
+
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+http-msgsign = { workspace = true }
+http-msgsign-draft = { workspace = true }
+ed25519-dalek = { workspace = true }
+tracing = { workspace = true }
 
 kernel = { path = "../kernel" }
 

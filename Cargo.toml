@@ -27,6 +27,11 @@ tracing-subscriber = { version = "0.3.18", features = ["registry", "env-filter",
 
 test-with = "0.14.7"
 
+http-msgsign = "0.1"
+http-msgsign-draft = "0.4"
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem", "rand_core"] }
+sfv = "0.15"
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"

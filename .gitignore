@@ -5,3 +5,5 @@
 .env
 logs
 master-key-password
+e2e/certs/*.pem
+e2e/certs/*.key
