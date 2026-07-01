@@ -212,7 +212,10 @@ echo "  - mastodon-sidekiq..."
 # Look for the sidekiq process in the container as a signal that sidekiq has
 # started processing. The heartbeat file pattern used by Iceshrimp does not
 # exist in Mastodon's container without a custom wrapper.
-wait_for_service "mastodon-sidekiq" "$COMPOSE_CMD exec -T mastodon-sidekiq pgrep -f sidekiq 2>/dev/null"
+# Close stdin explicitly: "docker compose exec -T" disables the TTY but still
+# attaches stdin, and terminal multiplexers (e.g. zellij) can keep it open so
+# that the exec session never terminates even though pgrep has already exited.
+wait_for_service "mastodon-sidekiq" "$COMPOSE_CMD exec -T mastodon-sidekiq pgrep -f sidekiq </dev/null 2>/dev/null"
 
 # ── 8. Set AP E2E environment ──────────────────────────────────────────────
 # These override any values from .env
