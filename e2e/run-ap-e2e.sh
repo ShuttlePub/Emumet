@@ -198,13 +198,21 @@ echo "  - nginx (port 8443)..."
 wait_for_service "nginx" "echo >/dev/tcp/localhost/8443 2>/dev/null"
 
 echo "  - iceshrimp..."
-wait_for_service "iceshrimp" "curl -sk --connect-timeout 2 --max-time 5 https://iceshrimp.127.0.0.1.nip.io:8443/api/endpoint"
+# Check that we get a non-502 HTTP status.  nginx returns 502 when the
+# upstream (iceshrimp:3000) is not yet ready, and curl -s returns 0 even
+# for the 502 HTML page.  We extract the status code and reject 502.
+wait_for_service "iceshrimp" "test \"\$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 https://iceshrimp.127.0.0.1.nip.io:8443/api/endpoint 2>/dev/null)\" != 502"
 
 echo "  - mastodon..."
-wait_for_service "mastodon" "curl -sk --connect-timeout 2 --max-time 5 https://mastodon.127.0.0.1.nip.io:8443/health"
+# Mastodon's health endpoint returns HTTP 200 with body "OK" when ready.
+# Check that the body is exactly "OK" (not the nginx 502 HTML page).
+wait_for_service "mastodon" "curl -sk --connect-timeout 2 --max-time 5 https://mastodon.127.0.0.1.nip.io:8443/health 2>/dev/null | grep -qxF OK"
 
 echo "  - mastodon-sidekiq..."
-wait_for_service "mastodon-sidekiq" "$COMPOSE_CMD exec -T mastodon-sidekiq test -f tmp/sidekiq_process_has_started_and_will_begin_processing_jobs 2>/dev/null"
+# Look for the sidekiq process in the container as a signal that sidekiq has
+# started processing. The heartbeat file pattern used by Iceshrimp does not
+# exist in Mastodon's container without a custom wrapper.
+wait_for_service "mastodon-sidekiq" "$COMPOSE_CMD exec -T mastodon-sidekiq pgrep -f sidekiq 2>/dev/null"
 
 # ── 8. Set AP E2E environment ──────────────────────────────────────────────
 # These override any values from .env
