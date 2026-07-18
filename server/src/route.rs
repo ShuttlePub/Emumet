@@ -4,9 +4,7 @@ use axum::http::StatusCode;
 
 pub mod account;
 pub mod activitypub;
-pub mod metadata;
 pub mod oauth2;
-pub mod profile;
 pub mod signing;
 
 #[cfg(feature = "test-mode")]
@@ -54,12 +52,10 @@ impl DirectionConverter for Option<String> {
 #[cfg(test)]
 pub(crate) fn build_test_router(app: crate::handler::AppModule) -> axum::Router {
     use crate::auth::{JwksCache, OidcConfig};
-    use crate::route::account::AccountRouter;
-    use crate::route::activitypub::ActivityPubRouter;
-    use crate::route::metadata::MetadataRouter;
+    use crate::route::account::{AccountRouter, AdminAccountRouter};
+    use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
     use crate::route::oauth2::OAuth2Router;
-    use crate::route::profile::ProfileRouter;
-    use crate::route::signing::{SigningAuthedRouter, SigningPublicRouter};
+    use crate::route::signing::SigningRouter;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -73,11 +69,13 @@ pub(crate) fn build_test_router(app: crate::handler::AppModule) -> axum::Router 
         Duration::from_secs(0),
     ));
 
-    let authed_routes = axum::Router::new()
+    let api_v1 = axum::Router::new()
         .route_account()
-        .route_profile()
-        .route_metadata()
-        .route_signing_authed()
+        .nest("/admin", axum::Router::new().route_admin_account());
+
+    let authed_routes = axum::Router::new()
+        .nest("/api/v1", api_v1)
+        .nest("/internal/v1", axum::Router::new().route_signing())
         .layer(axum::middleware::from_fn_with_state(
             (oidc_config, jwks_cache),
             crate::auth::auth_middleware,
@@ -85,8 +83,8 @@ pub(crate) fn build_test_router(app: crate::handler::AppModule) -> axum::Router 
 
     let public_routes = axum::Router::new()
         .route_oauth2()
-        .route_signing_public()
-        .route_activitypub();
+        .route_activitypub()
+        .nest("/ap", axum::Router::new().route_federation());
 
     authed_routes.merge(public_routes).with_state(app)
 }

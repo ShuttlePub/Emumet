@@ -24,18 +24,25 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 const ACTIVITY_JSON: &str = "application/activity+json";
-const ACTIVITY_LD_JSON: &str = "application/ld+json";
-const ACTIVITYSTREAMS_PROFILE: &str = "https://www.w3.org/ns/activitystreams";
 const JRD_JSON: &str = "application/jrd+json";
 
 pub trait ActivityPubRouter {
     fn route_activitypub(self) -> Self;
 }
 
+pub trait FederationRouter {
+    fn route_federation(self) -> Self;
+}
+
 impl ActivityPubRouter for Router<AppModule> {
     fn route_activitypub(self) -> Self {
         self.route("/.well-known/webfinger", get(webfinger))
-            .route("/accounts/{account_id}", get(get_actor))
+    }
+}
+
+impl FederationRouter for Router<AppModule> {
+    fn route_federation(self) -> Self {
+        self.route("/accounts/{account_id}", get(get_actor))
             .route(
                 "/accounts/{account_id}/inbox",
                 post(post_inbox).layer(DefaultBodyLimit::max(1024 * 1024)),
@@ -52,7 +59,7 @@ impl ActivityPubRouter for Router<AppModule> {
     description = "WebFinger account discovery for ActivityPub.",
     params(("resource" = String, Query, description = "Resource URI (acct:user@domain)")),
     responses(
-        (status = 200, description = "WebFinger response", body = crate::schema::activitypub::WebFingerResponse, content_type = "application/jrd+json"),
+        (status = 200, description = "WebFinger response", body = kernel::activitypub::WebFingerResponse, content_type = "application/jrd+json"),
         (status = 400, description = "Invalid resource format"),
         (status = 404, description = "Account not found"),
     ),
@@ -81,23 +88,19 @@ pub(crate) async fn webfinger(
 
 #[utoipa::path(
         get,
-        path = "/accounts/{account_id}",
+        path = "/ap/accounts/{account_id}",
         description = "Retrieve an ActivityPub Actor document for a local account.",
         params(("id" = String, Path, description = "Account nanoid")),
     responses(
-        (status = 200, description = "ActivityPub Actor", body = crate::schema::activitypub::ActorResponse, content_type = "application/activity+json"),
-        (status = 404, description = "Actor not found or ActivityPub media type not requested"),
+        (status = 200, description = "ActivityPub Actor", body = kernel::activitypub::Actor, content_type = "application/activity+json"),
+        (status = 404, description = "Actor not found"),
     ),
     tag = "ActivityPub",
 )]
 pub(crate) async fn get_actor(
     State(module): State<AppModule>,
     Path(account_id): Path<String>,
-    headers: HeaderMap,
 ) -> Result<Response, ErrorStatus> {
-    if !accepts_activitypub(&headers) {
-        return Err(ErrorStatus::from(StatusCode::NOT_FOUND));
-    }
     if account_id.trim().is_empty() {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
@@ -120,11 +123,11 @@ pub(crate) async fn get_actor(
 
 #[utoipa::path(
         get,
-        path = "/accounts/{account_id}/followers",
+        path = "/ap/accounts/{account_id}/followers",
         description = "Retrieve an ActivityPub followers OrderedCollection for a local account.",
         params(("id" = String, Path, description = "Account nanoid")),
     responses(
-        (status = 200, description = "Followers collection", body = crate::schema::activitypub::OrderedCollectionResponse, content_type = "application/activity+json"),
+        (status = 200, description = "Followers collection", body = kernel::activitypub::OrderedCollection, content_type = "application/activity+json"),
         (status = 400, description = "Invalid account ID"),
         (status = 404, description = "Account not found"),
     ),
@@ -150,11 +153,11 @@ pub(crate) async fn get_followers(
 
 #[utoipa::path(
         get,
-        path = "/accounts/{account_id}/following",
+        path = "/ap/accounts/{account_id}/following",
         description = "Retrieve an ActivityPub following OrderedCollection for a local account.",
         params(("id" = String, Path, description = "Account nanoid")),
     responses(
-        (status = 200, description = "Following collection", body = crate::schema::activitypub::OrderedCollectionResponse, content_type = "application/activity+json"),
+        (status = 200, description = "Following collection", body = kernel::activitypub::OrderedCollection, content_type = "application/activity+json"),
         (status = 400, description = "Invalid account ID"),
         (status = 404, description = "Account not found"),
     ),
@@ -180,7 +183,7 @@ pub(crate) async fn get_following(
 
 #[utoipa::path(
         get,
-        path = "/accounts/{account_id}/outbox",
+        path = "/ap/accounts/{account_id}/outbox",
         description = "Retrieve an ActivityPub outbox OrderedCollection for a local account.",
         params(
             ("id" = String, Path, description = "Account nanoid"),
@@ -188,7 +191,7 @@ pub(crate) async fn get_following(
         ("cursor" = Option<i64>, Query, description = "Return activities with IDs older than this cursor")
     ),
     responses(
-        (status = 200, description = "Outbox collection", body = crate::schema::activitypub::OrderedCollectionResponse, content_type = "application/activity+json"),
+        (status = 200, description = "Outbox collection", body = kernel::activitypub::OrderedCollection, content_type = "application/activity+json"),
         (status = 400, description = "Invalid account ID or pagination parameter"),
         (status = 404, description = "Account not found"),
     ),
@@ -217,7 +220,7 @@ pub(crate) async fn get_outbox(
 
 #[utoipa::path(
         post,
-        path = "/accounts/{account_id}/inbox",
+        path = "/ap/accounts/{account_id}/inbox",
         description = "ActivityPub inbox for signed inbound federation activities.",
         params(("id" = String, Path, description = "Account nanoid")),
     request_body(content = serde_json::Value, content_type = "application/activity+json"),
@@ -488,34 +491,9 @@ fn parse_cursor(cursor: Option<&String>) -> Result<Option<i64>, ErrorStatus> {
     })
 }
 
-fn accepts_activitypub(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.split(',').any(accept_item_is_activitypub))
-}
-
-fn accept_item_is_activitypub(item: &str) -> bool {
-    let mut parts = item.split(';').map(str::trim);
-    let media_type = parts.next().unwrap_or_default();
-    if media_type.eq_ignore_ascii_case(ACTIVITY_JSON) {
-        return true;
-    }
-    if !media_type.eq_ignore_ascii_case(ACTIVITY_LD_JSON) {
-        return false;
-    }
-    parts.any(|part| {
-        part.split_once('=').is_some_and(|(key, value)| {
-            key.trim().eq_ignore_ascii_case("profile")
-                && value.trim().trim_matches('"') == ACTIVITYSTREAMS_PROFILE
-        })
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::HeaderValue;
 
     #[test]
     fn parse_webfinger_resource_accepts_acct_uri() {
@@ -536,28 +514,6 @@ mod tests {
         ] {
             assert!(parse_webfinger_resource(resource).is_err(), "{resource}");
         }
-    }
-
-    #[test]
-    fn accepts_activitypub_media_types() {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::ACCEPT, HeaderValue::from_static(ACTIVITY_JSON));
-        assert!(accepts_activitypub(&headers));
-
-        headers.insert(
-            header::ACCEPT,
-            HeaderValue::from_static(
-                "application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"",
-            ),
-        );
-        assert!(accepts_activitypub(&headers));
-    }
-
-    #[test]
-    fn rejects_non_activitypub_media_types() {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
-        assert!(!accepts_activitypub(&headers));
     }
 
     #[test]

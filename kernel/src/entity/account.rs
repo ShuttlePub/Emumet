@@ -15,16 +15,14 @@ use crate::KernelError;
 
 pub use self::id::*;
 pub use self::is_bot::*;
+pub use self::moderation_reason::*;
 pub use self::name::*;
-pub use self::private_key::*;
-pub use self::public_key::*;
 pub use self::status::*;
 
 mod id;
 mod is_bot;
+mod moderation_reason;
 mod name;
-mod private_key;
-mod public_key;
 mod status;
 
 #[derive(
@@ -33,8 +31,6 @@ mod status;
 pub struct Account {
     id: AccountId,
     name: AccountName,
-    private_key: AccountPrivateKey,
-    public_key: AccountPublicKey,
     is_bot: AccountIsBot,
     status: AccountStatus,
     deleted_at: Option<DeletedAt<Account>>,
@@ -49,8 +45,6 @@ pub struct Account {
 pub enum AccountEvent {
     Created {
         name: AccountName,
-        private_key: AccountPrivateKey,
-        public_key: AccountPublicKey,
         is_bot: AccountIsBot,
         nanoid: Nanoid<Account>,
         auth_account_id: AuthAccountId,
@@ -83,16 +77,12 @@ impl Account {
     pub fn create(
         id: AccountId,
         name: AccountName,
-        private_key: AccountPrivateKey,
-        public_key: AccountPublicKey,
         is_bot: AccountIsBot,
         nanoid: Nanoid<Account>,
         auth_account_id: AuthAccountId,
     ) -> CommandEnvelope<AccountEvent, Account> {
         let event = AccountEvent::Created {
             name,
-            private_key,
-            public_key,
             is_bot,
             nanoid,
             auth_account_id,
@@ -205,8 +195,6 @@ impl EventApplier for Account {
         match event.event {
             AccountEvent::Created {
                 name,
-                private_key,
-                public_key,
                 is_bot,
                 nanoid: nano_id,
                 auth_account_id: _,
@@ -220,8 +208,6 @@ impl EventApplier for Account {
                 *entity = Some(Account {
                     id: AccountId::new(*event.id.as_ref()),
                     name,
-                    private_key,
-                    public_key,
                     is_bot,
                     status: AccountStatus::Active,
                     deleted_at: None,
@@ -315,8 +301,8 @@ impl EventApplier for Account {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        Account, AccountEvent, AccountId, AccountIsBot, AccountName, AccountPrivateKey,
-        AccountPublicKey, AuthAccountId, EventEnvelope, EventId, EventVersion, Nanoid,
+        Account, AccountEvent, AccountId, AccountIsBot, AccountName, AuthAccountId, EventEnvelope,
+        EventId, EventVersion, Nanoid,
     };
     use crate::event::EventApplier;
     use crate::test_utils::AccountBuilder;
@@ -327,14 +313,10 @@ mod test {
         crate::ensure_generator_initialized();
         let id = AccountId::default();
         let name = AccountName::new("test");
-        let private_key = AccountPrivateKey::new("private_key".to_string());
-        let public_key = AccountPublicKey::new("public_key".to_string());
         let is_bot = AccountIsBot::new(false);
         let nano_id = Nanoid::default();
         let event = AccountEvent::Created {
             name: name.clone(),
-            private_key: private_key.clone(),
-            public_key: public_key.clone(),
             is_bot: is_bot.clone(),
             nanoid: nano_id.clone(),
             auth_account_id: AuthAccountId::default(),
@@ -347,9 +329,34 @@ mod test {
         let account = account.unwrap();
         assert_eq!(account.id(), &id);
         assert_eq!(account.name(), &name);
-        assert_eq!(account.private_key(), &private_key);
-        assert_eq!(account.public_key(), &public_key);
         assert_eq!(account.is_bot(), &is_bot);
+        assert_eq!(account.nanoid(), &nano_id);
+    }
+
+    // Regression guard: pre-migration Created payloads carry key fields; replay must tolerate them.
+    #[test]
+    fn legacy_created_event_with_keys_deserializes() {
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
+        let nano_id = Nanoid::default();
+        let auth_account_id = AuthAccountId::default();
+        let payload = serde_json::json!({
+            "type": "Created",
+            "name": "legacy",
+            "private_key": "-----BEGIN RSA PRIVATE KEY-----\nlegacy\n-----END RSA PRIVATE KEY-----",
+            "public_key": "-----BEGIN PUBLIC KEY-----\nlegacy\n-----END PUBLIC KEY-----",
+            "is_bot": false,
+            "nanoid": nano_id.as_ref(),
+            "auth_account_id": auth_account_id.as_ref(),
+        });
+        let event: AccountEvent = serde_json::from_value(payload).unwrap();
+        let envelope =
+            EventEnvelope::new(EventId::from(id.clone()), event, EventVersion::default());
+        let mut account = None;
+        Account::apply(&mut account, envelope).unwrap();
+        let account = account.unwrap();
+        assert_eq!(account.id(), &id);
+        assert_eq!(account.name(), &AccountName::new("legacy"));
         assert_eq!(account.nanoid(), &nano_id);
     }
 
@@ -364,8 +371,6 @@ mod test {
             .build();
         let event = AccountEvent::Created {
             name: AccountName::new("test"),
-            private_key: AccountPrivateKey::new("private_key".to_string()),
-            public_key: AccountPublicKey::new("public_key".to_string()),
             is_bot: AccountIsBot::new(false),
             nanoid: nano_id,
             auth_account_id: AuthAccountId::default(),

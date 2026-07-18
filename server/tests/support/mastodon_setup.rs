@@ -272,7 +272,7 @@ async fn inject_mastodon_actor_into_emumet_cache(
 
 pub fn emumet_actor_url(public_base_url: &str, account_id: &str) -> String {
     format!(
-        "{}/accounts/{}",
+        "{}/ap/accounts/{}",
         public_base_url.trim_end_matches('/'),
         account_id
     )

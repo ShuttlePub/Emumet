@@ -5,8 +5,7 @@ use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventSto
 use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
 use kernel::interfaces::signal::Signal;
 use kernel::prelude::entity::{
-    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-    AuthAccountId, EventVersion, Nanoid,
+    Account, AccountId, AccountIsBot, AccountName, AuthAccountId, EventVersion, Nanoid,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -15,8 +14,6 @@ use time::OffsetDateTime;
 #[derive(Debug)]
 pub struct CreateAccountParam {
     pub name: AccountName,
-    pub private_key: AccountPrivateKey,
-    pub public_key: AccountPublicKey,
     pub is_bot: AccountIsBot,
     pub auth_account_id: AuthAccountId,
 }
@@ -103,8 +100,6 @@ where
     ) -> error_stack::Result<Account, KernelError> {
         let CreateAccountParam {
             name,
-            private_key,
-            public_key,
             is_bot,
             auth_account_id,
         } = param;
@@ -113,8 +108,6 @@ where
         let command = Account::create(
             account_id.clone(),
             name,
-            private_key,
-            public_key,
             is_bot,
             nanoid,
             auth_account_id.clone(),

@@ -7,17 +7,18 @@ use crate::schema::account::{
     CreateAccountRequest, SuspendAccountRequest, UpdateAccountRequest,
 };
 use application::service::account::{
-    BanAccountUseCase, CreateAccountUseCase, DeactivateAccountUseCase, GetAccountUseCase,
-    SuspendAccountUseCase, UnsuspendAccountUseCase, UpdateAccountUseCase,
+    BanAccountUseCase, CreateAccountUseCase, DeactivateAccountUseCase, SuspendAccountUseCase,
+    UnsuspendAccountUseCase,
 };
+use application::service::account_detail::{GetAccountDetailUseCase, UpdateAccountDetailUseCase};
 use application::service::activitypub::SendFollowUseCase;
 use application::transfer::activitypub::SendFollowDto;
 
-use crate::schema::activitypub::{FollowAccountRequest, FollowAccountResponse};
+use crate::schema::account::{FollowAccountRequest, FollowAccountResponse};
 use application::transfer::pagination::Pagination;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, patch, post};
 use axum::{Extension, Json, Router};
 
 use crate::schema::account::GetAllAccountQuery;
@@ -26,9 +27,13 @@ pub trait AccountRouter {
     fn route_account(self) -> Self;
 }
 
+pub trait AdminAccountRouter {
+    fn route_admin_account(self) -> Self;
+}
+
 #[utoipa::path(
     get,
-    path = "/accounts",
+    path = "/api/v1/accounts",
     description = "Retrieve accounts by IDs or with cursor-based pagination.",
     params(
         ("ids" = Option<String>, Query, description = "Comma-separated account IDs"),
@@ -68,17 +73,16 @@ pub(crate) async fn get_accounts(
         }
         let id_list = parse_comma_ids(&ids)?;
         module
-            .get_accounts_by_ids(&auth_account_id, id_list)
+            .get_account_details_by_ids(&auth_account_id, id_list)
             .await
             .map_err(ErrorStatus::from)?
     } else {
         let direction = direction.convert_to_direction()?;
         let pagination = Pagination::new(limit, cursor, direction);
         module
-            .get_all_accounts(&auth_account_id, pagination)
+            .get_all_account_details(&auth_account_id, pagination)
             .await
             .map_err(ErrorStatus::from)?
-            .unwrap_or_default()
     };
 
     let response = AccountsResponse {
@@ -90,8 +94,35 @@ pub(crate) async fn get_accounts(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/accounts/{account_id}",
+    description = "Retrieve one integrated account resource.",
+    params(("account_id" = String, Path, description = "Account nanoid")),
+    responses(
+        (status = 200, description = "Integrated account", body = AccountResponse),
+        (status = 404, description = "Account not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn get_account_by_id(
+    Extension(claims): Extension<AuthClaims>,
+    State(module): State<AppModule>,
+    Path(account_id): Path<String>,
+) -> Result<Json<AccountResponse>, ErrorStatus> {
+    let auth_account_id = resolve_auth_account_id(&module, OidcAuthInfo::from(claims))
+        .await
+        .map_err(ErrorStatus::from)?;
+    let account = module
+        .get_account_detail(&auth_account_id, account_id)
+        .await
+        .map_err(ErrorStatus::from)?;
+    Ok(Json(account_dto_to_response(account)))
+}
+
+#[utoipa::path(
     post,
-    path = "/accounts",
+    path = "/api/v1/accounts",
     description = "Create a new account with a generated signing key pair.",
     request_body = CreateAccountRequest,
     responses(
@@ -127,21 +158,24 @@ pub(crate) async fn create_account(
         .map_err(ErrorStatus::from)?;
 
     let account = module
-        .create_account(auth_account_id, request.into_dto())
+        .create_account(auth_account_id.clone(), request.into_dto())
         .await
         .map_err(ErrorStatus::from)?;
-
+    let account = module
+        .get_account_detail(&auth_account_id, account.nanoid)
+        .await
+        .map_err(ErrorStatus::from)?;
     Ok((StatusCode::CREATED, Json(account_dto_to_response(account))))
 }
 
 #[utoipa::path(
-    put,
-    path = "/accounts/{account_id}",
+    patch,
+    path = "/api/v1/accounts/{account_id}",
     description = "Update account properties.",
     params(("account_id" = String, Path, description = "Account nanoid")),
     request_body = UpdateAccountRequest,
     responses(
-        (status = 204, description = "Account updated"),
+        (status = 200, description = "Account updated", body = AccountResponse),
         (status = 400, description = "Invalid request"),
     ),
     security(("bearer_auth" = [])),
@@ -152,7 +186,7 @@ pub(crate) async fn update_account_by_id(
     State(module): State<AppModule>,
     Path(account_id): Path<String>,
     Json(request): Json<UpdateAccountRequest>,
-) -> Result<StatusCode, ErrorStatus> {
+) -> Result<Json<AccountResponse>, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
     if account_id.trim().is_empty() {
@@ -166,17 +200,19 @@ pub(crate) async fn update_account_by_id(
         .await
         .map_err(ErrorStatus::from)?;
 
-    module
-        .update_account(&auth_account_id, request.into_dto(account_id))
+    let dto = request
+        .into_dto(account_id)
+        .map_err(|message| ErrorStatus::from((StatusCode::BAD_REQUEST, message.to_string())))?;
+    let account = module
+        .update_account_detail(&auth_account_id, dto)
         .await
         .map_err(ErrorStatus::from)?;
-
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(account_dto_to_response(account)))
 }
 
 #[utoipa::path(
     delete,
-    path = "/accounts/{account_id}",
+    path = "/api/v1/accounts/{account_id}",
     description = "Deactivate an account and cascade-delete related resources.",
     params(("account_id" = String, Path, description = "Account nanoid")),
     responses(
@@ -214,7 +250,7 @@ pub(crate) async fn deactivate_account_by_id(
 
 #[utoipa::path(
     post,
-    path = "/accounts/{account_id}/suspend",
+    path = "/api/v1/admin/accounts/{account_id}/suspend",
     description = "Suspend an account with a reason and optional expiry.",
     params(("account_id" = String, Path, description = "Account nanoid")),
     request_body = SuspendAccountRequest,
@@ -240,13 +276,6 @@ pub(crate) async fn suspend_account_by_id(
         )));
     }
 
-    if request.reason.trim().is_empty() || request.reason.len() > 1000 {
-        return Err(ErrorStatus::from((
-            StatusCode::BAD_REQUEST,
-            "Reason must be between 1 and 1000 characters".to_string(),
-        )));
-    }
-
     let auth_account_id = resolve_auth_account_id(&module, auth_info)
         .await
         .map_err(ErrorStatus::from)?;
@@ -266,7 +295,7 @@ pub(crate) async fn suspend_account_by_id(
 
 #[utoipa::path(
     post,
-    path = "/accounts/{account_id}/unsuspend",
+    path = "/api/v1/admin/accounts/{account_id}/unsuspend",
     description = "Remove suspension from an account.",
     params(("account_id" = String, Path, description = "Account nanoid")),
     responses(
@@ -304,7 +333,7 @@ pub(crate) async fn unsuspend_account_by_id(
 
 #[utoipa::path(
     post,
-    path = "/accounts/{account_id}/ban",
+    path = "/api/v1/admin/accounts/{account_id}/ban",
     description = "Permanently ban an account.",
     params(("account_id" = String, Path, description = "Account nanoid")),
     request_body = BanAccountRequest,
@@ -330,13 +359,6 @@ pub(crate) async fn ban_account_by_id(
         )));
     }
 
-    if request.reason.trim().is_empty() || request.reason.len() > 1000 {
-        return Err(ErrorStatus::from((
-            StatusCode::BAD_REQUEST,
-            "Reason must be between 1 and 1000 characters".to_string(),
-        )));
-    }
-
     let auth_account_id = resolve_auth_account_id(&module, auth_info)
         .await
         .map_err(ErrorStatus::from)?;
@@ -351,7 +373,7 @@ pub(crate) async fn ban_account_by_id(
 
 #[utoipa::path(
     post,
-    path = "/accounts/{account_id}/follow",
+    path = "/api/v1/accounts/{account_id}/follow",
     description = "Follow a remote ActivityPub account.",
     params(("account_id" = String, Path, description = "Local account nanoid")),
     request_body = FollowAccountRequest,
@@ -413,17 +435,23 @@ impl AccountRouter for Router<AppModule> {
     fn route_account(self) -> Self {
         self.route("/accounts", get(get_accounts))
             .route("/accounts", post(create_account))
-            .route("/accounts/{account_id}", put(update_account_by_id))
+            .route("/accounts/{account_id}", get(get_account_by_id))
+            .route("/accounts/{account_id}", patch(update_account_by_id))
             .route("/accounts/{account_id}", delete(deactivate_account_by_id))
-            .route(
-                "/accounts/{account_id}/suspend",
-                post(suspend_account_by_id),
-            )
-            .route(
-                "/accounts/{account_id}/unsuspend",
-                post(unsuspend_account_by_id),
-            )
-            .route("/accounts/{account_id}/ban", post(ban_account_by_id))
             .route("/accounts/{account_id}/follow", post(follow_account))
+    }
+}
+
+impl AdminAccountRouter for Router<AppModule> {
+    fn route_admin_account(self) -> Self {
+        self.route(
+            "/accounts/{account_id}/suspend",
+            post(suspend_account_by_id),
+        )
+        .route(
+            "/accounts/{account_id}/unsuspend",
+            post(unsuspend_account_by_id),
+        )
+        .route("/accounts/{account_id}/ban", post(ban_account_by_id))
     }
 }

@@ -249,6 +249,13 @@ pub trait UpdateProfileUseCase:
             let banner =
                 resolve_field_action_image_id(self, &mut transaction, &dto.banner_url).await?;
 
+            if let FieldAction::Set(value) = &dto.display_name {
+                ProfileDisplayName::new(value.as_str()).validate()?;
+            }
+            if let FieldAction::Set(value) = &dto.summary {
+                ProfileSummary::new(value.as_str()).validate()?;
+            }
+
             self.profile_command_processor()
                 .update(
                     &mut transaction,
@@ -287,12 +294,8 @@ async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(
     let Some(url) = url else {
         return Ok(None);
     };
-    if url.is_empty() {
-        return Err(
-            Report::new(KernelError::Rejected).attach_printable("Image URL must not be empty")
-        );
-    }
     let image_url = ImageUrl::new(url.to_string());
+    image_url.validate()?;
     let image = deps
         .image_repository()
         .find_by_url(executor, &image_url)
@@ -304,7 +307,7 @@ async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(
     Ok(Some(image.id().clone()))
 }
 
-async fn resolve_field_action_image_id<T: DependOnImageRepository + ?Sized>(
+pub(crate) async fn resolve_field_action_image_id<T: DependOnImageRepository + ?Sized>(
     deps: &T,
     executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
     action: &FieldAction<String>,
@@ -313,11 +316,11 @@ async fn resolve_field_action_image_id<T: DependOnImageRepository + ?Sized>(
         FieldAction::Unchanged => Ok(FieldAction::Unchanged),
         FieldAction::Clear => Ok(FieldAction::Clear),
         FieldAction::Set(url) => {
-            // resolve_image_id with Some(url) always returns Ok(Some(id)) or Err(NotFound)
-            let id = resolve_image_id(deps, executor, Some(url.as_str()))
-                .await?
-                .expect("resolve_image_id with Some input never returns Ok(None)");
-            Ok(FieldAction::Set(id))
+            match resolve_image_id(deps, executor, Some(url.as_str())).await? {
+                Some(id) => Ok(FieldAction::Set(id)),
+                None => Err(Report::new(KernelError::Internal)
+                    .attach_printable("Image resolution returned no ID for a provided URL")),
+            }
         }
     }
 }

@@ -21,10 +21,6 @@ pub use self::remote_account::*;
 use crate::entity::{AccountName, AuthHostUrl, ImageUrl, RemoteAccountAcct, RemoteAccountUrl};
 
 pub const DEFAULT_ACCOUNT_NAME: &str = "alice";
-pub const DEFAULT_PRIVATE_KEY: &str =
-    "-----BEGIN RSA PRIVATE KEY-----\ntest-key-data\n-----END RSA PRIVATE KEY-----";
-pub const DEFAULT_PUBLIC_KEY: &str =
-    "-----BEGIN PUBLIC KEY-----\ntest-key-data\n-----END PUBLIC KEY-----";
 pub const DEFAULT_DISPLAY_NAME: &str = "Alice Wonderland";
 pub const DEFAULT_SUMMARY: &str = "Hello! I'm a test user on ShuttlePub.";
 pub const DEFAULT_METADATA_LABEL: &str = "Website";

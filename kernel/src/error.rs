@@ -9,6 +9,7 @@ pub enum KernelError {
     PermissionDenied,
     NotFound,
     Rejected,
+    Validation,
 }
 
 impl Display for KernelError {
@@ -20,6 +21,7 @@ impl Display for KernelError {
             KernelError::PermissionDenied => write!(f, "Permission denied"),
             KernelError::NotFound => write!(f, "Resource not found"),
             KernelError::Rejected => write!(f, "Request rejected"),
+            KernelError::Validation => write!(f, "Validation failed"),
         }
     }
 }

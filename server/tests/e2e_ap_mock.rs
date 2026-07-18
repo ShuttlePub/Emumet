@@ -88,7 +88,10 @@ async fn actor_document_is_valid_activitypub() {
     let account_nanoid = setup_test_account_details().await.id;
 
     let resp = e2e_http_client()
-        .get(format!("{}/accounts/{account_nanoid}", cfg.server_base_url))
+        .get(format!(
+            "{}/ap/accounts/{account_nanoid}",
+            cfg.server_base_url
+        ))
         .header(reqwest::header::ACCEPT, "application/activity+json")
         .send()
         .await
@@ -150,7 +153,7 @@ async fn outbound_follow_sends_activity_to_remote_inbox() {
 
     assert_eq!(
         activity.body["actor"],
-        format!("{}/accounts/{account_nanoid}", cfg.public_base_url)
+        format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url)
     );
     assert_eq!(activity.body["object"], peer.actor_url);
     assert_signature_header(&activity);
@@ -167,9 +170,9 @@ async fn inbound_follow_creates_follower_and_sends_accept() {
     let cfg = config();
     let account_nanoid = setup_test_account_details().await.id;
 
-    let sign_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.public_base_url);
-    let send_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.server_base_url);
-    let target_actor = format!("{}/accounts/{account_nanoid}", cfg.public_base_url);
+    let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url);
     let resp = post_signed_follow_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
     assert_eq!(
         resp.status(),
@@ -212,9 +215,9 @@ async fn followers_and_following_collections_are_accurate() {
     let follow_activity_id = follow_activity.body["id"]
         .as_str()
         .expect("Follow activity missing id");
-    let sign_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.public_base_url);
-    let send_inbox = format!("{}/accounts/{account_nanoid}/inbox", cfg.server_base_url);
-    let target_actor = format!("{}/accounts/{account_nanoid}", cfg.public_base_url);
+    let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url);
     let accept_resp = post_signed_accept_direct(
         &peer,
         &sign_inbox,
@@ -250,7 +253,7 @@ async fn inbox_rejects_unsigned_requests() {
 
     let resp = e2e_http_client()
         .post(format!(
-            "{}/accounts/{account_nanoid}/inbox",
+            "{}/ap/accounts/{account_nanoid}/inbox",
             cfg.server_base_url
         ))
         .header("content-type", "application/activity+json")
@@ -258,7 +261,7 @@ async fn inbox_rejects_unsigned_requests() {
             "@context": "https://www.w3.org/ns/activitystreams",
             "type": "Follow",
             "actor": "https://remote.example.com/users/alice",
-            "object": format!("{}/accounts/{account_nanoid}", cfg.server_base_url)
+            "object": format!("{}/ap/accounts/{account_nanoid}", cfg.server_base_url)
         }))
         .send()
         .await

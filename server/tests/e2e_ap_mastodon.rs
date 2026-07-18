@@ -149,7 +149,7 @@ async fn mastodon_full_federation_scenario() {
 
     // ── S9: Emumet → Mastodon Signed Create/Note ──────────────────────
 
-    let actor_url = format!("{public_base_url}/accounts/{}", emumet_account.id);
+    let actor_url = format!("{public_base_url}/ap/accounts/{}", emumet_account.id);
     let followers_url = format!("{actor_url}/followers");
 
     let note_id = format!("{actor_url}/statuses/{}", uuid::Uuid::new_v4());
@@ -200,10 +200,10 @@ async fn mastodon_full_federation_scenario() {
     };
     let base64_body = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &body);
 
-    // Sign via Emumet's /accounts/{id}/sign endpoint
+    // Sign via Emumet's /internal/v1/accounts/{id}/sign endpoint
     let sign_resp = e2e_http_client()
         .post(format!(
-            "{}/accounts/{}/sign",
+            "{}/internal/v1/accounts/{}/sign",
             cfg.server_base_url, emumet_account.id
         ))
         .bearer_auth(&jwt)

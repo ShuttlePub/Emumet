@@ -51,7 +51,258 @@
         }
       }
     },
-    "/accounts": {
+    "/ap/accounts/{account_id}": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub Actor document for a local account.",
+        "operationId": "get_actor",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ActivityPub Actor",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Actor"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Actor not found"
+          }
+        }
+      }
+    },
+    "/ap/accounts/{account_id}/followers": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub followers OrderedCollection for a local account.",
+        "operationId": "get_followers",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Followers collection",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderedCollection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account ID"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
+    "/ap/accounts/{account_id}/following": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub following OrderedCollection for a local account.",
+        "operationId": "get_following",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Following collection",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderedCollection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account ID"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
+    "/ap/accounts/{account_id}/inbox": {
+      "post": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "ActivityPub inbox for signed inbound federation activities.",
+        "operationId": "post_inbox",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/activity+json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Activity accepted or ignored"
+          },
+          "400": {
+            "description": "Malformed ActivityPub activity"
+          },
+          "401": {
+            "description": "Missing or invalid HTTP Signature"
+          },
+          "404": {
+            "description": "Local actor not found"
+          }
+        }
+      }
+    },
+    "/ap/accounts/{account_id}/outbox": {
+      "get": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Retrieve an ActivityPub outbox OrderedCollection for a local account.",
+        "operationId": "get_outbox",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of activities to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Return activities with IDs older than this cursor",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Outbox collection",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderedCollection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account ID or pagination parameter"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
+    "/api/v1/accounts": {
       "get": {
         "tags": [
           "Account"
@@ -160,26 +411,18 @@
         ]
       }
     },
-    "/accounts/{account_id}": {
+    "/api/v1/accounts/{account_id}": {
       "get": {
         "tags": [
-          "ActivityPub"
+          "Account"
         ],
-        "description": "Retrieve an ActivityPub Actor document for a local account.",
-        "operationId": "get_actor",
+        "description": "Retrieve one integrated account resource.",
+        "operationId": "get_account_by_id",
         "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "account_id",
             "in": "path",
+            "description": "Account nanoid",
             "required": true,
             "schema": {
               "type": "string"
@@ -188,53 +431,17 @@
         ],
         "responses": {
           "200": {
-            "description": "ActivityPub Actor",
+            "description": "Integrated account",
             "content": {
-              "application/activity+json": {
+              "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ActorResponse"
+                  "$ref": "#/components/schemas/AccountResponse"
                 }
               }
             }
           },
           "404": {
-            "description": "Actor not found or ActivityPub media type not requested"
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Account"
-        ],
-        "description": "Update account properties.",
-        "operationId": "update_account_by_id",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateAccountRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Account updated"
-          },
-          "400": {
-            "description": "Invalid request"
+            "description": "Account not found"
           }
         },
         "security": [
@@ -273,15 +480,13 @@
             "bearer_auth": []
           }
         ]
-      }
-    },
-    "/accounts/{account_id}/ban": {
-      "post": {
+      },
+      "patch": {
         "tags": [
           "Account"
         ],
-        "description": "Permanently ban an account.",
-        "operationId": "ban_account_by_id",
+        "description": "Update account properties.",
+        "operationId": "update_account_by_id",
         "parameters": [
           {
             "name": "account_id",
@@ -297,15 +502,22 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BanAccountRequest"
+                "$ref": "#/components/schemas/UpdateAccountRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "204": {
-            "description": "Account banned"
+          "200": {
+            "description": "Account updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            }
           },
           "400": {
             "description": "Invalid request"
@@ -318,7 +530,7 @@
         ]
       }
     },
-    "/accounts/{account_id}/follow": {
+    "/api/v1/accounts/{account_id}/follow": {
       "post": {
         "tags": [
           "ActivityPub"
@@ -374,155 +586,13 @@
         ]
       }
     },
-    "/accounts/{account_id}/followers": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub followers OrderedCollection for a local account.",
-        "operationId": "get_followers",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Followers collection",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderedCollectionResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid account ID"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        }
-      }
-    },
-    "/accounts/{account_id}/following": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub following OrderedCollection for a local account.",
-        "operationId": "get_following",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Following collection",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderedCollectionResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid account ID"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        }
-      }
-    },
-    "/accounts/{account_id}/inbox": {
+    "/api/v1/admin/accounts/{account_id}/ban": {
       "post": {
         "tags": [
-          "ActivityPub"
+          "Account"
         ],
-        "description": "ActivityPub inbox for signed inbound federation activities.",
-        "operationId": "post_inbox",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/activity+json": {
-              "schema": {}
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Activity accepted or ignored"
-          },
-          "400": {
-            "description": "Malformed ActivityPub activity"
-          },
-          "401": {
-            "description": "Missing or invalid HTTP Signature"
-          },
-          "404": {
-            "description": "Local actor not found"
-          }
-        }
-      }
-    },
-    "/accounts/{account_id}/metadata": {
-      "post": {
-        "tags": [
-          "Metadata"
-        ],
-        "description": "Create a metadata entry for the specified account.",
-        "operationId": "create_metadata",
+        "description": "Permanently ban an account.",
+        "operationId": "ban_account_by_id",
         "parameters": [
           {
             "name": "account_id",
@@ -538,66 +608,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateMetadataRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Metadata created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetadataResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/accounts/{account_id}/metadata/{metadata_id}": {
-      "put": {
-        "tags": [
-          "Metadata"
-        ],
-        "description": "Update a metadata entry.",
-        "operationId": "update_metadata",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "metadata_id",
-            "in": "path",
-            "description": "Metadata nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateMetadataRequest"
+                "$ref": "#/components/schemas/BanAccountRequest"
               }
             }
           },
@@ -605,47 +616,7 @@
         },
         "responses": {
           "204": {
-            "description": "Metadata updated"
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "Metadata"
-        ],
-        "description": "Delete a metadata entry.",
-        "operationId": "delete_metadata",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "metadata_id",
-            "in": "path",
-            "description": "Metadata nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Metadata deleted"
+            "description": "Account banned"
           },
           "400": {
             "description": "Invalid request"
@@ -658,116 +629,7 @@
         ]
       }
     },
-    "/accounts/{account_id}/outbox": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub outbox OrderedCollection for a local account.",
-        "operationId": "get_outbox",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of activities to return",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Return activities with IDs older than this cursor",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Outbox collection",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderedCollectionResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid account ID or pagination parameter"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        }
-      }
-    },
-    "/accounts/{account_id}/profile": {
-      "put": {
-        "tags": [
-          "Profile"
-        ],
-        "description": "Update the profile of the specified account.",
-        "operationId": "update_profile",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateProfileRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Profile updated"
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/accounts/{account_id}/suspend": {
+    "/api/v1/admin/accounts/{account_id}/suspend": {
       "post": {
         "tags": [
           "Account"
@@ -810,7 +672,7 @@
         ]
       }
     },
-    "/accounts/{account_id}/unsuspend": {
+    "/api/v1/admin/accounts/{account_id}/unsuspend": {
       "post": {
         "tags": [
           "Account"
@@ -843,7 +705,7 @@
         ]
       }
     },
-    "/accounts/{id}/public-key": {
+    "/internal/v1/accounts/{id}/public-key": {
       "get": {
         "tags": [
           "Signing"
@@ -875,10 +737,15 @@
           "404": {
             "description": "Account or signing key not found"
           }
-        }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
       }
     },
-    "/accounts/{id}/sign": {
+    "/internal/v1/accounts/{id}/sign": {
       "post": {
         "tags": [
           "Signing"
@@ -928,49 +795,6 @@
           },
           "404": {
             "description": "Account or signing key not found"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/metadata": {
-      "get": {
-        "tags": [
-          "Metadata"
-        ],
-        "description": "Retrieve metadata entries for the given account IDs.",
-        "operationId": "get_metadata_batch",
-        "parameters": [
-          {
-            "name": "account_ids",
-            "in": "query",
-            "description": "Comma-separated account IDs",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of metadata",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MetadataResponse"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
           }
         },
         "security": [
@@ -1073,66 +897,62 @@
           }
         }
       }
-    },
-    "/profiles": {
-      "get": {
-        "tags": [
-          "Profile"
-        ],
-        "description": "Retrieve profiles for the given account IDs.",
-        "operationId": "get_profiles_batch",
-        "parameters": [
-          {
-            "name": "account_ids",
-            "in": "query",
-            "description": "Comma-separated account IDs",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of profiles",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ProfileResponse"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
     }
   },
   "components": {
     "schemas": {
+      "AccountField": {
+        "type": "object",
+        "required": [
+          "label",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
       "AccountResponse": {
         "type": "object",
         "required": [
           "id",
           "name",
-          "public_key",
           "is_bot",
+          "fields",
           "created_at"
         ],
         "properties": {
+          "banner_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountField"
+            }
+          },
+          "icon_url": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "id": {
             "type": "string"
@@ -1153,8 +973,11 @@
           "name": {
             "type": "string"
           },
-          "public_key": {
-            "type": "string"
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -1184,13 +1007,15 @@
           }
         }
       },
-      "ActorResponse": {
+      "Actor": {
         "type": "object",
+        "description": "An ActivityPub Actor representing a local Account.\n\nSerialized as a `Person` type with public key, inbox/outbox URLs,\nand optional profile fields.",
         "required": [
           "@context",
           "id",
           "type",
           "preferredUsername",
+          "url",
           "inbox",
           "outbox",
           "followers",
@@ -1247,6 +1072,9 @@
           },
           "type": {
             "type": "string"
+          },
+          "url": {
+            "type": "string"
           }
         }
       },
@@ -1300,21 +1128,6 @@
           }
         }
       },
-      "CreateMetadataRequest": {
-        "type": "object",
-        "required": [
-          "label",
-          "content"
-        ],
-        "properties": {
-          "content": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          }
-        }
-      },
       "FollowAccountRequest": {
         "type": "object",
         "required": [
@@ -1352,6 +1165,7 @@
       },
       "ImageObject": {
         "type": "object",
+        "description": "An ActivityPub Image object (e.g. profile avatar).",
         "required": [
           "type"
         ],
@@ -1370,29 +1184,6 @@
               "string",
               "null"
             ]
-          }
-        }
-      },
-      "MetadataResponse": {
-        "type": "object",
-        "required": [
-          "account_id",
-          "nanoid",
-          "label",
-          "content"
-        ],
-        "properties": {
-          "account_id": {
-            "type": "string"
-          },
-          "content": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "nanoid": {
-            "type": "string"
           }
         }
       },
@@ -1506,8 +1297,9 @@
           }
         ]
       },
-      "OrderedCollectionResponse": {
+      "OrderedCollection": {
         "type": "object",
+        "description": "An ActivityPub `OrderedCollection` (e.g. followers, following, outbox).",
         "required": [
           "@context",
           "id",
@@ -1555,47 +1347,9 @@
           }
         }
       },
-      "ProfileResponse": {
-        "type": "object",
-        "required": [
-          "account_id",
-          "nanoid"
-        ],
-        "properties": {
-          "account_id": {
-            "type": "string"
-          },
-          "banner_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "display_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "icon_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "nanoid": {
-            "type": "string"
-          },
-          "summary": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
       "PublicKey": {
         "type": "object",
+        "description": "An ActivityPub public key object attached to an Actor.",
         "required": [
           "id",
           "owner",
@@ -1711,65 +1465,51 @@
       },
       "UpdateAccountRequest": {
         "type": "object",
-        "required": [
-          "is_bot"
-        ],
-        "properties": {
-          "is_bot": {
-            "type": "boolean"
-          }
-        }
-      },
-      "UpdateMetadataRequest": {
-        "type": "object",
-        "required": [
-          "label",
-          "content"
-        ],
-        "properties": {
-          "content": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          }
-        }
-      },
-      "UpdateProfileRequest": {
-        "type": "object",
         "properties": {
           "banner_url": {
             "type": [
               "string",
               "null"
-            ],
-            "description": "Absent = no change, null = clear, string = set"
+            ]
           },
           "display_name": {
             "type": [
               "string",
               "null"
+            ]
+          },
+          "fields": {
+            "type": [
+              "array",
+              "null"
             ],
-            "description": "Absent = no change, null = clear, string = set"
+            "items": {
+              "$ref": "#/components/schemas/AccountField"
+            }
           },
           "icon_url": {
             "type": [
               "string",
               "null"
-            ],
-            "description": "Absent = no change, null = clear, string = set"
+            ]
+          },
+          "is_bot": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "summary": {
             "type": [
               "string",
               "null"
-            ],
-            "description": "Absent = no change, null = clear, string = set"
+            ]
           }
         }
       },
       "WebFingerLink": {
         "type": "object",
+        "description": "A single link entry within a WebFinger response.",
         "required": [
           "rel",
           "type",
@@ -1789,6 +1529,7 @@
       },
       "WebFingerResponse": {
         "type": "object",
+        "description": "A WebFinger response describing a resource and its links.\n\nBoth `links` and `aliases` are optional per RFC 7033 §4.",
         "required": [
           "subject"
         ],
@@ -1829,14 +1570,6 @@
     {
       "name": "Account",
       "description": "Account management"
-    },
-    {
-      "name": "Profile",
-      "description": "Profile management"
-    },
-    {
-      "name": "Metadata",
-      "description": "Metadata management"
     },
     {
       "name": "OAuth2",

@@ -3,8 +3,8 @@ use crate::ConvertError;
 use error_stack::Report;
 use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
 use kernel::prelude::entity::{
-    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-    AccountStatus, AuthAccountId, CreatedAt, DeletedAt, EventVersion, Nanoid,
+    Account, AccountId, AccountIsBot, AccountName, AccountStatus, AuthAccountId, CreatedAt,
+    DeletedAt, EventVersion, Nanoid,
 };
 use kernel::KernelError;
 use sqlx::types::time::OffsetDateTime;
@@ -14,8 +14,6 @@ use sqlx::PgConnection;
 struct AccountRow {
     id: i64,
     name: String,
-    private_key: String,
-    public_key: String,
     is_bot: bool,
     deleted_at: Option<OffsetDateTime>,
     version: i64,
@@ -71,8 +69,6 @@ fn account_from_row(value: AccountRow, check_suspend_expiry: bool) -> Account {
     Account::new(
         AccountId::new(value.id),
         AccountName::new(value.name),
-        AccountPrivateKey::new(value.private_key),
-        AccountPublicKey::new(value.public_key),
         AccountIsBot::new(value.is_bot),
         status,
         value.deleted_at.map(DeletedAt::new),
@@ -102,7 +98,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE id = $1 AND deleted_at IS NULL
@@ -128,7 +124,7 @@ impl AccountReadModel for PostgresAccountReadModel {
             r#"
             -- Intentionally does NOT filter suspended/banned: allows account owners
             -- to see their own accounts' moderation status via the listing endpoint.
-            SELECT accounts.id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT accounts.id, name, is_bot, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             INNER JOIN auth_emumet_accounts ON auth_emumet_accounts.emumet_id = accounts.id
@@ -139,7 +135,11 @@ impl AccountReadModel for PostgresAccountReadModel {
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|rows| rows.into_iter().map(|row| account_from_row(row, true)).collect())
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| account_from_row(row, true))
+                .collect()
+        })
     }
 
     async fn find_by_name(
@@ -151,7 +151,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE name = $1 AND deleted_at IS NULL
@@ -175,7 +175,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE nanoid = $1 AND deleted_at IS NULL
@@ -200,7 +200,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE nanoid = ANY($1) AND deleted_at IS NULL
@@ -224,14 +224,12 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO accounts (id, name, private_key, public_key, is_bot, version, nanoid, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO accounts (id, name, is_bot, version, nanoid, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
             "#,
         )
         .bind(account.id().as_ref())
         .bind(account.name().as_ref())
-        .bind(account.private_key().as_ref())
-        .bind(account.public_key().as_ref())
         .bind(account.is_bot().as_ref())
         .bind(account.version().as_ref())
         .bind(account.nanoid().as_ref())
@@ -270,16 +268,14 @@ impl AccountReadModel for PostgresAccountReadModel {
             //language=postgresql
             r#"
             UPDATE accounts
-            SET name = $2, private_key = $3, public_key = $4, is_bot = $5, version = $6, deleted_at = $7,
-                suspended_at = $8, suspend_expires_at = $9, suspend_reason = $10,
-                banned_at = $11, ban_reason = $12
+            SET name = $2, is_bot = $3, version = $4, deleted_at = $5,
+                suspended_at = $6, suspend_expires_at = $7, suspend_reason = $8,
+                banned_at = $9, ban_reason = $10
             WHERE id = $1
             "#,
         )
         .bind(account.id().as_ref())
         .bind(account.name().as_ref())
-        .bind(account.private_key().as_ref())
-        .bind(account.public_key().as_ref())
         .bind(account.is_bot().as_ref())
         .bind(account.version().as_ref())
         .bind(account.deleted_at().as_ref().map(|d| d.as_ref()))
@@ -372,7 +368,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE id = $1 AND deleted_at IS NULL
@@ -394,7 +390,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE nanoid = $1 AND deleted_at IS NULL
@@ -417,7 +413,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, private_key, public_key, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE nanoid = ANY($1) AND deleted_at IS NULL
@@ -427,7 +423,11 @@ impl AccountReadModel for PostgresAccountReadModel {
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|rows| rows.into_iter().map(|row| account_from_row(row, true)).collect())
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| account_from_row(row, true))
+                .collect()
+        })
     }
 
     async fn suspend(
@@ -717,8 +717,6 @@ mod test {
             let updated_account = AccountBuilder::new()
                 .id(account.id().clone())
                 .name(unique_account_name())
-                .private_key("test2")
-                .public_key("test2")
                 .is_bot(true)
                 .build();
             database
