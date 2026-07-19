@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::future::Future;
 use time::OffsetDateTime;
 use vodca::{AsRefln, Fromln, Newln, References};
-
 #[derive(
     Debug,
     Clone,
@@ -36,7 +35,7 @@ impl std::fmt::Display for SigningKeyId {
     }
 }
 
-#[derive(Debug, Clone, References, Newln, Serialize, Deserialize, Destructure)]
+#[derive(Debug, Clone, References, Newln, Destructure)]
 pub struct SigningKey {
     id: SigningKeyId,
     account_id: AccountId,
@@ -44,13 +43,7 @@ pub struct SigningKey {
     encrypted_private_key: EncryptedPrivateKey,
     pub public_key_pem: String,
     pub key_id_uri: String,
-    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "time::serde::rfc3339::option"
-    )]
     pub revoked_at: Option<OffsetDateTime>,
 }
 

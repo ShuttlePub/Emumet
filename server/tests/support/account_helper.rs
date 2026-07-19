@@ -33,7 +33,7 @@ pub async fn setup_test_account_details() -> TestAccount {
             .as_millis()
     );
     let resp = client
-        .post(format!("{}/accounts", cfg.server_base_url))
+        .post(format!("{}/api/v1/accounts", cfg.server_base_url))
         .bearer_auth(&jwt)
         .json(&serde_json::json!({"name": name, "is_bot": false}))
         .send()
@@ -81,7 +81,9 @@ pub async fn post_follow(
     target: &str,
 ) -> reqwest::Response {
     e2e_http_client()
-        .post(format!("{base_url}/accounts/{account_nanoid}/follow"))
+        .post(format!(
+            "{base_url}/api/v1/accounts/{account_nanoid}/follow"
+        ))
         .bearer_auth(jwt)
         .json(&serde_json::json!({"target": target}))
         .send()
@@ -106,7 +108,9 @@ pub async fn fetch_collection(
     collection: &str,
 ) -> serde_json::Value {
     let resp = e2e_http_client()
-        .get(format!("{base_url}/accounts/{account_nanoid}/{collection}"))
+        .get(format!(
+            "{base_url}/ap/accounts/{account_nanoid}/{collection}"
+        ))
         .header(reqwest::header::ACCEPT, "application/activity+json")
         .send()
         .await

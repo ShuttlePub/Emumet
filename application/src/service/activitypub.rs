@@ -4,7 +4,9 @@ use crate::transfer::activitypub::{
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use base64::{engine::general_purpose, Engine as _};
 use error_stack::{Report, ResultExt};
-use kernel::activitypub::{Activity, Actor, OrderedCollection, WebFingerLink, WebFingerResponse};
+use kernel::activitypub::{
+    Activity, Actor, ActorUrlBuilder, OrderedCollection, WebFingerLink, WebFingerResponse,
+};
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, KeyEncryptor, PasswordProvider,
@@ -83,8 +85,7 @@ pub trait GetActorUseCase:
                 .map(|summary| summary.as_ref().to_string());
 
             Ok(Actor::new(
-                self.public_base_url().as_str(),
-                account.nanoid().as_ref(),
+                &ActorUrlBuilder::new(self.public_base_url().as_str(), account.nanoid().as_ref()),
                 account.name().as_ref(),
                 display_name.as_deref(),
                 summary.as_deref(),
@@ -127,11 +128,9 @@ pub trait GetWebFingerUseCase:
                         account_name.as_ref()
                     ))
                 })?;
-            let actor_url = format!(
-                "{}/accounts/{}",
-                self.public_base_url().as_str(),
-                account.nanoid().as_ref()
-            );
+            let actor_url =
+                ActorUrlBuilder::new(self.public_base_url().as_str(), account.nanoid().as_ref())
+                    .actor_id();
 
             Ok(WebFingerResponse {
                 subject: format!(
@@ -187,11 +186,8 @@ pub trait GetFollowersCollectionUseCase:
                 .count() as u64;
 
             Ok(OrderedCollection::new(
-                format!(
-                    "{}/accounts/{}/followers",
-                    self.public_base_url().as_str(),
-                    account.nanoid().as_ref()
-                ),
+                ActorUrlBuilder::new(self.public_base_url().as_str(), account.nanoid().as_ref())
+                    .followers(),
                 total_items,
                 None,
                 None,
@@ -223,11 +219,8 @@ pub trait GetFollowersCollectionUseCase:
                 .count() as u64;
 
             Ok(OrderedCollection::new(
-                format!(
-                    "{}/accounts/{}/following",
-                    self.public_base_url().as_str(),
-                    account.nanoid().as_ref()
-                ),
+                ActorUrlBuilder::new(self.public_base_url().as_str(), account.nanoid().as_ref())
+                    .following(),
                 total_items,
                 None,
                 None,
@@ -311,11 +304,8 @@ pub trait GetOutboxUseCase:
                 .collect::<error_stack::Result<Vec<_>, KernelError>>()?;
 
             Ok(OrderedCollection::with_ordered_items(
-                format!(
-                    "{}/accounts/{}/outbox",
-                    self.public_base_url().as_str(),
-                    account.nanoid().as_ref()
-                ),
+                ActorUrlBuilder::new(self.public_base_url().as_str(), account.nanoid().as_ref())
+                    .outbox(),
                 total_items,
                 ordered_items,
             ))
@@ -1163,11 +1153,7 @@ fn same_activitypub_id(left: &str, right: &str) -> bool {
 }
 
 fn local_actor_url(public_base_url: &PublicBaseUrl, account_nanoid: &str) -> String {
-    format!(
-        "{}/accounts/{}",
-        public_base_url.as_str().trim_end_matches('/'),
-        account_nanoid
-    )
+    ActorUrlBuilder::new(public_base_url.as_str(), account_nanoid).actor_id()
 }
 
 fn accept_activity(
@@ -1851,7 +1837,7 @@ mod tests {
         assert!(ensure_local_actor_matches(
             &public_base_url,
             "alice",
-            "https://example.com/accounts/alice/"
+            "https://example.com/ap/accounts/alice/"
         )
         .is_ok());
         assert!(ensure_local_actor_matches(
@@ -1870,7 +1856,7 @@ mod tests {
 
         assert_eq!(
             collection.id,
-            "https://example.com/accounts/alice/followers"
+            "https://example.com/ap/accounts/alice/followers"
         );
         assert_eq!(collection.type_, "OrderedCollection");
         assert_eq!(collection.total_items, Some(1));
@@ -1886,7 +1872,7 @@ mod tests {
 
         assert_eq!(
             collection.id,
-            "https://example.com/accounts/alice/following"
+            "https://example.com/ap/accounts/alice/following"
         );
         assert_eq!(collection.type_, "OrderedCollection");
         assert_eq!(collection.total_items, Some(1));
@@ -1919,7 +1905,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(collection.id, "https://example.com/accounts/alice/outbox");
+        assert_eq!(
+            collection.id,
+            "https://example.com/ap/accounts/alice/outbox"
+        );
         assert_eq!(collection.type_, "OrderedCollection");
         assert_eq!(collection.total_items, Some(1));
         assert_eq!(collection.ordered_items.as_ref().unwrap().len(), 1);

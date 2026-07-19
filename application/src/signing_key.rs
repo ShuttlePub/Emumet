@@ -1,5 +1,6 @@
 use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
 use error_stack::Report;
+use kernel::activitypub::ActorUrlBuilder;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, KeyEncryptor, PasswordProvider,
@@ -43,7 +44,7 @@ pub trait CreateSigningKeyUseCase:
             let password = self.password_provider().get_password()?;
             let key_pair = self.signing_key_generator().generate(&password)?;
             let base_url = self.public_base_url().as_str();
-            let key_id_uri = format!("{}/accounts/{}#main-key", base_url, nanoid.as_ref());
+            let key_id_uri = ActorUrlBuilder::new(base_url, nanoid.as_ref()).key_id();
             let signing_key = SigningKey::new(
                 SigningKeyId::default(),
                 account_id,
@@ -92,7 +93,7 @@ pub trait GetPublicKeyUseCase:
                     .attach_printable("No active signing key found for account")
             })?;
             let base_url = self.public_base_url().as_str();
-            let owner = format!("{}/accounts/{}", base_url, nanoid.as_ref());
+            let owner = ActorUrlBuilder::new(base_url, nanoid.as_ref()).actor_id();
             Ok(PublicKeyInfo {
                 id: key.key_id_uri,
                 owner,
@@ -476,7 +477,7 @@ mod tests {
         let signing_key = result.unwrap();
         assert_eq!(
             signing_key.key_id_uri,
-            "https://example.com/accounts/abc123#main-key"
+            "https://example.com/ap/accounts/abc123#main-key"
         );
         assert_eq!(signing_key.public_key_pem, "mock-public-key-pem");
         assert_eq!(signing_key.revoked_at, None);
@@ -502,7 +503,7 @@ mod tests {
         let signing_key = result.unwrap();
         assert_eq!(
             signing_key.key_id_uri,
-            "https://my-instance.social/accounts/xyz789#main-key"
+            "https://my-instance.social/ap/accounts/xyz789#main-key"
         );
     }
 
@@ -538,7 +539,7 @@ mod tests {
         assert!(result.is_ok());
         let info = result.unwrap();
         assert_eq!(info.id, "https://example.com/accounts/abc123#main-key");
-        assert_eq!(info.owner, "https://example.com/accounts/abc123");
+        assert_eq!(info.owner, "https://example.com/ap/accounts/abc123");
         assert_eq!(info.public_key_pem, "test-public-key-pem");
     }
 

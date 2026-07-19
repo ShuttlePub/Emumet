@@ -19,7 +19,7 @@ use error_stack::{Report, ResultExt};
 use kernel::interfaces::database::{DatabaseConnection, Executor};
 use kernel::KernelError;
 use sqlx::pool::PoolConnection;
-use sqlx::{Error, PgConnection, Pool, Postgres};
+use sqlx::{Error, PgConnection, Pool, Postgres, Transaction};
 use std::ops::{Deref, DerefMut};
 
 const POSTGRESQL: &str = "DATABASE_URL";
@@ -59,20 +59,39 @@ impl PostgresDatabase {
     }
 }
 
-pub struct PostgresConnection(PoolConnection<Postgres>);
+pub enum PostgresConnection {
+    Connection(PoolConnection<Postgres>),
+    Transaction(Transaction<'static, Postgres>),
+}
 
-impl Executor for PostgresConnection {}
+impl Executor for PostgresConnection {
+    async fn commit(self) -> error_stack::Result<(), KernelError> {
+        match self {
+            PostgresConnection::Connection(_) => Ok(()),
+            PostgresConnection::Transaction(transaction) => transaction
+                .commit()
+                .await
+                .change_context(KernelError::Internal),
+        }
+    }
+}
 
 impl Deref for PostgresConnection {
     type Target = PgConnection;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        match self {
+            PostgresConnection::Connection(connection) => connection,
+            PostgresConnection::Transaction(transaction) => transaction,
+        }
     }
 }
 
 impl DerefMut for PostgresConnection {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        match self {
+            PostgresConnection::Connection(connection) => connection,
+            PostgresConnection::Transaction(transaction) => transaction,
+        }
     }
 }
 
@@ -80,7 +99,12 @@ impl DatabaseConnection for PostgresDatabase {
     type Executor = PostgresConnection;
     async fn get_executor(&self) -> error_stack::Result<Self::Executor, KernelError> {
         let connection = self.pool.acquire().await.convert_error()?;
-        Ok(PostgresConnection(connection))
+        Ok(PostgresConnection::Connection(connection))
+    }
+
+    async fn get_transaction(&self) -> error_stack::Result<Self::Executor, KernelError> {
+        let transaction = self.pool.begin().await.convert_error()?;
+        Ok(PostgresConnection::Transaction(transaction))
     }
 }
 

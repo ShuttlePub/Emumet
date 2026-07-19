@@ -16,12 +16,75 @@ use serde::{Deserialize, Serialize};
 /// Can be either a single URL string or an array of mixed values
 /// (strings, objects) for extended contexts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(untagged)]
 pub enum Context {
     /// A single context URL string (e.g. `"https://www.w3.org/ns/activitystreams"`)
     Single(String),
     /// Multiple context entries (URLs and/or JSON objects for extensions)
     Multiple(Vec<serde_json::Value>),
+}
+
+// ---------------------------------------------------------------------------
+// Actor URL builder
+// ---------------------------------------------------------------------------
+
+/// Federation path segment under which local actor documents are served.
+///
+/// The API redesign plan places all federation endpoints under `/ap`;
+/// this constant is the single place to change.
+const ACTORS_PATH: &str = "ap/accounts";
+
+/// Centralized builder for every ActivityPub URL of a local actor.
+///
+/// Constructed from the public base URL and the account nanoid. All
+/// endpoint URLs (actor id, inbox, outbox, collections, signing key URI)
+/// are derived here so the federation path lives in exactly one place.
+#[derive(Debug, Clone)]
+pub struct ActorUrlBuilder {
+    base_url: String,
+    account_nanoid: String,
+}
+
+impl ActorUrlBuilder {
+    /// Create a builder. Trailing slashes are stripped from `base_url`.
+    pub fn new(base_url: &str, account_nanoid: &str) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            account_nanoid: account_nanoid.to_string(),
+        }
+    }
+
+    /// Canonical actor URL (`{base}/ap/accounts/{nanoid}`). Also used as the
+    /// actor document `url`, `publicKey.owner`, and WebFinger href/aliases.
+    pub fn actor_id(&self) -> String {
+        format!("{}/{}/{}", self.base_url, ACTORS_PATH, self.account_nanoid)
+    }
+
+    /// Actor inbox URL.
+    pub fn inbox(&self) -> String {
+        format!("{}/inbox", self.actor_id())
+    }
+
+    /// Actor outbox URL.
+    pub fn outbox(&self) -> String {
+        format!("{}/outbox", self.actor_id())
+    }
+
+    /// Actor followers collection URL.
+    pub fn followers(&self) -> String {
+        format!("{}/followers", self.actor_id())
+    }
+
+    /// Actor following collection URL.
+    pub fn following(&self) -> String {
+        format!("{}/following", self.actor_id())
+    }
+
+    /// Signing key URI (`{actor_id}#main-key`).
+    pub fn key_id(&self) -> String {
+        format!("{}#main-key", self.actor_id())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -33,6 +96,7 @@ pub enum Context {
 /// Serialized as a `Person` type with public key, inbox/outbox URLs,
 /// and optional profile fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Actor {
     #[serde(rename = "@context")]
@@ -59,29 +123,26 @@ pub struct Actor {
 impl Actor {
     /// Construct a new `Actor` from domain data.
     ///
-    /// Automatically derives all ActivityPub endpoint URLs from the
-    /// actor ID (`{base_url}/accounts/{account_nanoid}`).
+    /// All ActivityPub endpoint URLs are derived from `urls`
+    /// (see [`ActorUrlBuilder`]).
     ///
     /// # Arguments
     ///
-    /// * `base_url`           - Scheme + host, e.g. `"https://example.com"`
-    /// * `account_nanoid`     - Unique identifier for the account
+    /// * `urls`               - URL builder for the actor's endpoints
     /// * `preferred_username` - Account username (used as `preferredUsername`)
     /// * `display_name`       - Optional display name (used as `name`)
     /// * `summary`            - Optional profile bio/summary
     /// * `public_key_pem`     - PEM-encoded public key string
     /// * `public_key_id`      - Canonical URI for the public key
     pub fn new(
-        base_url: &str,
-        account_nanoid: &str,
+        urls: &ActorUrlBuilder,
         preferred_username: &str,
         display_name: Option<&str>,
         summary: Option<&str>,
         public_key_pem: &str,
         public_key_id: &str,
     ) -> Self {
-        let base_url = base_url.trim_end_matches('/');
-        let actor_id = format!("{}/accounts/{}", base_url, account_nanoid);
+        let actor_id = urls.actor_id();
         let context = vec![
             serde_json::Value::String("https://www.w3.org/ns/activitystreams".to_string()),
             serde_json::json!({
@@ -98,13 +159,13 @@ impl Actor {
             name: display_name.map(|s| s.to_string()),
             summary: summary.map(|s| s.to_string()),
             icon: None,
-            inbox: format!("{}/inbox", actor_id),
-            outbox: format!("{}/outbox", actor_id),
-            followers: format!("{}/followers", actor_id),
-            following: format!("{}/following", actor_id),
+            inbox: urls.inbox(),
+            outbox: urls.outbox(),
+            followers: urls.followers(),
+            following: urls.following(),
             public_key: PublicKey {
                 id: public_key_id.to_string(),
-                owner: actor_id.clone(),
+                owner: actor_id,
                 public_key_pem: public_key_pem.to_string(),
             },
         }
@@ -117,6 +178,7 @@ impl Actor {
 
 /// An ActivityPub public key object attached to an Actor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PublicKey {
     pub id: String,
@@ -130,6 +192,7 @@ pub struct PublicKey {
 
 /// An ActivityPub Image object (e.g. profile avatar).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ImageObject {
     #[serde(rename = "type")]
@@ -146,9 +209,11 @@ pub struct ImageObject {
 
 /// An ActivityPub `OrderedCollection` (e.g. followers, following, outbox).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct OrderedCollection {
     #[serde(rename = "@context")]
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
     pub context: Vec<serde_json::Value>,
     pub id: String,
     #[serde(rename = "type")]
@@ -204,6 +269,7 @@ impl OrderedCollection {
 
 /// A single page of an `OrderedCollection`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct OrderedCollectionPage {
     #[serde(rename = "@context")]
@@ -226,6 +292,7 @@ pub struct OrderedCollectionPage {
 
 /// A generic ActivityPub Activity (e.g. Follow, Create, Like).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Activity {
     #[serde(rename = "@context")]
@@ -253,6 +320,7 @@ pub struct Activity {
 ///
 /// Both `links` and `aliases` are optional per RFC 7033 §4.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WebFingerResponse {
     pub subject: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -263,6 +331,7 @@ pub struct WebFingerResponse {
 
 /// A single link entry within a WebFinger response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct WebFingerLink {
     pub rel: String,
@@ -282,14 +351,52 @@ mod tests {
     /// Helper: create a minimal Actor for testing.
     fn test_actor() -> Actor {
         Actor::new(
-            "https://example.com",
-            "abc123",
+            &ActorUrlBuilder::new("https://example.com", "abc123"),
             "alice",
             Some("Alice"),
             Some("Hello, I'm Alice!"),
             "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----",
             "https://example.com/accounts/abc123#main-key",
         )
+    }
+
+    // -----------------------------------------------------------------------
+    // ActorUrlBuilder
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn actor_url_builder_derives_all_endpoints() {
+        let urls = ActorUrlBuilder::new("https://example.com", "abc123");
+
+        assert_eq!(urls.actor_id(), "https://example.com/ap/accounts/abc123");
+        assert_eq!(urls.inbox(), "https://example.com/ap/accounts/abc123/inbox");
+        assert_eq!(
+            urls.outbox(),
+            "https://example.com/ap/accounts/abc123/outbox"
+        );
+        assert_eq!(
+            urls.followers(),
+            "https://example.com/ap/accounts/abc123/followers"
+        );
+        assert_eq!(
+            urls.following(),
+            "https://example.com/ap/accounts/abc123/following"
+        );
+        assert_eq!(
+            urls.key_id(),
+            "https://example.com/ap/accounts/abc123#main-key"
+        );
+    }
+
+    #[test]
+    fn actor_url_builder_strips_trailing_slashes() {
+        let urls = ActorUrlBuilder::new("https://example.com///", "abc123");
+
+        assert_eq!(urls.actor_id(), "https://example.com/ap/accounts/abc123");
+        assert_eq!(
+            urls.key_id(),
+            "https://example.com/ap/accounts/abc123#main-key"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -324,24 +431,29 @@ mod tests {
         let actor = test_actor();
         let json = serde_json::to_value(&actor).unwrap();
 
-        assert_eq!(json["id"], "https://example.com/accounts/abc123");
-        assert_eq!(json["inbox"], "https://example.com/accounts/abc123/inbox");
-        assert_eq!(json["outbox"], "https://example.com/accounts/abc123/outbox");
+        assert_eq!(json["id"], "https://example.com/ap/accounts/abc123");
+        assert_eq!(
+            json["inbox"],
+            "https://example.com/ap/accounts/abc123/inbox"
+        );
+        assert_eq!(
+            json["outbox"],
+            "https://example.com/ap/accounts/abc123/outbox"
+        );
         assert_eq!(
             json["followers"],
-            "https://example.com/accounts/abc123/followers"
+            "https://example.com/ap/accounts/abc123/followers"
         );
         assert_eq!(
             json["following"],
-            "https://example.com/accounts/abc123/following"
+            "https://example.com/ap/accounts/abc123/following"
         );
     }
 
     #[test]
     fn actor_optional_fields_are_skipped_when_none() {
         let actor = Actor::new(
-            "https://example.com",
-            "xyz789",
+            &ActorUrlBuilder::new("https://example.com", "xyz789"),
             "bob",
             None, // display_name
             None, // summary
@@ -363,7 +475,7 @@ mod tests {
         let pk = &json["publicKey"];
 
         assert_eq!(pk["id"], "https://example.com/accounts/abc123#main-key");
-        assert_eq!(pk["owner"], "https://example.com/accounts/abc123");
+        assert_eq!(pk["owner"], "https://example.com/ap/accounts/abc123");
         assert!(pk["publicKeyPem"]
             .as_str()
             .unwrap()
@@ -631,19 +743,18 @@ mod tests {
     #[test]
     fn actor_new_strips_trailing_slash() {
         let actor = Actor::new(
-            "https://example.com/",
-            "abc123",
+            &ActorUrlBuilder::new("https://example.com/", "abc123"),
             "test",
             None,
             None,
             "pem",
-            "https://example.com/accounts/abc123#main-key",
+            "https://example.com/ap/accounts/abc123#main-key",
         );
         assert_eq!(
-            actor.id, "https://example.com/accounts/abc123",
+            actor.id, "https://example.com/ap/accounts/abc123",
             "trailing slash in base_url should be stripped"
         );
-        assert_eq!(actor.inbox, "https://example.com/accounts/abc123/inbox");
+        assert_eq!(actor.inbox, "https://example.com/ap/accounts/abc123/inbox");
     }
 
     #[test]

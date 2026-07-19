@@ -201,6 +201,7 @@ impl DependOnSigningKeyRepository for PostgresDatabase {
 #[cfg(test)]
 mod test {
     use crate::database::PostgresDatabase;
+    use kernel::activitypub::ActorUrlBuilder;
     use kernel::interfaces::crypto::{EncryptedPrivateKey, SigningAlgorithm};
     use kernel::interfaces::database::DatabaseConnection;
     use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
@@ -222,7 +223,7 @@ mod test {
                 algorithm: SigningAlgorithm::default(),
             },
             "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----".to_string(),
-            "https://example.com/accounts/abc123#main-key".to_string(),
+            ActorUrlBuilder::new("https://example.com", "abc123").key_id(),
             OffsetDateTime::now_utc(),
             None,
         )

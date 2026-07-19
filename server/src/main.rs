@@ -11,12 +11,10 @@ mod schema;
 use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
 use crate::handler::AppModule;
-use crate::route::account::AccountRouter;
-use crate::route::activitypub::ActivityPubRouter;
-use crate::route::metadata::MetadataRouter;
+use crate::route::account::{AccountRouter, AdminAccountRouter};
+use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
 use crate::route::oauth2::OAuth2Router;
-use crate::route::profile::ProfileRouter;
-use crate::route::signing::{SigningAuthedRouter, SigningPublicRouter};
+use crate::route::signing::SigningRouter;
 #[cfg(feature = "test-mode")]
 use crate::route::test_mode::TestModeRouter;
 use axum::http::{header, HeaderValue, Method};
@@ -84,22 +82,26 @@ async fn main() -> Result<(), StackTrace> {
         }
     }
 
-    // Routes that require JWT auth
-    let authed_routes = axum::Router::new()
+    // Routes that require JWT auth (/api/v1, /api/v1/admin, /internal/v1).
+    // Admin authorization (Keto instance_moderate) lives inside the use cases.
+    let api_v1 = axum::Router::new()
         .route_account()
-        .route_profile()
-        .route_metadata()
-        .route_signing_authed()
+        .nest("/admin", axum::Router::new().route_admin_account());
+
+    let authed_routes = axum::Router::new()
+        .nest("/api/v1", api_v1)
+        .nest("/internal/v1", axum::Router::new().route_signing())
         .layer(axum::middleware::from_fn_with_state(
             (oidc_config, jwks_cache),
             auth::auth_middleware,
         ));
 
-    // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider)
+    // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider,
+    // webfinger, federation under /ap — inbox is HTTP-Signature guarded)
     let public_routes = axum::Router::new()
         .route_oauth2()
-        .route_signing_public()
-        .route_activitypub();
+        .route_activitypub()
+        .nest("/ap", axum::Router::new().route_federation());
 
     #[cfg(feature = "test-mode")]
     let public_routes = public_routes.route_test_mode();
@@ -132,7 +134,7 @@ fn build_cors_layer() -> CorsLayer {
                 .collect();
             CorsLayer::new()
                 .allow_origin(origins)
-                .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+                .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
                 .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
         }
     }

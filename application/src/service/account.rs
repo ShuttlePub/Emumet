@@ -4,7 +4,7 @@ use crate::permission::{
 use crate::signing_key::CreateSigningKeyUseCase;
 use crate::transfer::account::{AccountDto, CreateAccountDto, UpdateAccountDto};
 use crate::transfer::pagination::{apply_pagination, Pagination};
-use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
+use adapter::crypto::DependOnSigningKeyGenerator;
 use adapter::processor::account::{
     AccountCommandProcessor, AccountQueryProcessor, CreateAccountParam,
     DependOnAccountCommandProcessor, DependOnAccountQueryProcessor, UpdateAccountParam,
@@ -14,7 +14,7 @@ use adapter::processor::profile::{
 };
 use error_stack::Report;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
-use kernel::interfaces::crypto::{DependOnPasswordProvider, PasswordProvider, SigningAlgorithm};
+use kernel::interfaces::crypto::{DependOnPasswordProvider, SigningAlgorithm};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
@@ -24,11 +24,10 @@ use kernel::interfaces::permission::{
 };
 use kernel::interfaces::repository::DependOnSigningKeyRepository;
 use kernel::prelude::entity::{
-    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-    AuthAccountId, EventId, EventVersion, Nanoid, Profile, ProfileDisplayName,
+    Account, AccountId, AccountIsBot, AccountName, AuthAccountId, EventId, EventVersion,
+    ModerationReason, Nanoid, Profile, ProfileDisplayName,
 };
 use kernel::KernelError;
-use serde_json;
 use std::future::Future;
 
 pub trait GetAccountUseCase:
@@ -120,18 +119,6 @@ pub trait CreateAccountUseCase:
         async move {
             let mut transaction = self.database_connection().get_executor().await?;
 
-            // Generate key pair
-            let master_password = self.password_provider().get_password()?;
-            let key_pair = self.signing_key_generator().generate(&master_password)?;
-
-            let encrypted_private_key_json = serde_json::to_string(&key_pair.encrypted_private_key)
-                .map_err(|e| {
-                    Report::new(KernelError::Internal)
-                        .attach_printable(format!("Failed to serialize encrypted private key: {e}"))
-                })?;
-
-            let private_key = AccountPrivateKey::new(encrypted_private_key_json);
-            let public_key = AccountPublicKey::new(key_pair.public_key_pem);
             let account_name = AccountName::new(dto.name);
             let account_is_bot = AccountIsBot::new(dto.is_bot);
 
@@ -143,8 +130,6 @@ pub trait CreateAccountUseCase:
                     &mut transaction,
                     CreateAccountParam {
                         name: account_name,
-                        private_key,
-                        public_key,
                         is_bot: account_is_bot,
                         auth_account_id: auth_account_id.clone(),
                     },
@@ -234,6 +219,12 @@ pub trait UpdateAccountUseCase:
             let (account, current_version) =
                 rehydrate_account(self, &mut transaction, &account_id).await?;
 
+            let is_bot = match dto.is_bot {
+                kernel::prelude::entity::FieldAction::Unchanged => *account.is_bot().as_ref(),
+                kernel::prelude::entity::FieldAction::Clear => false,
+                kernel::prelude::entity::FieldAction::Set(value) => value,
+            };
+
             if !account.status().is_active() {
                 return Err(Report::new(KernelError::Rejected)
                     .attach_printable("Cannot modify a suspended or banned account"));
@@ -249,7 +240,7 @@ pub trait UpdateAccountUseCase:
                     &mut transaction,
                     UpdateAccountParam {
                         account_id,
-                        is_bot: AccountIsBot::new(dto.is_bot),
+                        is_bot: AccountIsBot::new(is_bot),
                         current_version,
                     },
                 )
@@ -356,6 +347,7 @@ pub trait SuspendAccountUseCase:
         expires_at: Option<time::OffsetDateTime>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
+            ModerationReason::new(reason.as_str()).validate()?;
             let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
@@ -493,6 +485,7 @@ pub trait BanAccountUseCase:
         reason: String,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
+            ModerationReason::new(reason.as_str()).validate()?;
             let mut transaction = self.database_connection().get_executor().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
@@ -541,7 +534,7 @@ impl<T> BanAccountUseCase for T where
 {
 }
 
-async fn rehydrate_account<T>(
+pub(crate) async fn rehydrate_account<T>(
     deps: &T,
     executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
     account_id: &AccountId,

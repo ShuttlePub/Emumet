@@ -37,29 +37,20 @@ pub struct PublicKeyResponse {
     pub public_key_pem: String,
 }
 
-pub trait SigningAuthedRouter {
-    fn route_signing_authed(self) -> Self;
+pub trait SigningRouter {
+    fn route_signing(self) -> Self;
 }
 
-pub trait SigningPublicRouter {
-    fn route_signing_public(self) -> Self;
-}
-
-impl SigningAuthedRouter for Router<AppModule> {
-    fn route_signing_authed(self) -> Self {
+impl SigningRouter for Router<AppModule> {
+    fn route_signing(self) -> Self {
         self.route("/accounts/{id}/sign", post(sign_request))
-    }
-}
-
-impl SigningPublicRouter for Router<AppModule> {
-    fn route_signing_public(self) -> Self {
-        self.route("/accounts/{id}/public-key", get(get_public_key))
+            .route("/accounts/{id}/public-key", get(get_public_key))
     }
 }
 
 #[utoipa::path(
     post,
-    path = "/accounts/{id}/sign",
+    path = "/internal/v1/accounts/{id}/sign",
     description = "Sign an HTTP request using the account's signing key.",
     params(("id" = String, Path, description = "Account nanoid")),
     request_body = SignRequestBody,
@@ -142,13 +133,14 @@ pub(crate) async fn sign_request(
 
 #[utoipa::path(
     get,
-    path = "/accounts/{id}/public-key",
+    path = "/internal/v1/accounts/{id}/public-key",
     description = "Retrieve the public key for an account.",
     params(("id" = String, Path, description = "Account nanoid")),
     responses(
         (status = 200, description = "Public key info", body = PublicKeyResponse),
         (status = 404, description = "Account or signing key not found"),
     ),
+    security(("bearer_auth" = [])),
     tag = "Signing",
 )]
 pub(crate) async fn get_public_key(

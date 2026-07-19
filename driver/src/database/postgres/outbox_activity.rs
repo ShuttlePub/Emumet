@@ -114,6 +114,7 @@ impl DependOnOutboxActivityRepository for PostgresDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::activitypub::ActorUrlBuilder;
     use kernel::interfaces::database::DatabaseConnection;
     use serde_json::json;
 
@@ -134,7 +135,7 @@ mod tests {
                 "@context": "https://www.w3.org/ns/activitystreams",
                 "id": activity_id,
                 "type": "Create",
-                "actor": "https://example.com/accounts/alice"
+                "actor": ActorUrlBuilder::new("https://example.com", "alice").actor_id()
             })
             .to_string(),
             created_at: OffsetDateTime::now_utc(),

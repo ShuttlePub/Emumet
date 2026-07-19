@@ -1,15 +1,13 @@
 use crate::entity::{
-    Account, AccountId, AccountIsBot, AccountName, AccountPrivateKey, AccountPublicKey,
-    AccountStatus, CreatedAt, DeletedAt, EventVersion, Nanoid,
+    Account, AccountId, AccountIsBot, AccountName, AccountStatus, CreatedAt, DeletedAt,
+    EventVersion, Nanoid,
 };
 
-use super::{unique_account_name, DEFAULT_PRIVATE_KEY, DEFAULT_PUBLIC_KEY};
+use super::unique_account_name;
 
 pub struct AccountBuilder {
     id: Option<AccountId>,
     name: Option<AccountName>,
-    private_key: Option<AccountPrivateKey>,
-    public_key: Option<AccountPublicKey>,
     is_bot: Option<AccountIsBot>,
     status: Option<AccountStatus>,
     deleted_at: Option<Option<DeletedAt<Account>>>,
@@ -29,8 +27,6 @@ impl AccountBuilder {
         Self {
             id: None,
             name: None,
-            private_key: None,
-            public_key: None,
             is_bot: None,
             status: None,
             deleted_at: None,
@@ -47,16 +43,6 @@ impl AccountBuilder {
 
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(AccountName::new(name));
-        self
-    }
-
-    pub fn private_key(mut self, key: impl Into<String>) -> Self {
-        self.private_key = Some(AccountPrivateKey::new(key));
-        self
-    }
-
-    pub fn public_key(mut self, key: impl Into<String>) -> Self {
-        self.public_key = Some(AccountPublicKey::new(key));
         self
     }
 
@@ -96,10 +82,6 @@ impl AccountBuilder {
             self.id.unwrap_or_default(),
             self.name
                 .unwrap_or_else(|| AccountName::new(unique_account_name())),
-            self.private_key
-                .unwrap_or_else(|| AccountPrivateKey::new(DEFAULT_PRIVATE_KEY)),
-            self.public_key
-                .unwrap_or_else(|| AccountPublicKey::new(DEFAULT_PUBLIC_KEY)),
             self.is_bot.unwrap_or_else(|| AccountIsBot::new(false)),
             self.status.unwrap_or_default(),
             self.deleted_at.unwrap_or(None),

@@ -210,7 +210,7 @@ pub async fn setup_iceshrimp_remote_actor() -> (super::config::ApE2eConfig, Ices
 /// Build the ActivityPub actor URL for an Emumet account.
 pub fn emumet_actor_url(public_base_url: &str, account_id: &str) -> String {
     format!(
-        "{}/accounts/{}",
+        "{}/ap/accounts/{}",
         public_base_url.trim_end_matches('/'),
         account_id
     )

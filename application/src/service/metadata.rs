@@ -195,6 +195,8 @@ pub trait CreateMetadataUseCase:
             let account_nanoid_str = account.nanoid().as_ref().to_string();
             let account_id = account.id().clone();
             let metadata_nanoid = Nanoid::<Metadata>::default();
+            MetadataLabel::new(dto.label.as_str()).validate()?;
+            MetadataContent::new(dto.content.as_str()).validate()?;
             let metadata = self
                 .metadata_command_processor()
                 .create(
@@ -278,6 +280,8 @@ pub trait UpdateMetadataUseCase:
             let metadata_id = metadata.id().clone();
             let (_metadata, current_version) =
                 rehydrate_metadata(self, &mut transaction, &metadata_id).await?;
+            MetadataLabel::new(dto.label.as_str()).validate()?;
+            MetadataContent::new(dto.content.as_str()).validate()?;
             self.metadata_command_processor()
                 .update(
                     &mut transaction,
@@ -382,7 +386,7 @@ impl<T> DeleteMetadataUseCase for T where
 {
 }
 
-async fn rehydrate_metadata<T>(
+pub(crate) async fn rehydrate_metadata<T>(
     deps: &T,
     executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
     metadata_id: &MetadataId,

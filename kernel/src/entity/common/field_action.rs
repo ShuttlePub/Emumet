@@ -36,11 +36,10 @@ impl<T: Serialize> Serialize for FieldAction<T> {
 
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for FieldAction<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let opt: Option<Option<T>> = Option::deserialize(deserializer)?;
-        Ok(match opt {
-            None => FieldAction::Unchanged,
-            Some(None) => FieldAction::Clear,
-            Some(Some(v)) => FieldAction::Set(v),
+        let value: Option<T> = Option::deserialize(deserializer)?;
+        Ok(match value {
+            None => FieldAction::Clear,
+            Some(value) => FieldAction::Set(value),
         })
     }
 }
@@ -62,5 +61,14 @@ mod tests {
         let action: FieldAction<i32> = FieldAction::Unchanged;
         let mapped = action.map(|v| v.to_string());
         assert_eq!(mapped, FieldAction::<String>::Unchanged);
+    }
+
+    #[test]
+    fn explicit_null_round_trips_as_clear() {
+        let serialized = serde_json::to_string(&FieldAction::<String>::Clear).unwrap();
+
+        let deserialized: FieldAction<String> = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized, FieldAction::Clear);
     }
 }
