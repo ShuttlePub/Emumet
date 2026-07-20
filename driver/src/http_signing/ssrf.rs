@@ -138,7 +138,21 @@ fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
         || ip.is_multicast()
         || (ip.segments()[0] & 0xfe00) == 0xfc00
         || (ip.segments()[0] & 0xffc0) == 0xfe80
-        || (ip.segments()[0] & 0xffff) == 0x2001 && (ip.segments()[1] & 0xfff0) == 0x0db8
+        || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8)
         || ip.segments()[0] == 0x2002
         || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_blocked_ipv6;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn documentation_range_is_blocked() {
+        let ip: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        assert!(is_blocked_ipv6(ip));
+        let ip: Ipv6Addr = "2001:db8:ffff::1".parse().unwrap();
+        assert!(is_blocked_ipv6(ip));
+    }
 }
