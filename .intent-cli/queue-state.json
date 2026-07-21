@@ -1,5 +1,28 @@
 {
   "schema_version": "1",
-  "updated_at": "1970-01-01T00:00:00+00:00",
-  "items": []
+  "updated_at": "2026-07-21T15:46:27.0941919+00:00",
+  "items": [
+    {
+      "execution_unit": "block-mute-core",
+      "title": "\u30E6\u30FC\u30B6\u30FC\u30D6\u30ED\u30C3\u30AF/\u30DF\u30E5\u30FC\u30C8: \u30A8\u30F3\u30C6\u30A3\u30C6\u30A3\u3068 REST API \u306E\u5B9F\u88C5",
+      "state": "queued",
+      "dependencies": [],
+      "blocked_by": [],
+      "clarification_return_path": "intents/emumet/clarifications/open.md",
+      "packet_paths": {
+        "implementation": ".intent-cli/issues/block-mute-core/implementation.md",
+        "review_context": ".intent-cli/issues/block-mute-core/review-context.md",
+        "yaml": ".intent-cli/issues/block-mute-core/packet.yaml"
+      },
+      "linked_issue": {
+        "repo": "ShuttlePub/Emumet",
+        "number": 16,
+        "url": "https://github.com/ShuttlePub/Emumet/issues/16"
+      },
+      "worker_role": "Claude",
+      "review_role": "Codex",
+      "priority": "high",
+      "priority_revision": 0
+    }
+  ]
 }

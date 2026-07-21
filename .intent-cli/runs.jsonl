@@ -1,0 +1,2 @@
+{"ts":"2026-07-21T15:46:15.5919834+00:00","execution_unit":"block-mute-core","event":"queue_seeded_from_packet","by":"automation queue-seed-from-packet (G363)","packet_ref":".intent-cli/issues/block-mute-core/"}
+{"ts":"2026-07-21T15:46:27.0941919+00:00","execution_unit":"block-mute-core","event":"issue-created","by":"issue-publish-flow","linked_issue":"ShuttlePub/Emumet#16","reason":"https://github.com/ShuttlePub/Emumet/issues/16"}
