@@ -1,0 +1,48 @@
+implementation_issue_packet:
+  issue_title: "E2E: Mastodon 連携テストの完成"
+  issue_kind: test
+  source_execution_unit: mastodon-e2e-completion
+  domain: emumet
+  target_repo: ShuttlePub/Emumet
+  target_path: server/tests, e2e, compose.ap-e2e.yml
+  target_part: "Mastodon との ActivityPub 連携 E2E テスト (S7-S9 相当)"
+  dependencies: []
+  technical_baseline:
+    - "Iceshrimp 側 E2E テスト S7-S9 の完成パターン (server/tests/e2e_ap_iceshrimp.rs)"
+    - "Mastodon compose 定義 v4.6.2 (compose.ap-e2e.yml: mastodon-db, mastodon-setup, mastodon-web, mastodon-sidekiq)"
+    - "Mastodon REST API クライアント + セットアップヘルパー (server/tests/support/mastodon.rs, mastodon_setup.rs)"
+    - "nginx リバースプロキシ HTTPS (port 8443) + 証明書 SAN (e2e/certs/gen-cert.sh)"
+  intent_references:
+    - intents/emumet/features/ap-federation/overview.md
+  acceptance_criteria:
+    - "Mastodon とのフォロー双方向シナリオが E2E で通る"
+    - "run-ap-e2e.sh (または同等スクリプト) で Mastodon テストが再現可能に実行できる"
+    - "テスト手順が README または e2e ドキュメントに記載される"
+
+intent_placement:
+  primary_intent: intents/emumet/features/ap-federation/overview.md
+  supporting_intents: []
+  new_intent_needed: false
+  placement_rationale: "AP 連合テストの Mastodon 対応。Iceshrimp 側 S7-S9 と同パターンで Mastodon インスタンスとの E2E を完成させる。"
+knowledge_updates:
+  intent_tree:
+    required: true
+    target_paths:
+      - intents/emumet/features/ap-federation/packets.md
+    summary: "packet 発行後に packets.md へ issue リンクを追記する"
+  adr:
+    required: false
+    target_paths: []
+    decision_title: ""
+  diagram:
+    required: false
+    target_paths: []
+    diagram_type: none
+  docs:
+    required: false
+    target_paths: []
+    summary: ""
+closeout_learning:
+  expected: "Mastodon v4.6.x との連携で判明した相互運用上の注意点(ポート、SAN、証明書)を closeout で記録"
+  write_back_required: false
+  write_back_targets: []

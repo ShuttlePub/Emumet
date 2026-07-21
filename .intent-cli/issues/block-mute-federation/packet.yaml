@@ -1,0 +1,53 @@
+implementation_issue_packet:
+  issue_title: "ユーザーブロック/ミュート: ActivityPub 連合(Block アクティビティ送受信)"
+  issue_kind: feature
+  source_execution_unit: block-mute-federation
+  domain: emumet
+  target_repo: ShuttlePub/Emumet
+  target_path: application/src/service/activitypub, kernel/src/activitypub.rs, server/tests
+  target_part: "Block アクティビティの署名配送・inbox 受信処理・E2E テスト"
+  dependencies:
+    - block-mute-core
+  technical_baseline:
+    - "outbound_follow の署名配送パターン (application/src/service/activitypub/outbound_follow.rs)"
+    - "inbox ハンドラーの Follow/Accept/Undo 処理パターン (application/src/service/activitypub/inbox/handlers.rs)"
+    - "Cavage HTTP 署名と delivery エンジン (application/src/service/activitypub/delivery.rs)"
+    - "Mock peer E2E テストの構成 (server/tests/e2e_ap_mock.rs)"
+  intent_references:
+    - intents/emumet/features/block-mute/overview.md
+    - intents/emumet/features/block-mute/requirements.md
+    - intents/emumet/features/block-mute/acceptance.md
+  acceptance_criteria:
+    - "リモートへのブロックで署名付き Block アクティビティが相手 inbox へ配送される"
+    - "inbox で受信した Block アクティビティがフォロー解除に反映される"
+    - "Undo(Block) アクティビティでブロック解除が反映される"
+    - "Mock peer / Iceshrimp E2E にブロックシナリオが追加されテストが通る"
+
+intent_placement:
+  primary_intent: intents/emumet/features/block-mute/overview.md
+  supporting_intents:
+    - intents/emumet/features/ap-federation/overview.md
+  new_intent_needed: false
+  placement_rationale: "block-mute feature の2番目の実装スライス。ローカル基盤(block-mute-core)の上に連合を載せる。"
+knowledge_updates:
+  intent_tree:
+    required: true
+    target_paths:
+      - intents/emumet/features/block-mute/packets.md
+    summary: "packet 発行後に packets.md へ issue リンクを追記する"
+  docs:
+    required: false
+    target_paths: []
+    summary: "連合プロトコルのドキュメント更新は不要(実装コードとテストで十分)"
+  adr:
+    required: false
+    target_paths: []
+    decision_title: ""
+  diagram:
+    required: false
+    target_paths: []
+    diagram_type: none
+closeout_learning:
+  expected: "Block アクティビティの配送/受信で踏んだ坑(署名方式・inbox バリデーション・既存 Follow との競合)を closeout で記録"
+  write_back_required: false
+  write_back_targets: []

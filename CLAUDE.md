@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## intent-cli workflow
+
+このリポジトリは intent-cli の **design host** (domain: `emumet`, target: `ShuttlePub/Emumet`) でもある。
+
+- 意図ツリー: `intents/emumet/` (identity / product / features / decisions / clarifications / packets)
+- packet (issue の設計契約): `.intent-cli/issues/<unit>/`
+- 今後の作業の順序付き backlog: `intents/emumet/packets/backlog.md`
+- ガイダンスはコピーせず CLI から読むこと: `intent-cli guide model --format json`, `intent-cli guide commands list --format json`
+- ラベル遷移・issue publish は `intent-cli automation` / `intent-cli issue` 経由で行い、queue-state 等を直接編集しない
+
 ## Project Overview
 
 Emumet is an Account Service for ShuttlePub, implementing Event Sourcing with CQRS pattern. The name derives from EMU (Extravehicular Mobility Unit) + Helmet.

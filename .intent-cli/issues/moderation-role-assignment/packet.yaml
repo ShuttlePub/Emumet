@@ -1,0 +1,52 @@
+implementation_issue_packet:
+  issue_title: "モデレーション: インスタンスロール(Admin/Moderator)割当管理 API"
+  issue_kind: feature
+  source_execution_unit: moderation-role-assignment
+  domain: emumet
+  target_repo: ShuttlePub/Emumet
+  target_path: kernel/src/permission.rs, application/src/service, server/src/route, driver
+  target_part: "インスタンスロール(Admin/Moderator)の付与・剥奪・一覧 API、PermissionWriter trait の具体実装"
+  dependencies: []
+  technical_baseline:
+    - "InstanceRole(Admin, Moderator) 定義済み (kernel/src/permission.rs)"
+    - "PermissionChecker / PermissionWriter trait 定義済み、具体実装なし (kernel/src/permission.rs)"
+    - "Suspend/Ban API 実装済み (server/src/route/account/admin.rs)"
+    - "CQRS CommandProcessor/QueryProcessor パターン (adapter/src/)"
+    - "DependOn* trait DI パターン (kernel/src/lib.rs, server/src/handler.rs)"
+  intent_references:
+    - intents/emumet/features/moderation/overview.md
+    - intents/emumet/features/moderation/requirements.md
+  acceptance_criteria:
+    - "Admin が他アカウントへ Moderator ロールを付与・剥奪できる"
+    - "ロール一覧を参照できる"
+    - "Moderator ロール保持者が suspend/unsuspend を実行でき、非保持者は拒否される"
+    - "cargo test が通る"
+
+intent_placement:
+  primary_intent: intents/emumet/features/moderation/overview.md
+  supporting_intents: []
+  new_intent_needed: false
+  placement_rationale: "moderation feature の最初の実装スライス。ロール割当基盤を先に固める。"
+knowledge_updates:
+  intent_tree:
+    required: true
+    target_paths:
+      - intents/emumet/features/moderation/packets.md
+    summary: "packet 発行後に packets.md へ issue リンクを追記する"
+  adr:
+    required: false
+    target_paths: []
+    decision_title: ""
+  diagram:
+    required: false
+    target_paths: []
+    diagram_type: none
+  docs:
+    required: true
+    target_paths:
+      - "ShuttlePub/document data-structure.md"
+    summary: "Moderator 割当の実装状況を docs 側に反映する(別リポジトリのため別途対応)"
+closeout_learning:
+  expected: "PermissionWriter の権限バックエンド選定(Keto 等外部依存 or ローカル永続化)の最終判断と理由を closeout で記録"
+  write_back_required: false
+  write_back_targets: []

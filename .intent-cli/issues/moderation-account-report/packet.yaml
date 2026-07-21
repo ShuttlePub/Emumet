@@ -1,0 +1,54 @@
+implementation_issue_packet:
+  issue_title: "モデレーション: 通報(AccountReport)機能"
+  issue_kind: feature
+  source_execution_unit: moderation-account-report
+  domain: emumet
+  target_repo: ShuttlePub/Emumet
+  target_path: kernel/src/entity, kernel/src/event_store, kernel/src/read_model, application/src/service, driver/src/database/postgres, server/src/route
+  target_part: "AccountReport エンティティ・EventStore・ReadModel・ユースケース・REST API"
+  dependencies: ["moderation-role-assignment"]
+  technical_baseline:
+    - "Event Sourcing + CQRS パターン (kernel/src/entity/account.rs, application/src/service/account/"
+    - "kernel interface traits: EventStore / ReadModel (kernel/src/event_store/, kernel/src/read_model/)"
+    - "adapter CommandProcessor / QueryProcessor による組み合わせ (adapter/src/)"
+    - "driver Postgres 実装 (driver/src/database/postgres/)"
+    - "application use case + event applier パターン (application/src/service/account/, server/src/applier/)"
+    - "docs に account_report_created / updated / closed イベント定義あり (data-structure.md)"
+  intent_references:
+    - intents/emumet/features/moderation/overview.md
+    - intents/emumet/features/moderation/requirements.md
+  acceptance_criteria:
+    - "ユーザーがアカウントを通報できる (POST /api/v1/accounts/{id}/report)"
+    - "Moderator ロール保持者が通報一覧・詳細を参照できる"
+    - "通報を close_reason 付きでクローズできる"
+    - "非モデレーターは管理 API を利用できない (403)"
+    - "追加した API の単体/結合テストが通る (cargo test)"
+
+intent_placement:
+  primary_intent: intents/emumet/features/moderation/overview.md
+  supporting_intents: []
+  new_intent_needed: false
+  placement_rationale: "moderation feature の通報サブスコープ。ロール割当(moderation-role-assignment)に依存し、ホストモデレーションは別スライス。"
+knowledge_updates:
+  intent_tree:
+    required: true
+    target_paths:
+      - intents/emumet/features/moderation/packets.md
+    summary: "packet 発行後に packets.md へ issue リンクを追記する"
+  adr:
+    required: false
+    target_paths: []
+    decision_title: ""
+  diagram:
+    required: false
+    target_paths: []
+    diagram_type: none
+  docs:
+    required: true
+    target_paths:
+      - "ShuttlePub/document: packages/document/docs/emumet/data-structure.md"
+    summary: "docs の AccountReport イベント定義を実装に合わせて同期する(別リポジトリのため別途対応)"
+closeout_learning:
+  expected: "通報エンティティの永続化方式(Event Sourcing 採用の可否)と、close_reason のスキーマ設計判断を closeout で記録"
+  write_back_required: false
+  write_back_targets: []

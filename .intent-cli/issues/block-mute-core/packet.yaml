@@ -1,0 +1,52 @@
+implementation_issue_packet:
+  issue_title: "ユーザーブロック/ミュート: エンティティと REST API の実装"
+  issue_kind: feature
+  source_execution_unit: block-mute-core
+  domain: emumet
+  target_repo: ShuttlePub/Emumet
+  target_path: kernel/src/entity, kernel/src/repository, application/src/service, driver/src/database/postgres, server/src/route
+  target_part: "Block/Mute 関係エンティティ・Repository・ユースケース・REST API"
+  dependencies: []
+  technical_baseline:
+    - "Follow エンティティの local/remote 識別パターン (kernel/src/entity/follow.rs)"
+    - "純粋 CRUD Repository パターン (kernel/src/repository/follow.rs, driver/src/database/postgres)"
+    - "JWT 認証済みルートの追加方法 (server/src/route/account/follow.rs)"
+  intent_references:
+    - intents/emumet/features/block-mute/overview.md
+    - intents/emumet/features/block-mute/requirements.md
+    - intents/emumet/features/block-mute/acceptance.md
+  acceptance_criteria:
+    - "ローカルアカウントに対してブロック/ミュートの作成・一覧・解除が REST API 経由でできる"
+    - "ブロック成立時に双方向のフォロー関係が解除される"
+    - "リモートアカウントに対するブロック/ミュート関係をローカルに記録できる(配送は block-mute-federation のスコープ)"
+    - "追加した API の単体/結合テストが通る (cargo test)"
+
+intent_placement:
+  primary_intent: intents/emumet/features/block-mute/overview.md
+  supporting_intents:
+    - intents/emumet/features/ap-federation/overview.md
+  new_intent_needed: false
+  placement_rationale: "block-mute feature の最初の実装スライス。連合は次スライス。"
+knowledge_updates:
+  intent_tree:
+    required: true
+    target_paths:
+      - intents/emumet/features/block-mute/packets.md
+    summary: "packet 発行後に packets.md へ issue リンクを追記する"
+  adr:
+    required: false
+    target_paths: []
+    decision_title: ""
+  diagram:
+    required: false
+    target_paths: []
+    diagram_type: none
+  docs:
+    required: true
+    target_paths:
+      - "ShuttlePub/document: packages/document/docs/emumet/data-structure.md"
+    summary: "Block/Mute のデータ構造が確定したら docs 側に反映する(別リポジトリのため別途対応)"
+closeout_learning:
+  expected: "Block/Mute の永続化方式(純粋CRUD vs ES)の最終判断と理由を closeout で記録"
+  write_back_required: false
+  write_back_targets: []
