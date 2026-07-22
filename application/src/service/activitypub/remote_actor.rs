@@ -10,7 +10,7 @@ use kernel::KernelError;
 use reqwest::header::{ACCEPT, USER_AGENT};
 
 #[derive(Debug)]
-pub(super) struct ResolvedRemoteActor {
+pub(crate) struct ResolvedRemoteActor {
     acct: RemoteAccountAcct,
     url: RemoteAccountUrl,
     inbox_url: Option<String>,
@@ -154,7 +154,7 @@ pub(super) async fn resolve_remote_actor(
     })
 }
 
-pub(super) async fn resolve_remote_actor_identifier(
+pub(crate) async fn resolve_remote_actor_identifier(
     identifier: &str,
 ) -> error_stack::Result<ResolvedRemoteActor, KernelError> {
     if let Some((user, domain)) = identifier
@@ -256,7 +256,7 @@ async fn resolve_remote_webfinger(
     resolve_remote_actor(&actor_url).await
 }
 
-pub(super) async fn upsert_remote_account<R, E>(
+pub(crate) async fn upsert_remote_account<R, E>(
     repository: &R,
     executor: &mut E,
     actor: ResolvedRemoteActor,
