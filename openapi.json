@@ -530,6 +530,105 @@
         ]
       }
     },
+    "/api/v1/accounts/{account_id}/block": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Block a local or remote account. Also removes any follow relationships between the two accounts in both directions.",
+        "operationId": "block_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlockAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Account blocked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "404": {
+            "description": "Account not found"
+          },
+          "422": {
+            "description": "Cannot block (self-block or already blocked)"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/blocks": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "description": "List accounts blocked by the given account.",
+        "operationId": "get_blocks",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Blocked accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/accounts/{account_id}/follow": {
       "post": {
         "tags": [
@@ -577,6 +676,197 @@
           },
           "409": {
             "description": "Already following"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/mute": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Mute a local or remote account.",
+        "operationId": "mute_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MuteAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Account muted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "404": {
+            "description": "Account not found"
+          },
+          "422": {
+            "description": "Cannot mute (self-mute or already muted)"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/mutes": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "description": "List accounts muted by the given account.",
+        "operationId": "get_mutes",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Muted accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/unblock": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Remove a block on a local or remote account.",
+        "operationId": "unblock_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlockAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Block removed"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "404": {
+            "description": "Account or block relationship not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/unmute": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Remove a mute on a local or remote account.",
+        "operationId": "unmute_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MuteAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Mute removed"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "404": {
+            "description": "Account or mute relationship not found"
           }
         },
         "security": [
@@ -1089,6 +1379,18 @@
           }
         }
       },
+      "BlockAccountRequest": {
+        "type": "object",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Local account nanoid, remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain"
+          }
+        }
+      },
       "ConsentDecision": {
         "type": "object",
         "required": [
@@ -1244,6 +1546,18 @@
           }
         ]
       },
+      "MuteAccountRequest": {
+        "type": "object",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Local account nanoid, remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain"
+          }
+        }
+      },
       "OAuth2Response": {
         "oneOf": [
           {
@@ -1382,6 +1696,39 @@
             "type": "string"
           },
           "publicKeyPem": {
+            "type": "string"
+          }
+        }
+      },
+      "RelationListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelationResponse"
+            }
+          }
+        }
+      },
+      "RelationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "targetType",
+          "target"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "targetType": {
             "type": "string"
           }
         }

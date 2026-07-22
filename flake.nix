@@ -4,13 +4,15 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     utils.url = "github:numtide/flake-utils";
+    intent-system-flake.url = "github:turtton/intent-system-flake";
   };
 
-  outputs = { nixpkgs, flake-utils, ... }: flake-utils.lib.eachDefaultSystem (system:
+  outputs = { nixpkgs, flake-utils, intent-system-flake, ... }: flake-utils.lib.eachDefaultSystem (system:
     let
       pkgs = import nixpkgs {
         inherit system;
       };
+      intent-system = intent-system-flake.packages."${system}".intent-cli;
       emumet = pkgs.rustPlatform.buildRustPackage {
         pname = "server";
         name = "emumet";
@@ -31,6 +33,7 @@
           nodePackages.pnpm
           sqlx-cli
           psmisc
+          intent-system
         ];
         env = {
             LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;

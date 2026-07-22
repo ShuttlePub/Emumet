@@ -5,7 +5,7 @@ mod fetch;
 mod inbox;
 mod outbound_follow;
 mod outbox;
-mod remote_actor;
+pub(crate) mod remote_actor;
 
 use kernel::activitypub::ActorUrlBuilder;
 use kernel::interfaces::config::PublicBaseUrl;

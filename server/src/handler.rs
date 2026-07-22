@@ -198,6 +198,26 @@ impl kernel::interfaces::repository::DependOnFollowRepository for AppModule {
     }
 }
 
+impl kernel::interfaces::repository::DependOnBlockRepository for AppModule {
+    type BlockRepository =
+        <PostgresDatabase as kernel::interfaces::repository::DependOnBlockRepository>::BlockRepository;
+    fn block_repository(&self) -> &Self::BlockRepository {
+        kernel::interfaces::repository::DependOnBlockRepository::block_repository(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::repository::DependOnMuteRepository for AppModule {
+    type MuteRepository =
+        <PostgresDatabase as kernel::interfaces::repository::DependOnMuteRepository>::MuteRepository;
+    fn mute_repository(&self) -> &Self::MuteRepository {
+        kernel::interfaces::repository::DependOnMuteRepository::mute_repository(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
 impl kernel::interfaces::repository::DependOnOutboxActivityRepository for AppModule {
     type OutboxActivityRepository =
         <PostgresDatabase as kernel::interfaces::repository::DependOnOutboxActivityRepository>::OutboxActivityRepository;
