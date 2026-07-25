@@ -180,6 +180,31 @@ pub struct FollowAccountRequest {
     pub target: String,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BlockAccountRequest {
+    /// Local account nanoid, remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain
+    pub target: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct MuteAccountRequest {
+    /// Local account nanoid, remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain
+    pub target: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationResponse {
+    pub id: String,
+    pub target_type: String,
+    pub target: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RelationListResponse {
+    pub items: Vec<RelationResponse>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FollowAccountResponse {
