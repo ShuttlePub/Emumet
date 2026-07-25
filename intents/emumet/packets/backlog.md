@@ -7,11 +7,10 @@ intent interview (../interview/2026-07-22-initial-shaping.md) と実装インベ
 
 | # | execution unit | 概要 | 依存 |
 |---|---|---|---|
-| 1 | `block-mute-core` | ブロック/ミュートのエンティティ + REST API + フォロー解除 | — |
-| 2 | `block-mute-federation` | Block アクティビティの連合送受信 + E2E | 1 |
-| 3 | `moderation-role-assignment` | Admin/Moderator ロール割当管理 API | — |
-| 4 | `moderation-account-report` | 通報(AccountReport)機能 | 3 |
-| 5 | `mastodon-e2e-completion` | Mastodon 連携 E2E テストの完成 | — |
+| 1 | `block-mute-federation` | Block アクティビティの連合送受信 + E2E | block-mute-core (完了: PR #17) |
+| 2 | `moderation-role-assignment` | Admin/Moderator ロール割当管理 API | — |
+| 3 | `moderation-account-report` | 通報(AccountReport)機能 | 2 |
+| 4 | `mastodon-e2e-completion` | Mastodon 連携 E2E テストの完成 | — |
 
 ## Deferred(open question 解消が先)
 
