@@ -995,6 +995,38 @@
         ]
       }
     },
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "description": "Retrieve the authenticated account and direct instance roles.",
+        "operationId": "get_me",
+        "responses": {
+          "200": {
+            "description": "Authenticated session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "503": {
+            "description": "Instance role service unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/internal/v1/accounts/{id}/public-key": {
       "get": {
         "tags": [
@@ -1489,6 +1521,24 @@
           }
         }
       },
+      "MeResponse": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "instance_roles"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "instance_roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ModerationResponse": {
         "oneOf": [
           {
@@ -1917,6 +1967,10 @@
     {
       "name": "Account",
       "description": "Account management"
+    },
+    {
+      "name": "Me",
+      "description": "Authenticated session"
     },
     {
       "name": "OAuth2",

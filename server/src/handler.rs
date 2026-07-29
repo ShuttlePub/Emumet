@@ -398,14 +398,12 @@ impl Handler {
 
 #[cfg(test)]
 impl AppModule {
-    pub(crate) async fn new_for_oauth2_test(
+    pub(crate) async fn new_for_test_urls(
         hydra_admin_url: String,
         kratos_public_url: String,
+        keto_read_url: String,
+        keto_write_url: String,
     ) -> error_stack::Result<Self, KernelError> {
-        let keto_read_url =
-            dotenvy::var("KETO_READ_URL").unwrap_or_else(|_| "http://localhost:4466".to_string());
-        let keto_write_url =
-            dotenvy::var("KETO_WRITE_URL").unwrap_or_else(|_| "http://localhost:4467".to_string());
         let handler = Arc::new(
             Handler::init_for_oauth2_test(
                 hydra_admin_url,
@@ -420,6 +418,23 @@ impl AppModule {
             handler,
             applier_container,
         })
+    }
+
+    pub(crate) async fn new_for_oauth2_test(
+        hydra_admin_url: String,
+        kratos_public_url: String,
+    ) -> error_stack::Result<Self, KernelError> {
+        let keto_read_url =
+            dotenvy::var("KETO_READ_URL").unwrap_or_else(|_| "http://localhost:4466".to_string());
+        let keto_write_url =
+            dotenvy::var("KETO_WRITE_URL").unwrap_or_else(|_| "http://localhost:4467".to_string());
+        Self::new_for_test_urls(
+            hydra_admin_url,
+            kratos_public_url,
+            keto_read_url,
+            keto_write_url,
+        )
+        .await
     }
 }
 

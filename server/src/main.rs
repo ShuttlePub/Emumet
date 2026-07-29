@@ -13,6 +13,7 @@ use crate::error::StackTrace;
 use crate::handler::AppModule;
 use crate::route::account::{AccountRouter, AdminAccountRouter};
 use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
+use crate::route::me::MeRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::signing::SigningRouter;
 #[cfg(feature = "test-mode")]
@@ -86,6 +87,7 @@ async fn main() -> Result<(), StackTrace> {
     // Admin authorization (Keto instance_moderate) lives inside the use cases.
     let api_v1 = axum::Router::new()
         .route_account()
+        .route_me()
         .nest("/admin", axum::Router::new().route_admin_account());
 
     let authed_routes = axum::Router::new()
