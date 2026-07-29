@@ -26,3 +26,6 @@ prelude = []
 default = ["prelude", "interfaces"]
 test-utils = []
 openapi = ["dep:utoipa"]
+
+[dev-dependencies]
+futures = { version = "0.3", default-features = false, features = ["executor"] }

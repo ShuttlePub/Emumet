@@ -47,3 +47,4 @@ tokio = { workspace = true, features = ["macros", "test-util"] }
 test-with.workspace = true
 tempfile = "3"
 nanoid = { workspace = true }
+wiremock = "0.6"
