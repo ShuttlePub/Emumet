@@ -1,6 +1,6 @@
 use error_stack::{Report, ResultExt};
 use kernel::interfaces::permission::{
-    PermissionChecker, PermissionReq, PermissionWriter, RelationTarget,
+    InstanceRole, PermissionChecker, PermissionReq, PermissionWriter, RelationTarget,
 };
 use kernel::prelude::entity::AuthAccountId;
 use kernel::KernelError;
@@ -38,12 +38,18 @@ struct CheckResponse {
     allowed: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RelationTuple {
     namespace: String,
     object: String,
     relation: String,
     subject_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListRelationTuplesResponse {
+    relation_tuples: Vec<RelationTuple>,
+    next_page_token: String,
 }
 
 impl PermissionChecker for KetoClient {
@@ -87,6 +93,65 @@ impl PermissionChecker for KetoClient {
             .attach_printable("Failed to parse Keto check response")?;
 
         Ok(check.allowed)
+    }
+
+    async fn list_instance_roles(
+        &self,
+        subject: &AuthAccountId,
+    ) -> error_stack::Result<Vec<InstanceRole>, KernelError> {
+        let subject_id = subject.as_ref().to_string();
+        let mut relations: Vec<String> = Vec::new();
+        let mut page_token = String::new();
+
+        loop {
+            let mut query = vec![
+                ("namespace", "Instance"),
+                ("object", "singleton"),
+                ("subject_id", subject_id.as_str()),
+            ];
+            if !page_token.is_empty() {
+                query.push(("page_token", page_token.as_str()));
+            }
+
+            let response = self
+                .http_client
+                .get(format!("{}/relation-tuples", self.read_url))
+                .query(&query)
+                .send()
+                .await
+                .change_context_lazy(|| KernelError::Internal)
+                .attach_printable("Failed to list relation tuples from Keto")?;
+
+            let status = response.status();
+
+            if !status.is_success() {
+                return Err(Report::new(KernelError::Internal)
+                    .attach_printable(format!("Keto returned unexpected status: {}", status)));
+            }
+
+            let list: ListRelationTuplesResponse = response
+                .json()
+                .await
+                .change_context_lazy(|| KernelError::Internal)
+                .attach_printable("Failed to parse Keto relation-tuples response")?;
+
+            relations.extend(
+                list.relation_tuples
+                    .into_iter()
+                    .filter(|tuple| tuple.namespace == "Instance" && tuple.object == "singleton")
+                    .map(|tuple| tuple.relation),
+            );
+
+            if list.next_page_token.is_empty() {
+                break;
+            }
+            page_token = list.next_page_token;
+        }
+
+        Ok([InstanceRole::Admin, InstanceRole::Moderator]
+            .into_iter()
+            .filter(|role| relations.iter().any(|relation| relation == role.as_str()))
+            .collect())
     }
 }
 
@@ -145,3 +210,7 @@ impl PermissionWriter for KetoClient {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "keto/tests.rs"]
+mod tests;

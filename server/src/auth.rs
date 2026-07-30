@@ -274,6 +274,64 @@ impl JwksCache {
     }
 }
 
+#[cfg(test)]
+pub(crate) struct TestKeys {
+    pub(crate) encoding_key: jsonwebtoken::EncodingKey,
+    pub(crate) jwk_set: JwkSet,
+    pub(crate) kid: String,
+}
+
+#[cfg(test)]
+pub(crate) fn generate_test_keys() -> TestKeys {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use jsonwebtoken::jwk::{
+        AlgorithmParameters, CommonParameters, Jwk, KeyAlgorithm, PublicKeyUse, RSAKeyParameters,
+    };
+    use rsa::pkcs1::EncodeRsaPrivateKey;
+    use rsa::traits::PublicKeyParts;
+    use rsa::RsaPrivateKey;
+
+    let mut rng = rand::thread_rng();
+    let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("generate RSA key");
+    let pem = private_key
+        .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+        .expect("encode pkcs1 pem");
+    let encoding_key = jsonwebtoken::EncodingKey::from_rsa_pem(pem.as_bytes())
+        .expect("parse EncodingKey from PEM");
+    let public_key = private_key.to_public_key();
+    let kid = "test-key-1".to_string();
+    let jwk = Jwk {
+        common: CommonParameters {
+            public_key_use: Some(PublicKeyUse::Signature),
+            key_id: Some(kid.clone()),
+            key_algorithm: Some(KeyAlgorithm::RS256),
+            ..Default::default()
+        },
+        algorithm: AlgorithmParameters::RSA(RSAKeyParameters {
+            n: URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be()),
+            e: URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be()),
+            ..Default::default()
+        }),
+    };
+
+    TestKeys {
+        encoding_key,
+        jwk_set: JwkSet { keys: vec![jwk] },
+        kid,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn encode_test_jwt(
+    claims: &AuthClaims,
+    encoding_key: &jsonwebtoken::EncodingKey,
+    kid: &str,
+) -> String {
+    let mut header = jsonwebtoken::Header::new(Algorithm::RS256);
+    header.kid = Some(kid.to_string());
+    jsonwebtoken::encode(&header, claims, encoding_key).expect("encode JWT")
+}
+
 // ---------------------------------------------------------------------------
 // auth_middleware (axum middleware layer)
 // ---------------------------------------------------------------------------
@@ -419,13 +477,6 @@ fn extract_bearer_token(request: &Request<Body>) -> Result<&str, StatusCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jsonwebtoken::jwk::{
-        AlgorithmParameters, CommonParameters, Jwk, JwkSet, KeyAlgorithm, PublicKeyUse,
-        RSAKeyParameters,
-    };
-    use jsonwebtoken::{encode, EncodingKey, Header};
-    use rsa::pkcs1::EncodeRsaPrivateKey;
-    use rsa::RsaPrivateKey;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // -----------------------------------------------------------------------
@@ -439,55 +490,6 @@ mod tests {
             .as_secs()
     }
 
-    struct TestKeys {
-        encoding_key: EncodingKey,
-        jwk_set: JwkSet,
-        kid: String,
-    }
-
-    /// Generate a fresh 2048-bit RSA key pair and wrap it as a `JwkSet`.
-    fn generate_test_keys() -> TestKeys {
-        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-        use rsa::traits::PublicKeyParts;
-
-        let mut rng = rand::thread_rng();
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("generate RSA key");
-
-        // PEM → EncodingKey
-        let pem = private_key
-            .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
-            .expect("encode pkcs1 pem");
-        let encoding_key =
-            EncodingKey::from_rsa_pem(pem.as_bytes()).expect("parse EncodingKey from PEM");
-
-        // Build JWK from RSA public key components.
-        let pub_key = private_key.to_public_key();
-        let n = URL_SAFE_NO_PAD.encode(pub_key.n().to_bytes_be());
-        let e = URL_SAFE_NO_PAD.encode(pub_key.e().to_bytes_be());
-
-        let kid = "test-key-1".to_string();
-        let jwk = Jwk {
-            common: CommonParameters {
-                public_key_use: Some(PublicKeyUse::Signature),
-                key_id: Some(kid.clone()),
-                key_algorithm: Some(KeyAlgorithm::RS256),
-                ..Default::default()
-            },
-            algorithm: AlgorithmParameters::RSA(RSAKeyParameters {
-                n,
-                e,
-                ..Default::default()
-            }),
-        };
-        let jwk_set = JwkSet { keys: vec![jwk] };
-
-        TestKeys {
-            encoding_key,
-            jwk_set,
-            kid,
-        }
-    }
-
     fn make_claims(iss: &str, aud: &str, sub: &str, exp_offset_secs: i64) -> AuthClaims {
         let exp = (unix_now() as i64 + exp_offset_secs) as u64;
         AuthClaims {
@@ -496,12 +498,6 @@ mod tests {
             aud: OneOrMany::One(aud.to_string()),
             exp,
         }
-    }
-
-    fn encode_jwt(claims: &AuthClaims, encoding_key: &EncodingKey, kid: &str) -> String {
-        let mut header = Header::new(Algorithm::RS256);
-        header.kid = Some(kid.to_string());
-        encode(&header, claims, encoding_key).expect("encode JWT")
     }
 
     fn make_config(issuer: &str, audience: &str) -> Arc<OidcConfig> {
@@ -538,7 +534,7 @@ mod tests {
         let cache = Arc::new(JwksCache::new_with_jwks(issuer.to_string(), keys.jwk_set));
 
         let claims = make_claims(issuer, audience, "kratos-uuid-123", 3600);
-        let token = encode_jwt(&claims, &keys.encoding_key, &keys.kid);
+        let token = encode_test_jwt(&claims, &keys.encoding_key, &keys.kid);
 
         let result = validate(config, cache, &token).await;
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -557,7 +553,7 @@ mod tests {
 
         // exp well in the past (beyond default 60s leeway)
         let claims = make_claims(issuer, audience, "sub", -120);
-        let token = encode_jwt(&claims, &keys.encoding_key, &keys.kid);
+        let token = encode_test_jwt(&claims, &keys.encoding_key, &keys.kid);
 
         let result = validate(config, cache, &token).await;
         assert_eq!(result, Err(StatusCode::UNAUTHORIZED));
@@ -571,7 +567,7 @@ mod tests {
         let cache = Arc::new(JwksCache::new_with_jwks(issuer.to_string(), keys.jwk_set));
 
         let claims = make_claims(issuer, "wrong-audience", "sub", 3600);
-        let token = encode_jwt(&claims, &keys.encoding_key, &keys.kid);
+        let token = encode_test_jwt(&claims, &keys.encoding_key, &keys.kid);
 
         let result = validate(config, cache, &token).await;
         assert_eq!(result, Err(StatusCode::UNAUTHORIZED));
@@ -586,7 +582,7 @@ mod tests {
         let cache = Arc::new(JwksCache::new_with_jwks(issuer.to_string(), keys.jwk_set));
 
         let claims = make_claims("https://evil-issuer.example.com", audience, "sub", 3600);
-        let token = encode_jwt(&claims, &keys.encoding_key, &keys.kid);
+        let token = encode_test_jwt(&claims, &keys.encoding_key, &keys.kid);
 
         let result = validate(config, cache, &token).await;
         assert_eq!(result, Err(StatusCode::UNAUTHORIZED));
@@ -616,7 +612,7 @@ mod tests {
 
         let claims = make_claims(issuer, audience, "sub", 3600);
         // Sign with wrong key but use the kid from the cached keyset
-        let token = encode_jwt(&claims, &wrong_keys.encoding_key, &keys.kid);
+        let token = encode_test_jwt(&claims, &wrong_keys.encoding_key, &keys.kid);
 
         let result = validate(config, cache, &token).await;
         assert_eq!(result, Err(StatusCode::UNAUTHORIZED));

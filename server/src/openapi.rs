@@ -44,6 +44,7 @@ impl Modify for SecurityAddon {
         crate::route::account::mute_account,
         crate::route::account::unmute_account,
         crate::route::account::get_mutes,
+        crate::route::me::get_me,
         crate::route::oauth2::login,
         crate::route::oauth2::get_consent,
         crate::route::oauth2::post_consent,
@@ -82,10 +83,12 @@ impl Modify for SecurityAddon {
         crate::schema::account::MuteAccountRequest,
         crate::schema::account::RelationResponse,
         crate::schema::account::RelationListResponse,
+        crate::schema::me::MeResponse,
     )),
     modifiers(&SecurityAddon),
     tags(
         (name = "Account", description = "Account management"),
+        (name = "Me", description = "Authenticated session"),
         (name = "OAuth2", description = "OAuth2 Login/Consent Provider"),
         (name = "Signing", description = "HTTP Signature signing"),
         (name = "ActivityPub", description = "ActivityPub discovery and actor endpoints"),
@@ -138,6 +141,30 @@ mod tests {
         assert_eq!(
             committed, generated,
             "openapi.json is out of date. Regenerate with: cargo test -p server write_openapi_spec_to_file -- --ignored"
+        );
+    }
+
+    #[test]
+    fn me_endpoint_contract_is_registered() {
+        let spec: serde_json::Value = serde_json::from_str(&generate_openapi_json())
+            .expect("generated OpenAPI spec is valid JSON");
+        let operation = &spec["paths"]["/api/v1/me"]["get"];
+
+        assert!(operation.is_object(), "GET /api/v1/me must be registered");
+        assert_eq!(
+            operation["security"],
+            serde_json::json!([{"bearer_auth": []}]),
+            "GET /api/v1/me must require bearer authentication"
+        );
+        for status in ["200", "401", "503"] {
+            assert!(
+                operation["responses"].get(status).is_some(),
+                "GET /api/v1/me must document {status}"
+            );
+        }
+        assert!(
+            spec["components"]["schemas"].get("MeResponse").is_some(),
+            "MeResponse schema must be registered"
         );
     }
 }

@@ -117,6 +117,11 @@ pub trait PermissionChecker: Send + Sync + 'static {
         req: &PermissionReq,
     ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
 
+    fn list_instance_roles(
+        &self,
+        subject: &AuthAccountId,
+    ) -> impl Future<Output = error_stack::Result<Vec<InstanceRole>, KernelError>> + Send;
+
     fn satisfies(
         &self,
         subject: &AuthAccountId,
@@ -189,4 +194,85 @@ pub trait PermissionWriter: Send + Sync + 'static {
 pub trait DependOnPermissionWriter: Send + Sync {
     type PermissionWriter: PermissionWriter;
     fn permission_writer(&self) -> &Self::PermissionWriter;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::AuthAccountId;
+    use futures::executor::block_on;
+
+    #[derive(Debug, Clone)]
+    enum StubBehavior {
+        Roles(Vec<InstanceRole>),
+        Error,
+    }
+
+    struct StubPermissionChecker {
+        behavior: StubBehavior,
+    }
+
+    impl PermissionChecker for StubPermissionChecker {
+        fn check(
+            &self,
+            _subject: &AuthAccountId,
+            _req: &PermissionReq,
+        ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send {
+            async { Ok(true) }
+        }
+
+        fn list_instance_roles(
+            &self,
+            _subject: &AuthAccountId,
+        ) -> impl Future<Output = error_stack::Result<Vec<InstanceRole>, KernelError>> + Send
+        {
+            let behavior = self.behavior.clone();
+            async move {
+                match behavior {
+                    StubBehavior::Roles(roles) => Ok(roles),
+                    StubBehavior::Error => Err(error_stack::Report::new(KernelError::Internal)),
+                }
+            }
+        }
+    }
+
+    /// Vec<InstanceRole> がそのまま返る
+    #[test]
+    fn list_instance_roles_returns_vec() {
+        let checker = StubPermissionChecker {
+            behavior: StubBehavior::Roles(vec![InstanceRole::Admin, InstanceRole::Moderator]),
+        };
+        let subject = AuthAccountId::default();
+        let result = block_on(checker.list_instance_roles(&subject));
+        assert!(result.is_ok());
+        let roles = result.unwrap();
+        assert_eq!(roles.len(), 2);
+        assert!(roles.contains(&InstanceRole::Admin));
+        assert!(roles.contains(&InstanceRole::Moderator));
+    }
+
+    /// stub が [Admin] のみ返す場合、結果も [Admin] のみ (暗黙包含なし)
+    #[test]
+    fn list_instance_roles_returns_only_admin() {
+        let checker = StubPermissionChecker {
+            behavior: StubBehavior::Roles(vec![InstanceRole::Admin]),
+        };
+        let subject = AuthAccountId::default();
+        let result = block_on(checker.list_instance_roles(&subject));
+        assert!(result.is_ok());
+        let roles = result.unwrap();
+        assert_eq!(roles, vec![InstanceRole::Admin]);
+        assert!(!roles.contains(&InstanceRole::Moderator));
+    }
+
+    /// stub が Err(KernelError) を返す場合 Err が伝播
+    #[test]
+    fn list_instance_roles_propagates_error() {
+        let checker = StubPermissionChecker {
+            behavior: StubBehavior::Error,
+        };
+        let subject = AuthAccountId::default();
+        let result = block_on(checker.list_instance_roles(&subject));
+        assert!(result.is_err());
+    }
 }

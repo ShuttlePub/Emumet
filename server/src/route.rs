@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 
 pub mod account;
 pub mod activitypub;
+pub mod me;
 pub mod oauth2;
 pub mod signing;
 
@@ -52,25 +53,34 @@ impl DirectionConverter for Option<String> {
 #[cfg(test)]
 pub(crate) fn build_test_router(app: crate::handler::AppModule) -> axum::Router {
     use crate::auth::{JwksCache, OidcConfig};
-    use crate::route::account::{AccountRouter, AdminAccountRouter};
-    use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
-    use crate::route::oauth2::OAuth2Router;
-    use crate::route::signing::SigningRouter;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    let oidc_config = Arc::new(OidcConfig {
+    let oidc_config = std::sync::Arc::new(OidcConfig {
         issuer_url: "http://localhost:4444".to_string(),
         expected_audience: "emumet".to_string(),
         jwks_refetch_interval_secs: 0,
     });
-    let jwks_cache = Arc::new(JwksCache::new(
+    let jwks_cache = std::sync::Arc::new(JwksCache::new(
         oidc_config.issuer_url.clone(),
-        Duration::from_secs(0),
+        std::time::Duration::from_secs(0),
     ));
+
+    build_test_router_with_auth(app, oidc_config, jwks_cache)
+}
+
+#[cfg(test)]
+pub(crate) fn build_test_router_with_auth(
+    app: crate::handler::AppModule,
+    oidc_config: std::sync::Arc<crate::auth::OidcConfig>,
+    jwks_cache: std::sync::Arc<crate::auth::JwksCache>,
+) -> axum::Router {
+    use crate::route::account::{AccountRouter, AdminAccountRouter};
+    use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
+    use crate::route::me::MeRouter;
+    use crate::route::oauth2::OAuth2Router;
+    use crate::route::signing::SigningRouter;
 
     let api_v1 = axum::Router::new()
         .route_account()
+        .route_me()
         .nest("/admin", axum::Router::new().route_admin_account());
 
     let authed_routes = axum::Router::new()
