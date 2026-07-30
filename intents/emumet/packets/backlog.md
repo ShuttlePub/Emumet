@@ -11,7 +11,6 @@ intent interview (../interview/2026-07-22-initial-shaping.md) と実装インベ
 | 2 | `moderation-role-assignment` | Admin/Moderator ロール割当管理 API | — |
 | 3 | `moderation-account-report` | 通報(AccountReport)機能 | 2 |
 | 4 | `mastodon-e2e-completion` | Mastodon 連携 E2E テストの完成 | — |
-| 5 | `moderation-session-context` | 認証済みセッションの admin/moderator ロールを `GET /api/v1/me` で提供 (role-assignment とはブロッキング依存なし; role 付与は role-assignment が担当) | — |
 
 ## Deferred(open question 解消が先)
 
