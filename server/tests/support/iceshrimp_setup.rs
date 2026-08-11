@@ -109,8 +109,8 @@ pub async fn inject_iceshrimp_actor_into_emumet_cache(
 
     let sql = format!(
         r#"UPDATE user_keypair SET "publicKey" = '{public_pem}', "privateKey" = '{private_pem}' WHERE "userId" = '{uid}';"#,
-        public_pem = &public_key_pem.replace('\'', r"'\''"),
-        private_pem = &private_key_pem.replace('\'', r"'\''"),
+        public_pem = public_key_pem.replace('\'', r"'\''"),
+        private_pem = private_key_pem.replace('\'', r"'\''"),
         uid = user.user_id,
     );
     let docker_status = std::process::Command::new("docker")
@@ -138,8 +138,7 @@ pub async fn inject_iceshrimp_actor_into_emumet_cache(
             if status.success() {
                 Ok(())
             } else {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Err(std::io::Error::other(
                     format!("docker exec psql exited with non-zero status: {status}"),
                 ))
             }

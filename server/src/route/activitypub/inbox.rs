@@ -149,17 +149,16 @@ fn ensure_host_matches_public_base_url(
     // environment routes ActivityPub traffic directly to localhost:8080
     // instead of through the nginx reverse proxy). HTTP Signature verification
     // remains the primary security guard for inbox requests.
-    if cfg!(any(test, feature = "test-mode")) {
-        if actual.eq_ignore_ascii_case("localhost")
-            || actual.to_ascii_lowercase().starts_with("localhost:")
-        {
-            tracing::debug!(
-                expected,
-                actual,
-                "ActivityPub inbox Host is localhost (test-mode override)"
-            );
-            return Ok(());
-        }
+    if cfg!(any(test, feature = "test-mode"))
+        && (actual.eq_ignore_ascii_case("localhost")
+            || actual.to_ascii_lowercase().starts_with("localhost:"))
+    {
+        tracing::debug!(
+            expected,
+            actual,
+            "ActivityPub inbox Host is localhost (test-mode override)"
+        );
+        return Ok(());
     }
     tracing::warn!(
         expected,

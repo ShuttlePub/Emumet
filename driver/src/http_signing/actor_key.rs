@@ -26,9 +26,9 @@ pub fn inject_test_actor_key(key_id: &str, public_key_pem: String, owner: &str) 
         // Derive owner from key_id by stripping the fragment.
         reqwest::Url::parse(key_id)
             .ok()
-            .and_then(|mut url| {
+            .map(|mut url| {
                 url.set_fragment(None);
-                Some(url.to_string())
+                url.to_string()
             })
             .unwrap_or_default()
     } else {

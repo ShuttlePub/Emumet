@@ -23,13 +23,12 @@ pub(super) async fn validate_fetch_url(
     })?;
     let host_lc = host.trim_end_matches('.').to_ascii_lowercase();
 
-    if cfg!(not(any(test, feature = "test-mode"))) {
-        if !is_fetch_host_allowed(&host_lc)
-            && (host_lc == "localhost" || host_lc.ends_with(".localhost"))
-        {
-            return Err(Report::new(KernelError::Rejected)
-                .attach_printable("SsrfBlocked: localhost URL is not allowed"));
-        }
+    if cfg!(not(any(test, feature = "test-mode")))
+        && !is_fetch_host_allowed(&host_lc)
+        && (host_lc == "localhost" || host_lc.ends_with(".localhost"))
+    {
+        return Err(Report::new(KernelError::Rejected)
+            .attach_printable("SsrfBlocked: localhost URL is not allowed"));
     }
 
     let port = url.port_or_known_default().ok_or_else(|| {

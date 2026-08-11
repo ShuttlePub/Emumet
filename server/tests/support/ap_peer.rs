@@ -219,7 +219,6 @@ pub async fn generate_cavage_signature(
     let mut result_headers: Vec<(String, String)> = result
         .cavage_headers
         .into_iter()
-        .map(|(k, v)| (k, v))
         .collect();
     result_headers.push(("host".to_string(), host_header));
     result_headers.push(("date".to_string(), date));
@@ -265,7 +264,7 @@ mod tests {
         let client = reqwest::Client::new();
 
         let resp = client
-            .get(&format!("{}/users/testuser", peer.base_url))
+            .get(format!("{}/users/testuser", peer.base_url))
             .header("accept", "application/activity+json")
             .send()
             .await
@@ -300,7 +299,7 @@ mod tests {
             .expect("peer base_url must include a host for WebFinger resource domain");
 
         let resp = client
-            .get(&format!(
+            .get(format!(
                 "{}/.well-known/webfinger?resource=acct:alice@{domain}",
                 peer.base_url
             ))
@@ -329,7 +328,7 @@ mod tests {
         });
 
         let resp = client
-            .post(&format!("{}/users/bob/inbox", peer.base_url))
+            .post(format!("{}/users/bob/inbox", peer.base_url))
             .header("content-type", "application/activity+json")
             .json(&activity)
             .send()

@@ -236,7 +236,7 @@ mod test {
         let account_id = AccountId::default();
         let account = AccountBuilder::new()
             .id(account_id.clone())
-            .name(&format!("signing-key-test-{}", account_id.as_ref()))
+            .name(format!("signing-key-test-{}", account_id.as_ref()))
             .build();
         database
             .account_read_model()

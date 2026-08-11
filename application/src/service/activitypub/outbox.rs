@@ -218,7 +218,7 @@ mod tests {
                 .unwrap()
                 .iter()
                 .filter(|activity| &activity.account_id == account_id)
-                .filter(|activity| cursor.map_or(true, |cursor| activity.id < cursor))
+                .filter(|activity| cursor.is_none_or(|cursor| activity.id < cursor))
                 .cloned()
                 .collect::<Vec<_>>();
             activities.sort_by(|left, right| right.id.cmp(&left.id));
