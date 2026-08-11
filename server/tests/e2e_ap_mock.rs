@@ -8,7 +8,7 @@ use std::time::Duration;
 use support::account_helper::{
     assert_collection_has_items, assert_content_type, assert_signature_header, e2e_http_client,
     fetch_collection, post_follow, post_signed_accept_direct, post_signed_follow_direct,
-    setup_test_account_details, start_server_with_peer,
+    post_unfollow, setup_test_account_details, start_server_with_peer,
 };
 use support::ap_peer::{wait_for_activity, ApPeer};
 use support::auth;
@@ -159,6 +159,64 @@ async fn outbound_follow_sends_activity_to_remote_inbox() {
     assert_signature_header(&activity);
 
     let _following = fetch_collection(&cfg.server_base_url, &account_nanoid, "following").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn outbound_unfollow_sends_undo_to_remote_inbox() {
+    let peer = ApPeer::new("remote-unfollow").await;
+    let _server = start_server_with_peer(&peer).await;
+    db::reset_test_data().await;
+    let cfg = config();
+    let jwt = auth::get_jwt_for_test_user().await;
+    let account_nanoid = setup_test_account_details().await.id;
+
+    let follow_response =
+        post_follow(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(follow_response.status(), reqwest::StatusCode::OK);
+    let follow = wait_for_activity(&peer, "Follow", Duration::from_secs(15))
+        .await
+        .expect("mock peer inbox did not receive Follow activity");
+
+    let follow_activity_id = follow.body["id"]
+        .as_str()
+        .expect("Follow activity missing id");
+    let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url);
+    let accept = post_signed_accept_direct(
+        &peer,
+        &sign_inbox,
+        &send_inbox,
+        follow_activity_id,
+        &target_actor,
+    )
+    .await;
+    assert_eq!(accept.status(), reqwest::StatusCode::ACCEPTED);
+
+    peer.set_inbox_status(500);
+    let failed = post_unfollow(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(failed.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    peer.set_inbox_status(202);
+    peer.clear_inbox();
+
+    let response =
+        post_unfollow(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    let undo = wait_for_activity(&peer, "Undo", Duration::from_secs(15))
+        .await
+        .expect("mock peer inbox did not receive Undo activity");
+
+    assert_eq!(undo.body["actor"], follow.body["actor"]);
+    assert_eq!(undo.body["object"]["type"], "Follow");
+    assert_eq!(undo.body["object"]["id"], follow.body["id"]);
+    assert_eq!(undo.body["object"]["object"], peer.actor_url);
+    assert_signature_header(&undo);
+
+    let following = fetch_collection(&cfg.server_base_url, &account_nanoid, "following").await;
+    assert_eq!(following["totalItems"], 0);
+    let missing = post_unfollow(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
