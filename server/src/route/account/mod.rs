@@ -2,6 +2,8 @@ mod admin;
 mod block_mute;
 mod client;
 mod follow;
+mod follow_relations;
+mod unfollow;
 pub(crate) use admin::{
     __path_ban_account_by_id, __path_suspend_account_by_id, __path_unsuspend_account_by_id,
     ban_account_by_id, suspend_account_by_id, unsuspend_account_by_id,
@@ -17,6 +19,10 @@ pub(crate) use client::{
     get_account_by_id, get_accounts, update_account_by_id,
 };
 pub(crate) use follow::{__path_follow_account, follow_account};
+pub(crate) use follow_relations::{
+    __path_get_followers, __path_get_following, get_followers, get_following,
+};
+pub(crate) use unfollow::{__path_unfollow_account, unfollow_account};
 
 use crate::handler::AppModule;
 use axum::routing::{delete, get, patch, post};
@@ -38,6 +44,9 @@ impl AccountRouter for Router<AppModule> {
             .route("/accounts/{account_id}", patch(update_account_by_id))
             .route("/accounts/{account_id}", delete(deactivate_account_by_id))
             .route("/accounts/{account_id}/follow", post(follow_account))
+            .route("/accounts/{account_id}/unfollow", post(unfollow_account))
+            .route("/accounts/{account_id}/followers", get(get_followers))
+            .route("/accounts/{account_id}/following", get(get_following))
             .route("/accounts/{account_id}/block", post(block_account))
             .route("/accounts/{account_id}/unblock", post(unblock_account))
             .route("/accounts/{account_id}/blocks", get(get_blocks))
