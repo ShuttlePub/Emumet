@@ -685,6 +685,98 @@
         ]
       }
     },
+    "/api/v1/accounts/{account_id}/followers": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "description": "List approved followers of the given account.",
+        "operationId": "get_followers",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approved followers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Insufficient permission"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/following": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "description": "List approved accounts followed by the given account.",
+        "operationId": "get_following",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approved following accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Insufficient permission"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/accounts/{account_id}/mute": {
       "post": {
         "tags": [
@@ -821,6 +913,58 @@
           },
           "404": {
             "description": "Account or block relationship not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/unfollow": {
+      "post": {
+        "tags": [
+          "ActivityPub"
+        ],
+        "description": "Unfollow a remote ActivityPub account by delivering a signed Undo(Follow).",
+        "operationId": "unfollow_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Local account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Follow removed"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Insufficient permission"
+          },
+          "404": {
+            "description": "Account or follow relationship not found"
+          },
+          "422": {
+            "description": "Undo delivery failed"
           }
         },
         "security": [
