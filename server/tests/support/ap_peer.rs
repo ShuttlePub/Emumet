@@ -216,10 +216,7 @@ pub async fn generate_cavage_signature(
         .expect("signing failed");
 
     // Return both the Cavage headers and the basic headers
-    let mut result_headers: Vec<(String, String)> = result
-        .cavage_headers
-        .into_iter()
-        .collect();
+    let mut result_headers: Vec<(String, String)> = result.cavage_headers.into_iter().collect();
     result_headers.push(("host".to_string(), host_header));
     result_headers.push(("date".to_string(), date));
     result_headers.push(("digest".to_string(), digest));

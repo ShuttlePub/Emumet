@@ -138,9 +138,9 @@ pub async fn inject_iceshrimp_actor_into_emumet_cache(
             if status.success() {
                 Ok(())
             } else {
-                Err(std::io::Error::other(
-                    format!("docker exec psql exited with non-zero status: {status}"),
-                ))
+                Err(std::io::Error::other(format!(
+                    "docker exec psql exited with non-zero status: {status}"
+                )))
             }
         });
     docker_status
