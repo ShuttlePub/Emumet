@@ -163,18 +163,7 @@ pub trait SendFollowUseCase:
                 Report::new(KernelError::Rejected)
                     .attach_printable("Remote actor does not expose an inbox URL")
             })?;
-            deliver_activity_to_inbox(
-                self.database_connection(),
-                self.signing_key_repository(),
-                self.password_provider(),
-                self.key_encryptor(),
-                self.http_signer(),
-                account_id,
-                inbox_url,
-                activity,
-                "Follow",
-            )
-            .await
+            deliver_activity_to_inbox(self, account_id, inbox_url, activity, "Follow").await
         }
     }
 }

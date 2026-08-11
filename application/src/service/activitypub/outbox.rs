@@ -221,7 +221,7 @@ mod tests {
                 .filter(|activity| cursor.is_none_or(|cursor| activity.id < cursor))
                 .cloned()
                 .collect::<Vec<_>>();
-            activities.sort_by(|left, right| right.id.cmp(&left.id));
+            activities.sort_by_key(|activity| std::cmp::Reverse(activity.id));
             activities.truncate(limit);
             Ok(activities)
         }

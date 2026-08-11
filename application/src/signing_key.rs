@@ -174,10 +174,8 @@ mod tests {
     struct MockDatabaseConnection;
     impl DatabaseConnection for MockDatabaseConnection {
         type Executor = MockExecutor;
-        fn get_executor(
-            &self,
-        ) -> impl Future<Output = error_stack::Result<Self::Executor, KernelError>> + Send {
-            async { Ok(MockExecutor) }
+        async fn get_executor(&self) -> error_stack::Result<Self::Executor, KernelError> {
+            Ok(MockExecutor)
         }
     }
 
@@ -205,21 +203,20 @@ mod tests {
     impl kernel::prelude::entity::SigningKeyRepository for MockSigningKeyRepository {
         type Executor = MockExecutor;
 
-        fn find_by_id(
+        async fn find_by_id(
             &self,
             _executor: &mut Self::Executor,
             _id: &SigningKeyId,
-        ) -> impl Future<Output = error_stack::Result<SigningKey, KernelError>> + Send {
-            async { Err(Report::new(KernelError::NotFound)) }
+        ) -> error_stack::Result<SigningKey, KernelError> {
+            Err(Report::new(KernelError::NotFound))
         }
 
-        fn find_by_account_id(
+        async fn find_by_account_id(
             &self,
             _executor: &mut Self::Executor,
             _account_id: &AccountId,
-        ) -> impl Future<Output = error_stack::Result<Vec<SigningKey>, KernelError>> + Send
-        {
-            async { Ok(vec![]) }
+        ) -> error_stack::Result<Vec<SigningKey>, KernelError> {
+            Ok(vec![])
         }
 
         fn find_active_by_account_id(
@@ -241,12 +238,12 @@ mod tests {
             async { Ok(()) }
         }
 
-        fn revoke(
+        async fn revoke(
             &self,
             _executor: &mut Self::Executor,
             _id: &SigningKeyId,
-        ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
-            async { Ok(()) }
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
         }
     }
 
@@ -305,28 +302,25 @@ mod tests {
     struct MockHttpSigner;
 
     impl HttpSigner for MockHttpSigner {
-        fn sign(
+        async fn sign(
             &self,
             _request: &HttpSigningRequest,
             _private_key_pem: &[u8],
             _key_id: &str,
             _algorithm: &SigningAlgorithm,
-        ) -> impl Future<Output = error_stack::Result<HttpSigningResponse, KernelError>> + Send
-        {
-            async {
-                let mut cavage = HashMap::new();
-                cavage.insert("signature".to_string(), "mock-cavage-sig".to_string());
-                let mut rfc9421 = HashMap::new();
-                rfc9421.insert("signature".to_string(), "mock-rfc9421-sig".to_string());
-                rfc9421.insert(
-                    "signature-input".to_string(),
-                    "mock-rfc9421-input".to_string(),
-                );
-                Ok(HttpSigningResponse {
-                    cavage_headers: cavage,
-                    rfc9421_headers: rfc9421,
-                })
-            }
+        ) -> error_stack::Result<HttpSigningResponse, KernelError> {
+            let mut cavage = HashMap::new();
+            cavage.insert("signature".to_string(), "mock-cavage-sig".to_string());
+            let mut rfc9421 = HashMap::new();
+            rfc9421.insert("signature".to_string(), "mock-rfc9421-sig".to_string());
+            rfc9421.insert(
+                "signature-input".to_string(),
+                "mock-rfc9421-input".to_string(),
+            );
+            Ok(HttpSigningResponse {
+                cavage_headers: cavage,
+                rfc9421_headers: rfc9421,
+            })
         }
     }
 

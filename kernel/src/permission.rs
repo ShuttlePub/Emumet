@@ -213,12 +213,12 @@ mod tests {
     }
 
     impl PermissionChecker for StubPermissionChecker {
-        fn check(
+        async fn check(
             &self,
             _subject: &AuthAccountId,
             _req: &PermissionReq,
-        ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send {
-            async { Ok(true) }
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(true)
         }
 
         fn list_instance_roles(

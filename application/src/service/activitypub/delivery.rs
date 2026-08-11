@@ -3,10 +3,12 @@ use super::ACTIVITY_JSON;
 use base64::{engine::general_purpose, Engine as _};
 use error_stack::Report;
 use kernel::activitypub::Activity;
-use kernel::interfaces::crypto::{KeyEncryptor, PasswordProvider};
+use kernel::interfaces::crypto::{
+    DependOnKeyEncryptor, DependOnPasswordProvider, KeyEncryptor, PasswordProvider,
+};
 use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::http_signing::{HttpSigner, HttpSigningRequest};
-use kernel::interfaces::repository::SigningKeyRepository;
+use kernel::interfaces::http_signing::{DependOnHttpSigner, HttpSigner, HttpSigningRequest};
+use kernel::interfaces::repository::{DependOnSigningKeyRepository, SigningKeyRepository};
 use kernel::prelude::entity::AccountId;
 use kernel::KernelError;
 use reqwest::header::{CONTENT_TYPE, DATE, HOST};
@@ -22,20 +24,19 @@ fn host_header(url: &reqwest::Url) -> error_stack::Result<String, KernelError> {
     })
 }
 
-pub(super) async fn deliver_activity_to_inbox<D, S>(
-    database_connection: &D,
-    signing_key_repository: &S,
-    password_provider: &impl PasswordProvider,
-    key_encryptor: &impl KeyEncryptor,
-    http_signer: &impl HttpSigner,
+pub(super) async fn deliver_activity_to_inbox<T>(
+    module: &T,
     account_id: &AccountId,
     inbox_url: &str,
     activity: &Activity,
     activity_name: &str,
 ) -> error_stack::Result<(), KernelError>
 where
-    D: DatabaseConnection,
-    S: SigningKeyRepository<Executor = D::Executor>,
+    T: DependOnSigningKeyRepository
+        + DependOnPasswordProvider
+        + DependOnKeyEncryptor
+        + DependOnHttpSigner
+        + ?Sized,
 {
     let body = serde_json::to_vec(activity).map_err(|e| {
         Report::from(e)
@@ -65,8 +66,9 @@ where
         headers,
         body: Some(body.clone()),
     };
-    let mut executor = database_connection.get_executor().await?;
-    let signing_key = signing_key_repository
+    let mut executor = module.database_connection().get_executor().await?;
+    let signing_key = module
+        .signing_key_repository()
         .find_active_by_account_id(&mut executor, account_id)
         .await?
         .into_iter()
@@ -75,9 +77,12 @@ where
             Report::new(KernelError::NotFound)
                 .attach_printable("No active signing key found for account")
         })?;
-    let password = password_provider.get_password()?;
-    let private_key_pem = key_encryptor.decrypt(signing_key.encrypted_private_key(), &password)?;
-    let signature = http_signer
+    let password = module.password_provider().get_password()?;
+    let private_key_pem = module
+        .key_encryptor()
+        .decrypt(signing_key.encrypted_private_key(), &password)?;
+    let signature = module
+        .http_signer()
         .sign(
             &signing_request,
             &private_key_pem,
