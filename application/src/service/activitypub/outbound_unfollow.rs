@@ -1,3 +1,4 @@
+use self::target::{resolve_unfollow_target, UnfollowTarget};
 use super::delivery::deliver_activity_to_inbox;
 use super::outbound_follow::find_existing_following;
 use super::outbox::StoreOutboxActivityUseCase;
@@ -22,6 +23,8 @@ use kernel::prelude::entity::{
 use kernel::KernelError;
 use serde_json::Value;
 use std::future::Future;
+
+mod target;
 
 pub trait SendUndoFollowUseCase:
     'static
@@ -68,32 +71,37 @@ pub trait SendUndoFollowUseCase:
             )
             .await?;
 
-            let remote_actor = resolve_remote_actor_identifier(&dto.target).await?;
-            let remote_account = upsert_remote_account(
+            let source = FollowTargetId::from(account.id().clone());
+            let target = resolve_unfollow_target(
+                self.account_query_processor(),
                 self.remote_account_repository(),
                 &mut executor,
-                remote_actor,
+                self.public_base_url(),
+                &dto.target,
             )
             .await?;
-            let source = FollowTargetId::from(account.id().clone());
+
+            let remote_account = match target {
+                UnfollowTarget::Local(destination) => {
+                    delete_approved_follow(
+                        self.follow_repository(),
+                        &mut executor,
+                        &source,
+                        &FollowTargetId::from(destination.id().clone()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                UnfollowTarget::Remote(remote_account) => remote_account,
+            };
             let destination = FollowTargetId::from(remote_account.id().clone());
-            let follow = find_existing_following(
+            let follow = find_approved_follow(
                 self.follow_repository(),
                 &mut executor,
                 &source,
                 &destination,
             )
-            .await?
-            .ok_or_else(|| {
-                Report::new(KernelError::NotFound).attach_printable(format!(
-                    "Follow relationship not found for {}",
-                    remote_account.url().as_ref()
-                ))
-            })?;
-            if follow.approved_at().is_none() {
-                return Err(Report::new(KernelError::NotFound)
-                    .attach_printable("Approved follow relationship not found"));
-            }
+            .await?;
 
             let local_actor_url =
                 local_actor_url(self.public_base_url(), account.nanoid().as_ref());
@@ -132,6 +140,39 @@ pub trait SendUndoFollowUseCase:
             Ok(())
         }
     }
+}
+
+async fn find_approved_follow<R, E>(
+    repository: &R,
+    executor: &mut E,
+    source: &FollowTargetId,
+    destination: &FollowTargetId,
+) -> error_stack::Result<Follow, KernelError>
+where
+    R: FollowRepository<Executor = E>,
+    E: kernel::interfaces::database::Executor,
+{
+    find_existing_following(repository, executor, source, destination)
+        .await?
+        .filter(|follow| follow.approved_at().is_some())
+        .ok_or_else(|| {
+            Report::new(KernelError::NotFound)
+                .attach_printable("Approved follow relationship not found")
+        })
+}
+
+async fn delete_approved_follow<R, E>(
+    repository: &R,
+    executor: &mut E,
+    source: &FollowTargetId,
+    destination: &FollowTargetId,
+) -> error_stack::Result<(), KernelError>
+where
+    R: FollowRepository<Executor = E>,
+    E: kernel::interfaces::database::Executor,
+{
+    let follow = find_approved_follow(repository, executor, source, destination).await?;
+    repository.delete(executor, follow.id()).await
 }
 
 impl<T> SendUndoFollowUseCase for T where
@@ -193,37 +234,4 @@ fn undo_follow_activity(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use kernel::interfaces::config::PublicBaseUrl;
-    use kernel::prelude::entity::{AccountId, FollowId, RemoteAccountId};
-
-    #[test]
-    fn undo_wraps_the_original_follow_activity() {
-        kernel::ensure_generator_initialized();
-        let follow = Follow::new(
-            FollowId::new(kernel::generate_id()),
-            FollowTargetId::from(AccountId::default()),
-            FollowTargetId::from(RemoteAccountId::new(kernel::generate_id())),
-            None,
-        )
-        .unwrap();
-
-        let undo = undo_follow_activity(
-            &PublicBaseUrl::new("https://local.example".to_string()),
-            &follow,
-            "https://local.example/ap/accounts/alice",
-            "https://remote.example/users/bob",
-        )
-        .unwrap();
-
-        assert_eq!(undo.type_, "Undo");
-        let original = undo.object.unwrap();
-        assert_eq!(original["type"], "Follow");
-        assert_eq!(original["actor"], "https://local.example/ap/accounts/alice");
-        assert_eq!(original["object"], "https://remote.example/users/bob");
-        assert!(original["id"]
-            .as_str()
-            .is_some_and(|id| id.ends_with(follow.id().as_ref().to_string().as_str())));
-    }
-}
+mod tests;
