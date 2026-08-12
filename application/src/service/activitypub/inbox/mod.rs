@@ -9,8 +9,8 @@ use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
 use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::repository::{
-    DependOnFollowRepository, DependOnOutboxActivityRepository, DependOnRemoteAccountRepository,
-    DependOnSigningKeyRepository,
+    DependOnBlockRepository, DependOnFollowRepository, DependOnOutboxActivityRepository,
+    DependOnRemoteAccountRepository, DependOnSigningKeyRepository,
 };
 use kernel::prelude::entity::AccountId;
 use kernel::KernelError;
@@ -21,6 +21,7 @@ pub trait InboxUseCase:
     + Sync
     + Send
     + DependOnFollowRepository
+    + DependOnBlockRepository
     + DependOnRemoteAccountRepository
     + DependOnSigningKeyRepository
     + DependOnHttpSigner
@@ -38,8 +39,12 @@ pub trait InboxUseCase:
             match dto.activity.type_.as_str() {
                 "Follow" => self.handle_follow_activity(dto).await,
                 "Accept" => self.handle_accept_activity(dto).await,
+                "Block" => self.handle_block_activity(dto).await,
                 "Undo" if handlers::undo_object_is_follow(&dto.activity) => {
                     self.handle_undo_follow(dto).await
+                }
+                "Undo" if handlers::undo_object_is_block(&dto.activity) => {
+                    self.handle_undo_block_activity(dto).await
                 }
                 activity_type => {
                     tracing::info!(
@@ -64,6 +69,20 @@ pub trait InboxUseCase:
         dto: InboxActivityDto,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         handlers::handle_undo_follow(self, dto)
+    }
+
+    fn handle_block_activity(
+        &self,
+        dto: InboxActivityDto,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+        handlers::handle_block_activity(self, dto)
+    }
+
+    fn handle_undo_block_activity(
+        &self,
+        dto: InboxActivityDto,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+        handlers::handle_undo_block_activity(self, dto)
     }
 
     fn handle_accept_activity(
@@ -94,6 +113,7 @@ impl<T> InboxUseCase for T where
         + Sync
         + Send
         + DependOnFollowRepository
+        + DependOnBlockRepository
         + DependOnRemoteAccountRepository
         + DependOnSigningKeyRepository
         + DependOnHttpSigner

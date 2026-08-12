@@ -3,6 +3,7 @@ mod collections;
 mod delivery;
 mod fetch;
 mod inbox;
+pub(crate) mod outbound_block;
 mod outbound_follow;
 mod outbound_unfollow;
 mod outbox;
@@ -25,6 +26,6 @@ pub use remote_actor::inject_test_remote_actor;
 pub(super) const ACTIVITY_JSON: &str = "application/activity+json";
 pub(super) const ACTIVITYSTREAMS_CONTEXT: &str = "https://www.w3.org/ns/activitystreams";
 
-pub(super) fn local_actor_url(public_base_url: &PublicBaseUrl, account_nanoid: &str) -> String {
+pub(crate) fn local_actor_url(public_base_url: &PublicBaseUrl, account_nanoid: &str) -> String {
     ActorUrlBuilder::new(public_base_url.as_str(), account_nanoid).actor_id()
 }

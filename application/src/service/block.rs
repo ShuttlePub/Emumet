@@ -1,17 +1,27 @@
-use crate::service::activitypub::remote_actor::{
-    resolve_remote_actor_identifier, upsert_remote_account,
+use crate::service::activitypub::outbound_block::{
+    block_activity, deliver_block_activity, undo_block_activity,
+};
+use crate::service::activitypub::{
+    local_actor_url,
+    remote_actor::{resolve_remote_actor_identifier, upsert_remote_account},
+    StoreOutboxActivityUseCase,
 };
 use crate::transfer::block_mute::{BlockAccountDto, RelationDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
-use error_stack::Report;
+use error_stack::{Report, ResultExt};
+use kernel::interfaces::config::DependOnPublicBaseUrl;
+use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
 use kernel::interfaces::database::{DatabaseConnection, Executor};
+use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::repository::{
     BlockRepository, DependOnBlockRepository, DependOnFollowRepository,
-    DependOnRemoteAccountRepository, FollowRepository, RemoteAccountRepository,
+    DependOnOutboxActivityRepository, DependOnRemoteAccountRepository,
+    DependOnSigningKeyRepository, FollowRepository, RemoteAccountRepository,
 };
 use kernel::prelude::entity::{
-    Account, AuthAccountId, Block, BlockId, BlockTargetId, FollowTargetId, Nanoid,
+    Account, AuthAccountId, Block, BlockId, BlockTargetId, FollowTargetId, Nanoid, OutboxActivity,
+    OutboxActivityId, RemoteAccount,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -24,7 +34,14 @@ pub trait BlockAccountUseCase:
     + DependOnBlockRepository
     + DependOnFollowRepository
     + DependOnRemoteAccountRepository
+    + DependOnSigningKeyRepository
+    + DependOnHttpSigner
+    + DependOnPasswordProvider
+    + DependOnKeyEncryptor
+    + DependOnPublicBaseUrl
+    + DependOnOutboxActivityRepository
     + DependOnPermissionChecker
+    + StoreOutboxActivityUseCase
 {
     fn block_account(
         &self,
@@ -56,13 +73,14 @@ pub trait BlockAccountUseCase:
             .await?;
 
             let source = BlockTargetId::from(account.id().clone());
-            let (destination, target) = resolve_block_target(
+            let resolved = resolve_block_target(
                 self.account_query_processor(),
                 self.remote_account_repository(),
                 &mut executor,
                 &dto.target,
             )
             .await?;
+            let (destination, target) = block_target_parts(&resolved);
 
             if source == destination {
                 return Err(
@@ -86,6 +104,24 @@ pub trait BlockAccountUseCase:
                 source.clone(),
                 destination.clone(),
             )?;
+
+            let delivered_activity = match &resolved {
+                BlockTarget::Local(_) => None,
+                BlockTarget::Remote(remote_account) => {
+                    let local_actor_url =
+                        local_actor_url(self.public_base_url(), account.nanoid().as_ref());
+                    let activity = block_activity(
+                        self.public_base_url(),
+                        block.id(),
+                        &local_actor_url,
+                        remote_account.url().as_ref(),
+                    );
+                    deliver_block_activity(self, account.id(), &activity, remote_account, "Block")
+                        .await?;
+                    Some(activity)
+                }
+            };
+
             self.block_repository()
                 .create(&mut executor, &block)
                 .await?;
@@ -99,6 +135,25 @@ pub trait BlockAccountUseCase:
                 &follow_destination,
             )
             .await?;
+
+            if let Some(activity) = delivered_activity {
+                let outbox_entry = OutboxActivity {
+                    id: OutboxActivityId::default(),
+                    account_id: account.id().clone(),
+                    activity_id: activity.id.clone(),
+                    activity_type: "Block".to_string(),
+                    object_json: serde_json::to_string(&activity).map_err(|error| {
+                        Report::new(KernelError::Internal).attach_printable(format!(
+                            "Failed to serialize Block activity to JSON: {error}"
+                        ))
+                    })?,
+                    created_at: time::OffsetDateTime::now_utc(),
+                };
+                self.store_outbox_activity(&outbox_entry)
+                    .await
+                    .change_context_lazy(|| KernelError::Internal)
+                    .attach_printable("Failed to store outbox activity")?;
+            }
 
             let target_type = match &destination {
                 BlockTargetId::Local(_) => "local",
@@ -121,7 +176,14 @@ impl<T> BlockAccountUseCase for T where
         + DependOnBlockRepository
         + DependOnFollowRepository
         + DependOnRemoteAccountRepository
+        + DependOnSigningKeyRepository
+        + DependOnHttpSigner
+        + DependOnPasswordProvider
+        + DependOnKeyEncryptor
+        + DependOnPublicBaseUrl
+        + DependOnOutboxActivityRepository
         + DependOnPermissionChecker
+        + StoreOutboxActivityUseCase
 {
 }
 
@@ -132,7 +194,14 @@ pub trait UnblockAccountUseCase:
     + DependOnAccountQueryProcessor
     + DependOnBlockRepository
     + DependOnRemoteAccountRepository
+    + DependOnSigningKeyRepository
+    + DependOnHttpSigner
+    + DependOnPasswordProvider
+    + DependOnKeyEncryptor
+    + DependOnPublicBaseUrl
+    + DependOnOutboxActivityRepository
     + DependOnPermissionChecker
+    + StoreOutboxActivityUseCase
 {
     fn unblock_account(
         &self,
@@ -164,13 +233,14 @@ pub trait UnblockAccountUseCase:
             .await?;
 
             let source = BlockTargetId::from(account.id().clone());
-            let (destination, _) = resolve_block_target(
+            let resolved = resolve_block_target(
                 self.account_query_processor(),
                 self.remote_account_repository(),
                 &mut executor,
                 &dto.target,
             )
             .await?;
+            let (destination, _) = block_target_parts(&resolved);
 
             let blocks = self
                 .block_repository()
@@ -183,9 +253,51 @@ pub trait UnblockAccountUseCase:
                     Report::new(KernelError::NotFound)
                         .attach_printable("Block relationship not found")
                 })?;
+
+            let delivered_activity = match &resolved {
+                BlockTarget::Local(_) => None,
+                BlockTarget::Remote(remote_account) => {
+                    let local_actor_url =
+                        local_actor_url(self.public_base_url(), account.nanoid().as_ref());
+                    let original_block = block_activity(
+                        self.public_base_url(),
+                        block.id(),
+                        &local_actor_url,
+                        remote_account.url().as_ref(),
+                    );
+                    let undo = undo_block_activity(
+                        self.public_base_url(),
+                        original_block,
+                        remote_account.url().as_ref(),
+                    )?;
+                    deliver_block_activity(self, account.id(), &undo, remote_account, "Undo")
+                        .await?;
+                    Some(undo)
+                }
+            };
+
             self.block_repository()
                 .delete(&mut executor, block.id())
                 .await?;
+
+            if let Some(activity) = delivered_activity {
+                let outbox_entry = OutboxActivity {
+                    id: OutboxActivityId::default(),
+                    account_id: account.id().clone(),
+                    activity_id: activity.id.clone(),
+                    activity_type: "Undo".to_string(),
+                    object_json: serde_json::to_string(&activity).map_err(|error| {
+                        Report::new(KernelError::Internal).attach_printable(format!(
+                            "Failed to serialize Undo activity to JSON: {error}"
+                        ))
+                    })?,
+                    created_at: time::OffsetDateTime::now_utc(),
+                };
+                self.store_outbox_activity(&outbox_entry)
+                    .await
+                    .change_context_lazy(|| KernelError::Internal)
+                    .attach_printable("Failed to store outbox activity")?;
+            }
             Ok(())
         }
     }
@@ -198,7 +310,14 @@ impl<T> UnblockAccountUseCase for T where
         + DependOnAccountQueryProcessor
         + DependOnBlockRepository
         + DependOnRemoteAccountRepository
+        + DependOnSigningKeyRepository
+        + DependOnHttpSigner
+        + DependOnPasswordProvider
+        + DependOnKeyEncryptor
+        + DependOnPublicBaseUrl
+        + DependOnOutboxActivityRepository
         + DependOnPermissionChecker
+        + StoreOutboxActivityUseCase
 {
 }
 
@@ -329,7 +448,7 @@ where
     Ok(())
 }
 
-fn block_target_to_follow_target(target: &BlockTargetId) -> FollowTargetId {
+pub(crate) fn block_target_to_follow_target(target: &BlockTargetId) -> FollowTargetId {
     match target {
         BlockTargetId::Local(account_id) => FollowTargetId::Local(account_id.clone()),
         BlockTargetId::Remote(remote_account_id) => {
@@ -338,12 +457,30 @@ fn block_target_to_follow_target(target: &BlockTargetId) -> FollowTargetId {
     }
 }
 
+pub(crate) enum BlockTarget {
+    Local(Account),
+    Remote(RemoteAccount),
+}
+
+fn block_target_parts(target: &BlockTarget) -> (BlockTargetId, String) {
+    match target {
+        BlockTarget::Local(account) => (
+            BlockTargetId::from(account.id().clone()),
+            account.nanoid().as_ref().to_string(),
+        ),
+        BlockTarget::Remote(remote_account) => (
+            BlockTargetId::from(remote_account.id().clone()),
+            remote_account.url().as_ref().to_string(),
+        ),
+    }
+}
+
 async fn resolve_block_target<Q, R>(
     query_processor: &Q,
     remote_account_repository: &R,
     executor: &mut Q::Executor,
     target: &str,
-) -> error_stack::Result<(BlockTargetId, String), KernelError>
+) -> error_stack::Result<BlockTarget, KernelError>
 where
     Q: AccountQueryProcessor,
     R: RemoteAccountRepository<Executor = Q::Executor>,
@@ -353,15 +490,9 @@ where
         .find_by_nanoid(executor, &target_nanoid)
         .await?
     {
-        return Ok((
-            BlockTargetId::from(account.id().clone()),
-            account.nanoid().as_ref().to_string(),
-        ));
+        return Ok(BlockTarget::Local(account));
     }
     let actor = resolve_remote_actor_identifier(target).await?;
     let remote_account = upsert_remote_account(remote_account_repository, executor, actor).await?;
-    Ok((
-        BlockTargetId::from(remote_account.id().clone()),
-        remote_account.url().as_ref().to_string(),
-    ))
+    Ok(BlockTarget::Remote(remote_account))
 }

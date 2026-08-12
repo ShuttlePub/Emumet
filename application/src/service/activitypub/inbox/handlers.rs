@@ -2,15 +2,16 @@ use super::super::outbound_follow::find_existing_following;
 use super::super::remote_actor::{resolve_remote_actor, upsert_remote_account};
 use super::super::{local_actor_url, ACTIVITYSTREAMS_CONTEXT};
 use super::InboxUseCase;
+use crate::service::block::{block_target_to_follow_target, remove_follows_between};
 use crate::transfer::activitypub::InboxActivityDto;
 use error_stack::{Report, ResultExt};
 use kernel::activitypub::Activity;
 use kernel::interfaces::config::PublicBaseUrl;
 use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::repository::{FollowRepository, RemoteAccountRepository};
+use kernel::interfaces::repository::{BlockRepository, FollowRepository, RemoteAccountRepository};
 use kernel::prelude::entity::{
-    Follow, FollowApprovedAt, FollowId, FollowTargetId, OutboxActivity, OutboxActivityId,
-    RemoteAccountUrl,
+    Block, BlockId, BlockTargetId, Follow, FollowApprovedAt, FollowId, FollowTargetId,
+    OutboxActivity, OutboxActivityId, RemoteAccountUrl,
 };
 use kernel::KernelError;
 use serde_json::Value;
@@ -243,6 +244,126 @@ where
     Ok(())
 }
 
+pub(super) async fn handle_block_activity<T>(
+    module: &T,
+    dto: InboxActivityDto,
+) -> error_stack::Result<(), KernelError>
+where
+    T: InboxUseCase + ?Sized,
+{
+    let blocked_actor_url = activity_object_id(&dto.activity).ok_or_else(|| {
+        Report::new(KernelError::Rejected)
+            .attach_printable("Block activity object must be an actor id")
+    })?;
+    ensure_local_actor_matches(
+        module.public_base_url(),
+        &dto.account_nanoid,
+        &blocked_actor_url,
+    )?;
+
+    let remote_actor = resolve_remote_actor(&dto.activity.actor).await?;
+    let mut executor = module.database_connection().get_executor().await?;
+    let remote_account = upsert_remote_account(
+        module.remote_account_repository(),
+        &mut executor,
+        remote_actor,
+    )
+    .await?;
+
+    let source = BlockTargetId::from(remote_account.id().clone());
+    let destination = BlockTargetId::from(dto.account_id.clone());
+    let existing = module
+        .block_repository()
+        .find_blocks(&mut executor, &source)
+        .await?;
+    if existing
+        .iter()
+        .any(|block| block.destination() == &destination)
+    {
+        tracing::debug!("Block already exists, skipping creation");
+        return Ok(());
+    }
+
+    let block = Block::new(
+        BlockId::new(kernel::generate_id()),
+        source.clone(),
+        destination.clone(),
+    )?;
+    module
+        .block_repository()
+        .create(&mut executor, &block)
+        .await?;
+
+    remove_follows_between(
+        module.follow_repository(),
+        &mut executor,
+        &block_target_to_follow_target(&source),
+        &block_target_to_follow_target(&destination),
+    )
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn handle_undo_block_activity<T>(
+    module: &T,
+    dto: InboxActivityDto,
+) -> error_stack::Result<(), KernelError>
+where
+    T: InboxUseCase + ?Sized,
+{
+    let block_activity = undo_block_object(&dto.activity).ok_or_else(|| {
+        Report::new(KernelError::Rejected)
+            .attach_printable("Undo activity object must be a Block activity")
+    })?;
+    let blocked_actor_url = activity_object_id(&block_activity).ok_or_else(|| {
+        Report::new(KernelError::Rejected)
+            .attach_printable("Undo Block object must target an actor id")
+    })?;
+    ensure_local_actor_matches(
+        module.public_base_url(),
+        &dto.account_nanoid,
+        &blocked_actor_url,
+    )?;
+
+    let mut executor = module.database_connection().get_executor().await?;
+    let remote_url = RemoteAccountUrl::new(dto.activity.actor.clone());
+    let Some(remote_account) = module
+        .remote_account_repository()
+        .find_by_url(&mut executor, &remote_url)
+        .await?
+    else {
+        return Ok(());
+    };
+
+    let source = BlockTargetId::from(remote_account.id().clone());
+    let destination = BlockTargetId::from(dto.account_id.clone());
+    let blocks = module
+        .block_repository()
+        .find_blocks(&mut executor, &source)
+        .await?;
+    if let Some(block) = blocks
+        .into_iter()
+        .find(|block| block.destination() == &destination)
+    {
+        module
+            .block_repository()
+            .delete(&mut executor, block.id())
+            .await?;
+    }
+    Ok(())
+}
+
+pub(super) fn undo_object_is_block(activity: &Activity) -> bool {
+    undo_block_object(activity).is_some()
+}
+
+fn undo_block_object(activity: &Activity) -> Option<Activity> {
+    let object = activity.object.as_ref()?;
+    serde_json::from_value::<Activity>(object.clone())
+        .ok()
+        .filter(|activity| activity.type_ == "Block")
+}
+
 pub(super) fn undo_object_is_follow(activity: &Activity) -> bool {
     undo_follow_object(activity).is_some()
 }
@@ -373,6 +494,35 @@ mod tests {
             to: None,
             cc: None,
         }
+    }
+
+    #[test]
+    fn undo_object_is_block_detects_nested_block() {
+        let block = Activity {
+            context: None,
+            id: "https://remote.example/activities/block-1".to_string(),
+            type_: "Block".to_string(),
+            actor: "https://remote.example/users/bob".to_string(),
+            object: Some(serde_json::Value::String(
+                "https://example.com/accounts/alice".to_string(),
+            )),
+            target: None,
+            to: None,
+            cc: None,
+        };
+        let undo = Activity {
+            context: None,
+            id: "https://remote.example/activities/undo-block-1".to_string(),
+            type_: "Undo".to_string(),
+            actor: "https://remote.example/users/bob".to_string(),
+            object: Some(serde_json::to_value(block).unwrap()),
+            target: None,
+            to: None,
+            cc: None,
+        };
+
+        assert!(undo_object_is_block(&undo));
+        assert!(!undo_object_is_follow(&undo));
     }
 
     #[test]
