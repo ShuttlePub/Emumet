@@ -4,7 +4,7 @@
 //! and a real Iceshrimp instance running in a compose profile
 //! (compose.yml + compose.ap-e2e.yml).
 //!
-//! S7-S9 are combined into a single test (`iceshrimp_full_federation_scenario`)
+//! S7-S10 are combined into a single test (`iceshrimp_full_federation_scenario`)
 //! so the final database state is available for manual inspection when run
 //! with `EMUMET_E2E_PAUSE_BEFORE_CLEANUP=1`.
 //!
@@ -13,6 +13,7 @@
 //! | S7   | Iceshrimp → Emumet | Iceshrimp follows Emumet, both collections update |
 //! | S8   | Emumet → Iceshrimp | Emumet follows Iceshrimp, both collections update |
 //! | S9   | Emumet → Iceshrimp | Emumet signs and delivers a Create/Note activity |
+//! | S10  | Emumet → Iceshrimp | Emumet blocks/unblocks Iceshrimp, follows removed both sides |
 //!
 //! Run with:
 //!   EMUMET_E2E_EXTERNAL_SERVER=1 cargo test -p server \
@@ -21,7 +22,10 @@
 #[allow(dead_code)]
 mod support;
 
-use support::account_helper::{e2e_http_client, post_follow, setup_test_account_details};
+use support::account_helper::{
+    e2e_http_client, fetch_collection, post_block, post_follow, post_unblock,
+    setup_test_account_details,
+};
 use support::auth;
 use support::config::ap_e2e_config;
 use support::db;
@@ -287,4 +291,54 @@ async fn iceshrimp_full_federation_scenario() {
     // embedded Note with this URI as its `uri` field without immediately
     // dereferencing it.  If Iceshrimp changes to require a resolvable object
     // endpoint, the Note `id` must be updated to a real URL.
+
+    // ── S10: Emumet → Iceshrimp Block / Undo(Block) ──────────────────
+
+    let block_resp = post_block(
+        &jwt,
+        &emumet_account.id,
+        &cfg.server_base_url,
+        &fixture.user.actor_url,
+    )
+    .await;
+    assert!(
+        block_resp.status().is_success(),
+        "S10: Emumet block request should succeed: {}",
+        block_resp.status()
+    );
+
+    let following = fetch_collection(&cfg.server_base_url, &emumet_account.id, "following").await;
+    assert_eq!(
+        following["totalItems"], 0,
+        "S10: Emumet following should be empty after blocking the Iceshrimp user"
+    );
+    let followers = fetch_collection(&cfg.server_base_url, &emumet_account.id, "followers").await;
+    assert_eq!(
+        followers["totalItems"], 0,
+        "S10: Emumet followers should be empty after blocking the Iceshrimp user"
+    );
+
+    assert!(
+        iceshrimp_setup::wait_for_iceshrimp_followers_absent(
+            &fixture.client,
+            &fixture.user.user_id,
+            &fixture.user.token,
+            &emumet_actor_url,
+        )
+        .await,
+        "S10: Iceshrimp followers should drop the Emumet account after receiving Block"
+    );
+
+    let unblock_resp = post_unblock(
+        &jwt,
+        &emumet_account.id,
+        &cfg.server_base_url,
+        &fixture.user.actor_url,
+    )
+    .await;
+    assert_eq!(
+        unblock_resp.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "S10: Emumet unblock request should return 204 (signed Undo(Block) delivered)"
+    );
 }

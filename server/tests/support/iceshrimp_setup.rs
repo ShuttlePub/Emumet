@@ -244,6 +244,34 @@ pub async fn wait_for_iceshrimp_followers_contains(
     false
 }
 
+/// Poll Iceshrimp's followers list until a follower with the expected
+/// actor URL disappears (or timeout after ~15 s).
+pub async fn wait_for_iceshrimp_followers_absent(
+    client: &super::iceshrimp::IceshrimpClient,
+    local_iceshrimp_user_id: &str,
+    token: &str,
+    expected_actor_url: &str,
+) -> bool {
+    for _ in 1..=30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(followers) = client.get_followers(local_iceshrimp_user_id, token).await {
+            let still_present = followers.iter().any(|entry| {
+                let follower = &entry["follower"];
+                follower["uri"]
+                    .as_str()
+                    .is_some_and(|u| u == expected_actor_url)
+                    || follower["id"]
+                        .as_str()
+                        .is_some_and(|i| i == expected_actor_url)
+            });
+            if !still_present {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Poll Iceshrimp's following list until a followee with the expected
 /// actor URL appears (or timeout after ~15 s).
 pub async fn wait_for_iceshrimp_following_contains(
