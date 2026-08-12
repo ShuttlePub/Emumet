@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use support::account_helper::{
     assert_collection_has_items, assert_content_type, assert_signature_header, e2e_http_client,
-    fetch_collection, post_follow, post_signed_accept_direct, post_signed_follow_direct,
-    post_unfollow, setup_test_account_details, start_server_with_peer,
+    fetch_collection, get_blocks, post_block, post_follow, post_signed_accept_direct,
+    post_signed_block_direct, post_signed_follow_direct, post_signed_undo_block_direct,
+    post_unblock, post_unfollow, setup_test_account_details, start_server_with_peer,
 };
 use support::ap_peer::{wait_for_activity, ApPeer};
 use support::auth;
@@ -329,5 +330,166 @@ async fn inbox_rejects_unsigned_requests() {
         resp.status(),
         reqwest::StatusCode::UNAUTHORIZED,
         "unsigned inbox POST should be rejected with 401"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn outbound_block_sends_block_to_remote_inbox() {
+    let peer = ApPeer::new("remote-block").await;
+    let _server = start_server_with_peer(&peer).await;
+    db::reset_test_data().await;
+    let cfg = config();
+    let jwt = auth::get_jwt_for_test_user().await;
+    let account_nanoid = setup_test_account_details().await.id;
+
+    peer.set_inbox_status(500);
+    let failed = post_block(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(
+        failed.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+        "block delivery failure should be rejected with 422"
+    );
+    let blocks = get_blocks(&jwt, &account_nanoid, &cfg.server_base_url).await;
+    assert_eq!(
+        blocks["items"].as_array().map(Vec::len),
+        Some(0),
+        "failed block delivery must not create a local block"
+    );
+    peer.set_inbox_status(202);
+    peer.clear_inbox();
+
+    let response = post_block(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::OK,
+        "block should return 200 OK"
+    );
+
+    let activity = wait_for_activity(&peer, "Block", Duration::from_secs(15))
+        .await
+        .expect("mock peer inbox did not receive Block activity within timeout");
+
+    assert_eq!(
+        activity.body["actor"],
+        format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url)
+    );
+    assert_eq!(activity.body["object"], peer.actor_url);
+    assert_signature_header(&activity);
+
+    let blocks = get_blocks(&jwt, &account_nanoid, &cfg.server_base_url).await;
+    let items = blocks["items"]
+        .as_array()
+        .expect("blocks should have items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["target"], peer.actor_url);
+    assert_eq!(items[0]["targetType"], "remote");
+}
+
+#[tokio::test]
+#[ignore]
+async fn outbound_unblock_sends_undo_block_to_remote_inbox() {
+    let peer = ApPeer::new("remote-unblock").await;
+    let _server = start_server_with_peer(&peer).await;
+    db::reset_test_data().await;
+    let cfg = config();
+    let jwt = auth::get_jwt_for_test_user().await;
+    let account_nanoid = setup_test_account_details().await.id;
+
+    let block_response =
+        post_block(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(block_response.status(), reqwest::StatusCode::OK);
+    let block = wait_for_activity(&peer, "Block", Duration::from_secs(15))
+        .await
+        .expect("mock peer inbox did not receive Block activity");
+    peer.clear_inbox();
+
+    let response = post_unblock(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    let undo = wait_for_activity(&peer, "Undo", Duration::from_secs(15))
+        .await
+        .expect("mock peer inbox did not receive Undo activity");
+
+    assert_eq!(undo.body["actor"], block.body["actor"]);
+    assert_eq!(undo.body["object"]["type"], "Block");
+    assert_eq!(undo.body["object"]["id"], block.body["id"]);
+    assert_eq!(undo.body["object"]["object"], peer.actor_url);
+    assert_signature_header(&undo);
+
+    let blocks = get_blocks(&jwt, &account_nanoid, &cfg.server_base_url).await;
+    assert_eq!(blocks["items"].as_array().map(Vec::len), Some(0));
+    let missing = post_unblock(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore]
+async fn inbound_block_creates_block_and_removes_follows() {
+    let peer = ApPeer::new("remote-blocker").await;
+    let _server = start_server_with_peer(&peer).await;
+    db::reset_test_data().await;
+    let cfg = config();
+    let account_nanoid = setup_test_account_details().await.id;
+
+    let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url);
+    let follow_resp =
+        post_signed_follow_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(follow_resp.status(), reqwest::StatusCode::ACCEPTED);
+    let followers = fetch_collection(&cfg.server_base_url, &account_nanoid, "followers").await;
+    assert_collection_has_items(&followers, 1);
+
+    let block_resp = post_signed_block_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(
+        block_resp.status(),
+        reqwest::StatusCode::ACCEPTED,
+        "signed Block should be accepted with 202"
+    );
+
+    assert_eq!(
+        db::count_remote_blocks_against_local_account(&account_nanoid).await,
+        1,
+        "inbound Block should create a remote-to-local block row"
+    );
+
+    let followers = fetch_collection(&cfg.server_base_url, &account_nanoid, "followers").await;
+    assert_eq!(
+        followers["totalItems"], 0,
+        "inbound Block should remove the follow relationship"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn inbound_undo_block_removes_block() {
+    let peer = ApPeer::new("remote-unblocker").await;
+    let _server = start_server_with_peer(&peer).await;
+    db::reset_test_data().await;
+    let cfg = config();
+    let account_nanoid = setup_test_account_details().await.id;
+
+    let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url);
+    let block_resp = post_signed_block_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(block_resp.status(), reqwest::StatusCode::ACCEPTED);
+    assert_eq!(
+        db::count_remote_blocks_against_local_account(&account_nanoid).await,
+        1
+    );
+
+    let undo_resp =
+        post_signed_undo_block_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(
+        undo_resp.status(),
+        reqwest::StatusCode::ACCEPTED,
+        "signed Undo(Block) should be accepted with 202"
+    );
+
+    assert_eq!(
+        db::count_remote_blocks_against_local_account(&account_nanoid).await,
+        0,
+        "inbound Undo(Block) should remove the remote-to-local block row"
     );
 }

@@ -108,6 +108,51 @@ pub async fn post_unfollow(
         .expect("unfollow request failed")
 }
 
+pub async fn post_block(
+    jwt: &str,
+    account_nanoid: &str,
+    base_url: &str,
+    target: &str,
+) -> reqwest::Response {
+    e2e_http_client()
+        .post(format!("{base_url}/api/v1/accounts/{account_nanoid}/block"))
+        .bearer_auth(jwt)
+        .json(&serde_json::json!({"target": target}))
+        .send()
+        .await
+        .expect("block request failed")
+}
+
+pub async fn post_unblock(
+    jwt: &str,
+    account_nanoid: &str,
+    base_url: &str,
+    target: &str,
+) -> reqwest::Response {
+    e2e_http_client()
+        .post(format!(
+            "{base_url}/api/v1/accounts/{account_nanoid}/unblock"
+        ))
+        .bearer_auth(jwt)
+        .json(&serde_json::json!({"target": target}))
+        .send()
+        .await
+        .expect("unblock request failed")
+}
+
+pub async fn get_blocks(jwt: &str, account_nanoid: &str, base_url: &str) -> serde_json::Value {
+    let resp = e2e_http_client()
+        .get(format!(
+            "{base_url}/api/v1/accounts/{account_nanoid}/blocks"
+        ))
+        .bearer_auth(jwt)
+        .send()
+        .await
+        .expect("get blocks request failed");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    resp.json().await.expect("blocks response not valid JSON")
+}
+
 pub fn assert_signature_header(activity: &ReceivedActivity) {
     let found = activity.headers.iter().any(|(k, _)| {
         let kl = k.to_lowercase();
@@ -294,4 +339,77 @@ pub async fn post_signed_accept_direct(
         .send()
         .await
         .expect("signed Accept POST failed")
+}
+
+pub async fn post_signed_block_direct(
+    peer: &ApPeer,
+    sign_inbox: &str,
+    send_inbox: &str,
+    target_actor: &str,
+) -> reqwest::Response {
+    let block_activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "type": "Block",
+        "actor": peer.actor_url,
+        "object": target_actor,
+        "id": format!("{}/activities/block/{}", peer.actor_url, uuid::Uuid::new_v4()),
+    });
+    let body_bytes = serde_json::to_vec(&block_activity).expect("serialize block activity");
+    let key_id = format!("{}#main-key", peer.actor_url);
+    let signature_headers = generate_cavage_signature(
+        "POST",
+        sign_inbox,
+        &body_bytes,
+        &peer.private_key_pem,
+        &key_id,
+    )
+    .await;
+    let mut request = e2e_http_client().post(send_inbox);
+    for (k, v) in &signature_headers {
+        request = request.header(k.as_str(), v.as_str());
+    }
+    request
+        .body(body_bytes)
+        .send()
+        .await
+        .expect("signed Block POST failed")
+}
+
+pub async fn post_signed_undo_block_direct(
+    peer: &ApPeer,
+    sign_inbox: &str,
+    send_inbox: &str,
+    target_actor: &str,
+) -> reqwest::Response {
+    let undo_activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "type": "Undo",
+        "actor": peer.actor_url,
+        "object": {
+            "type": "Block",
+            "id": format!("{}/activities/block/{}", peer.actor_url, uuid::Uuid::new_v4()),
+            "actor": peer.actor_url,
+            "object": target_actor,
+        },
+        "id": format!("{}/activities/undo-block/{}", peer.actor_url, uuid::Uuid::new_v4()),
+    });
+    let body_bytes = serde_json::to_vec(&undo_activity).expect("serialize undo block activity");
+    let key_id = format!("{}#main-key", peer.actor_url);
+    let signature_headers = generate_cavage_signature(
+        "POST",
+        sign_inbox,
+        &body_bytes,
+        &peer.private_key_pem,
+        &key_id,
+    )
+    .await;
+    let mut request = e2e_http_client().post(send_inbox);
+    for (k, v) in &signature_headers {
+        request = request.header(k.as_str(), v.as_str());
+    }
+    request
+        .body(body_bytes)
+        .send()
+        .await
+        .expect("signed Undo Block POST failed")
 }
