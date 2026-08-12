@@ -32,5 +32,6 @@ kernel = { path = "../kernel", features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "test-util"] }
 tempfile = "3"
 zeroize = "1.7"
+test-with.workspace = true
 
 driver.path = "../driver"

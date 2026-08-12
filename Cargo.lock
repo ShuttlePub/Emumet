@@ -116,6 +116,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "test-with",
  "time",
  "tokio",
  "tracing",

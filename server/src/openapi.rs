@@ -38,6 +38,9 @@ impl Modify for SecurityAddon {
         crate::route::account::unsuspend_account_by_id,
         crate::route::account::ban_account_by_id,
         crate::route::account::follow_account,
+        crate::route::account::unfollow_account,
+        crate::route::account::get_followers,
+        crate::route::account::get_following,
         crate::route::account::block_account,
         crate::route::account::unblock_account,
         crate::route::account::get_blocks,
@@ -166,5 +169,23 @@ mod tests {
             spec["components"]["schemas"].get("MeResponse").is_some(),
             "MeResponse schema must be registered"
         );
+    }
+
+    #[test]
+    fn follow_management_contract_is_registered() {
+        let spec: serde_json::Value = serde_json::from_str(&generate_openapi_json())
+            .expect("generated OpenAPI spec is valid JSON");
+        for (path, method) in [
+            ("/api/v1/accounts/{account_id}/unfollow", "post"),
+            ("/api/v1/accounts/{account_id}/followers", "get"),
+            ("/api/v1/accounts/{account_id}/following", "get"),
+        ] {
+            let operation = &spec["paths"][path][method];
+            assert!(operation.is_object(), "{method} {path} must be registered");
+            assert_eq!(
+                operation["security"],
+                serde_json::json!([{"bearer_auth": []}])
+            );
+        }
     }
 }

@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,6 +14,7 @@ pub struct ApPeer {
     pub public_key_pem: String,
     pub private_key_pem: Vec<u8>,
     inbox_activities: Arc<Mutex<Vec<ReceivedActivity>>>,
+    inbox_status: Arc<AtomicU16>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +51,7 @@ impl ApPeer {
         let base_url = format!("http://127.0.0.1:{port}");
         let actor_url = format!("{base_url}/users/{username}");
         let inbox_activities: Arc<Mutex<Vec<ReceivedActivity>>> = Arc::new(Mutex::new(Vec::new()));
+        let inbox_status = Arc::new(AtomicU16::new(202));
 
         let u = username.to_string();
         let a = actor_url.clone();
@@ -114,6 +117,7 @@ impl ApPeer {
             .await;
 
         let activities = inbox_activities.clone();
+        let status = inbox_status.clone();
         let inbox_u = u.clone();
         Mock::given(method("POST"))
             .and(path(format!("/users/{inbox_u}/inbox")))
@@ -127,7 +131,7 @@ impl ApPeer {
                         .collect(),
                 };
                 activities.lock().unwrap().push(act);
-                ResponseTemplate::new(202)
+                ResponseTemplate::new(status.load(Ordering::Relaxed))
             })
             .mount(&server)
             .await;
@@ -139,6 +143,7 @@ impl ApPeer {
             public_key_pem,
             private_key_pem,
             inbox_activities,
+            inbox_status,
         }
     }
 
@@ -148,6 +153,10 @@ impl ApPeer {
 
     pub fn clear_inbox(&self) {
         self.inbox_activities.lock().unwrap().clear();
+    }
+
+    pub fn set_inbox_status(&self, status: u16) {
+        self.inbox_status.store(status, Ordering::Relaxed);
     }
 
     pub fn address(&self) -> SocketAddr {

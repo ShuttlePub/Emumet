@@ -91,6 +91,23 @@ pub async fn post_follow(
         .expect("follow request failed")
 }
 
+pub async fn post_unfollow(
+    jwt: &str,
+    account_nanoid: &str,
+    base_url: &str,
+    target: &str,
+) -> reqwest::Response {
+    e2e_http_client()
+        .post(format!(
+            "{base_url}/api/v1/accounts/{account_nanoid}/unfollow"
+        ))
+        .bearer_auth(jwt)
+        .json(&serde_json::json!({"target": target}))
+        .send()
+        .await
+        .expect("unfollow request failed")
+}
+
 pub fn assert_signature_header(activity: &ReceivedActivity) {
     let found = activity.headers.iter().any(|(k, _)| {
         let kl = k.to_lowercase();
@@ -98,7 +115,7 @@ pub fn assert_signature_header(activity: &ReceivedActivity) {
     });
     assert!(
         found,
-        "Follow activity should have HTTP Signature (Signature or Authorization header)"
+        "Activity should have HTTP Signature (Signature or Authorization header)"
     );
 }
 

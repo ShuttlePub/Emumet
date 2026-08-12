@@ -4,7 +4,9 @@ mod delivery;
 mod fetch;
 mod inbox;
 mod outbound_follow;
+mod outbound_unfollow;
 mod outbox;
+pub mod relations;
 pub(crate) mod remote_actor;
 
 use kernel::activitypub::ActorUrlBuilder;
@@ -14,7 +16,9 @@ pub use actor::{GetActorUseCase, GetWebFingerUseCase};
 pub use collections::GetFollowersCollectionUseCase;
 pub use inbox::InboxUseCase;
 pub use outbound_follow::SendFollowUseCase;
+pub use outbound_unfollow::SendUndoFollowUseCase;
 pub use outbox::{GetOutboxUseCase, StoreOutboxActivityUseCase};
+pub use relations::GetFollowRelationsUseCase;
 #[cfg(any(test, feature = "test-mode"))]
 pub use remote_actor::inject_test_remote_actor;
 

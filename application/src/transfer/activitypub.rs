@@ -29,3 +29,12 @@ pub struct SendFollowResultDto {
     pub activity_id: String,
     pub approved: bool,
 }
+
+pub type SendUndoFollowDto = SendFollowDto;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FollowRelationDto {
+    pub id: String,
+    pub target_type: String,
+    pub target: String,
+}
