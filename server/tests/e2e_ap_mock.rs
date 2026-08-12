@@ -429,7 +429,6 @@ async fn inbound_block_creates_block_and_removes_follows() {
     let _server = start_server_with_peer(&peer).await;
     db::reset_test_data().await;
     let cfg = config();
-    let jwt = auth::get_jwt_for_test_user().await;
     let account_nanoid = setup_test_account_details().await.id;
 
     let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
@@ -448,13 +447,11 @@ async fn inbound_block_creates_block_and_removes_follows() {
         "signed Block should be accepted with 202"
     );
 
-    let blocks = get_blocks(&jwt, &account_nanoid, &cfg.server_base_url).await;
-    let items = blocks["items"]
-        .as_array()
-        .expect("blocks should have items");
-    assert_eq!(items.len(), 1, "inbound Block should create a local block");
-    assert_eq!(items[0]["target"], peer.actor_url);
-    assert_eq!(items[0]["targetType"], "remote");
+    assert_eq!(
+        db::count_remote_blocks_against_local_account(&account_nanoid).await,
+        1,
+        "inbound Block should create a remote-to-local block row"
+    );
 
     let followers = fetch_collection(&cfg.server_base_url, &account_nanoid, "followers").await;
     assert_eq!(
@@ -470,7 +467,6 @@ async fn inbound_undo_block_removes_block() {
     let _server = start_server_with_peer(&peer).await;
     db::reset_test_data().await;
     let cfg = config();
-    let jwt = auth::get_jwt_for_test_user().await;
     let account_nanoid = setup_test_account_details().await.id;
 
     let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
@@ -478,8 +474,10 @@ async fn inbound_undo_block_removes_block() {
     let target_actor = format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url);
     let block_resp = post_signed_block_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
     assert_eq!(block_resp.status(), reqwest::StatusCode::ACCEPTED);
-    let blocks = get_blocks(&jwt, &account_nanoid, &cfg.server_base_url).await;
-    assert_eq!(blocks["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        db::count_remote_blocks_against_local_account(&account_nanoid).await,
+        1
+    );
 
     let undo_resp =
         post_signed_undo_block_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
@@ -489,10 +487,9 @@ async fn inbound_undo_block_removes_block() {
         "signed Undo(Block) should be accepted with 202"
     );
 
-    let blocks = get_blocks(&jwt, &account_nanoid, &cfg.server_base_url).await;
     assert_eq!(
-        blocks["items"].as_array().map(Vec::len),
-        Some(0),
-        "inbound Undo(Block) should remove the local block"
+        db::count_remote_blocks_against_local_account(&account_nanoid).await,
+        0,
+        "inbound Undo(Block) should remove the remote-to-local block row"
     );
 }

@@ -24,6 +24,34 @@ pub async fn reset_test_data() {
     truncate_tables().await;
 }
 
+pub async fn count_remote_blocks_against_local_account(account_nanoid: &str) -> i64 {
+    dotenvy::dotenv().ok();
+
+    let url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set for E2E tests (refusing to use default to avoid accidental data loss)");
+
+    validate_database_url(&url);
+
+    let pool = sqlx::PgPool::connect(&url)
+        .await
+        .expect("failed to connect to postgres for block assertion");
+
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*) FROM blocks
+        WHERE blocker_remote_id IS NOT NULL
+          AND blocked_local_id = (SELECT id FROM accounts WHERE nanoid = $1)
+        "#,
+    )
+    .bind(account_nanoid)
+    .fetch_one(&pool)
+    .await
+    .expect("failed to count remote-to-local blocks");
+
+    pool.close().await;
+    count
+}
+
 fn validate_database_url(url: &str) {
     let parsed: url::Url = url.parse().expect("DATABASE_URL is not a valid URL");
 
