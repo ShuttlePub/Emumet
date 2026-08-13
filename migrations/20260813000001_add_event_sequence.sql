@@ -1,0 +1,4 @@
+ALTER TABLE account_events ADD COLUMN seq BIGSERIAL;
+ALTER TABLE auth_account_events ADD COLUMN seq BIGSERIAL;
+ALTER TABLE profile_events ADD COLUMN seq BIGSERIAL;
+ALTER TABLE metadata_events ADD COLUMN seq BIGSERIAL;
