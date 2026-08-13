@@ -19,7 +19,8 @@ use crate::database::env;
 use crate::ConvertError;
 use error_stack::{Report, ResultExt};
 use kernel::interfaces::database::{
-    Connection, DatabaseConnection, Transaction as DbTransaction, TransactionalDatabaseConnection,
+    Connection, DatabaseConnection, Transaction as DbTransaction, TransactionManager,
+    TransactionalDatabaseConnection,
 };
 use kernel::KernelError;
 use sqlx::pool::PoolConnection;
@@ -129,6 +130,129 @@ impl TransactionalDatabaseConnection for PostgresDatabase {
         Ok(PostgresTransaction(PostgresConnection(
             PostgresConnectionInner::Transaction(transaction),
         )))
+    }
+}
+
+impl TransactionManager for PostgresDatabase {
+    fn transaction<'a, F, T>(
+        &'a self,
+        operation: F,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = error_stack::Result<T, KernelError>> + Send + 'a>,
+    >
+    where
+        F: for<'connection> FnOnce(
+                &'connection mut Self::Connection,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = error_stack::Result<T, KernelError>>
+                        + Send
+                        + 'connection,
+                >,
+            > + Send
+            + 'a,
+        T: Send + 'a,
+    {
+        Box::pin(async move {
+            let transaction = self.pool.begin().await.convert_error()?;
+            let mut conn = PostgresConnection(PostgresConnectionInner::Transaction(transaction));
+            match operation(&mut conn).await {
+                Ok(result) => match conn.0 {
+                    PostgresConnectionInner::Transaction(transaction) => {
+                        transaction
+                            .commit()
+                            .await
+                            .change_context(KernelError::Internal)?;
+                        Ok(result)
+                    }
+                    PostgresConnectionInner::Connection(_) => unreachable!(),
+                },
+                Err(error) => {
+                    match conn.0 {
+                        PostgresConnectionInner::Transaction(transaction) => transaction
+                            .rollback()
+                            .await
+                            .change_context(KernelError::Internal)?,
+                        PostgresConnectionInner::Connection(_) => unreachable!(),
+                    }
+                    Err(error)
+                }
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod transaction_manager_tests {
+    use super::*;
+    use error_stack::Report;
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn transaction_commits_when_operation_succeeds() {
+        // Given
+        kernel::ensure_generator_initialized();
+        let database = PostgresDatabase::new().await.unwrap();
+        let id = kernel::generate_id();
+
+        // When
+        database
+            .transaction(|conn| {
+                Box::pin(async move {
+                    sqlx::query("INSERT INTO auth_hosts (id, url) VALUES ($1, $2)")
+                        .bind(id)
+                        .bind(format!("https://transaction-{id}.example.com"))
+                        .execute(&mut **conn)
+                        .await
+                        .convert_error()?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Then
+        let mut conn = database.connection().await.unwrap();
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM auth_hosts WHERE id = $1")
+            .bind(id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 1);
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn transaction_rolls_back_when_operation_fails() {
+        // Given
+        kernel::ensure_generator_initialized();
+        let database = PostgresDatabase::new().await.unwrap();
+        let id = kernel::generate_id();
+
+        // When
+        let result = database
+            .transaction(|conn| {
+                Box::pin(async move {
+                    sqlx::query("INSERT INTO auth_hosts (id, url) VALUES ($1, $2)")
+                        .bind(id)
+                        .bind(format!("https://rollback-{id}.example.com"))
+                        .execute(&mut **conn)
+                        .await
+                        .convert_error()?;
+                    Err::<(), _>(Report::new(KernelError::Rejected))
+                })
+            })
+            .await;
+
+        // Then
+        assert!(result.is_err());
+        let mut conn = database.connection().await.unwrap();
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM auth_hosts WHERE id = $1")
+            .bind(id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0);
     }
 }
 

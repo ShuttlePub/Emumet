@@ -1,5 +1,6 @@
 use crate::KernelError;
 use std::future::Future;
+use std::pin::Pin;
 
 pub trait Connection: Send {}
 
@@ -21,6 +22,21 @@ pub trait TransactionalDatabaseConnection: DatabaseConnection {
     fn get_transaction(
         &self,
     ) -> impl Future<Output = error_stack::Result<Self::Transaction, KernelError>> + Send;
+}
+
+pub trait TransactionManager: DatabaseConnection {
+    fn transaction<'a, F, T>(
+        &'a self,
+        operation: F,
+    ) -> Pin<Box<dyn Future<Output = error_stack::Result<T, KernelError>> + Send + 'a>>
+    where
+        F: for<'connection> FnOnce(
+                &'connection mut Self::Connection,
+            ) -> Pin<
+                Box<dyn Future<Output = error_stack::Result<T, KernelError>> + Send + 'connection>,
+            > + Send
+            + 'a,
+        T: Send + 'a;
 }
 
 pub trait DependOnDatabaseConnection: Sync + Send {
