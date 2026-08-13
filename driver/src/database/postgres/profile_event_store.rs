@@ -3,7 +3,7 @@ use crate::ConvertError;
 use error_stack::Report;
 use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
 use kernel::prelude::entity::{
-    CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion, Profile, ProfileEvent,
+    CommandEnvelope, EventEnvelope, EventId, EventVersion, ExpectedVersion, Profile, ProfileEvent,
 };
 use kernel::KernelError;
 use serde_json;
@@ -117,7 +117,7 @@ impl PostgresProfileEventStore {
         let prev_version = command.prev_version().as_ref();
 
         let result = match prev_version {
-            Some(KnownEventVersion::Nothing) => {
+            Some(ExpectedVersion::Nothing) => {
                 sqlx::query(
                     //language=postgresql
                     r#"
@@ -134,7 +134,7 @@ impl PostgresProfileEventStore {
                 .await
                 .convert_error()?
             }
-            Some(KnownEventVersion::Prev(prev)) => {
+            Some(ExpectedVersion::At(prev)) => {
                 sqlx::query(
                     //language=postgresql
                     r#"
@@ -376,7 +376,7 @@ mod test {
                 .await
                 .unwrap();
 
-            // Second persist with KnownEventVersion::Nothing should fail (concurrency error)
+            // Second persist with ExpectedVersion::Nothing should fail (concurrency error)
             let result = db
                 .profile_event_store()
                 .persist(&mut conn, &created_profile)

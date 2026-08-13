@@ -3,8 +3,7 @@ use crate::ConvertError;
 use error_stack::Report;
 use kernel::interfaces::event_store::{DependOnMetadataEventStore, MetadataEventStore};
 use kernel::prelude::entity::{
-    CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion, Metadata,
-    MetadataEvent,
+    CommandEnvelope, EventEnvelope, EventId, EventVersion, ExpectedVersion, Metadata, MetadataEvent,
 };
 use kernel::KernelError;
 use serde_json;
@@ -118,7 +117,7 @@ impl PostgresMetadataEventStore {
         let prev_version = command.prev_version().as_ref();
 
         let result = match prev_version {
-            Some(KnownEventVersion::Nothing) => {
+            Some(ExpectedVersion::Nothing) => {
                 sqlx::query(
                     //language=postgresql
                     r#"
@@ -135,7 +134,7 @@ impl PostgresMetadataEventStore {
                 .await
                 .convert_error()?
             }
-            Some(KnownEventVersion::Prev(prev)) => {
+            Some(ExpectedVersion::At(prev)) => {
                 sqlx::query(
                     //language=postgresql
                     r#"
@@ -397,7 +396,7 @@ mod test {
                 .await
                 .unwrap();
 
-            // Second persist with KnownEventVersion::Nothing should fail (concurrency error)
+            // Second persist with ExpectedVersion::Nothing should fail (concurrency error)
             let result = db
                 .metadata_event_store()
                 .persist(&mut conn, &created_metadata)

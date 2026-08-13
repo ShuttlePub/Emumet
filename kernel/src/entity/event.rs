@@ -18,5 +18,5 @@ pub struct CommandEnvelope<Event, Entity> {
     id: EventId<Event, Entity>,
     event_name: String,
     event: Event,
-    prev_version: Option<KnownEventVersion<Entity>>,
+    prev_version: Option<ExpectedVersion<Entity>>,
 }

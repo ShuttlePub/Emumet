@@ -4,7 +4,7 @@ use error_stack::Report;
 use kernel::interfaces::event_store::{AuthAccountEventStore, DependOnAuthAccountEventStore};
 use kernel::prelude::entity::{
     AuthAccount, AuthAccountEvent, CommandEnvelope, EventEnvelope, EventId, EventVersion,
-    KnownEventVersion,
+    ExpectedVersion,
 };
 use kernel::KernelError;
 use serde_json;
@@ -118,7 +118,7 @@ impl PostgresAuthAccountEventStore {
         let prev_version = command.prev_version().as_ref();
 
         let result = match prev_version {
-            Some(KnownEventVersion::Nothing) => {
+            Some(ExpectedVersion::Nothing) => {
                 sqlx::query(
                     //language=postgresql
                     r#"
@@ -135,7 +135,7 @@ impl PostgresAuthAccountEventStore {
                 .await
                 .convert_error()?
             }
-            Some(KnownEventVersion::Prev(prev)) => {
+            Some(ExpectedVersion::At(prev)) => {
                 sqlx::query(
                     //language=postgresql
                     r#"
