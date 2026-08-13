@@ -1,16 +1,12 @@
 use crate::KernelError;
 use std::future::Future;
 
-/// Connectionの取得を示すトレイト
-///
-/// 現状は何もないが、将来的にトランザクション時に使える機能を示す可能性を考えて用意している
-pub trait Connection: Send {
-    fn commit(self) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send
-    where
-        Self: Sized,
-    {
-        async { Ok(()) }
-    }
+pub trait Connection: Send {}
+
+pub trait Transaction: Send {
+    type Connection: Connection;
+    fn connection(&mut self) -> &mut Self::Connection;
+    fn commit(self) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DatabaseConnection: Sync + Send + 'static {
@@ -18,12 +14,13 @@ pub trait DatabaseConnection: Sync + Send + 'static {
     fn connection(
         &self,
     ) -> impl Future<Output = error_stack::Result<Self::Connection, KernelError>> + Send;
+}
 
+pub trait TransactionalDatabaseConnection: DatabaseConnection {
+    type Transaction: Transaction<Connection = Self::Connection>;
     fn get_transaction(
         &self,
-    ) -> impl Future<Output = error_stack::Result<Self::Connection, KernelError>> + Send {
-        self.connection()
-    }
+    ) -> impl Future<Output = error_stack::Result<Self::Transaction, KernelError>> + Send;
 }
 
 pub trait DependOnDatabaseConnection: Sync + Send {
