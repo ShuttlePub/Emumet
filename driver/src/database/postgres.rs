@@ -1,5 +1,6 @@
 mod account;
 mod account_event_store;
+mod account_repository;
 mod auth_account;
 mod auth_account_event_store;
 mod auth_host;
