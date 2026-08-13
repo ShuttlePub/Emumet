@@ -178,6 +178,13 @@ mod test {
             .unwrap();
         assert_eq!(stored_old.len(), events.len());
         assert_eq!(stored_new.len(), events.len());
+        for (stored, envelope) in stored_old.iter().zip(old_envelopes.0.iter()) {
+            assert_eq!(&stored.event, &envelope.event);
+            assert_eq!(stored.version, envelope.version);
+        }
+        for (old, new) in stored_old.iter().zip(stored_new.iter()) {
+            assert_eq!(&old.event, &new.event);
+        }
         for (stored, envelope) in stored_new.iter().zip(new_envelopes.iter()) {
             assert_eq!(&stored.event, &envelope.event);
             assert_eq!(stored.version, envelope.version);
