@@ -51,7 +51,7 @@ pub trait GetAccountDetailUseCase:
         }: Pagination<String>,
     ) -> impl Future<Output = error_stack::Result<Vec<AccountDetailDto>, KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let accounts = self
                 .account_query_processor()
                 .find_by_auth_id(&mut executor, auth_account_id)
@@ -78,7 +78,7 @@ pub trait GetAccountDetailUseCase:
         ids: Vec<String>,
     ) -> impl Future<Output = error_stack::Result<Vec<AccountDetailDto>, KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let nanoids: Vec<_> = ids.into_iter().map(Nanoid::<Account>::new).collect();
             let accounts = self
                 .account_query_processor()
@@ -112,7 +112,7 @@ impl<T> GetAccountDetailUseCase for T where
 
 async fn compose_account_details<T>(
     deps: &T,
-    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     accounts: Vec<Account>,
 ) -> error_stack::Result<Vec<AccountDetailDto>, KernelError>
 where

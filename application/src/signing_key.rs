@@ -40,7 +40,7 @@ pub trait CreateSigningKeyUseCase:
         algorithm: SigningAlgorithm,
     ) -> impl Future<Output = error_stack::Result<SigningKey, KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let password = self.password_provider().get_password()?;
             let key_pair = self.signing_key_generator().generate(&password)?;
             let base_url = self.public_base_url().as_str();
@@ -83,7 +83,7 @@ pub trait GetPublicKeyUseCase:
         nanoid: &Nanoid<Account>,
     ) -> impl Future<Output = error_stack::Result<PublicKeyInfo, KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let keys = self
                 .signing_key_repository()
                 .find_active_by_account_id(&mut executor, account_id)
@@ -123,7 +123,7 @@ pub trait SignRequestUseCase:
         request: HttpSigningRequest,
     ) -> impl Future<Output = error_stack::Result<HttpSigningResponse, KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let keys = self
                 .signing_key_repository()
                 .find_active_by_account_id(&mut executor, account_id)
@@ -161,21 +161,23 @@ mod tests {
     use kernel::interfaces::crypto::{
         EncryptedPrivateKey, KeyEncryptor, PasswordProvider, RawKeyGenerator, SigningAlgorithm,
     };
-    use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+    use kernel::interfaces::database::{
+        Connection, DatabaseConnection, DependOnDatabaseConnection,
+    };
     use kernel::interfaces::http_signing::{HttpSigner, HttpSigningRequest, HttpSigningResponse};
     use kernel::prelude::entity::{SigningKey, SigningKeyId};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use zeroize::Zeroizing;
 
-    struct MockExecutor;
-    impl Executor for MockExecutor {}
+    struct MockConnection;
+    impl Connection for MockConnection {}
 
     struct MockDatabaseConnection;
     impl DatabaseConnection for MockDatabaseConnection {
-        type Executor = MockExecutor;
-        async fn get_executor(&self) -> error_stack::Result<Self::Executor, KernelError> {
-            Ok(MockExecutor)
+        type Connection = MockConnection;
+        async fn connection(&self) -> error_stack::Result<Self::Connection, KernelError> {
+            Ok(MockConnection)
         }
     }
 
@@ -201,11 +203,11 @@ mod tests {
     }
 
     impl kernel::prelude::entity::SigningKeyRepository for MockSigningKeyRepository {
-        type Executor = MockExecutor;
+        type Connection = MockConnection;
 
         async fn find_by_id(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             _id: &SigningKeyId,
         ) -> error_stack::Result<SigningKey, KernelError> {
             Err(Report::new(KernelError::NotFound))
@@ -213,7 +215,7 @@ mod tests {
 
         async fn find_by_account_id(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             _account_id: &AccountId,
         ) -> error_stack::Result<Vec<SigningKey>, KernelError> {
             Ok(vec![])
@@ -221,7 +223,7 @@ mod tests {
 
         fn find_active_by_account_id(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             _account_id: &AccountId,
         ) -> impl Future<Output = error_stack::Result<Vec<SigningKey>, KernelError>> + Send
         {
@@ -231,7 +233,7 @@ mod tests {
 
         fn create(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             signing_key: &SigningKey,
         ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
             self.created_keys.lock().unwrap().push(signing_key.clone());
@@ -240,7 +242,7 @@ mod tests {
 
         async fn revoke(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             _id: &SigningKeyId,
         ) -> error_stack::Result<(), KernelError> {
             Ok(())

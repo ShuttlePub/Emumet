@@ -35,7 +35,7 @@ impl AccountApplier {
             |handler: Arc<Handler>, id: AccountId| async move {
                 let mut tx = handler
                     .database_connection()
-                    .get_executor()
+                    .connection()
                     .await
                     .map_err(|e| ErrorOperation::Delay(format!("{:?}", e)))?;
                 let event_id = EventId::from(id.clone());

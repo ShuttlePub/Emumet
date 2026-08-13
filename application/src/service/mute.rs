@@ -33,7 +33,7 @@ pub trait MuteAccountUseCase:
     {
         async move {
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut executor, &account_nanoid)
@@ -128,7 +128,7 @@ pub trait UnmuteAccountUseCase:
     {
         async move {
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut executor, &account_nanoid)
@@ -205,7 +205,7 @@ pub trait GetMutesUseCase:
     {
         async move {
             let account_nanoid = Nanoid::<Account>::new(account_nanoid);
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut executor, &account_nanoid)
@@ -289,12 +289,12 @@ impl<T> GetMutesUseCase for T where
 async fn resolve_mute_target<Q, R>(
     query_processor: &Q,
     remote_account_repository: &R,
-    executor: &mut Q::Executor,
+    executor: &mut Q::Connection,
     target: &str,
 ) -> error_stack::Result<(MuteTargetId, String), KernelError>
 where
     Q: AccountQueryProcessor,
-    R: RemoteAccountRepository<Executor = Q::Executor>,
+    R: RemoteAccountRepository<Connection = Q::Connection>,
 {
     let target_nanoid = Nanoid::<Account>::new(target.to_string());
     if let Some(account) = query_processor

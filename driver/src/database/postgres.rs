@@ -14,11 +14,16 @@ mod profile;
 mod profile_event_store;
 mod remote_account;
 mod signing_key;
+#[cfg(test)]
+mod transaction_manager_tests;
 
 use crate::database::env;
 use crate::ConvertError;
 use error_stack::{Report, ResultExt};
-use kernel::interfaces::database::{DatabaseConnection, Executor};
+use kernel::interfaces::database::{
+    Connection, DatabaseConnection, Transaction as DbTransaction, TransactionManager,
+    TransactionalDatabaseConnection,
+};
 use kernel::KernelError;
 use sqlx::pool::PoolConnection;
 use sqlx::{Error, PgConnection, Pool, Postgres, Transaction};
@@ -61,52 +66,125 @@ impl PostgresDatabase {
     }
 }
 
-pub enum PostgresConnection {
+enum PostgresConnectionInner {
     Connection(PoolConnection<Postgres>),
     Transaction(Transaction<'static, Postgres>),
 }
 
-impl Executor for PostgresConnection {
-    async fn commit(self) -> error_stack::Result<(), KernelError> {
-        match self {
-            PostgresConnection::Connection(_) => Ok(()),
-            PostgresConnection::Transaction(transaction) => transaction
-                .commit()
-                .await
-                .change_context(KernelError::Internal),
-        }
-    }
-}
+pub struct PostgresConnection(PostgresConnectionInner);
+
+impl Connection for PostgresConnection {}
 
 impl Deref for PostgresConnection {
     type Target = PgConnection;
     fn deref(&self) -> &Self::Target {
-        match self {
-            PostgresConnection::Connection(connection) => connection,
-            PostgresConnection::Transaction(transaction) => transaction,
+        match &self.0 {
+            PostgresConnectionInner::Connection(connection) => connection,
+            PostgresConnectionInner::Transaction(transaction) => transaction,
         }
     }
 }
 
 impl DerefMut for PostgresConnection {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            PostgresConnection::Connection(connection) => connection,
-            PostgresConnection::Transaction(transaction) => transaction,
+        match &mut self.0 {
+            PostgresConnectionInner::Connection(connection) => connection,
+            PostgresConnectionInner::Transaction(transaction) => transaction,
+        }
+    }
+}
+
+pub struct PostgresTransaction(PostgresConnection);
+
+impl DbTransaction for PostgresTransaction {
+    type Connection = PostgresConnection;
+
+    fn connection(&mut self) -> &mut Self::Connection {
+        &mut self.0
+    }
+
+    async fn commit(self) -> error_stack::Result<(), KernelError> {
+        match self.0 .0 {
+            PostgresConnectionInner::Transaction(transaction) => transaction
+                .commit()
+                .await
+                .change_context(KernelError::Internal),
+            PostgresConnectionInner::Connection(_) => unreachable!(),
         }
     }
 }
 
 impl DatabaseConnection for PostgresDatabase {
-    type Executor = PostgresConnection;
-    async fn get_executor(&self) -> error_stack::Result<Self::Executor, KernelError> {
+    type Connection = PostgresConnection;
+    async fn connection(&self) -> error_stack::Result<Self::Connection, KernelError> {
         let connection = self.pool.acquire().await.convert_error()?;
-        Ok(PostgresConnection::Connection(connection))
+        Ok(PostgresConnection(PostgresConnectionInner::Connection(
+            connection,
+        )))
     }
+}
 
-    async fn get_transaction(&self) -> error_stack::Result<Self::Executor, KernelError> {
+impl TransactionalDatabaseConnection for PostgresDatabase {
+    type Transaction = PostgresTransaction;
+
+    async fn get_transaction(&self) -> error_stack::Result<Self::Transaction, KernelError> {
         let transaction = self.pool.begin().await.convert_error()?;
-        Ok(PostgresConnection::Transaction(transaction))
+        Ok(PostgresTransaction(PostgresConnection(
+            PostgresConnectionInner::Transaction(transaction),
+        )))
+    }
+}
+
+impl TransactionManager for PostgresDatabase {
+    fn transaction<'a, F, T>(
+        &'a self,
+        operation: F,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = error_stack::Result<T, KernelError>> + Send + 'a>,
+    >
+    where
+        F: for<'connection> FnOnce(
+                &'connection mut Self::Connection,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = error_stack::Result<T, KernelError>>
+                        + Send
+                        + 'connection,
+                >,
+            > + Send
+            + 'a,
+        T: Send + 'a,
+    {
+        Box::pin(async move {
+            let transaction = self.pool.begin().await.convert_error()?;
+            let mut conn = PostgresConnection(PostgresConnectionInner::Transaction(transaction));
+            match operation(&mut conn).await {
+                Ok(result) => match conn.0 {
+                    PostgresConnectionInner::Transaction(transaction) => {
+                        transaction
+                            .commit()
+                            .await
+                            .change_context(KernelError::Internal)?;
+                        Ok(result)
+                    }
+                    PostgresConnectionInner::Connection(_) => unreachable!(),
+                },
+                Err(error) => {
+                    match conn.0 {
+                        PostgresConnectionInner::Transaction(transaction) => {
+                            if let Err(rollback_error) = transaction.rollback().await {
+                                tracing::error!(
+                                    rollback_error = %rollback_error,
+                                    "Transaction rollback failed; original error preserved"
+                                );
+                            }
+                        }
+                        PostgresConnectionInner::Connection(_) => unreachable!(),
+                    }
+                    Err(error)
+                }
+            }
+        })
     }
 }
 

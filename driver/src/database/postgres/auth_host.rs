@@ -20,10 +20,10 @@ impl From<AuthHostRow> for AuthHost {
 pub struct PostgresAuthHostRepository;
 
 impl AuthHostRepository for PostgresAuthHostRepository {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &AuthHostId,
     ) -> error_stack::Result<Option<AuthHost>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -44,7 +44,7 @@ impl AuthHostRepository for PostgresAuthHostRepository {
 
     async fn find_by_url(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         domain: &AuthHostUrl,
     ) -> error_stack::Result<Option<AuthHost>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -65,7 +65,7 @@ impl AuthHostRepository for PostgresAuthHostRepository {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         auth_host: &AuthHost,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -86,7 +86,7 @@ impl AuthHostRepository for PostgresAuthHostRepository {
 
     async fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         auth_host: &AuthHost,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -128,18 +128,18 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let auth_host = AuthHostBuilder::new().build();
             database
                 .auth_host_repository()
-                .create(&mut transaction, &auth_host)
+                .create(&mut conn, &auth_host)
                 .await
                 .unwrap();
 
             let found_auth_host = database
                 .auth_host_repository()
-                .find_by_id(&mut transaction, auth_host.id())
+                .find_by_id(&mut conn, auth_host.id())
                 .await
                 .unwrap()
                 .unwrap();
@@ -151,18 +151,18 @@ mod test {
         async fn find_by_url() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let auth_host = AuthHostBuilder::new().build();
             database
                 .auth_host_repository()
-                .create(&mut transaction, &auth_host)
+                .create(&mut conn, &auth_host)
                 .await
                 .unwrap();
 
             let found_auth_host = database
                 .auth_host_repository()
-                .find_by_url(&mut transaction, auth_host.url())
+                .find_by_url(&mut conn, auth_host.url())
                 .await
                 .unwrap()
                 .unwrap();
@@ -181,18 +181,18 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let auth_host = AuthHostBuilder::new().build();
             database
                 .auth_host_repository()
-                .create(&mut transaction, &auth_host)
+                .create(&mut conn, &auth_host)
                 .await
                 .unwrap();
 
             let found_auth_host = database
                 .auth_host_repository()
-                .find_by_id(&mut transaction, auth_host.id())
+                .find_by_id(&mut conn, auth_host.id())
                 .await
                 .unwrap()
                 .unwrap();
@@ -204,12 +204,12 @@ mod test {
         async fn update() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let auth_host = AuthHostBuilder::new().build();
             database
                 .auth_host_repository()
-                .create(&mut transaction, &auth_host)
+                .create(&mut conn, &auth_host)
                 .await
                 .unwrap();
 
@@ -220,13 +220,13 @@ mod test {
                 .build();
             database
                 .auth_host_repository()
-                .update(&mut transaction, &updated_auth_host)
+                .update(&mut conn, &updated_auth_host)
                 .await
                 .unwrap();
 
             let found_auth_host = database
                 .auth_host_repository()
-                .find_by_id(&mut transaction, auth_host.id())
+                .find_by_id(&mut conn, auth_host.id())
                 .await
                 .unwrap()
                 .unwrap();

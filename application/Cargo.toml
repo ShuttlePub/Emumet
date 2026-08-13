@@ -35,3 +35,4 @@ zeroize = "1.7"
 test-with.workspace = true
 
 driver.path = "../driver"
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls"] }

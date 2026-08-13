@@ -303,7 +303,7 @@ mod test {
         )
         .await
         .unwrap();
-        let mut executor = module.database_connection().get_executor().await.unwrap();
+        let mut executor = module.database_connection().connection().await.unwrap();
 
         let a_id = AccountId::default();
         let account_a = AccountBuilder::new()

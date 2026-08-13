@@ -123,7 +123,7 @@ mod tests {
             .build();
         let mut executor = module
             .database_connection()
-            .get_executor()
+            .connection()
             .await
             .expect("database executor");
         module

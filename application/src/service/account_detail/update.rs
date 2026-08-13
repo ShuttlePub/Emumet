@@ -16,7 +16,9 @@ use adapter::processor::profile::{
     ProfileQueryProcessor, UpdateProfileParam,
 };
 use error_stack::Report;
-use kernel::interfaces::database::{DatabaseConnection, Executor};
+use kernel::interfaces::database::{
+    DatabaseConnection, Transaction, TransactionalDatabaseConnection,
+};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{
     DependOnAccountEventStore, DependOnMetadataEventStore, DependOnProfileEventStore,
@@ -54,6 +56,9 @@ pub trait UpdateAccountDetailUseCase:
     + DependOnMetadataReadModel
     + DependOnImageRepository
     + DependOnPermissionChecker
+where
+    <Self as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection:
+        TransactionalDatabaseConnection,
 {
     fn update_account_detail(
         &self,
@@ -62,13 +67,11 @@ pub trait UpdateAccountDetailUseCase:
     ) -> impl Future<Output = error_stack::Result<AccountDetailDto, KernelError>> + Send {
         async move {
             validate_update_account_dto(&dto)?;
-            let mut executor = self.database_connection().get_transaction().await?;
+            let mut transaction = self.database_connection().get_transaction().await?;
+            let executor = transaction.connection();
             let projection = self
                 .account_query_processor()
-                .find_by_nanoid_unfiltered(
-                    &mut executor,
-                    &Nanoid::<Account>::new(dto.account_nanoid),
-                )
+                .find_by_nanoid_unfiltered(executor, &Nanoid::<Account>::new(dto.account_nanoid))
                 .await?
                 .ok_or_else(|| Report::new(KernelError::NotFound))?;
             check_permission(self, auth_account_id, &account_edit(projection.id())).await?;
@@ -78,12 +81,12 @@ pub trait UpdateAccountDetailUseCase:
             }
 
             let account_id = projection.id().clone();
-            let (account, version) = rehydrate_account(self, &mut executor, &account_id).await?;
+            let (account, version) = rehydrate_account(self, executor, &account_id).await?;
             let is_bot = apply_is_bot(*account.is_bot().as_ref(), dto.is_bot);
             if is_bot != *account.is_bot().as_ref() {
                 self.account_command_processor()
                     .update(
-                        &mut executor,
+                        executor,
                         UpdateAccountParam {
                             account_id: account_id.clone(),
                             is_bot: AccountIsBot::new(is_bot),
@@ -91,20 +94,17 @@ pub trait UpdateAccountDetailUseCase:
                         },
                     )
                     .await?;
-                let account = rehydrate_account(self, &mut executor, &account_id).await?.0;
-                self.account_read_model()
-                    .update(&mut executor, &account)
-                    .await?;
+                let account = rehydrate_account(self, executor, &account_id).await?.0;
+                self.account_read_model().update(executor, &account).await?;
             }
 
             let profile = self
                 .profile_query_processor()
-                .find_by_account_id(&mut executor, &account_id)
+                .find_by_account_id(executor, &account_id)
                 .await?
                 .ok_or_else(|| Report::new(KernelError::NotFound))?;
-            let icon = resolve_field_action_image_id(self, &mut executor, &dto.icon_url).await?;
-            let banner =
-                resolve_field_action_image_id(self, &mut executor, &dto.banner_url).await?;
+            let icon = resolve_field_action_image_id(self, executor, &dto.icon_url).await?;
+            let banner = resolve_field_action_image_id(self, executor, &dto.banner_url).await?;
             if !dto.display_name.is_unchanged()
                 || !dto.summary.is_unchanged()
                 || !icon.is_unchanged()
@@ -112,7 +112,7 @@ pub trait UpdateAccountDetailUseCase:
             {
                 self.profile_command_processor()
                     .update(
-                        &mut executor,
+                        executor,
                         UpdateProfileParam {
                             profile_id: profile.id().clone(),
                             display_name: dto.display_name.clone().map(ProfileDisplayName::new),
@@ -122,35 +122,32 @@ pub trait UpdateAccountDetailUseCase:
                         },
                     )
                     .await?;
-                let profile = rehydrate_profile(self, &mut executor, profile.id()).await?;
-                self.profile_read_model()
-                    .update(&mut executor, &profile)
-                    .await?;
+                let profile = rehydrate_profile(self, executor, profile.id()).await?;
+                self.profile_read_model().update(executor, &profile).await?;
             }
 
             let mut existing_fields = self
                 .metadata_query_processor()
-                .find_by_account_id(&mut executor, &account_id)
+                .find_by_account_id(executor, &account_id)
                 .await?;
             existing_fields.sort_by_key(|field| *field.id().as_ref());
             if let Some(fields) = &dto.fields {
-                apply_field_updates(self, &mut executor, &account_id, &existing_fields, fields)
-                    .await?;
+                apply_field_updates(self, executor, &account_id, &existing_fields, fields).await?;
             }
 
             let account = self
                 .account_query_processor()
-                .find_by_id(&mut executor, &account_id)
+                .find_by_id(executor, &account_id)
                 .await?
                 .ok_or_else(|| Report::new(KernelError::NotFound))?;
             let profile = self
                 .profile_query_processor()
-                .find_by_account_id(&mut executor, &account_id)
+                .find_by_account_id(executor, &account_id)
                 .await?
                 .ok_or_else(|| Report::new(KernelError::NotFound))?;
             let mut current_fields = self
                 .metadata_query_processor()
-                .find_by_account_id(&mut executor, &account_id)
+                .find_by_account_id(executor, &account_id)
                 .await?;
             current_fields.sort_by_key(|field| *field.id().as_ref());
             let fields = current_fields
@@ -169,7 +166,7 @@ pub trait UpdateAccountDetailUseCase:
                 .collect();
             let images: HashMap<ImageId, String> = self
                 .image_repository()
-                .find_by_ids(&mut executor, &image_ids)
+                .find_by_ids(executor, &image_ids)
                 .await?
                 .into_iter()
                 .map(|image| (image.id().clone(), image.url().as_ref().to_string()))
@@ -190,13 +187,14 @@ pub trait UpdateAccountDetailUseCase:
                     .and_then(|id| images.get(id).cloned()),
                 fields,
             );
-            executor.commit().await?;
+            transaction.commit().await?;
             Ok(detail)
         }
     }
 }
 
-impl<T> UpdateAccountDetailUseCase for T where
+impl<T> UpdateAccountDetailUseCase for T
+where
     T: 'static
         + Sync
         + Send
@@ -214,6 +212,10 @@ impl<T> UpdateAccountDetailUseCase for T where
         + DependOnMetadataReadModel
         + DependOnImageRepository
         + DependOnPermissionChecker
+        + Sync
+        + Send,
+    <T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection:
+        TransactionalDatabaseConnection,
 {
 }
 
@@ -227,7 +229,7 @@ fn apply_is_bot(current: bool, action: FieldAction<bool>) -> bool {
 
 async fn rehydrate_profile<T>(
     deps: &T,
-    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     profile_id: &kernel::prelude::entity::ProfileId,
 ) -> error_stack::Result<Profile, KernelError>
 where

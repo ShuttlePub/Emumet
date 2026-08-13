@@ -1,5 +1,5 @@
 use error_stack::Report;
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
 use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
@@ -35,30 +35,30 @@ pub trait DependOnAccountSignal: Send + Sync {
 // --- AccountCommandProcessor ---
 
 pub trait AccountCommandProcessor: Send + Sync + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: CreateAccountParam,
     ) -> impl Future<Output = error_stack::Result<Account, KernelError>> + Send;
 
     fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: UpdateAccountParam,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn deactivate(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: AccountId,
         current_version: kernel::prelude::entity::EventVersion<Account>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn suspend(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: AccountId,
         reason: String,
         expires_at: Option<OffsetDateTime>,
@@ -67,14 +67,14 @@ pub trait AccountCommandProcessor: Send + Sync + 'static {
 
     fn unsuspend(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: AccountId,
         current_version: kernel::prelude::entity::EventVersion<Account>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn ban(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: AccountId,
         reason: String,
         current_version: kernel::prelude::entity::EventVersion<Account>,
@@ -90,12 +90,12 @@ where
         + Sync
         + 'static,
 {
-    type Executor =
-        <<T as DependOnAccountEventStore>::AccountEventStore as AccountEventStore>::Executor;
+    type Connection =
+        <<T as DependOnAccountEventStore>::AccountEventStore as AccountEventStore>::Connection;
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: CreateAccountParam,
     ) -> error_stack::Result<Account, KernelError> {
         let CreateAccountParam {
@@ -156,7 +156,7 @@ where
 
     async fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: UpdateAccountParam,
     ) -> error_stack::Result<(), KernelError> {
         let command = Account::update(
@@ -178,7 +178,7 @@ where
 
     async fn deactivate(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: AccountId,
         current_version: kernel::prelude::entity::EventVersion<Account>,
     ) -> error_stack::Result<(), KernelError> {
@@ -197,7 +197,7 @@ where
 
     async fn suspend(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: AccountId,
         reason: String,
         expires_at: Option<OffsetDateTime>,
@@ -218,7 +218,7 @@ where
 
     async fn unsuspend(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: AccountId,
         current_version: kernel::prelude::entity::EventVersion<Account>,
     ) -> error_stack::Result<(), KernelError> {
@@ -237,7 +237,7 @@ where
 
     async fn ban(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: AccountId,
         reason: String,
         current_version: kernel::prelude::entity::EventVersion<Account>,
@@ -258,7 +258,7 @@ where
 
 pub trait DependOnAccountCommandProcessor: DependOnDatabaseConnection + Send + Sync {
     type AccountCommandProcessor: AccountCommandProcessor<
-        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn account_command_processor(&self) -> &Self::AccountCommandProcessor;
 }

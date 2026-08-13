@@ -33,11 +33,11 @@ impl TryFrom<EventRow> for EventEnvelope<ProfileEvent, Profile> {
 pub struct PostgresProfileEventStore;
 
 impl ProfileEventStore for PostgresProfileEventStore {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &EventId<ProfileEvent, Profile>,
         since: Option<&EventVersion<Profile>>,
     ) -> error_stack::Result<Vec<EventEnvelope<ProfileEvent, Profile>>, KernelError> {
@@ -79,7 +79,7 @@ impl ProfileEventStore for PostgresProfileEventStore {
 
     async fn persist(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         command: &CommandEnvelope<ProfileEvent, Profile>,
     ) -> error_stack::Result<(), KernelError> {
         self.persist_internal(executor, command, kernel::generate_id())
@@ -88,7 +88,7 @@ impl ProfileEventStore for PostgresProfileEventStore {
 
     async fn persist_and_transform(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         command: CommandEnvelope<ProfileEvent, Profile>,
     ) -> error_stack::Result<EventEnvelope<ProfileEvent, Profile>, KernelError> {
         let version = kernel::generate_id();
@@ -207,12 +207,12 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let event_id = EventId::from(profile_id.clone());
             let events = db
                 .profile_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 0);
@@ -231,16 +231,16 @@ mod test {
             );
 
             db.profile_event_store()
-                .persist(&mut transaction, &created_profile)
+                .persist(&mut conn, &created_profile)
                 .await
                 .unwrap();
             db.profile_event_store()
-                .persist(&mut transaction, &updated_profile)
+                .persist(&mut conn, &updated_profile)
                 .await
                 .unwrap();
             let events = db
                 .profile_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 2);
@@ -253,7 +253,7 @@ mod test {
         async fn find_by_id_since_version() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let event_id = EventId::from(profile_id.clone());
 
@@ -272,18 +272,18 @@ mod test {
             );
 
             db.profile_event_store()
-                .persist(&mut transaction, &created_profile)
+                .persist(&mut conn, &created_profile)
                 .await
                 .unwrap();
             db.profile_event_store()
-                .persist(&mut transaction, &updated_profile)
+                .persist(&mut conn, &updated_profile)
                 .await
                 .unwrap();
 
             // Get all events to obtain the first version
             let all_events = db
                 .profile_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await
                 .unwrap();
             assert_eq!(all_events.len(), 2);
@@ -291,7 +291,7 @@ mod test {
             // Query since the first event's version — should return the 2nd event
             let since_events = db
                 .profile_event_store()
-                .find_by_id(&mut transaction, &event_id, Some(&all_events[0].version))
+                .find_by_id(&mut conn, &event_id, Some(&all_events[0].version))
                 .await
                 .unwrap();
             assert_eq!(since_events.len(), 1);
@@ -300,7 +300,7 @@ mod test {
             // Query since the last event's version — should return no events
             let no_events = db
                 .profile_event_store()
-                .find_by_id(&mut transaction, &event_id, Some(&all_events[1].version))
+                .find_by_id(&mut conn, &event_id, Some(&all_events[1].version))
                 .await
                 .unwrap();
             assert_eq!(no_events.len(), 0);
@@ -319,16 +319,16 @@ mod test {
         async fn basic_creation() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let created_profile = profile_create_command(profile_id.clone());
             db.profile_event_store()
-                .persist(&mut transaction, &created_profile)
+                .persist(&mut conn, &created_profile)
                 .await
                 .unwrap();
             let events = db
                 .profile_event_store()
-                .find_by_id(&mut transaction, &EventId::from(profile_id), None)
+                .find_by_id(&mut conn, &EventId::from(profile_id), None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
@@ -339,13 +339,13 @@ mod test {
         async fn persist_and_transform_test() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let created_profile = profile_create_command(profile_id.clone());
 
             let event_envelope = db
                 .profile_event_store()
-                .persist_and_transform(&mut transaction, created_profile.clone())
+                .persist_and_transform(&mut conn, created_profile.clone())
                 .await
                 .unwrap();
 
@@ -354,7 +354,7 @@ mod test {
 
             let events = db
                 .profile_event_store()
-                .find_by_id(&mut transaction, &EventId::from(profile_id), None)
+                .find_by_id(&mut conn, &EventId::from(profile_id), None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
@@ -366,20 +366,20 @@ mod test {
         async fn known_event_version_nothing_prevents_duplicate() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let profile_id = ProfileId::new(kernel::generate_id());
             let created_profile = profile_create_command(profile_id.clone());
 
             // First persist should succeed
             db.profile_event_store()
-                .persist(&mut transaction, &created_profile)
+                .persist(&mut conn, &created_profile)
                 .await
                 .unwrap();
 
             // Second persist with KnownEventVersion::Nothing should fail (concurrency error)
             let result = db
                 .profile_event_store()
-                .persist(&mut transaction, &created_profile)
+                .persist(&mut conn, &created_profile)
                 .await;
             assert!(result.is_err());
         }

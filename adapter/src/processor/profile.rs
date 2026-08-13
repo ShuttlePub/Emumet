@@ -1,5 +1,5 @@
 use error_stack::Report;
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
@@ -41,17 +41,17 @@ pub struct UpdateProfileParam {
 // --- ProfileCommandProcessor ---
 
 pub trait ProfileCommandProcessor: Send + Sync + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: CreateProfileParam,
     ) -> impl Future<Output = error_stack::Result<Profile, KernelError>> + Send;
 
     fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: UpdateProfileParam,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
@@ -65,12 +65,12 @@ where
         + Sync
         + 'static,
 {
-    type Executor =
-        <<T as DependOnProfileEventStore>::ProfileEventStore as ProfileEventStore>::Executor;
+    type Connection =
+        <<T as DependOnProfileEventStore>::ProfileEventStore as ProfileEventStore>::Connection;
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: CreateProfileParam,
     ) -> error_stack::Result<Profile, KernelError> {
         let profile_id = ProfileId::new(kernel::generate_id());
@@ -114,7 +114,7 @@ where
 
     async fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: UpdateProfileParam,
     ) -> error_stack::Result<(), KernelError> {
         let command = Profile::update(
@@ -139,7 +139,7 @@ where
 
 pub trait DependOnProfileCommandProcessor: DependOnDatabaseConnection + Send + Sync {
     type ProfileCommandProcessor: ProfileCommandProcessor<
-        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn profile_command_processor(&self) -> &Self::ProfileCommandProcessor;
 }
@@ -163,23 +163,23 @@ where
 // --- ProfileQueryProcessor ---
 
 pub trait ProfileQueryProcessor: Send + Sync + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &ProfileId,
     ) -> impl Future<Output = error_stack::Result<Option<Profile>, KernelError>> + Send;
 
     fn find_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Option<Profile>, KernelError>> + Send;
 
     fn find_by_account_ids(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_ids: &[AccountId],
     ) -> impl Future<Output = error_stack::Result<Vec<Profile>, KernelError>> + Send;
 }
@@ -188,12 +188,12 @@ impl<T> ProfileQueryProcessor for T
 where
     T: DependOnProfileReadModel + Send + Sync + 'static,
 {
-    type Executor =
-        <<T as DependOnProfileReadModel>::ProfileReadModel as ProfileReadModel>::Executor;
+    type Connection =
+        <<T as DependOnProfileReadModel>::ProfileReadModel as ProfileReadModel>::Connection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &ProfileId,
     ) -> error_stack::Result<Option<Profile>, KernelError> {
         self.profile_read_model().find_by_id(executor, id).await
@@ -201,7 +201,7 @@ where
 
     async fn find_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> error_stack::Result<Option<Profile>, KernelError> {
         self.profile_read_model()
@@ -211,7 +211,7 @@ where
 
     async fn find_by_account_ids(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_ids: &[AccountId],
     ) -> error_stack::Result<Vec<Profile>, KernelError> {
         self.profile_read_model()
@@ -222,7 +222,7 @@ where
 
 pub trait DependOnProfileQueryProcessor: DependOnDatabaseConnection + Send + Sync {
     type ProfileQueryProcessor: ProfileQueryProcessor<
-        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn profile_query_processor(&self) -> &Self::ProfileQueryProcessor;
 }

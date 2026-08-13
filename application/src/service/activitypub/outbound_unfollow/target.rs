@@ -13,13 +13,13 @@ pub(super) enum UnfollowTarget {
 pub(super) async fn resolve_unfollow_target<Q, R>(
     accounts: &Q,
     remote_accounts: &R,
-    executor: &mut Q::Executor,
+    executor: &mut Q::Connection,
     public_base_url: &PublicBaseUrl,
     target: &str,
 ) -> error_stack::Result<UnfollowTarget, KernelError>
 where
     Q: AccountQueryProcessor,
-    R: RemoteAccountRepository<Executor = Q::Executor>,
+    R: RemoteAccountRepository<Connection = Q::Connection>,
 {
     if let Some(account) = accounts
         .find_by_nanoid(executor, &Nanoid::<Account>::new(target.to_string()))

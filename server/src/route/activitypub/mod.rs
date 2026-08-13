@@ -66,7 +66,7 @@ pub(super) async fn find_account_id_by_nanoid(
 
     let mut executor = module
         .database_connection()
-        .get_executor()
+        .connection()
         .await
         .map_err(ErrorStatus::from)?;
     let nanoid = Nanoid::<Account>::new(id);

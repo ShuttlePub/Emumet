@@ -85,7 +85,7 @@ pub(crate) async fn sign_request(
     let nanoid = Nanoid::<Account>::new(id);
     let mut executor = module
         .database_connection()
-        .get_executor()
+        .connection()
         .await
         .map_err(ErrorStatus::from)?;
     let account = module
@@ -157,7 +157,7 @@ pub(crate) async fn get_public_key(
     let nanoid = Nanoid::<Account>::new(id);
     let mut executor = module
         .database_connection()
-        .get_executor()
+        .connection()
         .await
         .map_err(ErrorStatus::from)?;
     let account = module

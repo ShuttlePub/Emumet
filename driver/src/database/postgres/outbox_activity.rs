@@ -32,11 +32,11 @@ impl From<OutboxActivityRow> for OutboxActivity {
 pub struct PostgresOutboxActivityRepository;
 
 impl OutboxActivityRepository for PostgresOutboxActivityRepository {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         activity: &OutboxActivity,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -59,7 +59,7 @@ impl OutboxActivityRepository for PostgresOutboxActivityRepository {
 
     async fn find_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
         limit: usize,
         cursor: Option<i64>,
@@ -86,7 +86,7 @@ impl OutboxActivityRepository for PostgresOutboxActivityRepository {
 
     async fn count_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> error_stack::Result<u64, KernelError> {
         let con: &mut PgConnection = executor;
@@ -123,7 +123,7 @@ mod tests {
     async fn create_and_find_by_account_id_returns_stored_activity() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();
-        let mut executor = database.get_executor().await.unwrap();
+        let mut executor = database.connection().await.unwrap();
         let account_id = AccountId::default();
         let activity_id = format!("https://example.com/activities/{}", kernel::generate_id());
         let activity = OutboxActivity {

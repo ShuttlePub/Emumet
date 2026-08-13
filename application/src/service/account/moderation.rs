@@ -30,12 +30,12 @@ pub trait SuspendAccountUseCase:
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
             ModerationReason::new(reason.as_str()).validate()?;
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let projection = self
                 .account_query_processor()
-                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -55,7 +55,7 @@ pub trait SuspendAccountUseCase:
 
             let account_id = projection.id().clone();
             let (account, current_version) =
-                rehydrate_account(self, &mut transaction, &account_id).await?;
+                rehydrate_account(self, &mut conn, &account_id).await?;
 
             if !account.status().is_active() {
                 return Err(
@@ -69,13 +69,7 @@ pub trait SuspendAccountUseCase:
             }
 
             self.account_command_processor()
-                .suspend(
-                    &mut transaction,
-                    account_id,
-                    reason,
-                    expires_at,
-                    current_version,
-                )
+                .suspend(&mut conn, account_id, reason, expires_at, current_version)
                 .await?;
 
             Ok(())
@@ -107,12 +101,12 @@ pub trait UnsuspendAccountUseCase:
         account_id: String,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let projection = self
                 .account_query_processor()
-                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -125,7 +119,7 @@ pub trait UnsuspendAccountUseCase:
 
             let account_id = projection.id().clone();
             let (account, current_version) =
-                rehydrate_account(self, &mut transaction, &account_id).await?;
+                rehydrate_account(self, &mut conn, &account_id).await?;
 
             if !account.status().is_suspended() {
                 return Err(
@@ -134,7 +128,7 @@ pub trait UnsuspendAccountUseCase:
             }
 
             self.account_command_processor()
-                .unsuspend(&mut transaction, account_id, current_version)
+                .unsuspend(&mut conn, account_id, current_version)
                 .await?;
 
             Ok(())
@@ -168,12 +162,12 @@ pub trait BanAccountUseCase:
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
             ModerationReason::new(reason.as_str()).validate()?;
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let projection = self
                 .account_query_processor()
-                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -186,7 +180,7 @@ pub trait BanAccountUseCase:
 
             let account_id = projection.id().clone();
             let (account, current_version) =
-                rehydrate_account(self, &mut transaction, &account_id).await?;
+                rehydrate_account(self, &mut conn, &account_id).await?;
 
             if account.status().is_banned() {
                 return Err(Report::new(KernelError::Rejected)
@@ -199,7 +193,7 @@ pub trait BanAccountUseCase:
             }
 
             self.account_command_processor()
-                .ban(&mut transaction, account_id, reason, current_version)
+                .ban(&mut conn, account_id, reason, current_version)
                 .await?;
 
             Ok(())

@@ -34,11 +34,11 @@ impl From<RemoteAccountRow> for RemoteAccount {
 pub struct PostgresRemoteAccountRepository;
 
 impl RemoteAccountRepository for PostgresRemoteAccountRepository {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &RemoteAccountId,
     ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -59,7 +59,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
 
     async fn find_by_acct(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         acct: &RemoteAccountAcct,
     ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -80,7 +80,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
 
     async fn find_by_url(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         url: &RemoteAccountUrl,
     ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -101,7 +101,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account: &RemoteAccount,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -126,7 +126,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
 
     async fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account: &RemoteAccount,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -156,7 +156,7 @@ impl RemoteAccountRepository for PostgresRemoteAccountRepository {
 
     async fn delete(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &RemoteAccountId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -202,23 +202,23 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let remote_account = RemoteAccountBuilder::new().build();
             database
                 .remote_account_repository()
-                .create(&mut transaction, &remote_account)
+                .create(&mut conn, &remote_account)
                 .await
                 .unwrap();
             let result = database
                 .remote_account_repository()
-                .find_by_id(&mut transaction, remote_account.id())
+                .find_by_id(&mut conn, remote_account.id())
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
             database
                 .remote_account_repository()
-                .delete(&mut transaction, remote_account.id())
+                .delete(&mut conn, remote_account.id())
                 .await
                 .unwrap();
         }
@@ -228,7 +228,7 @@ mod test {
         async fn find_by_acct() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let (acct, url) = unique_remote_acct();
             let remote_account = RemoteAccountBuilder::new()
@@ -237,19 +237,19 @@ mod test {
                 .build();
             database
                 .remote_account_repository()
-                .create(&mut transaction, &remote_account)
+                .create(&mut conn, &remote_account)
                 .await
                 .unwrap();
             let result = database
                 .remote_account_repository()
-                .find_by_acct(&mut transaction, &acct)
+                .find_by_acct(&mut conn, &acct)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
 
             database
                 .remote_account_repository()
-                .delete(&mut transaction, remote_account.id())
+                .delete(&mut conn, remote_account.id())
                 .await
                 .unwrap();
         }
@@ -259,7 +259,7 @@ mod test {
         async fn find_by_url() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let (acct, url) = unique_remote_acct();
             let remote_account = RemoteAccountBuilder::new()
@@ -268,18 +268,18 @@ mod test {
                 .build();
             database
                 .remote_account_repository()
-                .create(&mut transaction, &remote_account)
+                .create(&mut conn, &remote_account)
                 .await
                 .unwrap();
             let result = database
                 .remote_account_repository()
-                .find_by_url(&mut transaction, &url)
+                .find_by_url(&mut conn, &url)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
             database
                 .remote_account_repository()
-                .delete(&mut transaction, remote_account.id())
+                .delete(&mut conn, remote_account.id())
                 .await
                 .unwrap();
         }
@@ -299,17 +299,17 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let remote_account = RemoteAccountBuilder::new().build();
             database
                 .remote_account_repository()
-                .create(&mut transaction, &remote_account)
+                .create(&mut conn, &remote_account)
                 .await
                 .unwrap();
             database
                 .remote_account_repository()
-                .delete(&mut transaction, remote_account.id())
+                .delete(&mut conn, remote_account.id())
                 .await
                 .unwrap();
         }
@@ -319,31 +319,31 @@ mod test {
         async fn update() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let id = RemoteAccountId::new(kernel::generate_id());
             let remote_account = RemoteAccountBuilder::new().id(id.clone()).build();
             database
                 .remote_account_repository()
-                .create(&mut transaction, &remote_account)
+                .create(&mut conn, &remote_account)
                 .await
                 .unwrap();
 
             let remote_account = RemoteAccountBuilder::new().id(id.clone()).build();
             database
                 .remote_account_repository()
-                .update(&mut transaction, &remote_account)
+                .update(&mut conn, &remote_account)
                 .await
                 .unwrap();
             let result = database
                 .remote_account_repository()
-                .find_by_id(&mut transaction, &id)
+                .find_by_id(&mut conn, &id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(remote_account.clone()));
             database
                 .remote_account_repository()
-                .delete(&mut transaction, remote_account.id())
+                .delete(&mut conn, remote_account.id())
                 .await
                 .unwrap();
         }
@@ -353,23 +353,23 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let remote_account = RemoteAccountBuilder::new().build();
             database
                 .remote_account_repository()
-                .create(&mut transaction, &remote_account)
+                .create(&mut conn, &remote_account)
                 .await
                 .unwrap();
 
             database
                 .remote_account_repository()
-                .delete(&mut transaction, remote_account.id())
+                .delete(&mut conn, remote_account.id())
                 .await
                 .unwrap();
             let result = database
                 .remote_account_repository()
-                .find_by_id(&mut transaction, remote_account.id())
+                .find_by_id(&mut conn, remote_account.id())
                 .await
                 .unwrap();
             assert_eq!(result, None);

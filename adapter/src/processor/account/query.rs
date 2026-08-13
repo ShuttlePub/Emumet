@@ -1,4 +1,4 @@
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
 use kernel::prelude::entity::{Account, AccountId, AccountName, AuthAccountId, Nanoid};
 use kernel::KernelError;
@@ -7,53 +7,53 @@ use std::future::Future;
 // --- AccountQueryProcessor ---
 
 pub trait AccountQueryProcessor: Send + Sync + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
 
     fn find_by_auth_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         auth_id: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
 
     fn find_by_name(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         name: &AccountName,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
 
     fn find_by_nanoid(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoid: &Nanoid<Account>,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
 
     fn find_by_nanoids(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoids: &[Nanoid<Account>],
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
 
     fn find_by_id_unfiltered(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
 
     fn find_by_nanoid_unfiltered(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoid: &Nanoid<Account>,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
 
     fn find_by_nanoids_unfiltered(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoids: &[Nanoid<Account>],
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
 }
@@ -62,12 +62,12 @@ impl<T> AccountQueryProcessor for T
 where
     T: DependOnAccountReadModel + Send + Sync + 'static,
 {
-    type Executor =
-        <<T as DependOnAccountReadModel>::AccountReadModel as AccountReadModel>::Executor;
+    type Connection =
+        <<T as DependOnAccountReadModel>::AccountReadModel as AccountReadModel>::Connection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &AccountId,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         self.account_read_model().find_by_id(executor, id).await
@@ -75,7 +75,7 @@ where
 
     async fn find_by_auth_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         auth_id: &AuthAccountId,
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         self.account_read_model()
@@ -85,7 +85,7 @@ where
 
     async fn find_by_name(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         name: &AccountName,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         self.account_read_model().find_by_name(executor, name).await
@@ -93,7 +93,7 @@ where
 
     async fn find_by_nanoid(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoid: &Nanoid<Account>,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         self.account_read_model()
@@ -103,7 +103,7 @@ where
 
     async fn find_by_nanoids(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoids: &[Nanoid<Account>],
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         self.account_read_model()
@@ -113,7 +113,7 @@ where
 
     async fn find_by_id_unfiltered(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &AccountId,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         self.account_read_model()
@@ -123,7 +123,7 @@ where
 
     async fn find_by_nanoid_unfiltered(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoid: &Nanoid<Account>,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         self.account_read_model()
@@ -133,7 +133,7 @@ where
 
     async fn find_by_nanoids_unfiltered(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoids: &[Nanoid<Account>],
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         self.account_read_model()
@@ -144,7 +144,7 @@ where
 
 pub trait DependOnAccountQueryProcessor: DependOnDatabaseConnection + Send + Sync {
     type AccountQueryProcessor: AccountQueryProcessor<
-        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn account_query_processor(&self) -> &Self::AccountQueryProcessor;
 }

@@ -1,7 +1,7 @@
 use crate::transfer::activitypub::FollowRelationDto;
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
-use kernel::interfaces::database::{DatabaseConnection, Executor};
+use kernel::interfaces::database::{Connection, DatabaseConnection};
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::repository::{
     DependOnFollowRepository, DependOnRemoteAccountRepository, FollowRepository,
@@ -59,7 +59,7 @@ pub trait GetFollowRelationsUseCase:
     {
         async move {
             let account_nanoid = Nanoid::<Account>::new(account_nanoid);
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut executor, &account_nanoid)
@@ -109,10 +109,10 @@ pub async fn list_approved_relations<Q, F, R, E>(
     following: bool,
 ) -> error_stack::Result<Vec<FollowRelationDto>, KernelError>
 where
-    Q: AccountQueryProcessor<Executor = E>,
-    F: FollowRepository<Executor = E>,
-    R: RemoteAccountRepository<Executor = E>,
-    E: Executor,
+    Q: AccountQueryProcessor<Connection = E>,
+    F: FollowRepository<Connection = E>,
+    R: RemoteAccountRepository<Connection = E>,
+    E: Connection,
 {
     let relations = if following {
         follows.find_followings(executor, account).await?

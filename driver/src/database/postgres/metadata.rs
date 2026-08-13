@@ -34,11 +34,11 @@ impl From<MetadataRow> for Metadata {
 pub struct PostgresMetadataReadModel;
 
 impl MetadataReadModel for PostgresMetadataReadModel {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &MetadataId,
     ) -> error_stack::Result<Option<Metadata>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -59,7 +59,7 @@ impl MetadataReadModel for PostgresMetadataReadModel {
 
     async fn find_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> error_stack::Result<Vec<Metadata>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -80,7 +80,7 @@ impl MetadataReadModel for PostgresMetadataReadModel {
 
     async fn find_by_account_ids(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_ids: &[AccountId],
     ) -> error_stack::Result<Vec<Metadata>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -102,7 +102,7 @@ impl MetadataReadModel for PostgresMetadataReadModel {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         metadata: &Metadata,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -127,7 +127,7 @@ impl MetadataReadModel for PostgresMetadataReadModel {
 
     async fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         metadata: &Metadata,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -155,7 +155,7 @@ impl MetadataReadModel for PostgresMetadataReadModel {
 
     async fn delete(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         metadata_id: &MetadataId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -203,7 +203,7 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let account_id = AccountId::default();
             let account = AccountBuilder::new().id(account_id.clone()).build();
@@ -215,18 +215,18 @@ mod test {
 
             database
                 .account_read_model()
-                .create(&mut transaction, &account)
+                .create(&mut conn, &account)
                 .await
                 .unwrap();
             database
                 .metadata_read_model()
-                .create(&mut transaction, &metadata)
+                .create(&mut conn, &metadata)
                 .await
                 .unwrap();
 
             let found = database
                 .metadata_read_model()
-                .find_by_id(&mut transaction, &metadata_id)
+                .find_by_id(&mut conn, &metadata_id)
                 .await
                 .unwrap();
             assert_eq!(found.as_ref().map(Metadata::id), Some(metadata.id()));
@@ -234,14 +234,14 @@ mod test {
             // Non-existent id returns None
             let not_found = database
                 .metadata_read_model()
-                .find_by_id(&mut transaction, &MetadataId::new(kernel::generate_id()))
+                .find_by_id(&mut conn, &MetadataId::new(kernel::generate_id()))
                 .await
                 .unwrap();
             assert!(not_found.is_none());
 
             database
                 .account_read_model()
-                .deactivate(&mut transaction, account.id())
+                .deactivate(&mut conn, account.id())
                 .await
                 .unwrap();
         }
@@ -251,7 +251,7 @@ mod test {
         async fn find_by_account_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let account_id = AccountId::default();
             let account = AccountBuilder::new().id(account_id.clone()).build();
@@ -267,23 +267,23 @@ mod test {
 
             database
                 .account_read_model()
-                .create(&mut transaction, &account)
+                .create(&mut conn, &account)
                 .await
                 .unwrap();
             database
                 .metadata_read_model()
-                .create(&mut transaction, &metadata1)
+                .create(&mut conn, &metadata1)
                 .await
                 .unwrap();
             database
                 .metadata_read_model()
-                .create(&mut transaction, &metadata2)
+                .create(&mut conn, &metadata2)
                 .await
                 .unwrap();
 
             let found = database
                 .metadata_read_model()
-                .find_by_account_id(&mut transaction, &account_id)
+                .find_by_account_id(&mut conn, &account_id)
                 .await
                 .unwrap();
             assert_eq!(found.len(), 2);
@@ -294,14 +294,14 @@ mod test {
             // Non-existent account_id returns empty vec
             let not_found = database
                 .metadata_read_model()
-                .find_by_account_id(&mut transaction, &AccountId::default())
+                .find_by_account_id(&mut conn, &AccountId::default())
                 .await
                 .unwrap();
             assert!(not_found.is_empty());
 
             database
                 .account_read_model()
-                .deactivate(&mut transaction, account.id())
+                .deactivate(&mut conn, account.id())
                 .await
                 .unwrap();
         }
@@ -311,7 +311,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let account_id = AccountId::default();
             let account = AccountBuilder::new().id(account_id.clone()).build();
@@ -323,18 +323,18 @@ mod test {
 
             database
                 .account_read_model()
-                .create(&mut transaction, &account)
+                .create(&mut conn, &account)
                 .await
                 .unwrap();
             database
                 .metadata_read_model()
-                .create(&mut transaction, &metadata)
+                .create(&mut conn, &metadata)
                 .await
                 .unwrap();
 
             let found = database
                 .metadata_read_model()
-                .find_by_id(&mut transaction, &metadata_id)
+                .find_by_id(&mut conn, &metadata_id)
                 .await
                 .unwrap()
                 .unwrap();
@@ -344,7 +344,7 @@ mod test {
 
             database
                 .account_read_model()
-                .deactivate(&mut transaction, account.id())
+                .deactivate(&mut conn, account.id())
                 .await
                 .unwrap();
         }
@@ -354,7 +354,7 @@ mod test {
         async fn update() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let account_id = AccountId::default();
             let account = AccountBuilder::new().id(account_id.clone()).build();
@@ -366,12 +366,12 @@ mod test {
 
             database
                 .account_read_model()
-                .create(&mut transaction, &account)
+                .create(&mut conn, &account)
                 .await
                 .unwrap();
             database
                 .metadata_read_model()
-                .create(&mut transaction, &metadata)
+                .create(&mut conn, &metadata)
                 .await
                 .unwrap();
 
@@ -383,13 +383,13 @@ mod test {
                 .build();
             database
                 .metadata_read_model()
-                .update(&mut transaction, &updated_metadata)
+                .update(&mut conn, &updated_metadata)
                 .await
                 .unwrap();
 
             let found = database
                 .metadata_read_model()
-                .find_by_id(&mut transaction, &metadata_id)
+                .find_by_id(&mut conn, &metadata_id)
                 .await
                 .unwrap()
                 .unwrap();
@@ -399,7 +399,7 @@ mod test {
 
             database
                 .account_read_model()
-                .deactivate(&mut transaction, account.id())
+                .deactivate(&mut conn, account.id())
                 .await
                 .unwrap();
         }
@@ -409,7 +409,7 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let account_id = AccountId::default();
             let account = AccountBuilder::new().id(account_id.clone()).build();
@@ -421,31 +421,31 @@ mod test {
 
             database
                 .account_read_model()
-                .create(&mut transaction, &account)
+                .create(&mut conn, &account)
                 .await
                 .unwrap();
             database
                 .metadata_read_model()
-                .create(&mut transaction, &metadata)
+                .create(&mut conn, &metadata)
                 .await
                 .unwrap();
 
             database
                 .metadata_read_model()
-                .delete(&mut transaction, &metadata_id)
+                .delete(&mut conn, &metadata_id)
                 .await
                 .unwrap();
 
             let found = database
                 .metadata_read_model()
-                .find_by_id(&mut transaction, &metadata_id)
+                .find_by_id(&mut conn, &metadata_id)
                 .await
                 .unwrap();
             assert!(found.is_none());
 
             database
                 .account_read_model()
-                .deactivate(&mut transaction, account.id())
+                .deactivate(&mut conn, account.id())
                 .await
                 .unwrap();
         }

@@ -119,7 +119,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let mut executor = module.database_connection().get_executor().await.unwrap();
+        let mut executor = module.database_connection().connection().await.unwrap();
         let source_id = AccountId::default();
         let source = AccountBuilder::new()
             .id(source_id.clone())

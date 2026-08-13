@@ -34,7 +34,7 @@ where
     )?;
 
     let remote_actor = resolve_remote_actor(&dto.activity.actor).await?;
-    let mut executor = module.database_connection().get_executor().await?;
+    let mut executor = module.database_connection().connection().await?;
     let remote_account = upsert_remote_account(
         module.remote_account_repository(),
         &mut executor,
@@ -126,7 +126,7 @@ where
         &followed_actor_url,
     )?;
 
-    let mut executor = module.database_connection().get_executor().await?;
+    let mut executor = module.database_connection().connection().await?;
     let remote_url = RemoteAccountUrl::new(dto.activity.actor.clone());
     let Some(remote_account) = module
         .remote_account_repository()
@@ -198,7 +198,7 @@ where
         return Ok(());
     }
 
-    let mut executor = module.database_connection().get_executor().await?;
+    let mut executor = module.database_connection().connection().await?;
     let remote_url = RemoteAccountUrl::new(remote_actor_url.clone());
     let remote_account = module
         .remote_account_repository()
@@ -262,7 +262,7 @@ where
     )?;
 
     let remote_actor = resolve_remote_actor(&dto.activity.actor).await?;
-    let mut executor = module.database_connection().get_executor().await?;
+    let mut executor = module.database_connection().connection().await?;
     let remote_account = upsert_remote_account(
         module.remote_account_repository(),
         &mut executor,
@@ -325,7 +325,7 @@ where
         &blocked_actor_url,
     )?;
 
-    let mut executor = module.database_connection().get_executor().await?;
+    let mut executor = module.database_connection().connection().await?;
     let remote_url = RemoteAccountUrl::new(dto.activity.actor.clone());
     let Some(remote_account) = module
         .remote_account_repository()
@@ -405,8 +405,8 @@ async fn find_existing_follow<R, E>(
     destination: &FollowTargetId,
 ) -> error_stack::Result<Option<Follow>, KernelError>
 where
-    R: FollowRepository<Executor = E>,
-    E: kernel::interfaces::database::Executor,
+    R: FollowRepository<Connection = E>,
+    E: kernel::interfaces::database::Connection,
 {
     let followers = repository.find_followers(executor, destination).await?;
     Ok(followers

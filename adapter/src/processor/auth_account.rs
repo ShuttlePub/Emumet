@@ -1,5 +1,5 @@
 use error_stack::Report;
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AuthAccountEventStore, DependOnAuthAccountEventStore};
 use kernel::interfaces::read_model::{AuthAccountReadModel, DependOnAuthAccountReadModel};
@@ -18,11 +18,11 @@ pub trait DependOnAuthAccountSignal: Send + Sync {
 // --- AuthAccountCommandProcessor ---
 
 pub trait AuthAccountCommandProcessor: Send + Sync + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         host: AuthHostId,
         client_id: AuthAccountClientId,
     ) -> impl Future<Output = error_stack::Result<AuthAccount, KernelError>> + Send;
@@ -37,11 +37,11 @@ where
         + Sync
         + 'static,
 {
-    type Executor = <<T as DependOnAuthAccountEventStore>::AuthAccountEventStore as AuthAccountEventStore>::Executor;
+    type Connection = <<T as DependOnAuthAccountEventStore>::AuthAccountEventStore as AuthAccountEventStore>::Connection;
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         host: AuthHostId,
         client_id: AuthAccountClientId,
     ) -> error_stack::Result<AuthAccount, KernelError> {
@@ -83,7 +83,7 @@ where
 
 pub trait DependOnAuthAccountCommandProcessor: DependOnDatabaseConnection + Send + Sync {
     type AuthAccountCommandProcessor: AuthAccountCommandProcessor<
-        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn auth_account_command_processor(&self) -> &Self::AuthAccountCommandProcessor;
 }
@@ -107,17 +107,17 @@ where
 // --- AuthAccountQueryProcessor ---
 
 pub trait AuthAccountQueryProcessor: Send + Sync + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<Option<AuthAccount>, KernelError>> + Send;
 
     fn find_by_client_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         client_id: &AuthAccountClientId,
     ) -> impl Future<Output = error_stack::Result<Option<AuthAccount>, KernelError>> + Send;
 }
@@ -126,12 +126,12 @@ impl<T> AuthAccountQueryProcessor for T
 where
     T: DependOnAuthAccountReadModel + Send + Sync + 'static,
 {
-    type Executor =
-        <<T as DependOnAuthAccountReadModel>::AuthAccountReadModel as AuthAccountReadModel>::Executor;
+    type Connection =
+        <<T as DependOnAuthAccountReadModel>::AuthAccountReadModel as AuthAccountReadModel>::Connection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &AuthAccountId,
     ) -> error_stack::Result<Option<AuthAccount>, KernelError> {
         self.auth_account_read_model()
@@ -141,7 +141,7 @@ where
 
     async fn find_by_client_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         client_id: &AuthAccountClientId,
     ) -> error_stack::Result<Option<AuthAccount>, KernelError> {
         self.auth_account_read_model()
@@ -152,7 +152,7 @@ where
 
 pub trait DependOnAuthAccountQueryProcessor: DependOnDatabaseConnection + Send + Sync {
     type AuthAccountQueryProcessor: AuthAccountQueryProcessor<
-        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn auth_account_query_processor(&self) -> &Self::AuthAccountQueryProcessor;
 }

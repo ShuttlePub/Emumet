@@ -1,29 +1,42 @@
 use crate::KernelError;
 use std::future::Future;
+use std::pin::Pin;
 
-/// Executorの取得を示すトレイト
-///
-/// 現状は何もないが、将来的にトランザクション時に使える機能を示す可能性を考えて用意している
-pub trait Executor: Send {
-    fn commit(self) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send
-    where
-        Self: Sized,
-    {
-        async { Ok(()) }
-    }
+pub trait Connection: Send {}
+
+pub trait Transaction: Send {
+    type Connection: Connection;
+    fn connection(&mut self) -> &mut Self::Connection;
+    fn commit(self) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DatabaseConnection: Sync + Send + 'static {
-    type Executor: Executor;
-    fn get_executor(
+    type Connection: Connection;
+    fn connection(
         &self,
-    ) -> impl Future<Output = error_stack::Result<Self::Executor, KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<Self::Connection, KernelError>> + Send;
+}
 
+pub trait TransactionalDatabaseConnection: DatabaseConnection {
+    type Transaction: Transaction<Connection = Self::Connection>;
     fn get_transaction(
         &self,
-    ) -> impl Future<Output = error_stack::Result<Self::Executor, KernelError>> + Send {
-        self.get_executor()
-    }
+    ) -> impl Future<Output = error_stack::Result<Self::Transaction, KernelError>> + Send;
+}
+
+pub trait TransactionManager: DatabaseConnection {
+    fn transaction<'a, F, T>(
+        &'a self,
+        operation: F,
+    ) -> Pin<Box<dyn Future<Output = error_stack::Result<T, KernelError>> + Send + 'a>>
+    where
+        F: for<'connection> FnOnce(
+                &'connection mut Self::Connection,
+            ) -> Pin<
+                Box<dyn Future<Output = error_stack::Result<T, KernelError>> + Send + 'connection>,
+            > + Send
+            + 'a,
+        T: Send + 'a;
 }
 
 pub trait DependOnDatabaseConnection: Sync + Send {

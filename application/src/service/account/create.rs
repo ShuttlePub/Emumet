@@ -38,7 +38,7 @@ pub trait CreateAccountUseCase:
         dto: CreateAccountDto,
     ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
 
             let account_name = AccountName::new(dto.name);
             let account_is_bot = AccountIsBot::new(dto.is_bot);
@@ -48,7 +48,7 @@ pub trait CreateAccountUseCase:
             let account = self
                 .account_command_processor()
                 .create(
-                    &mut transaction,
+                    &mut conn,
                     CreateAccountParam {
                         name: account_name,
                         is_bot: account_is_bot,
@@ -59,7 +59,7 @@ pub trait CreateAccountUseCase:
 
             self.profile_command_processor()
                 .create(
-                    &mut transaction,
+                    &mut conn,
                     CreateProfileParam {
                         account_id: account.id().clone(),
                         display_name: Some(display_name),

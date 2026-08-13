@@ -19,18 +19,18 @@ mod read_model {
     async fn find_by_id() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
 
         let id = AccountId::default();
         let account = AccountBuilder::new().id(id.clone()).build();
         database
             .account_read_model()
-            .create(&mut transaction, &account)
+            .create(&mut conn, &account)
             .await
             .unwrap();
         let result = database
             .account_read_model()
-            .find_by_id(&mut transaction, &id)
+            .find_by_id(&mut conn, &id)
             .await
             .unwrap();
         assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
@@ -41,11 +41,11 @@ mod read_model {
     async fn find_by_auth_id() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
 
         let accounts = database
             .account_read_model()
-            .find_by_auth_id(&mut transaction, &AuthAccountId::default())
+            .find_by_auth_id(&mut conn, &AuthAccountId::default())
             .await
             .unwrap();
         assert!(accounts.is_empty());
@@ -56,13 +56,13 @@ mod read_model {
     async fn find_by_auth_id_after_create_and_link() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
 
         let host_id = AuthHostId::default();
         let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
         database
             .auth_host_repository()
-            .create(&mut transaction, &auth_host)
+            .create(&mut conn, &auth_host)
             .await
             .unwrap();
 
@@ -73,26 +73,26 @@ mod read_model {
             .build();
         database
             .auth_account_read_model()
-            .create(&mut transaction, &auth_account)
+            .create(&mut conn, &auth_account)
             .await
             .unwrap();
 
         let account = AccountBuilder::new().build();
         database
             .account_read_model()
-            .create(&mut transaction, &account)
+            .create(&mut conn, &account)
             .await
             .unwrap();
 
         database
             .account_read_model()
-            .link_auth_account(&mut transaction, account.id(), &auth_account_id)
+            .link_auth_account(&mut conn, account.id(), &auth_account_id)
             .await
             .unwrap();
 
         let accounts = database
             .account_read_model()
-            .find_by_auth_id(&mut transaction, &auth_account_id)
+            .find_by_auth_id(&mut conn, &auth_account_id)
             .await
             .unwrap();
         assert_eq!(accounts.len(), 1);
@@ -100,12 +100,12 @@ mod read_model {
 
         database
             .account_read_model()
-            .unlink_all_auth_accounts(&mut transaction, account.id())
+            .unlink_all_auth_accounts(&mut conn, account.id())
             .await
             .unwrap();
         database
             .account_read_model()
-            .deactivate(&mut transaction, account.id())
+            .deactivate(&mut conn, account.id())
             .await
             .unwrap();
     }
@@ -115,25 +115,25 @@ mod read_model {
     async fn find_by_name() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
 
         let name = unique_account_name();
         let account = AccountBuilder::new().name(name.as_ref()).build();
         database
             .account_read_model()
-            .create(&mut transaction, &account)
+            .create(&mut conn, &account)
             .await
             .unwrap();
 
         let result = database
             .account_read_model()
-            .find_by_name(&mut transaction, &name)
+            .find_by_name(&mut conn, &name)
             .await
             .unwrap();
         assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
         database
             .account_read_model()
-            .deactivate(&mut transaction, account.id())
+            .deactivate(&mut conn, account.id())
             .await
             .unwrap();
     }
@@ -143,25 +143,25 @@ mod read_model {
     async fn find_by_nanoid() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
 
         let nanoid = Nanoid::default();
         let account = AccountBuilder::new().nanoid(nanoid.clone()).build();
         database
             .account_read_model()
-            .create(&mut transaction, &account)
+            .create(&mut conn, &account)
             .await
             .unwrap();
 
         let result = database
             .account_read_model()
-            .find_by_nanoid(&mut transaction, &nanoid)
+            .find_by_nanoid(&mut conn, &nanoid)
             .await
             .unwrap();
         assert_eq!(result.as_ref().map(Account::id), Some(account.id()));
         database
             .account_read_model()
-            .deactivate(&mut transaction, account.id())
+            .deactivate(&mut conn, account.id())
             .await
             .unwrap();
     }
@@ -171,17 +171,17 @@ mod read_model {
     async fn create() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
 
         let account = AccountBuilder::new().build();
         database
             .account_read_model()
-            .create(&mut transaction, &account)
+            .create(&mut conn, &account)
             .await
             .unwrap();
         let result = database
             .account_read_model()
-            .find_by_id(&mut transaction, account.id())
+            .find_by_id(&mut conn, account.id())
             .await
             .unwrap()
             .unwrap();
@@ -193,12 +193,12 @@ mod read_model {
     async fn update() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
 
         let account = AccountBuilder::new().build();
         database
             .account_read_model()
-            .create(&mut transaction, &account)
+            .create(&mut conn, &account)
             .await
             .unwrap();
         let updated_account = AccountBuilder::new()
@@ -208,12 +208,12 @@ mod read_model {
             .build();
         database
             .account_read_model()
-            .update(&mut transaction, &updated_account)
+            .update(&mut conn, &updated_account)
             .await
             .unwrap();
         let result = database
             .account_read_model()
-            .find_by_id(&mut transaction, account.id())
+            .find_by_id(&mut conn, account.id())
             .await
             .unwrap();
         assert_eq!(result.as_ref().map(Account::id), Some(updated_account.id()));
@@ -224,23 +224,23 @@ mod read_model {
     async fn deactivate() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
 
         let account = AccountBuilder::new().build();
         database
             .account_read_model()
-            .create(&mut transaction, &account)
+            .create(&mut conn, &account)
             .await
             .unwrap();
 
         database
             .account_read_model()
-            .deactivate(&mut transaction, account.id())
+            .deactivate(&mut conn, account.id())
             .await
             .unwrap();
         let result = database
             .account_read_model()
-            .find_by_id(&mut transaction, account.id())
+            .find_by_id(&mut conn, account.id())
             .await
             .unwrap();
         assert!(result.is_none());
@@ -251,18 +251,18 @@ mod read_model {
             .build();
         database
             .account_read_model()
-            .create(&mut transaction, &account)
+            .create(&mut conn, &account)
             .await
             .unwrap();
 
         database
             .account_read_model()
-            .deactivate(&mut transaction, account.id())
+            .deactivate(&mut conn, account.id())
             .await
             .unwrap();
         let result = database
             .account_read_model()
-            .find_by_id(&mut transaction, account.id())
+            .find_by_id(&mut conn, account.id())
             .await
             .unwrap();
         assert!(result.is_none());

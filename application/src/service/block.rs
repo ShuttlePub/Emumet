@@ -11,7 +11,7 @@ use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryPro
 use error_stack::{Report, ResultExt};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
-use kernel::interfaces::database::{DatabaseConnection, Executor};
+use kernel::interfaces::database::{Connection, DatabaseConnection};
 use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::repository::{
@@ -53,7 +53,7 @@ pub trait BlockAccountUseCase:
     {
         async move {
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut executor, &account_nanoid)
@@ -213,7 +213,7 @@ pub trait UnblockAccountUseCase:
     {
         async move {
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut executor, &account_nanoid)
@@ -340,7 +340,7 @@ pub trait GetBlocksUseCase:
     {
         async move {
             let account_nanoid = Nanoid::<Account>::new(account_nanoid);
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut executor, &account_nanoid)
@@ -428,8 +428,8 @@ pub async fn remove_follows_between<R, E>(
     b: &FollowTargetId,
 ) -> error_stack::Result<(), KernelError>
 where
-    R: FollowRepository<Executor = E>,
-    E: Executor,
+    R: FollowRepository<Connection = E>,
+    E: Connection,
 {
     let followings_of_a = repository.find_followings(executor, a).await?;
     for follow in followings_of_a
@@ -478,12 +478,12 @@ fn block_target_parts(target: &BlockTarget) -> (BlockTargetId, String) {
 async fn resolve_block_target<Q, R>(
     query_processor: &Q,
     remote_account_repository: &R,
-    executor: &mut Q::Executor,
+    executor: &mut Q::Connection,
     target: &str,
 ) -> error_stack::Result<BlockTarget, KernelError>
 where
     Q: AccountQueryProcessor,
-    R: RemoteAccountRepository<Executor = Q::Executor>,
+    R: RemoteAccountRepository<Connection = Q::Connection>,
 {
     let target_nanoid = Nanoid::<Account>::new(target.to_string());
     if let Some(account) = query_processor

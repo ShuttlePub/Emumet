@@ -54,7 +54,7 @@ fn plan_field_updates(existing: &[Metadata], submitted: &[AccountFieldDto]) -> V
 
 pub(super) async fn apply_field_updates<T>(
     deps: &T,
-    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     account_id: &AccountId,
     existing: &[Metadata],
     submitted: &[AccountFieldDto],

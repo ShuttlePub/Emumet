@@ -7,3 +7,6 @@ pub mod metadata;
 pub mod mute;
 pub mod profile;
 pub mod session_context;
+
+#[cfg(test)]
+mod characterization_tests;
