@@ -18,7 +18,7 @@ mod signing_key;
 use crate::database::env;
 use crate::ConvertError;
 use error_stack::{Report, ResultExt};
-use kernel::interfaces::database::{DatabaseConnection, Executor};
+use kernel::interfaces::database::{Connection, DatabaseConnection};
 use kernel::KernelError;
 use sqlx::pool::PoolConnection;
 use sqlx::{Error, PgConnection, Pool, Postgres, Transaction};
@@ -66,7 +66,7 @@ pub enum PostgresConnection {
     Transaction(Transaction<'static, Postgres>),
 }
 
-impl Executor for PostgresConnection {
+impl Connection for PostgresConnection {
     async fn commit(self) -> error_stack::Result<(), KernelError> {
         match self {
             PostgresConnection::Connection(_) => Ok(()),
@@ -98,13 +98,13 @@ impl DerefMut for PostgresConnection {
 }
 
 impl DatabaseConnection for PostgresDatabase {
-    type Executor = PostgresConnection;
-    async fn get_executor(&self) -> error_stack::Result<Self::Executor, KernelError> {
+    type Connection = PostgresConnection;
+    async fn connection(&self) -> error_stack::Result<Self::Connection, KernelError> {
         let connection = self.pool.acquire().await.convert_error()?;
         Ok(PostgresConnection::Connection(connection))
     }
 
-    async fn get_transaction(&self) -> error_stack::Result<Self::Executor, KernelError> {
+    async fn get_transaction(&self) -> error_stack::Result<Self::Connection, KernelError> {
         let transaction = self.pool.begin().await.convert_error()?;
         Ok(PostgresConnection::Transaction(transaction))
     }

@@ -1,5 +1,5 @@
 use crate::crypto::{EncryptedPrivateKey, SigningAlgorithm};
-use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::AccountId;
 use crate::KernelError;
 use destructure::Destructure;
@@ -48,42 +48,42 @@ pub struct SigningKey {
 }
 
 pub trait SigningKeyRepository: Sync + Send + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &SigningKeyId,
     ) -> impl Future<Output = error_stack::Result<SigningKey, KernelError>> + Send;
 
     fn find_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Vec<SigningKey>, KernelError>> + Send;
 
     fn find_active_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Vec<SigningKey>, KernelError>> + Send;
 
     fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         signing_key: &SigningKey,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn revoke(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &SigningKeyId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DependOnSigningKeyRepository: Sync + Send + DependOnDatabaseConnection {
     type SigningKeyRepository: SigningKeyRepository<
-        Executor = <Self::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
     >;
 
     fn signing_key_repository(&self) -> &Self::SigningKeyRepository;

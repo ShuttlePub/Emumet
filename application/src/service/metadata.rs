@@ -15,17 +15,17 @@ pub trait UpdateMetadata:
         metadata_id: MetadataId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> {
         async move {
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
             let existing = self
                 .metadata_read_model()
-                .find_by_id(&mut transaction, &metadata_id)
+                .find_by_id(&mut conn, &metadata_id)
                 .await?;
             let event_id = EventId::from(metadata_id.clone());
 
             if let Some(metadata) = existing {
                 let events = self
                     .metadata_event_store()
-                    .find_by_id(&mut transaction, &event_id, Some(metadata.version()))
+                    .find_by_id(&mut conn, &event_id, Some(metadata.version()))
                     .await?;
                 if events
                     .last()
@@ -38,18 +38,18 @@ pub trait UpdateMetadata:
                     }
                     if let Some(metadata) = metadata {
                         self.metadata_read_model()
-                            .update(&mut transaction, &metadata)
+                            .update(&mut conn, &metadata)
                             .await?;
                     } else {
                         self.metadata_read_model()
-                            .delete(&mut transaction, &metadata_id)
+                            .delete(&mut conn, &metadata_id)
                             .await?;
                     }
                 }
             } else {
                 let events = self
                     .metadata_event_store()
-                    .find_by_id(&mut transaction, &event_id, None)
+                    .find_by_id(&mut conn, &event_id, None)
                     .await?;
                 if !events.is_empty() {
                     let mut metadata = None;
@@ -58,7 +58,7 @@ pub trait UpdateMetadata:
                     }
                     if let Some(metadata) = metadata {
                         self.metadata_read_model()
-                            .create(&mut transaction, &metadata)
+                            .create(&mut conn, &metadata)
                             .await?;
                     }
                 }
@@ -78,7 +78,7 @@ impl<T> UpdateMetadata for T where
 
 pub(crate) async fn rehydrate_metadata<T>(
     deps: &T,
-    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     metadata_id: &MetadataId,
 ) -> error_stack::Result<(Metadata, kernel::prelude::entity::EventVersion<Metadata>), KernelError>
 where

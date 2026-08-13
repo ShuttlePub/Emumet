@@ -34,11 +34,11 @@ impl TryFrom<EventRow> for EventEnvelope<MetadataEvent, Metadata> {
 pub struct PostgresMetadataEventStore;
 
 impl MetadataEventStore for PostgresMetadataEventStore {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &EventId<MetadataEvent, Metadata>,
         since: Option<&EventVersion<Metadata>>,
     ) -> error_stack::Result<Vec<EventEnvelope<MetadataEvent, Metadata>>, KernelError> {
@@ -80,7 +80,7 @@ impl MetadataEventStore for PostgresMetadataEventStore {
 
     async fn persist(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         command: &CommandEnvelope<MetadataEvent, Metadata>,
     ) -> error_stack::Result<(), KernelError> {
         self.persist_internal(executor, command, kernel::generate_id())
@@ -89,7 +89,7 @@ impl MetadataEventStore for PostgresMetadataEventStore {
 
     async fn persist_and_transform(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         command: CommandEnvelope<MetadataEvent, Metadata>,
     ) -> error_stack::Result<EventEnvelope<MetadataEvent, Metadata>, KernelError> {
         let version = kernel::generate_id();
@@ -208,12 +208,12 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let metadata_id = MetadataId::new(kernel::generate_id());
             let event_id = EventId::from(metadata_id.clone());
             let events = db
                 .metadata_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 0);
@@ -237,20 +237,20 @@ mod test {
             );
 
             db.metadata_event_store()
-                .persist(&mut transaction, &created_metadata)
+                .persist(&mut conn, &created_metadata)
                 .await
                 .unwrap();
             db.metadata_event_store()
-                .persist(&mut transaction, &updated_metadata)
+                .persist(&mut conn, &updated_metadata)
                 .await
                 .unwrap();
             db.metadata_event_store()
-                .persist(&mut transaction, &deleted_metadata)
+                .persist(&mut conn, &deleted_metadata)
                 .await
                 .unwrap();
             let events = db
                 .metadata_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 3);
@@ -264,7 +264,7 @@ mod test {
         async fn find_by_id_since_version() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let metadata_id = MetadataId::new(kernel::generate_id());
             let event_id = EventId::from(metadata_id.clone());
 
@@ -288,22 +288,22 @@ mod test {
             );
 
             db.metadata_event_store()
-                .persist(&mut transaction, &created_metadata)
+                .persist(&mut conn, &created_metadata)
                 .await
                 .unwrap();
             db.metadata_event_store()
-                .persist(&mut transaction, &updated_metadata)
+                .persist(&mut conn, &updated_metadata)
                 .await
                 .unwrap();
             db.metadata_event_store()
-                .persist(&mut transaction, &deleted_metadata)
+                .persist(&mut conn, &deleted_metadata)
                 .await
                 .unwrap();
 
             // Get all events to obtain the first version
             let all_events = db
                 .metadata_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await
                 .unwrap();
             assert_eq!(all_events.len(), 3);
@@ -311,7 +311,7 @@ mod test {
             // Query since the first event's version — should return the 2nd and 3rd events
             let since_events = db
                 .metadata_event_store()
-                .find_by_id(&mut transaction, &event_id, Some(&all_events[0].version))
+                .find_by_id(&mut conn, &event_id, Some(&all_events[0].version))
                 .await
                 .unwrap();
             assert_eq!(since_events.len(), 2);
@@ -321,7 +321,7 @@ mod test {
             // Query since the last event's version — should return no events
             let no_events = db
                 .metadata_event_store()
-                .find_by_id(&mut transaction, &event_id, Some(&all_events[2].version))
+                .find_by_id(&mut conn, &event_id, Some(&all_events[2].version))
                 .await
                 .unwrap();
             assert_eq!(no_events.len(), 0);
@@ -340,16 +340,16 @@ mod test {
         async fn basic_creation() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let metadata_id = MetadataId::new(kernel::generate_id());
             let created_metadata = metadata_create_command(metadata_id.clone());
             db.metadata_event_store()
-                .persist(&mut transaction, &created_metadata)
+                .persist(&mut conn, &created_metadata)
                 .await
                 .unwrap();
             let events = db
                 .metadata_event_store()
-                .find_by_id(&mut transaction, &EventId::from(metadata_id), None)
+                .find_by_id(&mut conn, &EventId::from(metadata_id), None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
@@ -360,13 +360,13 @@ mod test {
         async fn persist_and_transform_test() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let metadata_id = MetadataId::new(kernel::generate_id());
             let created_metadata = metadata_create_command(metadata_id.clone());
 
             let event_envelope = db
                 .metadata_event_store()
-                .persist_and_transform(&mut transaction, created_metadata.clone())
+                .persist_and_transform(&mut conn, created_metadata.clone())
                 .await
                 .unwrap();
 
@@ -375,7 +375,7 @@ mod test {
 
             let events = db
                 .metadata_event_store()
-                .find_by_id(&mut transaction, &EventId::from(metadata_id), None)
+                .find_by_id(&mut conn, &EventId::from(metadata_id), None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
@@ -387,20 +387,20 @@ mod test {
         async fn known_event_version_nothing_prevents_duplicate() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let metadata_id = MetadataId::new(kernel::generate_id());
             let created_metadata = metadata_create_command(metadata_id.clone());
 
             // First persist should succeed
             db.metadata_event_store()
-                .persist(&mut transaction, &created_metadata)
+                .persist(&mut conn, &created_metadata)
                 .await
                 .unwrap();
 
             // Second persist with KnownEventVersion::Nothing should fail (concurrency error)
             let result = db
                 .metadata_event_store()
-                .persist(&mut transaction, &created_metadata)
+                .persist(&mut conn, &created_metadata)
                 .await;
             assert!(result.is_err());
         }

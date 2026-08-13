@@ -29,11 +29,11 @@ impl From<AuthAccountRow> for AuthAccount {
 pub struct PostgresAuthAccountReadModel;
 
 impl AuthAccountReadModel for PostgresAuthAccountReadModel {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AuthAccountId,
     ) -> error_stack::Result<Option<AuthAccount>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -54,7 +54,7 @@ impl AuthAccountReadModel for PostgresAuthAccountReadModel {
 
     async fn find_by_client_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         client_id: &AuthAccountClientId,
     ) -> error_stack::Result<Option<AuthAccount>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -75,7 +75,7 @@ impl AuthAccountReadModel for PostgresAuthAccountReadModel {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         auth_account: &AuthAccount,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -119,13 +119,13 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let auth_host_id = AuthHostId::default();
             let auth_host = AuthHostBuilder::new().id(auth_host_id.clone()).build();
             database
                 .auth_host_repository()
-                .create(&mut transaction, &auth_host)
+                .create(&mut conn, &auth_host)
                 .await
                 .unwrap();
             let account_id = AuthAccountId::default();
@@ -137,12 +137,12 @@ mod test {
 
             database
                 .auth_account_read_model()
-                .create(&mut transaction, &auth_account)
+                .create(&mut conn, &auth_account)
                 .await
                 .unwrap();
             let result = database
                 .auth_account_read_model()
-                .find_by_id(&mut transaction, &account_id)
+                .find_by_id(&mut conn, &account_id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(auth_account));
@@ -162,14 +162,14 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let host_id = AuthHostId::default();
             let account_id = AuthAccountId::default();
             let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
             database
                 .auth_host_repository()
-                .create(&mut transaction, &auth_host)
+                .create(&mut conn, &auth_host)
                 .await
                 .unwrap();
             let auth_account = AuthAccountBuilder::new()
@@ -179,12 +179,12 @@ mod test {
                 .build();
             database
                 .auth_account_read_model()
-                .create(&mut transaction, &auth_account)
+                .create(&mut conn, &auth_account)
                 .await
                 .unwrap();
             let result = database
                 .auth_account_read_model()
-                .find_by_id(&mut transaction, &account_id)
+                .find_by_id(&mut conn, &account_id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(auth_account));

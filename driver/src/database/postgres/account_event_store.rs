@@ -33,11 +33,11 @@ impl TryFrom<EventRow> for EventEnvelope<AccountEvent, Account> {
 pub struct PostgresAccountEventStore;
 
 impl AccountEventStore for PostgresAccountEventStore {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &EventId<AccountEvent, Account>,
         since: Option<&EventVersion<Account>>,
     ) -> error_stack::Result<Vec<EventEnvelope<AccountEvent, Account>>, KernelError> {
@@ -79,7 +79,7 @@ impl AccountEventStore for PostgresAccountEventStore {
 
     async fn persist(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         command: &CommandEnvelope<AccountEvent, Account>,
     ) -> error_stack::Result<(), KernelError> {
         self.persist_internal(executor, command, kernel::generate_id())
@@ -88,7 +88,7 @@ impl AccountEventStore for PostgresAccountEventStore {
 
     async fn persist_and_transform(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         command: CommandEnvelope<AccountEvent, Account>,
     ) -> error_stack::Result<EventEnvelope<AccountEvent, Account>, KernelError> {
         let version = kernel::generate_id();
@@ -207,12 +207,12 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let account_id = AccountId::default();
             let event_id = EventId::from(account_id.clone());
             let events = db
                 .account_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 0);
@@ -235,20 +235,20 @@ mod test {
             );
 
             db.account_event_store()
-                .persist(&mut transaction, &created_account)
+                .persist(&mut conn, &created_account)
                 .await
                 .unwrap();
             db.account_event_store()
-                .persist(&mut transaction, &updated_account)
+                .persist(&mut conn, &updated_account)
                 .await
                 .unwrap();
             db.account_event_store()
-                .persist(&mut transaction, &deleted_account)
+                .persist(&mut conn, &deleted_account)
                 .await
                 .unwrap();
             let events = db
                 .account_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 3);
@@ -262,7 +262,7 @@ mod test {
         async fn find_by_id_since_version() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let account_id = AccountId::default();
             let event_id = EventId::from(account_id.clone());
 
@@ -285,22 +285,22 @@ mod test {
             );
 
             db.account_event_store()
-                .persist(&mut transaction, &created_account)
+                .persist(&mut conn, &created_account)
                 .await
                 .unwrap();
             db.account_event_store()
-                .persist(&mut transaction, &updated_account)
+                .persist(&mut conn, &updated_account)
                 .await
                 .unwrap();
             db.account_event_store()
-                .persist(&mut transaction, &deleted_account)
+                .persist(&mut conn, &deleted_account)
                 .await
                 .unwrap();
 
             // Get all events to obtain the first version
             let all_events = db
                 .account_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await
                 .unwrap();
             assert_eq!(all_events.len(), 3);
@@ -308,7 +308,7 @@ mod test {
             // Query since the first event's version — should return the 2nd and 3rd events
             let since_events = db
                 .account_event_store()
-                .find_by_id(&mut transaction, &event_id, Some(&all_events[0].version))
+                .find_by_id(&mut conn, &event_id, Some(&all_events[0].version))
                 .await
                 .unwrap();
             assert_eq!(since_events.len(), 2);
@@ -318,7 +318,7 @@ mod test {
             // Query since the last event's version — should return no events
             let no_events = db
                 .account_event_store()
-                .find_by_id(&mut transaction, &event_id, Some(&all_events[2].version))
+                .find_by_id(&mut conn, &event_id, Some(&all_events[2].version))
                 .await
                 .unwrap();
             assert_eq!(no_events.len(), 0);
@@ -337,16 +337,16 @@ mod test {
         async fn basic_creation() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let account_id = AccountId::default();
             let created_account = account_create_command(account_id.clone());
             db.account_event_store()
-                .persist(&mut transaction, &created_account)
+                .persist(&mut conn, &created_account)
                 .await
                 .unwrap();
             let events = db
                 .account_event_store()
-                .find_by_id(&mut transaction, &EventId::from(account_id), None)
+                .find_by_id(&mut conn, &EventId::from(account_id), None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);
@@ -357,13 +357,13 @@ mod test {
         async fn persist_and_transform_test() {
             kernel::ensure_generator_initialized();
             let db = PostgresDatabase::new().await.unwrap();
-            let mut transaction = db.get_executor().await.unwrap();
+            let mut conn = db.connection().await.unwrap();
             let account_id = AccountId::default();
             let created_account = account_create_command(account_id.clone());
 
             let event_envelope = db
                 .account_event_store()
-                .persist_and_transform(&mut transaction, created_account.clone())
+                .persist_and_transform(&mut conn, created_account.clone())
                 .await
                 .unwrap();
 
@@ -372,7 +372,7 @@ mod test {
 
             let events = db
                 .account_event_store()
-                .find_by_id(&mut transaction, &EventId::from(account_id), None)
+                .find_by_id(&mut conn, &EventId::from(account_id), None)
                 .await
                 .unwrap();
             assert_eq!(events.len(), 1);

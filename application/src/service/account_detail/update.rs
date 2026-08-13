@@ -16,7 +16,7 @@ use adapter::processor::profile::{
     ProfileQueryProcessor, UpdateProfileParam,
 };
 use error_stack::Report;
-use kernel::interfaces::database::{DatabaseConnection, Executor};
+use kernel::interfaces::database::{Connection, DatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{
     DependOnAccountEventStore, DependOnMetadataEventStore, DependOnProfileEventStore,
@@ -227,7 +227,7 @@ fn apply_is_bot(current: bool, action: FieldAction<bool>) -> bool {
 
 async fn rehydrate_profile<T>(
     deps: &T,
-    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     profile_id: &kernel::prelude::entity::ProfileId,
 ) -> error_stack::Result<Profile, KernelError>
 where

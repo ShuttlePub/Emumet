@@ -262,8 +262,8 @@ pub(crate) async fn upsert_remote_account<R, E>(
     actor: ResolvedRemoteActor,
 ) -> error_stack::Result<RemoteAccount, KernelError>
 where
-    R: RemoteAccountRepository<Executor = E>,
-    E: kernel::interfaces::database::Executor,
+    R: RemoteAccountRepository<Connection = E>,
+    E: kernel::interfaces::database::Connection,
 {
     if let Some(existing) = repository.find_by_url(executor, &actor.url).await? {
         let updated = RemoteAccount::new(

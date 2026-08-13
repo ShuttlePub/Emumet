@@ -59,11 +59,11 @@ fn split_block_target_id(target_id: &BlockTargetId) -> (Option<&i64>, Option<&i6
 }
 
 impl BlockRepository for PostgresBlockRepository {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_blocks(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         source_id: &BlockTargetId,
     ) -> error_stack::Result<Vec<Block>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -103,7 +103,7 @@ impl BlockRepository for PostgresBlockRepository {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         block: &Block,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -136,7 +136,7 @@ impl BlockRepository for PostgresBlockRepository {
 
     async fn delete(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         block_id: &BlockId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -181,7 +181,7 @@ mod test {
         async fn find_blocks() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let blocker_id = AccountId::default();
             let blocker_account = AccountBuilder::new()
                 .id(blocker_id.clone())
@@ -189,7 +189,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &blocker_account)
+                .create(&mut conn, &blocker_account)
                 .await
                 .unwrap();
             let blocked_id = AccountId::default();
@@ -199,7 +199,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &blocked_account)
+                .create(&mut conn, &blocked_account)
                 .await
                 .unwrap();
             let block = BlockBuilder::new()
@@ -209,36 +209,36 @@ mod test {
 
             database
                 .block_repository()
-                .create(&mut transaction, &block)
+                .create(&mut conn, &block)
                 .await
                 .unwrap();
 
             let blocks = database
                 .block_repository()
-                .find_blocks(&mut transaction, &BlockTargetId::from(blocker_id))
+                .find_blocks(&mut conn, &BlockTargetId::from(blocker_id))
                 .await
                 .unwrap();
             assert_eq!(blocks[0].id(), block.id());
 
             let blocks = database
                 .block_repository()
-                .find_blocks(&mut transaction, &BlockTargetId::from(blocked_id))
+                .find_blocks(&mut conn, &BlockTargetId::from(blocked_id))
                 .await
                 .unwrap();
             assert!(blocks.is_empty());
             database
                 .block_repository()
-                .delete(&mut transaction, block.id())
+                .delete(&mut conn, block.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, blocker_account.id())
+                .deactivate(&mut conn, blocker_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, blocked_account.id())
+                .deactivate(&mut conn, blocked_account.id())
                 .await
                 .unwrap();
         }
@@ -257,7 +257,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let blocker_id = AccountId::default();
             let blocker_account = AccountBuilder::new()
                 .id(blocker_id.clone())
@@ -265,7 +265,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &blocker_account)
+                .create(&mut conn, &blocker_account)
                 .await
                 .unwrap();
             let blocked_id = AccountId::default();
@@ -275,7 +275,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &blocked_account)
+                .create(&mut conn, &blocked_account)
                 .await
                 .unwrap();
             let block = BlockBuilder::new()
@@ -285,22 +285,22 @@ mod test {
 
             database
                 .block_repository()
-                .create(&mut transaction, &block)
+                .create(&mut conn, &block)
                 .await
                 .unwrap();
             database
                 .block_repository()
-                .delete(&mut transaction, block.id())
+                .delete(&mut conn, block.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, blocker_account.id())
+                .deactivate(&mut conn, blocker_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, blocked_account.id())
+                .deactivate(&mut conn, blocked_account.id())
                 .await
                 .unwrap();
         }
@@ -310,7 +310,7 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let blocker_id = AccountId::default();
             let blocker_account = AccountBuilder::new()
                 .id(blocker_id.clone())
@@ -318,7 +318,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &blocker_account)
+                .create(&mut conn, &blocker_account)
                 .await
                 .unwrap();
             let blocked_id = AccountId::default();
@@ -328,7 +328,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &blocked_account)
+                .create(&mut conn, &blocked_account)
                 .await
                 .unwrap();
             let block = BlockBuilder::new()
@@ -338,30 +338,30 @@ mod test {
 
             database
                 .block_repository()
-                .create(&mut transaction, &block)
+                .create(&mut conn, &block)
                 .await
                 .unwrap();
 
             database
                 .block_repository()
-                .delete(&mut transaction, block.id())
+                .delete(&mut conn, block.id())
                 .await
                 .unwrap();
 
             let blocks = database
                 .block_repository()
-                .find_blocks(&mut transaction, &BlockTargetId::from(blocker_id))
+                .find_blocks(&mut conn, &BlockTargetId::from(blocker_id))
                 .await
                 .unwrap();
             assert!(blocks.is_empty());
             database
                 .account_read_model()
-                .deactivate(&mut transaction, blocker_account.id())
+                .deactivate(&mut conn, blocker_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, blocked_account.id())
+                .deactivate(&mut conn, blocked_account.id())
                 .await
                 .unwrap();
         }

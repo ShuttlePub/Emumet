@@ -28,11 +28,11 @@ impl From<ImageRow> for Image {
 pub struct PostgresImageRepository;
 
 impl ImageRepository for PostgresImageRepository {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &ImageId,
     ) -> error_stack::Result<Option<Image>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -51,7 +51,7 @@ impl ImageRepository for PostgresImageRepository {
 
     async fn find_by_ids(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         ids: &[ImageId],
     ) -> error_stack::Result<Vec<Image>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -71,7 +71,7 @@ impl ImageRepository for PostgresImageRepository {
 
     async fn find_by_url(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         url: &ImageUrl,
     ) -> error_stack::Result<Option<Image>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -90,7 +90,7 @@ impl ImageRepository for PostgresImageRepository {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         image: &Image,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -112,7 +112,7 @@ impl ImageRepository for PostgresImageRepository {
 
     async fn delete(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         image_id: &ImageId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -156,25 +156,25 @@ mod test {
         async fn find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let id = ImageId::new(kernel::generate_id());
             let image = ImageBuilder::new().id(id.clone()).build();
 
             database
                 .image_repository()
-                .create(&mut transaction, &image)
+                .create(&mut conn, &image)
                 .await
                 .unwrap();
             let result = database
                 .image_repository()
-                .find_by_id(&mut transaction, &id)
+                .find_by_id(&mut conn, &id)
                 .await
                 .unwrap();
             assert_eq!(result, Some(image));
             database
                 .image_repository()
-                .delete(&mut transaction, &id)
+                .delete(&mut conn, &id)
                 .await
                 .unwrap();
         }
@@ -184,11 +184,11 @@ mod test {
         async fn find_by_ids_empty() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let result = database
                 .image_repository()
-                .find_by_ids(&mut transaction, &[])
+                .find_by_ids(&mut conn, &[])
                 .await
                 .unwrap();
             assert!(result.is_empty());
@@ -199,28 +199,25 @@ mod test {
         async fn find_by_ids_multiple() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let image1 = ImageBuilder::new().hash("hash1").blur_hash("blur1").build();
             let image2 = ImageBuilder::new().hash("hash2").blur_hash("blur2").build();
 
             database
                 .image_repository()
-                .create(&mut transaction, &image1)
+                .create(&mut conn, &image1)
                 .await
                 .unwrap();
             database
                 .image_repository()
-                .create(&mut transaction, &image2)
+                .create(&mut conn, &image2)
                 .await
                 .unwrap();
 
             let result = database
                 .image_repository()
-                .find_by_ids(
-                    &mut transaction,
-                    &[image1.id().clone(), image2.id().clone()],
-                )
+                .find_by_ids(&mut conn, &[image1.id().clone(), image2.id().clone()])
                 .await
                 .unwrap();
             assert_eq!(result.len(), 2);
@@ -229,12 +226,12 @@ mod test {
 
             database
                 .image_repository()
-                .delete(&mut transaction, image1.id())
+                .delete(&mut conn, image1.id())
                 .await
                 .unwrap();
             database
                 .image_repository()
-                .delete(&mut transaction, image2.id())
+                .delete(&mut conn, image2.id())
                 .await
                 .unwrap();
         }
@@ -244,20 +241,20 @@ mod test {
         async fn find_by_ids_with_nonexistent() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let image = ImageBuilder::new().build();
 
             database
                 .image_repository()
-                .create(&mut transaction, &image)
+                .create(&mut conn, &image)
                 .await
                 .unwrap();
 
             let nonexistent_id = ImageId::new(kernel::generate_id());
             let result = database
                 .image_repository()
-                .find_by_ids(&mut transaction, &[image.id().clone(), nonexistent_id])
+                .find_by_ids(&mut conn, &[image.id().clone(), nonexistent_id])
                 .await
                 .unwrap();
             assert_eq!(result.len(), 1);
@@ -265,7 +262,7 @@ mod test {
 
             database
                 .image_repository()
-                .delete(&mut transaction, image.id())
+                .delete(&mut conn, image.id())
                 .await
                 .unwrap();
         }
@@ -275,25 +272,25 @@ mod test {
         async fn find_by_url() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let url = unique_image_url();
             let image = ImageBuilder::new().url(url.as_ref()).build();
 
             database
                 .image_repository()
-                .create(&mut transaction, &image)
+                .create(&mut conn, &image)
                 .await
                 .unwrap();
             let result = database
                 .image_repository()
-                .find_by_url(&mut transaction, &url)
+                .find_by_url(&mut conn, &url)
                 .await
                 .unwrap();
             assert_eq!(result, Some(image.clone()));
             database
                 .image_repository()
-                .delete(&mut transaction, image.id())
+                .delete(&mut conn, image.id())
                 .await
                 .unwrap();
         }
@@ -310,18 +307,18 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let image = ImageBuilder::new().build();
 
             database
                 .image_repository()
-                .create(&mut transaction, &image)
+                .create(&mut conn, &image)
                 .await
                 .unwrap();
             database
                 .image_repository()
-                .delete(&mut transaction, image.id())
+                .delete(&mut conn, image.id())
                 .await
                 .unwrap();
         }
@@ -331,18 +328,18 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let image = ImageBuilder::new().build();
 
             database
                 .image_repository()
-                .create(&mut transaction, &image)
+                .create(&mut conn, &image)
                 .await
                 .unwrap();
             database
                 .image_repository()
-                .delete(&mut transaction, image.id())
+                .delete(&mut conn, image.id())
                 .await
                 .unwrap();
         }

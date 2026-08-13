@@ -59,11 +59,11 @@ fn split_mute_target_id(target_id: &MuteTargetId) -> (Option<&i64>, Option<&i64>
 }
 
 impl MuteRepository for PostgresMuteRepository {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_mutes(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         source_id: &MuteTargetId,
     ) -> error_stack::Result<Vec<Mute>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -103,7 +103,7 @@ impl MuteRepository for PostgresMuteRepository {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         mute: &Mute,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -137,7 +137,7 @@ impl MuteRepository for PostgresMuteRepository {
 
     async fn delete(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         mute_id: &MuteId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -182,7 +182,7 @@ mod test {
         async fn find_mutes() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let muter_id = AccountId::default();
             let muter_account = AccountBuilder::new()
                 .id(muter_id.clone())
@@ -190,7 +190,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &muter_account)
+                .create(&mut conn, &muter_account)
                 .await
                 .unwrap();
             let muted_id = AccountId::default();
@@ -200,7 +200,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &muted_account)
+                .create(&mut conn, &muted_account)
                 .await
                 .unwrap();
             let mute = MuteBuilder::new()
@@ -210,36 +210,36 @@ mod test {
 
             database
                 .mute_repository()
-                .create(&mut transaction, &mute)
+                .create(&mut conn, &mute)
                 .await
                 .unwrap();
 
             let mutes = database
                 .mute_repository()
-                .find_mutes(&mut transaction, &MuteTargetId::from(muter_id))
+                .find_mutes(&mut conn, &MuteTargetId::from(muter_id))
                 .await
                 .unwrap();
             assert_eq!(mutes[0].id(), mute.id());
 
             let mutes = database
                 .mute_repository()
-                .find_mutes(&mut transaction, &MuteTargetId::from(muted_id))
+                .find_mutes(&mut conn, &MuteTargetId::from(muted_id))
                 .await
                 .unwrap();
             assert!(mutes.is_empty());
             database
                 .mute_repository()
-                .delete(&mut transaction, mute.id())
+                .delete(&mut conn, mute.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, muter_account.id())
+                .deactivate(&mut conn, muter_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, muted_account.id())
+                .deactivate(&mut conn, muted_account.id())
                 .await
                 .unwrap();
         }
@@ -258,7 +258,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let muter_id = AccountId::default();
             let muter_account = AccountBuilder::new()
                 .id(muter_id.clone())
@@ -266,7 +266,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &muter_account)
+                .create(&mut conn, &muter_account)
                 .await
                 .unwrap();
             let muted_id = AccountId::default();
@@ -276,7 +276,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &muted_account)
+                .create(&mut conn, &muted_account)
                 .await
                 .unwrap();
             let mute = MuteBuilder::new()
@@ -286,22 +286,22 @@ mod test {
 
             database
                 .mute_repository()
-                .create(&mut transaction, &mute)
+                .create(&mut conn, &mute)
                 .await
                 .unwrap();
             database
                 .mute_repository()
-                .delete(&mut transaction, mute.id())
+                .delete(&mut conn, mute.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, muter_account.id())
+                .deactivate(&mut conn, muter_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, muted_account.id())
+                .deactivate(&mut conn, muted_account.id())
                 .await
                 .unwrap();
         }
@@ -311,7 +311,7 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let muter_id = AccountId::default();
             let muter_account = AccountBuilder::new()
                 .id(muter_id.clone())
@@ -319,7 +319,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &muter_account)
+                .create(&mut conn, &muter_account)
                 .await
                 .unwrap();
             let muted_id = AccountId::default();
@@ -329,7 +329,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &muted_account)
+                .create(&mut conn, &muted_account)
                 .await
                 .unwrap();
             let mute = MuteBuilder::new()
@@ -339,30 +339,30 @@ mod test {
 
             database
                 .mute_repository()
-                .create(&mut transaction, &mute)
+                .create(&mut conn, &mute)
                 .await
                 .unwrap();
 
             database
                 .mute_repository()
-                .delete(&mut transaction, mute.id())
+                .delete(&mut conn, mute.id())
                 .await
                 .unwrap();
 
             let mutes = database
                 .mute_repository()
-                .find_mutes(&mut transaction, &MuteTargetId::from(muter_id))
+                .find_mutes(&mut conn, &MuteTargetId::from(muter_id))
                 .await
                 .unwrap();
             assert!(mutes.is_empty());
             database
                 .account_read_model()
-                .deactivate(&mut transaction, muter_account.id())
+                .deactivate(&mut conn, muter_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, muted_account.id())
+                .deactivate(&mut conn, muted_account.id())
                 .await
                 .unwrap();
         }

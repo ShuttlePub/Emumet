@@ -68,11 +68,11 @@ fn split_follow_target_id(target_id: &FollowTargetId) -> (Option<&i64>, Option<&
 }
 
 impl FollowRepository for PostgresFollowRepository {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_followings(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         source_id: &FollowTargetId,
     ) -> error_stack::Result<Vec<Follow>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -105,7 +105,7 @@ impl FollowRepository for PostgresFollowRepository {
 
     async fn find_followers(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         destination_id: &FollowTargetId,
     ) -> error_stack::Result<Vec<Follow>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -138,7 +138,7 @@ impl FollowRepository for PostgresFollowRepository {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         follow: &Follow,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -172,7 +172,7 @@ impl FollowRepository for PostgresFollowRepository {
 
     async fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         follow: &Follow,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -203,7 +203,7 @@ impl FollowRepository for PostgresFollowRepository {
 
     async fn delete(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         follow_id: &FollowId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -248,7 +248,7 @@ mod test {
         async fn find_followers() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
@@ -256,7 +256,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &follower_account)
+                .create(&mut conn, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
@@ -266,7 +266,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &followee_account)
+                .create(&mut conn, &followee_account)
                 .await
                 .unwrap();
             let follow = FollowBuilder::new()
@@ -276,36 +276,36 @@ mod test {
 
             database
                 .follow_repository()
-                .create(&mut transaction, &follow)
+                .create(&mut conn, &follow)
                 .await
                 .unwrap();
 
             let followers = database
                 .follow_repository()
-                .find_followings(&mut transaction, &FollowTargetId::from(follower_id))
+                .find_followings(&mut conn, &FollowTargetId::from(follower_id))
                 .await
                 .unwrap();
             assert_eq!(followers[0].id(), follow.id());
 
             let followers = database
                 .follow_repository()
-                .find_followings(&mut transaction, &FollowTargetId::from(followee_id))
+                .find_followings(&mut conn, &FollowTargetId::from(followee_id))
                 .await
                 .unwrap();
             assert!(followers.is_empty());
             database
                 .follow_repository()
-                .delete(&mut transaction, follow.id())
+                .delete(&mut conn, follow.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, follower_account.id())
+                .deactivate(&mut conn, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, followee_account.id())
+                .deactivate(&mut conn, followee_account.id())
                 .await
                 .unwrap();
         }
@@ -315,7 +315,7 @@ mod test {
         async fn find_followings() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
@@ -323,7 +323,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &follower_account)
+                .create(&mut conn, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
@@ -333,7 +333,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &followee_account)
+                .create(&mut conn, &followee_account)
                 .await
                 .unwrap();
             let follow = FollowBuilder::new()
@@ -344,36 +344,36 @@ mod test {
 
             database
                 .follow_repository()
-                .create(&mut transaction, &follow)
+                .create(&mut conn, &follow)
                 .await
                 .unwrap();
 
             let followings = database
                 .follow_repository()
-                .find_followers(&mut transaction, &FollowTargetId::from(followee_id))
+                .find_followers(&mut conn, &FollowTargetId::from(followee_id))
                 .await
                 .unwrap();
             assert_eq!(followings[0].id(), follow.id());
 
             let followings = database
                 .follow_repository()
-                .find_followers(&mut transaction, &FollowTargetId::from(follower_id))
+                .find_followers(&mut conn, &FollowTargetId::from(follower_id))
                 .await
                 .unwrap();
             assert!(followings.is_empty());
             database
                 .follow_repository()
-                .delete(&mut transaction, follow.id())
+                .delete(&mut conn, follow.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, follower_account.id())
+                .deactivate(&mut conn, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, followee_account.id())
+                .deactivate(&mut conn, followee_account.id())
                 .await
                 .unwrap();
         }
@@ -392,7 +392,7 @@ mod test {
         async fn create() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
@@ -400,7 +400,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &follower_account)
+                .create(&mut conn, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
@@ -410,7 +410,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &followee_account)
+                .create(&mut conn, &followee_account)
                 .await
                 .unwrap();
             let follow = FollowBuilder::new()
@@ -421,22 +421,22 @@ mod test {
 
             database
                 .follow_repository()
-                .create(&mut transaction, &follow)
+                .create(&mut conn, &follow)
                 .await
                 .unwrap();
             database
                 .follow_repository()
-                .delete(&mut transaction, follow.id())
+                .delete(&mut conn, follow.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, follower_account.id())
+                .deactivate(&mut conn, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, followee_account.id())
+                .deactivate(&mut conn, followee_account.id())
                 .await
                 .unwrap();
         }
@@ -446,7 +446,7 @@ mod test {
         async fn update() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
 
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
@@ -455,7 +455,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &follower_account)
+                .create(&mut conn, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
@@ -465,7 +465,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &followee_account)
+                .create(&mut conn, &followee_account)
                 .await
                 .unwrap();
             let follow = FollowBuilder::new()
@@ -475,14 +475,14 @@ mod test {
 
             let following = database
                 .follow_repository()
-                .find_followings(&mut transaction, &FollowTargetId::from(follower_id.clone()))
+                .find_followings(&mut conn, &FollowTargetId::from(follower_id.clone()))
                 .await
                 .unwrap();
             assert!(following.is_empty());
 
             database
                 .follow_repository()
-                .create(&mut transaction, &follow)
+                .create(&mut conn, &follow)
                 .await
                 .unwrap();
 
@@ -495,29 +495,29 @@ mod test {
             .unwrap();
             database
                 .follow_repository()
-                .update(&mut transaction, &follow)
+                .update(&mut conn, &follow)
                 .await
                 .unwrap();
 
             let following = database
                 .follow_repository()
-                .find_followers(&mut transaction, &FollowTargetId::from(followee_id))
+                .find_followers(&mut conn, &FollowTargetId::from(followee_id))
                 .await
                 .unwrap();
             assert_eq!(following[0].id(), follow.id());
             database
                 .follow_repository()
-                .delete(&mut transaction, follow.id())
+                .delete(&mut conn, follow.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, follower_account.id())
+                .deactivate(&mut conn, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, followee_account.id())
+                .deactivate(&mut conn, followee_account.id())
                 .await
                 .unwrap();
         }
@@ -527,7 +527,7 @@ mod test {
         async fn delete() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut transaction = database.get_executor().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
             let follower_id = AccountId::default();
             let follower_account = AccountBuilder::new()
                 .id(follower_id.clone())
@@ -535,7 +535,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &follower_account)
+                .create(&mut conn, &follower_account)
                 .await
                 .unwrap();
             let followee_id = AccountId::default();
@@ -545,7 +545,7 @@ mod test {
                 .build();
             database
                 .account_read_model()
-                .create(&mut transaction, &followee_account)
+                .create(&mut conn, &followee_account)
                 .await
                 .unwrap();
             let follow = FollowBuilder::new()
@@ -555,30 +555,30 @@ mod test {
 
             database
                 .follow_repository()
-                .create(&mut transaction, &follow)
+                .create(&mut conn, &follow)
                 .await
                 .unwrap();
 
             database
                 .follow_repository()
-                .delete(&mut transaction, follow.id())
+                .delete(&mut conn, follow.id())
                 .await
                 .unwrap();
 
             let following = database
                 .follow_repository()
-                .find_followers(&mut transaction, &FollowTargetId::from(follower_id))
+                .find_followers(&mut conn, &FollowTargetId::from(follower_id))
                 .await
                 .unwrap();
             assert!(following.is_empty());
             database
                 .account_read_model()
-                .deactivate(&mut transaction, follower_account.id())
+                .deactivate(&mut conn, follower_account.id())
                 .await
                 .unwrap();
             database
                 .account_read_model()
-                .deactivate(&mut transaction, followee_account.id())
+                .deactivate(&mut conn, followee_account.id())
                 .await
                 .unwrap();
         }

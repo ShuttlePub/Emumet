@@ -1,5 +1,5 @@
 use error_stack::Report;
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{DependOnMetadataEventStore, MetadataEventStore};
 use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
@@ -38,23 +38,23 @@ pub struct UpdateMetadataParam {
 // --- MetadataCommandProcessor ---
 
 pub trait MetadataCommandProcessor: Send + Sync + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: CreateMetadataParam,
     ) -> impl Future<Output = error_stack::Result<Metadata, KernelError>> + Send;
 
     fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: UpdateMetadataParam,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn delete(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         metadata_id: MetadataId,
         current_version: EventVersion<Metadata>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
@@ -64,12 +64,12 @@ impl<T> MetadataCommandProcessor for T
 where
     T: DependOnMetadataEventStore + DependOnMetadataSignal + Send + Sync + 'static,
 {
-    type Executor =
-        <<T as DependOnMetadataEventStore>::MetadataEventStore as MetadataEventStore>::Executor;
+    type Connection =
+        <<T as DependOnMetadataEventStore>::MetadataEventStore as MetadataEventStore>::Connection;
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: CreateMetadataParam,
     ) -> error_stack::Result<Metadata, KernelError> {
         let metadata_id = MetadataId::new(kernel::generate_id());
@@ -102,7 +102,7 @@ where
 
     async fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         param: UpdateMetadataParam,
     ) -> error_stack::Result<(), KernelError> {
         let command = Metadata::update(
@@ -125,7 +125,7 @@ where
 
     async fn delete(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         metadata_id: MetadataId,
         current_version: EventVersion<Metadata>,
     ) -> error_stack::Result<(), KernelError> {
@@ -145,7 +145,7 @@ where
 
 pub trait DependOnMetadataCommandProcessor: DependOnDatabaseConnection + Send + Sync {
     type MetadataCommandProcessor: MetadataCommandProcessor<
-        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn metadata_command_processor(&self) -> &Self::MetadataCommandProcessor;
 }
@@ -168,23 +168,23 @@ where
 // --- MetadataQueryProcessor ---
 
 pub trait MetadataQueryProcessor: Send + Sync + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &MetadataId,
     ) -> impl Future<Output = error_stack::Result<Option<Metadata>, KernelError>> + Send;
 
     fn find_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Vec<Metadata>, KernelError>> + Send;
 
     fn find_by_account_ids(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_ids: &[AccountId],
     ) -> impl Future<Output = error_stack::Result<Vec<Metadata>, KernelError>> + Send;
 }
@@ -193,12 +193,12 @@ impl<T> MetadataQueryProcessor for T
 where
     T: DependOnMetadataReadModel + Send + Sync + 'static,
 {
-    type Executor =
-        <<T as DependOnMetadataReadModel>::MetadataReadModel as MetadataReadModel>::Executor;
+    type Connection =
+        <<T as DependOnMetadataReadModel>::MetadataReadModel as MetadataReadModel>::Connection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &MetadataId,
     ) -> error_stack::Result<Option<Metadata>, KernelError> {
         self.metadata_read_model().find_by_id(executor, id).await
@@ -206,7 +206,7 @@ where
 
     async fn find_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> error_stack::Result<Vec<Metadata>, KernelError> {
         self.metadata_read_model()
@@ -216,7 +216,7 @@ where
 
     async fn find_by_account_ids(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_ids: &[AccountId],
     ) -> error_stack::Result<Vec<Metadata>, KernelError> {
         self.metadata_read_model()
@@ -227,7 +227,7 @@ where
 
 pub trait DependOnMetadataQueryProcessor: DependOnDatabaseConnection + Send + Sync {
     type MetadataQueryProcessor: MetadataQueryProcessor<
-        Executor = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn metadata_query_processor(&self) -> &Self::MetadataQueryProcessor;
 }

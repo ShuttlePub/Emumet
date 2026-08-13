@@ -28,12 +28,12 @@ pub trait UpdateAccountUseCase:
         dto: UpdateAccountDto,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
 
             let nanoid = Nanoid::<Account>::new(dto.account_nanoid);
             let projection = self
                 .account_query_processor()
-                .find_by_nanoid_unfiltered(&mut transaction, &nanoid)
+                .find_by_nanoid_unfiltered(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -46,7 +46,7 @@ pub trait UpdateAccountUseCase:
 
             let account_id = projection.id().clone();
             let (account, current_version) =
-                rehydrate_account(self, &mut transaction, &account_id).await?;
+                rehydrate_account(self, &mut conn, &account_id).await?;
 
             let is_bot = match dto.is_bot {
                 kernel::prelude::entity::FieldAction::Unchanged => *account.is_bot().as_ref(),
@@ -66,7 +66,7 @@ pub trait UpdateAccountUseCase:
 
             self.account_command_processor()
                 .update(
-                    &mut transaction,
+                    &mut conn,
                     UpdateAccountParam {
                         account_id,
                         is_bot: AccountIsBot::new(is_bot),

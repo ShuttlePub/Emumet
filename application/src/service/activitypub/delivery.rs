@@ -66,7 +66,7 @@ where
         headers,
         body: Some(body.clone()),
     };
-    let mut executor = module.database_connection().get_executor().await?;
+    let mut executor = module.database_connection().connection().await?;
     let signing_key = module
         .signing_key_repository()
         .find_active_by_account_id(&mut executor, account_id)

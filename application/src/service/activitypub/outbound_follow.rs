@@ -48,7 +48,7 @@ pub trait SendFollowUseCase:
     {
         async move {
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account = self
                 .account_query_processor()
                 .find_by_nanoid(&mut executor, &account_nanoid)
@@ -193,8 +193,8 @@ pub(super) async fn find_existing_following<R, E>(
     destination: &FollowTargetId,
 ) -> error_stack::Result<Option<Follow>, KernelError>
 where
-    R: FollowRepository<Executor = E>,
-    E: kernel::interfaces::database::Executor,
+    R: FollowRepository<Connection = E>,
+    E: kernel::interfaces::database::Connection,
 {
     let followings = repository.find_followings(executor, source).await?;
     Ok(followings

@@ -43,7 +43,7 @@ fn undo_wraps_the_original_follow_activity() {
 async fn local_unfollow_deletes_approved_follow_without_outbox_activity() {
     kernel::ensure_generator_initialized();
     let database = PostgresDatabase::new().await.unwrap();
-    let mut executor = database.get_executor().await.unwrap();
+    let mut executor = database.connection().await.unwrap();
     let source = AccountBuilder::new()
         .id(AccountId::default())
         .name(unique_account_name())
@@ -106,7 +106,7 @@ async fn local_unfollow_deletes_approved_follow_without_outbox_activity() {
 async fn local_unfollow_rejects_pending_or_missing_follow() {
     kernel::ensure_generator_initialized();
     let database = PostgresDatabase::new().await.unwrap();
-    let mut executor = database.get_executor().await.unwrap();
+    let mut executor = database.connection().await.unwrap();
     let source = AccountBuilder::new()
         .id(AccountId::default())
         .name(unique_account_name())

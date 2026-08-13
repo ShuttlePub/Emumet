@@ -24,7 +24,7 @@ pub trait GetActorUseCase:
         dto: GetActorDto,
     ) -> impl Future<Output = error_stack::Result<Actor, KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
                 .account_query_processor()
@@ -90,7 +90,7 @@ pub trait GetWebFingerUseCase:
         dto: GetWebFingerDto,
     ) -> impl Future<Output = error_stack::Result<WebFingerResponse, KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account_name = AccountName::new(dto.account_name);
             account_name.validate()?;
             let account = self

@@ -1,10 +1,10 @@
 use crate::KernelError;
 use std::future::Future;
 
-/// Executorの取得を示すトレイト
+/// Connectionの取得を示すトレイト
 ///
 /// 現状は何もないが、将来的にトランザクション時に使える機能を示す可能性を考えて用意している
-pub trait Executor: Send {
+pub trait Connection: Send {
     fn commit(self) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send
     where
         Self: Sized,
@@ -14,15 +14,15 @@ pub trait Executor: Send {
 }
 
 pub trait DatabaseConnection: Sync + Send + 'static {
-    type Executor: Executor;
-    fn get_executor(
+    type Connection: Connection;
+    fn connection(
         &self,
-    ) -> impl Future<Output = error_stack::Result<Self::Executor, KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<Self::Connection, KernelError>> + Send;
 
     fn get_transaction(
         &self,
-    ) -> impl Future<Output = error_stack::Result<Self::Executor, KernelError>> + Send {
-        self.get_executor()
+    ) -> impl Future<Output = error_stack::Result<Self::Connection, KernelError>> + Send {
+        self.connection()
     }
 }
 

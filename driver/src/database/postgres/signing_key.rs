@@ -53,11 +53,11 @@ impl TryFrom<SigningKeyRow> for SigningKey {
 pub struct PostgresSigningKeyRepository;
 
 impl SigningKeyRepository for PostgresSigningKeyRepository {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &SigningKeyId,
     ) -> error_stack::Result<SigningKey, KernelError> {
         let con: &mut PgConnection = executor;
@@ -82,7 +82,7 @@ impl SigningKeyRepository for PostgresSigningKeyRepository {
 
     async fn find_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> error_stack::Result<Vec<SigningKey>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -107,7 +107,7 @@ impl SigningKeyRepository for PostgresSigningKeyRepository {
 
     async fn find_active_by_account_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> error_stack::Result<Vec<SigningKey>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -132,7 +132,7 @@ impl SigningKeyRepository for PostgresSigningKeyRepository {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         signing_key: &SigningKey,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -166,7 +166,7 @@ impl SigningKeyRepository for PostgresSigningKeyRepository {
 
     async fn revoke(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &SigningKeyId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -232,7 +232,7 @@ mod test {
     async fn setup_account(
         database: &PostgresDatabase,
     ) -> (AccountId, kernel::prelude::entity::Account) {
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
         let account_id = AccountId::default();
         let account = AccountBuilder::new()
             .id(account_id.clone())
@@ -240,7 +240,7 @@ mod test {
             .build();
         database
             .account_read_model()
-            .create(&mut transaction, &account)
+            .create(&mut conn, &account)
             .await
             .unwrap();
         (account_id, account)
@@ -250,10 +250,10 @@ mod test {
         database: &PostgresDatabase,
         account: &kernel::prelude::entity::Account,
     ) {
-        let mut transaction = database.get_executor().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
         database
             .account_read_model()
-            .deactivate(&mut transaction, account.id())
+            .deactivate(&mut conn, account.id())
             .await
             .unwrap();
     }
@@ -270,14 +270,14 @@ mod test {
 
             let signing_key = build_test_signing_key(account_id);
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .create(&mut executor, &signing_key)
                 .await
                 .unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             let found = database
                 .signing_key_repository()
                 .find_by_id(&mut executor, signing_key.id())
@@ -297,7 +297,7 @@ mod test {
         async fn find_by_id_not_found() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
 
             let result = database
                 .signing_key_repository()
@@ -317,20 +317,20 @@ mod test {
             let key1 = build_test_signing_key(account_id.clone());
             let key2 = build_test_signing_key(account_id.clone());
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .create(&mut executor, &key1)
                 .await
                 .unwrap();
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .create(&mut executor, &key2)
                 .await
                 .unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             let found = database
                 .signing_key_repository()
                 .find_by_account_id(&mut executor, &account_id)
@@ -352,27 +352,27 @@ mod test {
             let key1 = build_test_signing_key(account_id.clone());
             let key2 = build_test_signing_key(account_id.clone());
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .create(&mut executor, &key1)
                 .await
                 .unwrap();
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .create(&mut executor, &key2)
                 .await
                 .unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .revoke(&mut executor, key1.id())
                 .await
                 .unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             let active = database
                 .signing_key_repository()
                 .find_active_by_account_id(&mut executor, &account_id)
@@ -398,14 +398,14 @@ mod test {
 
             let signing_key = build_test_signing_key(account_id);
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .create(&mut executor, &signing_key)
                 .await
                 .unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             let found = database
                 .signing_key_repository()
                 .find_by_id(&mut executor, signing_key.id())
@@ -426,21 +426,21 @@ mod test {
 
             let signing_key = build_test_signing_key(account_id.clone());
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .create(&mut executor, &signing_key)
                 .await
                 .unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .revoke(&mut executor, signing_key.id())
                 .await
                 .unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             let found = database
                 .signing_key_repository()
                 .find_by_id(&mut executor, signing_key.id())
@@ -449,7 +449,7 @@ mod test {
 
             assert!(found.revoked_at.is_some());
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             let active = database
                 .signing_key_repository()
                 .find_active_by_account_id(&mut executor, &account_id)
@@ -467,7 +467,7 @@ mod test {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             let result = database
                 .signing_key_repository()
                 .revoke(&mut executor, &SigningKeyId::new(999999999))
@@ -485,21 +485,21 @@ mod test {
 
             let signing_key = build_test_signing_key(account_id);
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .create(&mut executor, &signing_key)
                 .await
                 .unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             database
                 .signing_key_repository()
                 .revoke(&mut executor, signing_key.id())
                 .await
                 .unwrap();
 
-            let mut executor = database.get_executor().await.unwrap();
+            let mut executor = database.connection().await.unwrap();
             let result = database
                 .signing_key_repository()
                 .revoke(&mut executor, signing_key.id())

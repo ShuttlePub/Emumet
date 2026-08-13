@@ -1,27 +1,27 @@
-use crate::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::{Account, AccountEvent, CommandEnvelope, EventEnvelope, EventId, EventVersion};
 use crate::KernelError;
 use std::future::Future;
 
 pub trait AccountEventStore: Sync + Send + 'static {
-    type Executor: Executor;
+    type Connection: Connection;
 
     fn persist(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         command: &CommandEnvelope<AccountEvent, Account>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn persist_and_transform(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         command: CommandEnvelope<AccountEvent, Account>,
     ) -> impl Future<Output = error_stack::Result<EventEnvelope<AccountEvent, Account>, KernelError>>
            + Send;
 
     fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &EventId<AccountEvent, Account>,
         since: Option<&EventVersion<Account>>,
     ) -> impl Future<
@@ -31,7 +31,7 @@ pub trait AccountEventStore: Sync + Send + 'static {
 
 pub trait DependOnAccountEventStore: Sync + Send + DependOnDatabaseConnection {
     type AccountEventStore: AccountEventStore<
-        Executor = <Self::DatabaseConnection as DatabaseConnection>::Executor,
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
     >;
 
     fn account_event_store(&self) -> &Self::AccountEventStore;

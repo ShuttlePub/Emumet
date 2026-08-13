@@ -7,7 +7,7 @@ use kernel::KernelError;
 
 pub(crate) async fn rehydrate_account<T>(
     deps: &T,
-    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     account_id: &AccountId,
 ) -> error_stack::Result<(Account, EventVersion<Account>), KernelError>
 where

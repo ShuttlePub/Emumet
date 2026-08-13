@@ -24,15 +24,15 @@ pub trait GetAccountUseCase:
     ) -> impl Future<Output = error_stack::Result<Option<Vec<AccountDto>>, KernelError>> + Send
     {
         async move {
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
             let accounts = self
                 .account_query_processor()
-                .find_by_auth_id(&mut transaction, auth_account_id)
+                .find_by_auth_id(&mut conn, auth_account_id)
                 .await?;
             let cursor = if let Some(cursor) = cursor {
                 let id: Nanoid<Account> = Nanoid::new(cursor);
                 self.account_query_processor()
-                    .find_by_nanoid(&mut transaction, &id)
+                    .find_by_nanoid(&mut conn, &id)
                     .await?
             } else {
                 None
@@ -48,13 +48,13 @@ pub trait GetAccountUseCase:
         ids: Vec<String>,
     ) -> impl Future<Output = error_stack::Result<Vec<AccountDto>, KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
 
             let nanoids: Vec<Nanoid<Account>> =
                 ids.into_iter().map(Nanoid::<Account>::new).collect();
             let accounts = self
                 .account_query_processor()
-                .find_by_nanoids(&mut transaction, &nanoids)
+                .find_by_nanoids(&mut conn, &nanoids)
                 .await?;
 
             let mut result = Vec::new();

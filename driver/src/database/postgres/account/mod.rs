@@ -15,11 +15,11 @@ use sqlx::types::time::OffsetDateTime;
 use sqlx::PgConnection;
 
 impl AccountReadModel for PostgresAccountReadModel {
-    type Executor = PostgresConnection;
+    type Connection = PostgresConnection;
 
     async fn find_by_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &AccountId,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -43,7 +43,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_auth_id(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         auth_id: &AuthAccountId,
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -72,7 +72,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_name(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         name: &AccountName,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -96,7 +96,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_nanoid(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoid: &Nanoid<Account>,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -120,7 +120,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_nanoids(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoids: &[Nanoid<Account>],
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -145,7 +145,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn create(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account: &Account,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -170,7 +170,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn update(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account: &Account,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -224,7 +224,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn deactivate(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -249,7 +249,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn unlink_all_auth_accounts(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -268,7 +268,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn link_auth_account(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
         auth_account_id: &AuthAccountId,
     ) -> error_stack::Result<(), KernelError> {
@@ -289,7 +289,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_id_unfiltered(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         id: &AccountId,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -311,7 +311,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_nanoid_unfiltered(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoid: &Nanoid<Account>,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -333,7 +333,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn find_by_nanoids_unfiltered(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         nanoids: &[Nanoid<Account>],
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         let con: &mut PgConnection = executor;
@@ -360,7 +360,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn suspend(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
         reason: &str,
         expires_at: Option<OffsetDateTime>,
@@ -385,7 +385,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn unsuspend(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> error_stack::Result<(), KernelError> {
         let con: &mut PgConnection = executor;
@@ -406,7 +406,7 @@ impl AccountReadModel for PostgresAccountReadModel {
 
     async fn ban(
         &self,
-        executor: &mut Self::Executor,
+        executor: &mut Self::Connection,
         account_id: &AccountId,
         reason: &str,
     ) -> error_stack::Result<(), KernelError> {

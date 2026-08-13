@@ -16,7 +16,7 @@ pub trait StoreOutboxActivityUseCase:
         activity: &OutboxActivity,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             self.outbox_activity_repository()
                 .create(&mut executor, activity)
                 .await
@@ -44,7 +44,7 @@ pub trait GetOutboxUseCase:
         cursor: Option<i64>,
     ) -> impl Future<Output = error_stack::Result<OrderedCollection, KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().get_executor().await?;
+            let mut executor = self.database_connection().connection().await?;
             let account = self
                 .account_query_processor()
                 .find_by_id(&mut executor, account_id)
@@ -96,24 +96,26 @@ impl<T> GetOutboxUseCase for T where
 mod tests {
     use super::*;
     use kernel::interfaces::config::PublicBaseUrl;
-    use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection, Executor};
+    use kernel::interfaces::database::{
+        Connection, DatabaseConnection, DependOnDatabaseConnection,
+    };
     use kernel::prelude::entity::{Account, AccountName, AuthAccountId, Nanoid};
     use kernel::test_utils::AccountBuilder;
     use std::sync::Mutex;
     use time::OffsetDateTime;
 
     #[derive(Clone)]
-    struct MockExecutor;
+    struct MockConnection;
 
-    impl Executor for MockExecutor {}
+    impl Connection for MockConnection {}
 
     struct MockDatabaseConnection;
 
     impl DatabaseConnection for MockDatabaseConnection {
-        type Executor = MockExecutor;
+        type Connection = MockConnection;
 
-        async fn get_executor(&self) -> error_stack::Result<Self::Executor, KernelError> {
-            Ok(MockExecutor)
+        async fn connection(&self) -> error_stack::Result<Self::Connection, KernelError> {
+            Ok(MockConnection)
         }
     }
 
@@ -122,11 +124,11 @@ mod tests {
     }
 
     impl AccountQueryProcessor for MockAccountQueryProcessor {
-        type Executor = MockExecutor;
+        type Connection = MockConnection;
 
         async fn find_by_id(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             id: &AccountId,
         ) -> error_stack::Result<Option<Account>, KernelError> {
             Ok((self.account.id() == id).then(|| self.account.clone()))
@@ -134,7 +136,7 @@ mod tests {
 
         async fn find_by_auth_id(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             _auth_id: &AuthAccountId,
         ) -> error_stack::Result<Vec<Account>, KernelError> {
             Ok(Vec::new())
@@ -142,7 +144,7 @@ mod tests {
 
         async fn find_by_name(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             name: &AccountName,
         ) -> error_stack::Result<Option<Account>, KernelError> {
             Ok((self.account.name() == name).then(|| self.account.clone()))
@@ -150,7 +152,7 @@ mod tests {
 
         async fn find_by_nanoid(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             nanoid: &Nanoid<Account>,
         ) -> error_stack::Result<Option<Account>, KernelError> {
             Ok((self.account.nanoid() == nanoid).then(|| self.account.clone()))
@@ -158,7 +160,7 @@ mod tests {
 
         async fn find_by_nanoids(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             _nanoids: &[Nanoid<Account>],
         ) -> error_stack::Result<Vec<Account>, KernelError> {
             Ok(Vec::new())
@@ -166,7 +168,7 @@ mod tests {
 
         async fn find_by_id_unfiltered(
             &self,
-            executor: &mut Self::Executor,
+            executor: &mut Self::Connection,
             id: &AccountId,
         ) -> error_stack::Result<Option<Account>, KernelError> {
             self.find_by_id(executor, id).await
@@ -174,7 +176,7 @@ mod tests {
 
         async fn find_by_nanoid_unfiltered(
             &self,
-            executor: &mut Self::Executor,
+            executor: &mut Self::Connection,
             nanoid: &Nanoid<Account>,
         ) -> error_stack::Result<Option<Account>, KernelError> {
             self.find_by_nanoid(executor, nanoid).await
@@ -182,7 +184,7 @@ mod tests {
 
         async fn find_by_nanoids_unfiltered(
             &self,
-            executor: &mut Self::Executor,
+            executor: &mut Self::Connection,
             nanoids: &[Nanoid<Account>],
         ) -> error_stack::Result<Vec<Account>, KernelError> {
             self.find_by_nanoids(executor, nanoids).await
@@ -194,11 +196,11 @@ mod tests {
     }
 
     impl OutboxActivityRepository for MockOutboxActivityRepository {
-        type Executor = MockExecutor;
+        type Connection = MockConnection;
 
         async fn create(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             activity: &OutboxActivity,
         ) -> error_stack::Result<(), KernelError> {
             self.activities.lock().unwrap().push(activity.clone());
@@ -207,7 +209,7 @@ mod tests {
 
         async fn find_by_account_id(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             account_id: &AccountId,
             limit: usize,
             cursor: Option<i64>,
@@ -228,7 +230,7 @@ mod tests {
 
         async fn count_by_account_id(
             &self,
-            _executor: &mut Self::Executor,
+            _executor: &mut Self::Connection,
             account_id: &AccountId,
         ) -> error_stack::Result<u64, KernelError> {
             Ok(self
@@ -325,7 +327,7 @@ mod tests {
 
         module.store_outbox_activity(&activity).await.unwrap();
 
-        let mut executor = MockExecutor;
+        let mut executor = MockConnection;
         let activities = module
             .outbox_activity_repository()
             .find_by_account_id(&mut executor, &account_id, 10, None)

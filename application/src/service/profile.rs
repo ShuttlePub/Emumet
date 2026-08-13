@@ -16,17 +16,17 @@ pub trait UpdateProfile:
         profile_id: ProfileId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> {
         async move {
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
             let existing = self
                 .profile_read_model()
-                .find_by_id(&mut transaction, &profile_id)
+                .find_by_id(&mut conn, &profile_id)
                 .await?;
             let event_id = EventId::from(profile_id.clone());
 
             if let Some(profile) = existing {
                 let events = self
                     .profile_event_store()
-                    .find_by_id(&mut transaction, &event_id, Some(profile.version()))
+                    .find_by_id(&mut conn, &event_id, Some(profile.version()))
                     .await?;
                 if events
                     .last()
@@ -39,18 +39,18 @@ pub trait UpdateProfile:
                     }
                     if let Some(profile) = profile {
                         self.profile_read_model()
-                            .update(&mut transaction, &profile)
+                            .update(&mut conn, &profile)
                             .await?;
                     } else {
                         self.profile_read_model()
-                            .delete(&mut transaction, &profile_id)
+                            .delete(&mut conn, &profile_id)
                             .await?;
                     }
                 }
             } else {
                 let events = self
                     .profile_event_store()
-                    .find_by_id(&mut transaction, &event_id, None)
+                    .find_by_id(&mut conn, &event_id, None)
                     .await?;
                 if !events.is_empty() {
                     let mut profile = None;
@@ -59,7 +59,7 @@ pub trait UpdateProfile:
                     }
                     if let Some(profile) = profile {
                         self.profile_read_model()
-                            .create(&mut transaction, &profile)
+                            .create(&mut conn, &profile)
                             .await?;
                     }
                 }
@@ -76,7 +76,7 @@ impl<T> UpdateProfile for T where
 
 async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(
     deps: &T,
-    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     url: Option<&str>,
 ) -> error_stack::Result<Option<ImageId>, KernelError> {
     let Some(url) = url else {
@@ -97,7 +97,7 @@ async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(
 
 pub(crate) async fn resolve_field_action_image_id<T: DependOnImageRepository + ?Sized>(
     deps: &T,
-    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Executor,
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     action: &FieldAction<String>,
 ) -> error_stack::Result<FieldAction<ImageId>, KernelError> {
     match action {

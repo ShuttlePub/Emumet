@@ -14,10 +14,10 @@ pub trait UpdateAuthAccount:
         auth_account_id: AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> {
         async move {
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
             let existing = self
                 .auth_account_read_model()
-                .find_by_id(&mut transaction, &auth_account_id)
+                .find_by_id(&mut conn, &auth_account_id)
                 .await?;
 
             // AuthAccountEvent only has a Created variant, so if a projection
@@ -29,7 +29,7 @@ pub trait UpdateAuthAccount:
             let event_id = EventId::from(auth_account_id.clone());
             let events = self
                 .auth_account_event_store()
-                .find_by_id(&mut transaction, &event_id, None)
+                .find_by_id(&mut conn, &event_id, None)
                 .await?;
             if !events.is_empty() {
                 let mut auth_account = None;
@@ -38,7 +38,7 @@ pub trait UpdateAuthAccount:
                 }
                 if let Some(auth_account) = auth_account {
                     self.auth_account_read_model()
-                        .create(&mut transaction, &auth_account)
+                        .create(&mut conn, &auth_account)
                         .await?;
                 }
             }

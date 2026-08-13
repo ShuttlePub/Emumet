@@ -31,12 +31,12 @@ pub trait DeactivateAccountUseCase:
         account_id: String,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
         async move {
-            let mut transaction = self.database_connection().get_executor().await?;
+            let mut conn = self.database_connection().connection().await?;
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let projection = self
                 .account_query_processor()
-                .find_by_nanoid(&mut transaction, &nanoid)
+                .find_by_nanoid(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
                     Report::new(KernelError::NotFound).attach_printable(format!(
@@ -49,9 +49,9 @@ pub trait DeactivateAccountUseCase:
 
             let account_id = projection.id().clone();
             let (_account, current_version) =
-                rehydrate_account(self, &mut transaction, &account_id).await?;
+                rehydrate_account(self, &mut conn, &account_id).await?;
             self.account_command_processor()
-                .deactivate(&mut transaction, account_id.clone(), current_version)
+                .deactivate(&mut conn, account_id.clone(), current_version)
                 .await?;
 
             for relation in [
