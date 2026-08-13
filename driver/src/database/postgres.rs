@@ -171,10 +171,14 @@ impl TransactionManager for PostgresDatabase {
                 },
                 Err(error) => {
                     match conn.0 {
-                        PostgresConnectionInner::Transaction(transaction) => transaction
-                            .rollback()
-                            .await
-                            .change_context(KernelError::Internal)?,
+                        PostgresConnectionInner::Transaction(transaction) => {
+                            if let Err(rollback_error) = transaction.rollback().await {
+                                tracing::error!(
+                                    rollback_error = %rollback_error,
+                                    "Transaction rollback failed; original error preserved"
+                                );
+                            }
+                        }
                         PostgresConnectionInner::Connection(_) => unreachable!(),
                     }
                     Err(error)
