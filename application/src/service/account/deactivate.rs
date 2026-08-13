@@ -48,8 +48,9 @@ pub trait DeactivateAccountUseCase:
             check_permission(self, auth_account_id, &account_deactivate(projection.id())).await?;
 
             let account_id = projection.id().clone();
-            let (_account, current_version) =
-                rehydrate_account(self, &mut conn, &account_id).await?;
+            let (_account, current_version) = rehydrate_account(self, &mut conn, &account_id)
+                .await?
+                .into_parts();
             self.account_command_processor()
                 .deactivate(&mut conn, account_id.clone(), current_version)
                 .await?;

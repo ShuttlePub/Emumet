@@ -81,7 +81,9 @@ where
             }
 
             let account_id = projection.id().clone();
-            let (account, version) = rehydrate_account(self, executor, &account_id).await?;
+            let (account, version) = rehydrate_account(self, executor, &account_id)
+                .await?
+                .into_parts();
             let is_bot = apply_is_bot(*account.is_bot().as_ref(), dto.is_bot);
             if is_bot != *account.is_bot().as_ref() {
                 self.account_command_processor()
@@ -94,7 +96,10 @@ where
                         },
                     )
                     .await?;
-                let account = rehydrate_account(self, executor, &account_id).await?.0;
+                let account = rehydrate_account(self, executor, &account_id)
+                    .await?
+                    .into_parts()
+                    .0;
                 self.account_read_model().update(executor, &account).await?;
             }
 

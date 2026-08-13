@@ -1,3 +1,4 @@
+mod aggregate;
 mod auth_host;
 mod block;
 mod follow;
@@ -6,6 +7,7 @@ mod mute;
 mod outbox_activity;
 mod remote_account;
 
+pub use self::aggregate::*;
 pub use self::auth_host::*;
 pub use self::block::*;
 pub use self::follow::*;
