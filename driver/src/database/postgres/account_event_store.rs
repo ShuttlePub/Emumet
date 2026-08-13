@@ -3,7 +3,7 @@ use crate::ConvertError;
 use error_stack::Report;
 use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
 use kernel::prelude::entity::{
-    Account, AccountEvent, CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion,
+    Account, AccountEvent, CommandEnvelope, EventEnvelope, EventId, EventVersion, ExpectedVersion,
 };
 use kernel::KernelError;
 use serde_json;
@@ -117,7 +117,7 @@ impl PostgresAccountEventStore {
         let prev_version = command.prev_version().as_ref();
 
         let result = match prev_version {
-            Some(KnownEventVersion::Nothing) => {
+            Some(ExpectedVersion::Nothing) => {
                 sqlx::query(
                     //language=postgresql
                     r#"
@@ -134,7 +134,7 @@ impl PostgresAccountEventStore {
                 .await
                 .convert_error()?
             }
-            Some(KnownEventVersion::Prev(prev)) => {
+            Some(ExpectedVersion::At(prev)) => {
                 sqlx::query(
                     //language=postgresql
                     r#"

@@ -45,8 +45,9 @@ pub trait UpdateAccountUseCase:
             check_permission(self, auth_account_id, &account_edit(projection.id())).await?;
 
             let account_id = projection.id().clone();
-            let (account, current_version) =
-                rehydrate_account(self, &mut conn, &account_id).await?;
+            let (account, current_version) = rehydrate_account(self, &mut conn, &account_id)
+                .await?
+                .into_parts();
 
             let is_bot = match dto.is_bot {
                 kernel::prelude::entity::FieldAction::Unchanged => *account.is_bot().as_ref(),

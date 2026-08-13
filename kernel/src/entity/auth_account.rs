@@ -4,7 +4,7 @@ mod id;
 pub use self::client_id::*;
 pub use self::id::*;
 use crate::entity::{
-    AuthHostId, CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion,
+    AuthHostId, CommandEnvelope, EventEnvelope, EventId, EventVersion, ExpectedVersion,
 };
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -45,7 +45,7 @@ impl AuthAccount {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Nothing),
+            Some(ExpectedVersion::Nothing),
         )
     }
 }

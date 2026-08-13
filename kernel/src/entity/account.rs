@@ -8,7 +8,7 @@ use time::OffsetDateTime;
 
 use crate::entity::{
     AuthAccountId, CommandEnvelope, CreatedAt, DeletedAt, EventEnvelope, EventId, EventVersion,
-    KnownEventVersion, Nanoid,
+    ExpectedVersion, Nanoid,
 };
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -91,7 +91,7 @@ impl Account {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Nothing),
+            Some(ExpectedVersion::Nothing),
         )
     }
 
@@ -105,7 +105,7 @@ impl Account {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Prev(current_version)),
+            Some(ExpectedVersion::At(current_version)),
         )
     }
 
@@ -118,7 +118,7 @@ impl Account {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Prev(current_version)),
+            Some(ExpectedVersion::At(current_version)),
         )
     }
 
@@ -137,7 +137,7 @@ impl Account {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Prev(current_version)),
+            Some(ExpectedVersion::At(current_version)),
         )
     }
 
@@ -150,7 +150,7 @@ impl Account {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Prev(current_version)),
+            Some(ExpectedVersion::At(current_version)),
         )
     }
 
@@ -167,7 +167,7 @@ impl Account {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Prev(current_version)),
+            Some(ExpectedVersion::At(current_version)),
         )
     }
 }

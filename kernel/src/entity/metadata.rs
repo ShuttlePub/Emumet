@@ -6,7 +6,7 @@ pub use self::content::*;
 pub use self::id::*;
 pub use self::label::*;
 use super::{
-    AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, KnownEventVersion, Nanoid,
+    AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, ExpectedVersion, Nanoid,
 };
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -60,7 +60,7 @@ impl Metadata {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Nothing),
+            Some(ExpectedVersion::Nothing),
         )
     }
 
@@ -75,7 +75,7 @@ impl Metadata {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Prev(current_version)),
+            Some(ExpectedVersion::At(current_version)),
         )
     }
 
@@ -88,7 +88,7 @@ impl Metadata {
             EventId::from(id),
             event.name(),
             event,
-            Some(KnownEventVersion::Prev(current_version)),
+            Some(ExpectedVersion::At(current_version)),
         )
     }
 }

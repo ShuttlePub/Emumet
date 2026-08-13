@@ -36,9 +36,9 @@ impl<'de, T> Deserialize<'de> for EventVersion<T> {
 }
 
 #[derive(Debug, Clone, Ord, PartialOrd, PartialEq, Eq, Hash)]
-pub enum KnownEventVersion<T> {
+pub enum ExpectedVersion<T> {
     /// There is no event stream
     Nothing,
     /// There is an event stream and the version is the past event version of the event stream
-    Prev(EventVersion<T>),
+    At(EventVersion<T>),
 }

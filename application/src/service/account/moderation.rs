@@ -54,8 +54,9 @@ pub trait SuspendAccountUseCase:
             }
 
             let account_id = projection.id().clone();
-            let (account, current_version) =
-                rehydrate_account(self, &mut conn, &account_id).await?;
+            let (account, current_version) = rehydrate_account(self, &mut conn, &account_id)
+                .await?
+                .into_parts();
 
             if !account.status().is_active() {
                 return Err(
@@ -118,8 +119,9 @@ pub trait UnsuspendAccountUseCase:
             check_permission(self, auth_account_id, &instance_moderate()).await?;
 
             let account_id = projection.id().clone();
-            let (account, current_version) =
-                rehydrate_account(self, &mut conn, &account_id).await?;
+            let (account, current_version) = rehydrate_account(self, &mut conn, &account_id)
+                .await?
+                .into_parts();
 
             if !account.status().is_suspended() {
                 return Err(
@@ -179,8 +181,9 @@ pub trait BanAccountUseCase:
             check_permission(self, auth_account_id, &instance_moderate()).await?;
 
             let account_id = projection.id().clone();
-            let (account, current_version) =
-                rehydrate_account(self, &mut conn, &account_id).await?;
+            let (account, current_version) = rehydrate_account(self, &mut conn, &account_id)
+                .await?
+                .into_parts();
 
             if account.status().is_banned() {
                 return Err(Report::new(KernelError::Rejected)
