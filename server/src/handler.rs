@@ -56,6 +56,13 @@ impl kernel::interfaces::database::DependOnDatabaseConnection for AppModule {
     }
 }
 
+impl kernel::interfaces::database::DependOnTransactionManager for AppModule {
+    type TransactionManager = PostgresDatabase;
+    fn transaction_manager(&self) -> &Self::TransactionManager {
+        self.handler.as_ref().database_connection()
+    }
+}
+
 impl kernel::interfaces::read_model::DependOnAccountReadModel for AppModule {
     type AccountReadModel = <PostgresDatabase as kernel::interfaces::read_model::DependOnAccountReadModel>::AccountReadModel;
     fn account_read_model(&self) -> &Self::AccountReadModel {
@@ -286,6 +293,16 @@ impl kernel::interfaces::repository::DependOnSigningKeyRepository for AppModule 
         <PostgresDatabase as kernel::interfaces::repository::DependOnSigningKeyRepository>::SigningKeyRepository;
     fn signing_key_repository(&self) -> &Self::SigningKeyRepository {
         kernel::interfaces::repository::DependOnSigningKeyRepository::signing_key_repository(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::repository::DependOnAccountRepository for AppModule {
+    type AccountRepository =
+        <PostgresDatabase as kernel::interfaces::repository::DependOnAccountRepository>::AccountRepository;
+    fn account_repository(&self) -> &Self::AccountRepository {
+        kernel::interfaces::repository::DependOnAccountRepository::account_repository(
             self.handler.as_ref().database_connection(),
         )
     }
