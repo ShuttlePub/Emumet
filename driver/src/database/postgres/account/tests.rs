@@ -1,11 +1,11 @@
 mod read_model {
     use crate::database::PostgresDatabase;
     use kernel::interfaces::database::DatabaseConnection;
-    use kernel::interfaces::read_model::{
-        AccountReadModel, AuthAccountReadModel, DependOnAccountReadModel,
-        DependOnAuthAccountReadModel,
+    use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
+    use kernel::interfaces::repository::{
+        AuthAccountRepository, AuthHostRepository, DependOnAuthAccountRepository,
+        DependOnAuthHostRepository,
     };
-    use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
     use kernel::prelude::entity::{
         Account, AccountId, AuthAccountId, AuthHostId, DeletedAt, Nanoid,
     };
@@ -72,7 +72,7 @@ mod read_model {
             .host(host_id)
             .build();
         database
-            .auth_account_read_model()
+            .auth_account_repository()
             .create(&mut conn, &auth_account)
             .await
             .unwrap();

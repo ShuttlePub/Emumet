@@ -143,15 +143,13 @@ impl TestModule {
             .execute(&mut *conn)
             .await
             .unwrap();
-        sqlx::query(
-            "INSERT INTO auth_accounts (id, host_id, client_id, version) VALUES ($1, $2, $3, 0)",
-        )
-        .bind(auth_account_id.as_ref())
-        .bind(host_id)
-        .bind(format!("client-{host_id}"))
-        .execute(&mut *conn)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO auth_accounts (id, host_id, client_id) VALUES ($1, $2, $3)")
+            .bind(auth_account_id.as_ref())
+            .bind(host_id)
+            .bind(format!("client-{host_id}"))
+            .execute(&mut *conn)
+            .await
+            .unwrap();
     }
 }
 

@@ -70,8 +70,8 @@ async fn reset(headers: HeaderMap) -> Result<StatusCode, ErrorStatus> {
     let pool = get_pool().await?;
 
     sqlx::query(
-        "TRUNCATE accounts, account_events, auth_accounts, auth_account_events, \
-         auth_emumet_accounts, profiles, profile_events, metadatas, metadata_events, \
+        "TRUNCATE accounts, account_events, auth_accounts, auth_emumet_accounts, \
+         profiles, profile_events, metadatas, metadata_events, \
          auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities \
          CASCADE",
     )

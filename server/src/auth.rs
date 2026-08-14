@@ -401,12 +401,11 @@ async fn auth_middleware_core(
 // ---------------------------------------------------------------------------
 
 use crate::handler::AppModule;
-use adapter::processor::auth_account::{
-    AuthAccountCommandProcessor, AuthAccountQueryProcessor, DependOnAuthAccountCommandProcessor,
-    DependOnAuthAccountQueryProcessor,
-};
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
-use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
+use kernel::interfaces::repository::{
+    AuthAccountRepository, AuthHostRepository, DependOnAuthAccountRepository,
+    DependOnAuthHostRepository,
+};
 use kernel::prelude::entity::{
     AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
 };
@@ -418,32 +417,25 @@ pub async fn resolve_auth_account_id(
 ) -> error_stack::Result<AuthAccountId, KernelError> {
     let client_id = AuthAccountClientId::new(auth_info.subject);
     let mut executor = app.database_connection().connection().await?;
-    let auth_account = app
-        .auth_account_query_processor()
-        .find_by_client_id(&mut executor, &client_id)
+    let url = AuthHostUrl::new(auth_info.issuer);
+    let auth_host = app
+        .auth_host_repository()
+        .find_by_url(&mut executor, &url)
         .await?;
-    let auth_account = if let Some(auth_account) = auth_account {
-        auth_account
+    let auth_host = if let Some(auth_host) = auth_host {
+        auth_host
     } else {
-        let url = AuthHostUrl::new(auth_info.issuer);
-        let auth_host = app
-            .auth_host_repository()
-            .find_by_url(&mut executor, &url)
+        let auth_host = AuthHost::new(AuthHostId::default(), url);
+        app.auth_host_repository()
+            .create(&mut executor, &auth_host)
             .await?;
-        let auth_host = if let Some(auth_host) = auth_host {
-            auth_host
-        } else {
-            let auth_host = AuthHost::new(AuthHostId::default(), url);
-            app.auth_host_repository()
-                .create(&mut executor, &auth_host)
-                .await?;
-            auth_host
-        };
-        let host_id = auth_host.into_destruct().id;
-        app.auth_account_command_processor()
-            .create(&mut executor, host_id, client_id)
-            .await?
+        auth_host
     };
+    let host_id = auth_host.into_destruct().id;
+    let auth_account = app
+        .auth_account_repository()
+        .find_or_create(&mut executor, &host_id, &client_id)
+        .await?;
     Ok(auth_account.id().clone())
 }
 

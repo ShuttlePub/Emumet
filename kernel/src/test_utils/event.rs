@@ -1,12 +1,10 @@
 use crate::entity::{
-    Account, AccountEvent, AccountId, AccountIsBot, AccountName, AuthAccount, AuthAccountClientId,
-    AuthAccountEvent, AuthAccountId, AuthHostId, CommandEnvelope, Metadata, MetadataContent,
-    MetadataEvent, MetadataId, MetadataLabel, Nanoid, Profile, ProfileEvent, ProfileId,
+    Account, AccountEvent, AccountId, AccountIsBot, AccountName, AuthAccountId, CommandEnvelope,
+    Metadata, MetadataContent, MetadataEvent, MetadataId, MetadataLabel, Nanoid, Profile,
+    ProfileEvent, ProfileId,
 };
 
-use super::{
-    DEFAULT_ACCOUNT_NAME, DEFAULT_CLIENT_ID, DEFAULT_METADATA_CONTENT, DEFAULT_METADATA_LABEL,
-};
+use super::{DEFAULT_ACCOUNT_NAME, DEFAULT_METADATA_CONTENT, DEFAULT_METADATA_LABEL};
 
 pub fn account_create_command(account_id: AccountId) -> CommandEnvelope<AccountEvent, Account> {
     crate::ensure_generator_initialized();
@@ -42,16 +40,5 @@ pub fn metadata_create_command(
         MetadataLabel::new(DEFAULT_METADATA_LABEL),
         MetadataContent::new(DEFAULT_METADATA_CONTENT),
         Nanoid::default(),
-    )
-}
-
-pub fn auth_account_create_command(
-    id: AuthAccountId,
-) -> CommandEnvelope<AuthAccountEvent, AuthAccount> {
-    crate::ensure_generator_initialized();
-    AuthAccount::create(
-        id,
-        AuthHostId::default(),
-        AuthAccountClientId::new(DEFAULT_CLIENT_ID),
     )
 }
