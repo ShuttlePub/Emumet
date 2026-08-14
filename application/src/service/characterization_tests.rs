@@ -1,7 +1,6 @@
 use super::account::CreateAccountUseCase;
 use super::account_detail::UpdateAccountDetailUseCase;
 use crate::transfer::account::{AccountFieldDto, CreateAccountDto, UpdateAccountDto};
-use adapter::processor::account::DependOnAccountSignal;
 use adapter::processor::metadata::DependOnMetadataSignal;
 use adapter::processor::profile::DependOnProfileSignal;
 use driver::crypto::{Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator};
@@ -158,14 +157,6 @@ impl DependOnPermissionWriter for TestModule {
 impl DependOnPublicBaseUrl for TestModule {
     fn public_base_url(&self) -> &PublicBaseUrl {
         &self.public_base_url
-    }
-}
-
-impl DependOnAccountSignal for TestModule {
-    type AccountSignal = NoopSignal;
-
-    fn account_signal(&self) -> &Self::AccountSignal {
-        &self.signal
     }
 }
 

@@ -3,7 +3,6 @@ use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatab
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
 use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
-use kernel::interfaces::signal::Signal;
 use kernel::prelude::entity::{
     Account, AccountId, AccountIsBot, AccountName, AuthAccountId, EventVersion, Nanoid,
 };
@@ -23,13 +22,6 @@ pub struct UpdateAccountParam {
     pub account_id: AccountId,
     pub is_bot: AccountIsBot,
     pub current_version: EventVersion<Account>,
-}
-
-// --- Signal DI trait (adapter-specific) ---
-
-pub trait DependOnAccountSignal: Send + Sync {
-    type AccountSignal: Signal<AccountId> + Send + Sync + 'static;
-    fn account_signal(&self) -> &Self::AccountSignal;
 }
 
 // --- AccountCommandProcessor ---
@@ -85,7 +77,6 @@ impl<T> AccountCommandProcessor for T
 where
     T: DependOnAccountEventStore
         + DependOnAccountReadModel
-        + DependOnAccountSignal
         + Send
         + Sync
         + 'static,
@@ -126,11 +117,7 @@ where
         })?;
 
         if let Err(e) = self.account_read_model().create(executor, &account).await {
-            tracing::error!(
-                ?e,
-                "Failed to create account read model, emitting signal for recovery"
-            );
-            let _ = self.account_signal().emit(account_id).await;
+            tracing::error!(?e, "Failed to create account read model");
             return Err(e);
         }
 
@@ -139,16 +126,8 @@ where
             .link_auth_account(executor, &account_id, &auth_account_id)
             .await
         {
-            tracing::error!(
-                ?e,
-                "Failed to link auth account, emitting signal for recovery"
-            );
-            let _ = self.account_signal().emit(account_id).await;
+            tracing::error!(?e, "Failed to link auth account");
             return Err(e);
-        }
-
-        if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::error!(?e, "Failed to emit account signal");
         }
 
         Ok(account)
@@ -169,10 +148,6 @@ where
             .persist_and_transform(executor, command)
             .await?;
 
-        if let Err(e) = self.account_signal().emit(param.account_id).await {
-            tracing::warn!("Failed to emit account signal: {:?}", e);
-        }
-
         Ok(())
     }
 
@@ -187,10 +162,6 @@ where
         self.account_event_store()
             .persist_and_transform(executor, command)
             .await?;
-
-        if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::error!(?e, "Failed to emit account signal");
-        }
 
         Ok(())
     }
@@ -209,10 +180,6 @@ where
             .persist_and_transform(executor, command)
             .await?;
 
-        if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::error!(?e, "Failed to emit account signal");
-        }
-
         Ok(())
     }
 
@@ -227,10 +194,6 @@ where
         self.account_event_store()
             .persist_and_transform(executor, command)
             .await?;
-
-        if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::error!(?e, "Failed to emit account signal");
-        }
 
         Ok(())
     }
@@ -248,10 +211,6 @@ where
             .persist_and_transform(executor, command)
             .await?;
 
-        if let Err(e) = self.account_signal().emit(account_id).await {
-            tracing::error!(?e, "Failed to emit account signal");
-        }
-
         Ok(())
     }
 }
@@ -267,7 +226,6 @@ impl<T> DependOnAccountCommandProcessor for T
 where
     T: DependOnAccountEventStore
         + DependOnAccountReadModel
-        + DependOnAccountSignal
         + DependOnDatabaseConnection
         + Send
         + Sync

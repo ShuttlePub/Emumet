@@ -1,7 +1,6 @@
 use crate::applier::ApplierContainer;
 use crate::hydra::HydraAdminClient;
 use crate::kratos::KratosClient;
-use adapter::processor::account::DependOnAccountSignal;
 use adapter::processor::auth_account::DependOnAuthAccountSignal;
 use adapter::processor::metadata::DependOnMetadataSignal;
 use adapter::processor::profile::DependOnProfileSignal;
@@ -120,13 +119,6 @@ impl DependOnKeyEncryptor for AppModule {
     type KeyEncryptor = Argon2Encryptor;
     fn key_encryptor(&self) -> &Self::KeyEncryptor {
         self.handler.as_ref().key_encryptor()
-    }
-}
-
-impl DependOnAccountSignal for AppModule {
-    type AccountSignal = ApplierContainer;
-    fn account_signal(&self) -> &Self::AccountSignal {
-        &self.applier_container
     }
 }
 

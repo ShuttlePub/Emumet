@@ -4,10 +4,30 @@ use std::pin::Pin;
 
 pub trait Connection: Send {}
 
+pub trait Savepoint: Send {
+    type Connection: Connection;
+    fn commit(
+        self,
+        executor: &mut Self::Connection,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+    fn rollback(
+        self,
+        executor: &mut Self::Connection,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+}
+
 pub trait Transaction: Send {
     type Connection: Connection;
+    type Savepoint: Savepoint<Connection = Self::Connection>;
     fn connection(&mut self) -> &mut Self::Connection;
     fn commit(self) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    /// Open a savepoint on this transaction. Rolling the savepoint back leaves
+    /// the transaction usable, so one failing aggregate cannot abort the whole
+    /// batch.
+    fn savepoint(
+        &mut self,
+    ) -> impl Future<Output = error_stack::Result<Self::Savepoint, KernelError>> + Send;
 }
 
 pub trait DatabaseConnection: Sync + Send + 'static {
