@@ -35,12 +35,12 @@ pub trait CreateSigningKeyUseCase:
 {
     fn create(
         &self,
+        executor: &mut <<Self as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
         account_id: AccountId,
         nanoid: &Nanoid<Account>,
         algorithm: SigningAlgorithm,
     ) -> impl Future<Output = error_stack::Result<SigningKey, KernelError>> + Send {
         async move {
-            let mut executor = self.database_connection().connection().await?;
             let password = self.password_provider().get_password()?;
             let key_pair = self.signing_key_generator().generate(&password)?;
             let base_url = self.public_base_url().as_str();
@@ -56,7 +56,7 @@ pub trait CreateSigningKeyUseCase:
                 None,
             );
             self.signing_key_repository()
-                .create(&mut executor, &signing_key)
+                .create(executor, &signing_key)
                 .await?;
             Ok(signing_key)
         }
@@ -462,11 +462,17 @@ mod tests {
     async fn test_create_signing_key_success() {
         kernel::id::ensure_generator_initialized();
         let module = CreateMockModule::new();
+        let mut executor = MockConnection;
         let account_id = AccountId::default();
         let nanoid = Nanoid::<Account>::new("abc123".to_string());
 
         let result = module
-            .create(account_id.clone(), &nanoid, SigningAlgorithm::Rsa2048)
+            .create(
+                &mut executor,
+                account_id.clone(),
+                &nanoid,
+                SigningAlgorithm::Rsa2048,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -488,12 +494,18 @@ mod tests {
     async fn test_create_signing_key_builds_correct_key_id_uri() {
         kernel::id::ensure_generator_initialized();
         let mut module = CreateMockModule::new();
+        let mut executor = MockConnection;
         module.base_url = PublicBaseUrl::new("https://my-instance.social".to_string());
         let account_id = AccountId::default();
         let nanoid = Nanoid::<Account>::new("xyz789".to_string());
 
         let result = module
-            .create(account_id, &nanoid, SigningAlgorithm::Rsa2048)
+            .create(
+                &mut executor,
+                account_id,
+                &nanoid,
+                SigningAlgorithm::Rsa2048,
+            )
             .await;
 
         let signing_key = result.unwrap();

@@ -1,16 +1,14 @@
-use super::rehydrate::rehydrate_account;
 use crate::permission::{account_deactivate, check_permission};
-use adapter::processor::account::{
-    AccountCommandProcessor, AccountQueryProcessor, DependOnAccountCommandProcessor,
-    DependOnAccountQueryProcessor,
-};
+use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
-use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::event_store::DependOnAccountEventStore;
+use kernel::interfaces::database::{
+    DatabaseConnection, DependOnTransactionManager, TransactionManager,
+};
 use kernel::interfaces::permission::{
     AccountRelation, DependOnPermissionChecker, DependOnPermissionWriter, PermissionWriter,
     RelationTarget,
 };
+use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{Account, AuthAccountId, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
@@ -19,17 +17,18 @@ pub trait DeactivateAccountUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountCommandProcessor
+    + Clone
     + DependOnAccountQueryProcessor
-    + DependOnAccountEventStore
+    + DependOnAccountRepository
+    + DependOnTransactionManager
     + DependOnPermissionChecker
     + DependOnPermissionWriter
 {
-    fn deactivate_account(
-        &self,
-        auth_account_id: &AuthAccountId,
+    fn deactivate_account<'a>(
+        &'a self,
+        auth_account_id: &'a AuthAccountId,
         account_id: String,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
         async move {
             let mut conn = self.database_connection().connection().await?;
 
@@ -48,11 +47,26 @@ pub trait DeactivateAccountUseCase:
             check_permission(self, auth_account_id, &account_deactivate(projection.id())).await?;
 
             let account_id = projection.id().clone();
-            let (_account, current_version) = rehydrate_account(self, &mut conn, &account_id)
-                .await?
-                .into_parts();
-            self.account_command_processor()
-                .deactivate(&mut conn, account_id.clone(), current_version)
+            let transaction_account_id = account_id.clone();
+            let deps = self.clone();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let current_version = deps
+                            .account_repository()
+                            .load(executor, &transaction_account_id)
+                            .await?
+                            .into_parts()
+                            .1;
+                        deps.account_repository()
+                            .save(
+                                executor,
+                                Account::deactivate(transaction_account_id, current_version),
+                            )
+                            .await?;
+                        Ok(())
+                    })
+                })
                 .await?;
 
             for relation in [
@@ -78,9 +92,10 @@ pub trait DeactivateAccountUseCase:
 
 impl<T> DeactivateAccountUseCase for T where
     T: 'static
-        + DependOnAccountCommandProcessor
+        + Clone
         + DependOnAccountQueryProcessor
-        + DependOnAccountEventStore
+        + DependOnAccountRepository
+        + DependOnTransactionManager
         + DependOnPermissionChecker
         + DependOnPermissionWriter
 {
