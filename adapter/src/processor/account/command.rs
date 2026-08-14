@@ -1,8 +1,8 @@
 use error_stack::Report;
 use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
-use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
 use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
+use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{
     Account, AccountId, AccountIsBot, AccountName, AuthAccountId, EventVersion, Nanoid,
 };
@@ -75,10 +75,10 @@ pub trait AccountCommandProcessor: Send + Sync + 'static {
 
 impl<T> AccountCommandProcessor for T
 where
-    T: DependOnAccountEventStore + DependOnAccountReadModel + Send + Sync + 'static,
+    T: DependOnAccountRepository + DependOnAccountReadModel + Send + Sync + 'static,
 {
     type Connection =
-        <<T as DependOnAccountEventStore>::AccountEventStore as AccountEventStore>::Connection;
+        <<T as DependOnAccountRepository>::AccountRepository as AggregateRepository<Account>>::Connection;
 
     async fn create(
         &self,
@@ -100,10 +100,7 @@ where
             auth_account_id.clone(),
         );
 
-        let event_envelope = self
-            .account_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
+        let event_envelope = self.account_repository().save(executor, command).await?;
 
         let mut account = None;
         Account::apply(&mut account, event_envelope)?;
@@ -140,9 +137,7 @@ where
             param.current_version,
         );
 
-        self.account_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
+        self.account_repository().save(executor, command).await?;
 
         Ok(())
     }
@@ -155,9 +150,7 @@ where
     ) -> error_stack::Result<(), KernelError> {
         let command = Account::deactivate(account_id.clone(), current_version);
 
-        self.account_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
+        self.account_repository().save(executor, command).await?;
 
         Ok(())
     }
@@ -172,9 +165,7 @@ where
     ) -> error_stack::Result<(), KernelError> {
         let command = Account::suspend(account_id.clone(), reason, expires_at, current_version);
 
-        self.account_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
+        self.account_repository().save(executor, command).await?;
 
         Ok(())
     }
@@ -187,9 +178,7 @@ where
     ) -> error_stack::Result<(), KernelError> {
         let command = Account::unsuspend(account_id.clone(), current_version);
 
-        self.account_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
+        self.account_repository().save(executor, command).await?;
 
         Ok(())
     }
@@ -203,9 +192,7 @@ where
     ) -> error_stack::Result<(), KernelError> {
         let command = Account::ban(account_id.clone(), reason, current_version);
 
-        self.account_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
+        self.account_repository().save(executor, command).await?;
 
         Ok(())
     }
@@ -220,7 +207,7 @@ pub trait DependOnAccountCommandProcessor: DependOnDatabaseConnection + Send + S
 
 impl<T> DependOnAccountCommandProcessor for T
 where
-    T: DependOnAccountEventStore
+    T: DependOnAccountRepository
         + DependOnAccountReadModel
         + DependOnDatabaseConnection
         + Send

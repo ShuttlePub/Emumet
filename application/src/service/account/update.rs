@@ -1,4 +1,3 @@
-use super::rehydrate::rehydrate_account;
 use crate::permission::{account_edit, check_permission};
 use crate::transfer::account::UpdateAccountDto;
 use adapter::processor::account::{
@@ -7,8 +6,8 @@ use adapter::processor::account::{
 };
 use error_stack::Report;
 use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::event_store::DependOnAccountEventStore;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{Account, AccountIsBot, AuthAccountId, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
@@ -19,7 +18,7 @@ pub trait UpdateAccountUseCase:
     + Send
     + DependOnAccountCommandProcessor
     + DependOnAccountQueryProcessor
-    + DependOnAccountEventStore
+    + DependOnAccountRepository
     + DependOnPermissionChecker
 {
     fn update_account(
@@ -45,7 +44,9 @@ pub trait UpdateAccountUseCase:
             check_permission(self, auth_account_id, &account_edit(projection.id())).await?;
 
             let account_id = projection.id().clone();
-            let (account, current_version) = rehydrate_account(self, &mut conn, &account_id)
+            let (account, current_version) = self
+                .account_repository()
+                .load(&mut conn, &account_id)
                 .await?
                 .into_parts();
 
@@ -85,7 +86,7 @@ impl<T> UpdateAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
         + DependOnAccountQueryProcessor
-        + DependOnAccountEventStore
+        + DependOnAccountRepository
         + DependOnPermissionChecker
 {
 }
