@@ -1,13 +1,11 @@
-use super::rehydrate::rehydrate_account;
 use crate::permission::{check_permission, instance_moderate};
-use adapter::processor::account::{
-    AccountCommandProcessor, AccountQueryProcessor, DependOnAccountCommandProcessor,
-    DependOnAccountQueryProcessor,
-};
+use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
-use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::event_store::DependOnAccountEventStore;
+use kernel::interfaces::database::{
+    DatabaseConnection, DependOnTransactionManager, TransactionManager,
+};
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{Account, AuthAccountId, ModerationReason, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
@@ -16,18 +14,19 @@ pub trait SuspendAccountUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountCommandProcessor
+    + Clone
     + DependOnAccountQueryProcessor
-    + DependOnAccountEventStore
+    + DependOnAccountRepository
+    + DependOnTransactionManager
     + DependOnPermissionChecker
 {
-    fn suspend_account(
-        &self,
-        auth_account_id: &AuthAccountId,
+    fn suspend_account<'a>(
+        &'a self,
+        auth_account_id: &'a AuthAccountId,
         account_id: String,
         reason: String,
         expires_at: Option<time::OffsetDateTime>,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
         async move {
             ModerationReason::new(reason.as_str()).validate()?;
             let mut conn = self.database_connection().connection().await?;
@@ -54,23 +53,34 @@ pub trait SuspendAccountUseCase:
             }
 
             let account_id = projection.id().clone();
-            let (account, current_version) = rehydrate_account(self, &mut conn, &account_id)
-                .await?
-                .into_parts();
+            let deps = self.clone();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let (account, current_version) = deps
+                            .account_repository()
+                            .load(executor, &account_id)
+                            .await?
+                            .into_parts();
 
-            if !account.status().is_active() {
-                return Err(
-                    Report::new(KernelError::Rejected).attach_printable("Account is not active")
-                );
-            }
-            if account.deleted_at().is_some() {
-                return Err(
-                    Report::new(KernelError::Rejected).attach_printable("Account is deactivated")
-                );
-            }
+                        if !account.status().is_active() {
+                            return Err(Report::new(KernelError::Rejected)
+                                .attach_printable("Account is not active"));
+                        }
+                        if account.deleted_at().is_some() {
+                            return Err(Report::new(KernelError::Rejected)
+                                .attach_printable("Account is deactivated"));
+                        }
 
-            self.account_command_processor()
-                .suspend(&mut conn, account_id, reason, expires_at, current_version)
+                        deps.account_repository()
+                            .save(
+                                executor,
+                                Account::suspend(account_id, reason, expires_at, current_version),
+                            )
+                            .await?;
+                        Ok(())
+                    })
+                })
                 .await?;
 
             Ok(())
@@ -80,9 +90,10 @@ pub trait SuspendAccountUseCase:
 
 impl<T> SuspendAccountUseCase for T where
     T: 'static
-        + DependOnAccountCommandProcessor
+        + Clone
         + DependOnAccountQueryProcessor
-        + DependOnAccountEventStore
+        + DependOnAccountRepository
+        + DependOnTransactionManager
         + DependOnPermissionChecker
 {
 }
@@ -91,16 +102,17 @@ pub trait UnsuspendAccountUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountCommandProcessor
+    + Clone
     + DependOnAccountQueryProcessor
-    + DependOnAccountEventStore
+    + DependOnAccountRepository
+    + DependOnTransactionManager
     + DependOnPermissionChecker
 {
-    fn unsuspend_account(
-        &self,
-        auth_account_id: &AuthAccountId,
+    fn unsuspend_account<'a>(
+        &'a self,
+        auth_account_id: &'a AuthAccountId,
         account_id: String,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
         async move {
             let mut conn = self.database_connection().connection().await?;
 
@@ -119,18 +131,27 @@ pub trait UnsuspendAccountUseCase:
             check_permission(self, auth_account_id, &instance_moderate()).await?;
 
             let account_id = projection.id().clone();
-            let (account, current_version) = rehydrate_account(self, &mut conn, &account_id)
-                .await?
-                .into_parts();
+            let deps = self.clone();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let (account, current_version) = deps
+                            .account_repository()
+                            .load(executor, &account_id)
+                            .await?
+                            .into_parts();
 
-            if !account.status().is_suspended() {
-                return Err(
-                    Report::new(KernelError::Rejected).attach_printable("Account is not suspended")
-                );
-            }
+                        if !account.status().is_suspended() {
+                            return Err(Report::new(KernelError::Rejected)
+                                .attach_printable("Account is not suspended"));
+                        }
 
-            self.account_command_processor()
-                .unsuspend(&mut conn, account_id, current_version)
+                        deps.account_repository()
+                            .save(executor, Account::unsuspend(account_id, current_version))
+                            .await?;
+                        Ok(())
+                    })
+                })
                 .await?;
 
             Ok(())
@@ -140,9 +161,10 @@ pub trait UnsuspendAccountUseCase:
 
 impl<T> UnsuspendAccountUseCase for T where
     T: 'static
-        + DependOnAccountCommandProcessor
+        + Clone
         + DependOnAccountQueryProcessor
-        + DependOnAccountEventStore
+        + DependOnAccountRepository
+        + DependOnTransactionManager
         + DependOnPermissionChecker
 {
 }
@@ -151,17 +173,18 @@ pub trait BanAccountUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountCommandProcessor
+    + Clone
     + DependOnAccountQueryProcessor
-    + DependOnAccountEventStore
+    + DependOnAccountRepository
+    + DependOnTransactionManager
     + DependOnPermissionChecker
 {
-    fn ban_account(
-        &self,
-        auth_account_id: &AuthAccountId,
+    fn ban_account<'a>(
+        &'a self,
+        auth_account_id: &'a AuthAccountId,
         account_id: String,
         reason: String,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
         async move {
             ModerationReason::new(reason.as_str()).validate()?;
             let mut conn = self.database_connection().connection().await?;
@@ -181,22 +204,31 @@ pub trait BanAccountUseCase:
             check_permission(self, auth_account_id, &instance_moderate()).await?;
 
             let account_id = projection.id().clone();
-            let (account, current_version) = rehydrate_account(self, &mut conn, &account_id)
-                .await?
-                .into_parts();
+            let deps = self.clone();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let (account, current_version) = deps
+                            .account_repository()
+                            .load(executor, &account_id)
+                            .await?
+                            .into_parts();
 
-            if account.status().is_banned() {
-                return Err(Report::new(KernelError::Rejected)
-                    .attach_printable("Account is already banned"));
-            }
-            if account.deleted_at().is_some() {
-                return Err(
-                    Report::new(KernelError::Rejected).attach_printable("Account is deactivated")
-                );
-            }
+                        if account.status().is_banned() {
+                            return Err(Report::new(KernelError::Rejected)
+                                .attach_printable("Account is already banned"));
+                        }
+                        if account.deleted_at().is_some() {
+                            return Err(Report::new(KernelError::Rejected)
+                                .attach_printable("Account is deactivated"));
+                        }
 
-            self.account_command_processor()
-                .ban(&mut conn, account_id, reason, current_version)
+                        deps.account_repository()
+                            .save(executor, Account::ban(account_id, reason, current_version))
+                            .await?;
+                        Ok(())
+                    })
+                })
                 .await?;
 
             Ok(())
@@ -206,9 +238,10 @@ pub trait BanAccountUseCase:
 
 impl<T> BanAccountUseCase for T where
     T: 'static
-        + DependOnAccountCommandProcessor
+        + Clone
         + DependOnAccountQueryProcessor
-        + DependOnAccountEventStore
+        + DependOnAccountRepository
+        + DependOnTransactionManager
         + DependOnPermissionChecker
 {
 }

@@ -9,7 +9,7 @@ use adapter::processor::profile::{
 };
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{DependOnPasswordProvider, SigningAlgorithm};
-use kernel::interfaces::database::DatabaseConnection;
+use kernel::interfaces::database::{DependOnTransactionManager, TransactionManager};
 use kernel::interfaces::permission::{
     AccountRelation, DependOnPermissionWriter, PermissionWriter, RelationTarget,
 };
@@ -24,6 +24,7 @@ pub trait CreateAccountUseCase:
     'static
     + Sync
     + Send
+    + Clone
     + DependOnAccountCommandProcessor
     + DependOnProfileCommandProcessor
     + DependOnPasswordProvider
@@ -31,44 +32,60 @@ pub trait CreateAccountUseCase:
     + DependOnPermissionWriter
     + DependOnSigningKeyRepository
     + DependOnPublicBaseUrl
+    + DependOnTransactionManager
 {
     fn create_account(
         &self,
         auth_account_id: AuthAccountId,
         dto: CreateAccountDto,
-    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send {
+    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send + '_ {
         async move {
-            let mut conn = self.database_connection().connection().await?;
-
             let account_name = AccountName::new(dto.name);
             let account_is_bot = AccountIsBot::new(dto.is_bot);
-
             let display_name = ProfileDisplayName::new(account_name.as_ref().to_string());
-
+            let transaction_auth_account_id = auth_account_id.clone();
+            let deps = self.clone();
             let account = self
-                .account_command_processor()
-                .create(
-                    &mut conn,
-                    CreateAccountParam {
-                        name: account_name,
-                        is_bot: account_is_bot,
-                        auth_account_id: auth_account_id.clone(),
-                    },
-                )
-                .await?;
+                .transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let account = deps
+                            .account_command_processor()
+                            .create(
+                                executor,
+                                CreateAccountParam {
+                                    name: account_name,
+                                    is_bot: account_is_bot,
+                                    auth_account_id: transaction_auth_account_id,
+                                },
+                            )
+                            .await?;
 
-            self.profile_command_processor()
-                .create(
-                    &mut conn,
-                    CreateProfileParam {
-                        account_id: account.id().clone(),
-                        display_name: Some(display_name),
-                        summary: None,
-                        icon: None,
-                        banner: None,
-                        nano_id: Nanoid::<Profile>::default(),
-                    },
-                )
+                        deps.profile_command_processor()
+                            .create(
+                                executor,
+                                CreateProfileParam {
+                                    account_id: account.id().clone(),
+                                    display_name: Some(display_name),
+                                    summary: None,
+                                    icon: None,
+                                    banner: None,
+                                    nano_id: Nanoid::<Profile>::default(),
+                                },
+                            )
+                            .await?;
+
+                        deps.create(
+                            executor,
+                            account.id().clone(),
+                            account.nanoid(),
+                            SigningAlgorithm::Rsa2048,
+                        )
+                        .await?;
+
+                        Ok(account)
+                    })
+                })
                 .await?;
 
             self.permission_writer()
@@ -81,13 +98,6 @@ pub trait CreateAccountUseCase:
                 )
                 .await?;
 
-            self.create(
-                account.id().clone(),
-                account.nanoid(),
-                SigningAlgorithm::Rsa2048,
-            )
-            .await?;
-
             Ok(AccountDto::from(account))
         }
     }
@@ -95,6 +105,7 @@ pub trait CreateAccountUseCase:
 
 impl<T> CreateAccountUseCase for T where
     T: 'static
+        + Clone
         + DependOnAccountCommandProcessor
         + DependOnProfileCommandProcessor
         + DependOnPasswordProvider
@@ -102,5 +113,6 @@ impl<T> CreateAccountUseCase for T where
         + DependOnPermissionWriter
         + DependOnSigningKeyRepository
         + DependOnPublicBaseUrl
+        + DependOnTransactionManager
 {
 }

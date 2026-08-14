@@ -99,6 +99,13 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::database::DependOnTransactionManager for $impl_type {
+            type TransactionManager = $db_type;
+            fn transaction_manager(&self) -> &Self::TransactionManager {
+                &self.$field
+            }
+        }
+
         impl $crate::interfaces::read_model::DependOnAccountReadModel for $impl_type {
             type AccountReadModel = <$db_type as $crate::interfaces::read_model::DependOnAccountReadModel>::AccountReadModel;
             fn account_read_model(&self) -> &Self::AccountReadModel {
@@ -194,6 +201,13 @@ macro_rules! impl_database_delegation {
             type SigningKeyRepository = <$db_type as $crate::interfaces::repository::DependOnSigningKeyRepository>::SigningKeyRepository;
             fn signing_key_repository(&self) -> &Self::SigningKeyRepository {
                 $crate::interfaces::repository::DependOnSigningKeyRepository::signing_key_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnAccountRepository for $impl_type {
+            type AccountRepository = <$db_type as $crate::interfaces::repository::DependOnAccountRepository>::AccountRepository;
+            fn account_repository(&self) -> &Self::AccountRepository {
+                $crate::interfaces::repository::DependOnAccountRepository::account_repository(&self.$field)
             }
         }
 
