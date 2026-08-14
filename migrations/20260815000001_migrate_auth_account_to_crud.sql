@@ -1,4 +1,10 @@
 -- AuthAccount ES -> CRUD migration (ADR 0006 Stage 6)
+-- The version column is no longer part of the AuthAccount entity. Drop it
+-- before backfilling so that missing rows can be inserted without supplying a
+-- value for the removed column.
+ALTER TABLE auth_accounts DROP COLUMN IF EXISTS version;
+
+-- Fold existing auth_account_events into auth_accounts.
 INSERT INTO auth_accounts (id, host_id, client_id)
 SELECT DISTINCT ON (aae.id)
     aae.id,
@@ -9,6 +15,4 @@ LEFT JOIN auth_accounts aa ON aae.id = aa.id
 WHERE aa.id IS NULL
 ORDER BY aae.id, aae.version;
 
-ALTER TABLE auth_accounts DROP COLUMN version;
-
-DROP TABLE auth_account_events;
+DROP TABLE IF EXISTS auth_account_events;

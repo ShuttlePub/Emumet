@@ -352,4 +352,131 @@ mod test {
             "auth_accounts.version must be dropped"
         );
     }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn migration_backfills_missing_auth_account_rows() {
+        use kernel::interfaces::database::{
+            Savepoint, Transaction as _, TransactionalDatabaseConnection,
+        };
+
+        kernel::ensure_generator_initialized();
+        let database = PostgresDatabase::new().await.unwrap();
+        let mut tx = database.get_transaction().await.unwrap();
+        let sp = tx.savepoint().await.unwrap();
+        let con = tx.connection();
+
+        // Recreate the pre-migration schema shape inside the savepoint.
+        sqlx::query(
+            "ALTER TABLE auth_accounts ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0",
+        )
+        .execute(&mut **con)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS auth_account_events (
+                id BIGINT PRIMARY KEY NOT NULL,
+                version BIGINT NOT NULL,
+                event_name TEXT NOT NULL,
+                data JSONB NOT NULL
+            )",
+        )
+        .execute(&mut **con)
+        .await
+        .unwrap();
+
+        let host_id = kernel::generate_id();
+        let account_id = kernel::generate_id();
+        let client_id = "backfill-client-id";
+
+        sqlx::query("INSERT INTO auth_hosts (id, url) VALUES ($1, $2)")
+            .bind(host_id)
+            .bind(format!("https://auth-{host_id}.example.com"))
+            .execute(&mut **con)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO auth_account_events (id, version, event_name, data)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(account_id)
+        .bind(1_i64)
+        .bind("auth_account_created")
+        .bind(serde_json::json!({
+            "type": "auth_account_created",
+            "host": host_id,
+            "client_id": client_id,
+        }))
+        .execute(&mut **con)
+        .await
+        .unwrap();
+
+        // Execute the migration statements in the same order as the migration file.
+        sqlx::query("ALTER TABLE auth_accounts DROP COLUMN IF EXISTS version")
+            .execute(&mut **con)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO auth_accounts (id, host_id, client_id)
+             SELECT DISTINCT ON (aae.id)
+                 aae.id,
+                 (aae.data->>'host')::BIGINT,
+                 aae.data->>'client_id'
+             FROM auth_account_events aae
+             LEFT JOIN auth_accounts aa ON aae.id = aa.id
+             WHERE aa.id IS NULL
+             ORDER BY aae.id, aae.version",
+        )
+        .execute(&mut **con)
+        .await
+        .unwrap();
+
+        sqlx::query("DROP TABLE IF EXISTS auth_account_events")
+            .execute(&mut **con)
+            .await
+            .unwrap();
+
+        // Assert the missing row was backfilled into auth_accounts.
+        let row: (i64, i64, String) =
+            sqlx::query_as("SELECT id, host_id, client_id FROM auth_accounts WHERE id = $1")
+                .bind(account_id)
+                .fetch_one(&mut **con)
+                .await
+                .unwrap();
+        assert_eq!(row.0, account_id);
+        assert_eq!(row.1, host_id);
+        assert_eq!(row.2, client_id);
+
+        // Assert the events table and version column are gone.
+        let events_table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'auth_account_events'
+            )",
+        )
+        .fetch_one(&mut **con)
+        .await
+        .unwrap();
+        assert!(!events_table_exists);
+
+        let version_column_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'auth_accounts'
+                  AND column_name = 'version'
+            )",
+        )
+        .fetch_one(&mut **con)
+        .await
+        .unwrap();
+        assert!(!version_column_exists);
+
+        // Rollback the savepoint so the recreated old schema does not leak to other tests.
+        sp.rollback(con).await.unwrap();
+        tx.commit().await.unwrap();
+    }
 }

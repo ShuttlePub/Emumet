@@ -34,7 +34,6 @@ pub async fn truncate_tables() {
         }
     }
 
-
     pool.close().await;
 }
 
