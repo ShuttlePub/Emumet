@@ -156,6 +156,67 @@ impl BlockRepository for PostgresBlockRepository {
         }
         Ok(())
     }
+
+    async fn insert_if_absent(
+        &self,
+        executor: &mut Self::Connection,
+        block: &Block,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (blocker_local_id, blocker_remote_id) = split_block_target_id(block.source());
+        let (blocked_local_id, blocked_remote_id) = split_block_target_id(block.destination());
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO blocks (id, blocker_local_id, blocker_remote_id, blocked_local_id, blocked_remote_id)
+            VALUES ($1, $2, $3, $4, $5)
+            "#
+        ).bind(block.id().as_ref())
+            .bind(blocker_local_id)
+            .bind(blocker_remote_id)
+            .bind(blocked_local_id)
+            .bind(blocked_remote_id)
+            .execute(con)
+            .await;
+        match result {
+            Ok(_) => Ok(true),
+            Err(sqlx::Error::Database(db_err))
+                if db_err.code().is_some_and(|code| code == "23505") =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(Report::from(e).change_context(KernelError::Internal)),
+        }
+    }
+
+    async fn delete_if_exists(
+        &self,
+        executor: &mut Self::Connection,
+        source: &BlockTargetId,
+        destination: &BlockTargetId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (blocker_local_id, blocker_remote_id) = split_block_target_id(source);
+        let (blocked_local_id, blocked_remote_id) = split_block_target_id(destination);
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            DELETE FROM blocks
+            WHERE blocker_local_id IS NOT DISTINCT FROM $1
+              AND blocker_remote_id IS NOT DISTINCT FROM $2
+              AND blocked_local_id IS NOT DISTINCT FROM $3
+              AND blocked_remote_id IS NOT DISTINCT FROM $4
+            "#,
+        )
+        .bind(blocker_local_id)
+        .bind(blocker_remote_id)
+        .bind(blocked_local_id)
+        .bind(blocked_remote_id)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 impl DependOnBlockRepository for PostgresDatabase {

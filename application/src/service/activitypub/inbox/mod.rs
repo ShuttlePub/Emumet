@@ -1,12 +1,12 @@
 mod handlers;
 
-use super::delivery::deliver_activity_to_inbox;
-use super::outbox::StoreOutboxActivityUseCase;
+use super::outbox::{DeliverOutboxActivityUseCase, StoreOutboxActivityUseCase};
 use crate::transfer::activitypub::InboxActivityDto;
 use error_stack::Report;
 use kernel::activitypub::Activity;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
+use kernel::interfaces::database::DependOnTransactionManager;
 use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::repository::{
     DependOnBlockRepository, DependOnFollowRepository, DependOnOutboxActivityRepository,
@@ -20,6 +20,7 @@ pub trait InboxUseCase:
     'static
     + Sync
     + Send
+    + Clone
     + DependOnFollowRepository
     + DependOnBlockRepository
     + DependOnRemoteAccountRepository
@@ -29,7 +30,9 @@ pub trait InboxUseCase:
     + DependOnKeyEncryptor
     + DependOnPublicBaseUrl
     + DependOnOutboxActivityRepository
+    + DependOnTransactionManager
     + StoreOutboxActivityUseCase
+    + DeliverOutboxActivityUseCase
 {
     fn handle_inbox_activity(
         &self,
@@ -95,6 +98,7 @@ pub trait InboxUseCase:
     fn deliver_accept(
         &self,
         account_id: &AccountId,
+        outbox_id: &kernel::prelude::entity::OutboxActivityId,
         inbox_url: &Option<String>,
         accept: &Activity,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
@@ -103,7 +107,8 @@ pub trait InboxUseCase:
                 Report::new(KernelError::Rejected)
                     .attach_printable("Remote actor does not expose an inbox URL")
             })?;
-            deliver_activity_to_inbox(self, account_id, inbox_url, accept, "Accept").await
+            self.deliver_outbox_activity(outbox_id, account_id, inbox_url, accept, "Accept")
+                .await
         }
     }
 }
@@ -112,6 +117,7 @@ impl<T> InboxUseCase for T where
     T: 'static
         + Sync
         + Send
+        + Clone
         + DependOnFollowRepository
         + DependOnBlockRepository
         + DependOnRemoteAccountRepository
@@ -121,6 +127,8 @@ impl<T> InboxUseCase for T where
         + DependOnKeyEncryptor
         + DependOnPublicBaseUrl
         + DependOnOutboxActivityRepository
+        + DependOnTransactionManager
         + StoreOutboxActivityUseCase
+        + DeliverOutboxActivityUseCase
 {
 }

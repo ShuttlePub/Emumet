@@ -16,7 +16,7 @@ use kernel::interfaces::repository::{
     DependOnSigningKeyRepository, FollowRepository,
 };
 use kernel::prelude::entity::{
-    Account, AccountId, Follow, FollowId, FollowTargetId, Nanoid, OutboxActivity, OutboxActivityId,
+    Account, AccountId, Follow, FollowId, FollowTargetId, Nanoid, OutboxActivity,
 };
 use kernel::KernelError;
 use serde_json::Value;
@@ -124,7 +124,7 @@ pub trait SendFollowUseCase:
             }
 
             let outbox_entry = OutboxActivity {
-                id: OutboxActivityId::default(),
+                id: 0,
                 account_id: account.id().clone(),
                 activity_id: follow_activity.id.clone(),
                 activity_type: "Follow".to_string(),
@@ -134,8 +134,12 @@ pub trait SendFollowUseCase:
                     ))
                 })?,
                 created_at: time::OffsetDateTime::now_utc(),
+                delivered_at: None,
+                attempted_at: None,
+                error: None,
             };
-            self.store_outbox_activity(&outbox_entry)
+            let _ = self
+                .store_outbox_activity(&outbox_entry)
                 .await
                 .change_context_lazy(|| KernelError::Internal)
                 .attach_printable("Failed to store outbox activity")?;

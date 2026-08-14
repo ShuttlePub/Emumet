@@ -223,6 +223,99 @@ impl FollowRepository for PostgresFollowRepository {
         }
         Ok(())
     }
+
+    async fn insert_if_absent(
+        &self,
+        executor: &mut Self::Connection,
+        follow: &Follow,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (follower_local_id, follower_remote_id) = split_follow_target_id(follow.source());
+        let (followee_local_id, followee_remote_id) = split_follow_target_id(follow.destination());
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO follows (id, follower_local_id, follower_remote_id, followee_local_id, followee_remote_id, approved_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#
+        ).bind(follow.id().as_ref())
+            .bind(follower_local_id)
+            .bind(follower_remote_id)
+            .bind(followee_local_id)
+            .bind(followee_remote_id)
+            .bind(follow.approved_at().as_ref().map(FollowApprovedAt::as_ref))
+            .execute(con)
+            .await;
+        match result {
+            Ok(_) => Ok(true),
+            Err(sqlx::Error::Database(db_err))
+                if db_err.code().is_some_and(|code| code == "23505") =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(Report::from(e).change_context(KernelError::Internal)),
+        }
+    }
+
+    async fn approve_follow_if_pending(
+        &self,
+        executor: &mut Self::Connection,
+        source: &FollowTargetId,
+        destination: &FollowTargetId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (follower_local_id, follower_remote_id) = split_follow_target_id(source);
+        let (followee_local_id, followee_remote_id) = split_follow_target_id(destination);
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            UPDATE follows
+            SET approved_at = NOW()
+            WHERE follower_local_id IS NOT DISTINCT FROM $1
+              AND follower_remote_id IS NOT DISTINCT FROM $2
+              AND followee_local_id IS NOT DISTINCT FROM $3
+              AND followee_remote_id IS NOT DISTINCT FROM $4
+              AND approved_at IS NULL
+            "#,
+        )
+        .bind(follower_local_id)
+        .bind(follower_remote_id)
+        .bind(followee_local_id)
+        .bind(followee_remote_id)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_if_exists(
+        &self,
+        executor: &mut Self::Connection,
+        source: &FollowTargetId,
+        destination: &FollowTargetId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (follower_local_id, follower_remote_id) = split_follow_target_id(source);
+        let (followee_local_id, followee_remote_id) = split_follow_target_id(destination);
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            DELETE FROM follows
+            WHERE follower_local_id IS NOT DISTINCT FROM $1
+              AND follower_remote_id IS NOT DISTINCT FROM $2
+              AND followee_local_id IS NOT DISTINCT FROM $3
+              AND followee_remote_id IS NOT DISTINCT FROM $4
+            "#,
+        )
+        .bind(follower_local_id)
+        .bind(follower_remote_id)
+        .bind(followee_local_id)
+        .bind(followee_remote_id)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 impl DependOnFollowRepository for PostgresDatabase {

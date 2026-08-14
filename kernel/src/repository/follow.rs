@@ -35,6 +35,26 @@ pub trait FollowRepository: Sync + Send + 'static {
         executor: &mut Self::Connection,
         follow_id: &FollowId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn insert_if_absent(
+        &self,
+        executor: &mut Self::Connection,
+        follow: &Follow,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
+
+    fn approve_follow_if_pending(
+        &self,
+        executor: &mut Self::Connection,
+        source: &FollowTargetId,
+        destination: &FollowTargetId,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
+
+    fn delete_if_exists(
+        &self,
+        executor: &mut Self::Connection,
+        source: &FollowTargetId,
+        destination: &FollowTargetId,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
 }
 
 pub trait DependOnFollowRepository: Sync + Send + DependOnDatabaseConnection {

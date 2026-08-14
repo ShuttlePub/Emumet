@@ -23,6 +23,19 @@ pub trait MuteRepository: Sync + Send + 'static {
         executor: &mut Self::Connection,
         mute_id: &MuteId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn insert_if_absent(
+        &self,
+        executor: &mut Self::Connection,
+        mute: &Mute,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
+
+    fn delete_if_exists(
+        &self,
+        executor: &mut Self::Connection,
+        source: &MuteTargetId,
+        destination: &MuteTargetId,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
 }
 
 pub trait DependOnMuteRepository: Sync + Send + DependOnDatabaseConnection {

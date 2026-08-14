@@ -157,6 +157,68 @@ impl MuteRepository for PostgresMuteRepository {
         }
         Ok(())
     }
+
+    async fn insert_if_absent(
+        &self,
+        executor: &mut Self::Connection,
+        mute: &Mute,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (muter_local_id, muter_remote_id) = split_mute_target_id(mute.source());
+        let (muted_local_id, muted_remote_id) = split_mute_target_id(mute.destination());
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO mutes (id, muter_local_id, muter_remote_id, muted_local_id, muted_remote_id)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+        )
+        .bind(mute.id().as_ref())
+        .bind(muter_local_id)
+        .bind(muter_remote_id)
+        .bind(muted_local_id)
+        .bind(muted_remote_id)
+        .execute(con)
+        .await;
+        match result {
+            Ok(_) => Ok(true),
+            Err(sqlx::Error::Database(db_err))
+                if db_err.code().is_some_and(|code| code == "23505") =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(Report::from(e).change_context(KernelError::Internal)),
+        }
+    }
+
+    async fn delete_if_exists(
+        &self,
+        executor: &mut Self::Connection,
+        source: &MuteTargetId,
+        destination: &MuteTargetId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (muter_local_id, muter_remote_id) = split_mute_target_id(source);
+        let (muted_local_id, muted_remote_id) = split_mute_target_id(destination);
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            DELETE FROM mutes
+            WHERE muter_local_id IS NOT DISTINCT FROM $1
+              AND muter_remote_id IS NOT DISTINCT FROM $2
+              AND muted_local_id IS NOT DISTINCT FROM $3
+              AND muted_remote_id IS NOT DISTINCT FROM $4
+            "#,
+        )
+        .bind(muter_local_id)
+        .bind(muter_remote_id)
+        .bind(muted_local_id)
+        .bind(muted_remote_id)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 impl DependOnMuteRepository for PostgresDatabase {

@@ -11,4 +11,7 @@ pub struct OutboxActivity {
     pub object_json: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    pub delivered_at: Option<OffsetDateTime>,
+    pub attempted_at: Option<OffsetDateTime>,
+    pub error: Option<String>,
 }

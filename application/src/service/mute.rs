@@ -67,23 +67,14 @@ pub trait MuteAccountUseCase:
                 );
             }
 
-            let existing = self
-                .mute_repository()
-                .find_mutes(&mut executor, &source)
-                .await?;
-            if existing
-                .iter()
-                .any(|mute| mute.destination() == &destination)
-            {
-                return Err(Report::new(KernelError::Rejected).attach_printable("Already muted"));
-            }
-
             let mute = Mute::new(
                 MuteId::new(kernel::generate_id()),
                 source.clone(),
                 destination.clone(),
             )?;
-            self.mute_repository().create(&mut executor, &mute).await?;
+            self.mute_repository()
+                .insert_if_absent(&mut executor, &mute)
+                .await?;
 
             let target_type = match &destination {
                 MuteTargetId::Local(_) => "local",
@@ -156,19 +147,8 @@ pub trait UnmuteAccountUseCase:
             )
             .await?;
 
-            let mutes = self
-                .mute_repository()
-                .find_mutes(&mut executor, &source)
-                .await?;
-            let mute = mutes
-                .into_iter()
-                .find(|mute| mute.destination() == &destination)
-                .ok_or_else(|| {
-                    Report::new(KernelError::NotFound)
-                        .attach_printable("Mute relationship not found")
-                })?;
             self.mute_repository()
-                .delete(&mut executor, mute.id())
+                .delete_if_exists(&mut executor, &source, &destination)
                 .await?;
             Ok(())
         }

@@ -1,27 +1,29 @@
-use crate::service::activitypub::outbound_block::{
-    block_activity, deliver_block_activity, undo_block_activity,
+use crate::service::activitypub::outbound_block::{block_activity, undo_block_activity};
+use crate::service::activitypub::remote_actor::{
+    resolve_remote_actor_identifier, upsert_remote_account,
 };
 use crate::service::activitypub::{
-    local_actor_url,
-    remote_actor::{resolve_remote_actor_identifier, upsert_remote_account},
-    StoreOutboxActivityUseCase,
+    local_actor_url, DeliverOutboxActivityUseCase, StoreOutboxActivityUseCase,
 };
 use crate::transfer::block_mute::{BlockAccountDto, RelationDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
-use error_stack::{Report, ResultExt};
+use error_stack::Report;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
-use kernel::interfaces::database::{Connection, DatabaseConnection};
+use kernel::interfaces::database::{
+    Connection, DatabaseConnection, DependOnTransactionManager, TransactionManager,
+};
 use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::repository::{
     BlockRepository, DependOnBlockRepository, DependOnFollowRepository,
     DependOnOutboxActivityRepository, DependOnRemoteAccountRepository,
-    DependOnSigningKeyRepository, FollowRepository, RemoteAccountRepository,
+    DependOnSigningKeyRepository, FollowRepository, OutboxActivityRepository,
+    RemoteAccountRepository,
 };
 use kernel::prelude::entity::{
     Account, AuthAccountId, Block, BlockId, BlockTargetId, FollowTargetId, Nanoid, OutboxActivity,
-    OutboxActivityId, RemoteAccount,
+    RemoteAccount,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -30,6 +32,7 @@ pub trait BlockAccountUseCase:
     'static
     + Sync
     + Send
+    + Clone
     + DependOnAccountQueryProcessor
     + DependOnBlockRepository
     + DependOnFollowRepository
@@ -41,6 +44,7 @@ pub trait BlockAccountUseCase:
     + DependOnPublicBaseUrl
     + DependOnOutboxActivityRepository
     + DependOnPermissionChecker
+    + DependOnTransactionManager
     + StoreOutboxActivityUseCase
 {
     fn block_account(
@@ -88,79 +92,111 @@ pub trait BlockAccountUseCase:
                 );
             }
 
-            let existing = self
-                .block_repository()
-                .find_blocks(&mut executor, &source)
-                .await?;
-            if existing
-                .iter()
-                .any(|block| block.destination() == &destination)
-            {
-                return Err(Report::new(KernelError::Rejected).attach_printable("Already blocked"));
-            }
-
-            let block = Block::new(
-                BlockId::new(kernel::generate_id()),
-                source.clone(),
-                destination.clone(),
-            )?;
-
+            let local_actor_url =
+                local_actor_url(self.public_base_url(), account.nanoid().as_ref());
+            let block_id = BlockId::new(kernel::generate_id());
             let delivered_activity = match &resolved {
                 BlockTarget::Local(_) => None,
                 BlockTarget::Remote(remote_account) => {
-                    let local_actor_url =
-                        local_actor_url(self.public_base_url(), account.nanoid().as_ref());
                     let activity = block_activity(
                         self.public_base_url(),
-                        block.id(),
+                        &block_id,
                         &local_actor_url,
                         remote_account.url().as_ref(),
                     );
-                    deliver_block_activity(self, account.id(), &activity, remote_account, "Block")
-                        .await?;
-                    Some(activity)
+                    Some((activity, remote_account.inbox_url().clone()))
                 }
             };
 
-            self.block_repository()
-                .create(&mut executor, &block)
-                .await?;
-
-            let follow_source = block_target_to_follow_target(&source);
-            let follow_destination = block_target_to_follow_target(&destination);
-            remove_follows_between(
-                self.follow_repository(),
-                &mut executor,
-                &follow_source,
-                &follow_destination,
-            )
-            .await?;
-
-            if let Some(activity) = delivered_activity {
-                let outbox_entry = OutboxActivity {
-                    id: OutboxActivityId::default(),
-                    account_id: account.id().clone(),
-                    activity_id: activity.id.clone(),
-                    activity_type: "Block".to_string(),
-                    object_json: serde_json::to_string(&activity).map_err(|error| {
-                        Report::new(KernelError::Internal).attach_printable(format!(
-                            "Failed to serialize Block activity to JSON: {error}"
-                        ))
-                    })?,
-                    created_at: time::OffsetDateTime::now_utc(),
-                };
-                self.store_outbox_activity(&outbox_entry)
-                    .await
-                    .change_context_lazy(|| KernelError::Internal)
-                    .attach_printable("Failed to store outbox activity")?;
-            }
-
-            let target_type = match &destination {
+            let deps = self.clone();
+            let account_id = account.id().clone();
+            let source_for_tx = source.clone();
+            let destination_for_tx = destination.clone();
+            let block = Block::new(block_id, source, destination)?;
+            let target_type = match block.destination() {
                 BlockTargetId::Local(_) => "local",
                 BlockTargetId::Remote(_) => "remote",
             };
+            let block_id_for_result = block.id().as_ref().to_string();
+            let account_id_for_delivery = account_id.clone();
+            let (outbox_id, delivered_activity) = self
+                .transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let existing = deps
+                            .block_repository()
+                            .find_blocks(executor, &source_for_tx)
+                            .await?;
+                        if existing
+                            .iter()
+                            .any(|block| block.destination() == &destination_for_tx)
+                        {
+                            return Err(Report::new(KernelError::Rejected)
+                                .attach_printable("Already blocked"));
+                        }
+
+                        deps.block_repository().create(executor, &block).await?;
+
+                        let follow_source = block_target_to_follow_target(&source_for_tx);
+                        let follow_destination = block_target_to_follow_target(&destination_for_tx);
+                        remove_follows_between(
+                            deps.follow_repository(),
+                            executor,
+                            &follow_source,
+                            &follow_destination,
+                        )
+                        .await?;
+
+                        let outbox_id = if let Some((activity, _)) = &delivered_activity {
+                            let outbox_entry = OutboxActivity {
+                                id: 0,
+                                account_id: account_id.clone(),
+                                activity_id: activity.id.clone(),
+                                activity_type: "Block".to_string(),
+                                object_json: serde_json::to_string(&activity).map_err(|error| {
+                                    Report::new(KernelError::Internal).attach_printable(format!(
+                                        "Failed to serialize Block activity to JSON: {error}"
+                                    ))
+                                })?,
+                                created_at: time::OffsetDateTime::now_utc(),
+                                delivered_at: None,
+                                attempted_at: None,
+                                error: None,
+                            };
+                            Some(
+                                deps.outbox_activity_repository()
+                                    .create(executor, &outbox_entry)
+                                    .await?,
+                            )
+                        } else {
+                            None
+                        };
+
+                        Ok((outbox_id, delivered_activity))
+                    })
+                })
+                .await?;
+
+            if let (Some(outbox_id), Some((activity, inbox_url))) = (outbox_id, delivered_activity)
+            {
+                if let Some(inbox_url) = inbox_url.as_deref() {
+                    if let Err(error) = self
+                        .deliver_outbox_activity(
+                            &outbox_id,
+                            &account_id_for_delivery,
+                            inbox_url,
+                            &activity,
+                            "Block",
+                        )
+                        .await
+                    {
+                        tracing::warn!(?error, inbox_url, "Failed to deliver ActivityPub Block");
+                    }
+                }
+            }
+
             Ok(RelationDto {
-                id: block.id().as_ref().to_string(),
+                id: block_id_for_result,
                 target_type: target_type.to_string(),
                 target,
             })
@@ -170,6 +206,7 @@ pub trait BlockAccountUseCase:
 
 impl<T> BlockAccountUseCase for T where
     T: 'static
+        + Clone
         + Sync
         + Send
         + DependOnAccountQueryProcessor
@@ -183,6 +220,7 @@ impl<T> BlockAccountUseCase for T where
         + DependOnPublicBaseUrl
         + DependOnOutboxActivityRepository
         + DependOnPermissionChecker
+        + DependOnTransactionManager
         + StoreOutboxActivityUseCase
 {
 }
@@ -191,6 +229,7 @@ pub trait UnblockAccountUseCase:
     'static
     + Sync
     + Send
+    + Clone
     + DependOnAccountQueryProcessor
     + DependOnBlockRepository
     + DependOnRemoteAccountRepository
@@ -201,7 +240,9 @@ pub trait UnblockAccountUseCase:
     + DependOnPublicBaseUrl
     + DependOnOutboxActivityRepository
     + DependOnPermissionChecker
+    + DependOnTransactionManager
     + StoreOutboxActivityUseCase
+    + DeliverOutboxActivityUseCase
 {
     fn unblock_account(
         &self,
@@ -242,61 +283,97 @@ pub trait UnblockAccountUseCase:
             .await?;
             let (destination, _) = block_target_parts(&resolved);
 
-            let blocks = self
-                .block_repository()
-                .find_blocks(&mut executor, &source)
-                .await?;
-            let block = blocks
-                .into_iter()
-                .find(|block| block.destination() == &destination)
-                .ok_or_else(|| {
-                    Report::new(KernelError::NotFound)
-                        .attach_printable("Block relationship not found")
-                })?;
+            let deps = self.clone();
+            let account_id = account.id().clone();
+            let account_id_for_delivery = account_id.clone();
+            let local_actor_url =
+                local_actor_url(self.public_base_url(), account.nanoid().as_ref());
+            let (outbox_id, delivered_activity) = self
+                .transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let blocks = deps
+                            .block_repository()
+                            .find_blocks(executor, &source)
+                            .await?;
+                        let block = blocks
+                            .into_iter()
+                            .find(|block| block.destination() == &destination)
+                            .ok_or_else(|| {
+                                Report::new(KernelError::NotFound)
+                                    .attach_printable("Block relationship not found")
+                            })?;
 
-            let delivered_activity = match &resolved {
-                BlockTarget::Local(_) => None,
-                BlockTarget::Remote(remote_account) => {
-                    let local_actor_url =
-                        local_actor_url(self.public_base_url(), account.nanoid().as_ref());
-                    let original_block = block_activity(
-                        self.public_base_url(),
-                        block.id(),
-                        &local_actor_url,
-                        remote_account.url().as_ref(),
-                    );
-                    let undo = undo_block_activity(
-                        self.public_base_url(),
-                        original_block,
-                        remote_account.url().as_ref(),
-                    )?;
-                    deliver_block_activity(self, account.id(), &undo, remote_account, "Undo")
-                        .await?;
-                    Some(undo)
+                        let delivered_activity = match &resolved {
+                            BlockTarget::Local(_) => None,
+                            BlockTarget::Remote(remote_account) => {
+                                let original_block = block_activity(
+                                    deps.public_base_url(),
+                                    block.id(),
+                                    &local_actor_url,
+                                    remote_account.url().as_ref(),
+                                );
+                                let undo = undo_block_activity(
+                                    deps.public_base_url(),
+                                    original_block,
+                                    remote_account.url().as_ref(),
+                                )?;
+                                Some((undo, remote_account.inbox_url().clone()))
+                            }
+                        };
+
+                        deps.block_repository().delete(executor, block.id()).await?;
+
+                        let outbox_id = if let Some((activity, _)) = &delivered_activity {
+                            let outbox_entry = OutboxActivity {
+                                id: 0,
+                                account_id: account_id.clone(),
+                                activity_id: activity.id.clone(),
+                                activity_type: "Undo".to_string(),
+                                object_json: serde_json::to_string(&activity).map_err(|error| {
+                                    Report::new(KernelError::Internal).attach_printable(format!(
+                                        "Failed to serialize Undo activity to JSON: {error}"
+                                    ))
+                                })?,
+                                created_at: time::OffsetDateTime::now_utc(),
+                                delivered_at: None,
+                                attempted_at: None,
+                                error: None,
+                            };
+                            Some(
+                                deps.outbox_activity_repository()
+                                    .create(executor, &outbox_entry)
+                                    .await?,
+                            )
+                        } else {
+                            None
+                        };
+
+                        Ok((outbox_id, delivered_activity))
+                    })
+                })
+                .await?;
+
+            if let (Some(outbox_id), Some((activity, inbox_url))) = (outbox_id, delivered_activity)
+            {
+                if let Some(inbox_url) = inbox_url.as_deref() {
+                    if let Err(error) = self
+                        .deliver_outbox_activity(
+                            &outbox_id,
+                            &account_id_for_delivery,
+                            inbox_url,
+                            &activity,
+                            "Undo",
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            ?error,
+                            inbox_url,
+                            "Failed to deliver ActivityPub Undo(Block)"
+                        );
+                    }
                 }
-            };
-
-            self.block_repository()
-                .delete(&mut executor, block.id())
-                .await?;
-
-            if let Some(activity) = delivered_activity {
-                let outbox_entry = OutboxActivity {
-                    id: OutboxActivityId::default(),
-                    account_id: account.id().clone(),
-                    activity_id: activity.id.clone(),
-                    activity_type: "Undo".to_string(),
-                    object_json: serde_json::to_string(&activity).map_err(|error| {
-                        Report::new(KernelError::Internal).attach_printable(format!(
-                            "Failed to serialize Undo activity to JSON: {error}"
-                        ))
-                    })?,
-                    created_at: time::OffsetDateTime::now_utc(),
-                };
-                self.store_outbox_activity(&outbox_entry)
-                    .await
-                    .change_context_lazy(|| KernelError::Internal)
-                    .attach_printable("Failed to store outbox activity")?;
             }
             Ok(())
         }
@@ -305,6 +382,7 @@ pub trait UnblockAccountUseCase:
 
 impl<T> UnblockAccountUseCase for T where
     T: 'static
+        + Clone
         + Sync
         + Send
         + DependOnAccountQueryProcessor
@@ -317,7 +395,9 @@ impl<T> UnblockAccountUseCase for T where
         + DependOnPublicBaseUrl
         + DependOnOutboxActivityRepository
         + DependOnPermissionChecker
+        + DependOnTransactionManager
         + StoreOutboxActivityUseCase
+        + DeliverOutboxActivityUseCase
 {
 }
 

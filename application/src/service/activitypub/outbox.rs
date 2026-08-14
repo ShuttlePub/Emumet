@@ -1,10 +1,15 @@
+use super::delivery::deliver_activity_to_inbox;
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
-use kernel::activitypub::{ActorUrlBuilder, OrderedCollection};
+use kernel::activitypub::{Activity, ActorUrlBuilder, OrderedCollection};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
-use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::repository::{DependOnOutboxActivityRepository, OutboxActivityRepository};
-use kernel::prelude::entity::{AccountId, OutboxActivity};
+use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
+use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::http_signing::DependOnHttpSigner;
+use kernel::interfaces::repository::{
+    DependOnOutboxActivityRepository, DependOnSigningKeyRepository, OutboxActivityRepository,
+};
+use kernel::prelude::entity::{AccountId, OutboxActivity, OutboxActivityId};
 use kernel::KernelError;
 use std::future::Future;
 
@@ -14,7 +19,7 @@ pub trait StoreOutboxActivityUseCase:
     fn store_outbox_activity(
         &self,
         activity: &OutboxActivity,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+    ) -> impl Future<Output = error_stack::Result<OutboxActivityId, KernelError>> + Send {
         async move {
             let mut executor = self.database_connection().connection().await?;
             self.outbox_activity_repository()
@@ -26,6 +31,64 @@ pub trait StoreOutboxActivityUseCase:
 
 impl<T> StoreOutboxActivityUseCase for T where
     T: 'static + Sync + Send + DependOnOutboxActivityRepository
+{
+}
+
+pub trait DeliverOutboxActivityUseCase:
+    'static
+    + Sync
+    + Send
+    + DependOnOutboxActivityRepository
+    + DependOnDatabaseConnection
+    + DependOnSigningKeyRepository
+    + DependOnPasswordProvider
+    + DependOnKeyEncryptor
+    + DependOnHttpSigner
+{
+    fn deliver_outbox_activity(
+        &self,
+        outbox_id: &OutboxActivityId,
+        account_id: &AccountId,
+        inbox_url: &str,
+        activity: &Activity,
+        activity_name: &str,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+        async move {
+            match deliver_activity_to_inbox(self, account_id, inbox_url, activity, activity_name)
+                .await
+            {
+                Ok(()) => {
+                    let mut executor = self.database_connection().connection().await?;
+                    self.outbox_activity_repository()
+                        .mark_delivered(&mut executor, outbox_id)
+                        .await
+                }
+                Err(error) => {
+                    let mut executor = self.database_connection().connection().await?;
+                    self.outbox_activity_repository()
+                        .mark_delivery_attempt(
+                            &mut executor,
+                            outbox_id,
+                            Some(&format!("{error:?}")),
+                        )
+                        .await?;
+                    Err(error)
+                }
+            }
+        }
+    }
+}
+
+impl<T> DeliverOutboxActivityUseCase for T where
+    T: 'static
+        + Sync
+        + Send
+        + DependOnOutboxActivityRepository
+        + DependOnDatabaseConnection
+        + DependOnSigningKeyRepository
+        + DependOnPasswordProvider
+        + DependOnKeyEncryptor
+        + DependOnHttpSigner
 {
 }
 
@@ -193,6 +256,7 @@ mod tests {
 
     struct MockOutboxActivityRepository {
         activities: Mutex<Vec<OutboxActivity>>,
+        next_id: Mutex<i64>,
     }
 
     impl OutboxActivityRepository for MockOutboxActivityRepository {
@@ -202,9 +266,17 @@ mod tests {
             &self,
             _executor: &mut Self::Connection,
             activity: &OutboxActivity,
-        ) -> error_stack::Result<(), KernelError> {
-            self.activities.lock().unwrap().push(activity.clone());
-            Ok(())
+        ) -> error_stack::Result<OutboxActivityId, KernelError> {
+            let id = {
+                let mut next_id = self.next_id.lock().unwrap();
+                let id = *next_id;
+                *next_id += 1;
+                id
+            };
+            let mut activity = activity.clone();
+            activity.id = id;
+            self.activities.lock().unwrap().push(activity);
+            Ok(id)
         }
 
         async fn find_by_account_id(
@@ -220,6 +292,7 @@ mod tests {
                 .unwrap()
                 .iter()
                 .filter(|activity| &activity.account_id == account_id)
+                .filter(|activity| activity.delivered_at.is_some())
                 .filter(|activity| cursor.is_none_or(|cursor| activity.id < cursor))
                 .cloned()
                 .collect::<Vec<_>>();
@@ -239,7 +312,53 @@ mod tests {
                 .unwrap()
                 .iter()
                 .filter(|activity| &activity.account_id == account_id)
+                .filter(|activity| activity.delivered_at.is_some())
                 .count() as u64)
+        }
+
+        async fn find_pending_deliveries(
+            &self,
+            _executor: &mut Self::Connection,
+            limit: usize,
+        ) -> error_stack::Result<Vec<OutboxActivity>, KernelError> {
+            let activities = self
+                .activities
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|activity| activity.delivered_at.is_none())
+                .cloned()
+                .take(limit)
+                .collect::<Vec<_>>();
+            Ok(activities)
+        }
+
+        async fn mark_delivered(
+            &self,
+            _executor: &mut Self::Connection,
+            id: &OutboxActivityId,
+        ) -> error_stack::Result<(), KernelError> {
+            let mut activities = self.activities.lock().unwrap();
+            if let Some(activity) = activities.iter_mut().find(|activity| activity.id == *id) {
+                activity.delivered_at = Some(OffsetDateTime::now_utc());
+                activity.attempted_at = None;
+                activity.error = None;
+            }
+            Ok(())
+        }
+
+        async fn mark_delivery_attempt(
+            &self,
+            _executor: &mut Self::Connection,
+            id: &OutboxActivityId,
+            error: Option<&str>,
+        ) -> error_stack::Result<(), KernelError> {
+            let mut activities = self.activities.lock().unwrap();
+            if let Some(activity) = activities.iter_mut().find(|activity| activity.id == *id) {
+                activity.attempted_at = Some(OffsetDateTime::now_utc());
+                activity.error = error.map(str::to_string);
+            }
+            Ok(())
         }
     }
 
@@ -295,6 +414,7 @@ mod tests {
                 accounts: MockAccountQueryProcessor { account },
                 outbox: MockOutboxActivityRepository {
                     activities: Mutex::new(vec![outbox_activity(1, account_id.clone(), "Create")]),
+                    next_id: Mutex::new(2),
                 },
                 public_base_url: PublicBaseUrl::new("https://example.com/".to_string()),
             },
@@ -317,6 +437,9 @@ mod tests {
             })
             .to_string(),
             created_at: OffsetDateTime::now_utc(),
+            delivered_at: Some(OffsetDateTime::now_utc()),
+            attempted_at: None,
+            error: None,
         }
     }
 
@@ -325,7 +448,7 @@ mod tests {
         let (module, account_id) = module();
         let activity = outbox_activity(2, account_id.clone(), "Accept");
 
-        module.store_outbox_activity(&activity).await.unwrap();
+        let id = module.store_outbox_activity(&activity).await.unwrap();
 
         let mut executor = MockConnection;
         let activities = module
@@ -333,7 +456,7 @@ mod tests {
             .find_by_account_id(&mut executor, &account_id, 10, None)
             .await
             .unwrap();
-        assert!(activities.iter().any(|stored| stored.id == 2));
+        assert!(activities.iter().any(|stored| stored.id == id));
     }
 
     #[tokio::test]

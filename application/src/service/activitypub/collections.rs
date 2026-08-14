@@ -239,6 +239,32 @@ mod tests {
         ) -> error_stack::Result<(), KernelError> {
             Ok(())
         }
+
+        async fn insert_if_absent(
+            &self,
+            _executor: &mut Self::Connection,
+            _follow: &Follow,
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(true)
+        }
+
+        async fn approve_follow_if_pending(
+            &self,
+            _executor: &mut Self::Connection,
+            _source: &FollowTargetId,
+            _destination: &FollowTargetId,
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(true)
+        }
+
+        async fn delete_if_exists(
+            &self,
+            _executor: &mut Self::Connection,
+            _source: &FollowTargetId,
+            _destination: &FollowTargetId,
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(true)
+        }
     }
 
     struct MockModule {
