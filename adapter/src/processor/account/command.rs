@@ -75,11 +75,7 @@ pub trait AccountCommandProcessor: Send + Sync + 'static {
 
 impl<T> AccountCommandProcessor for T
 where
-    T: DependOnAccountEventStore
-        + DependOnAccountReadModel
-        + Send
-        + Sync
-        + 'static,
+    T: DependOnAccountEventStore + DependOnAccountReadModel + Send + Sync + 'static,
 {
     type Connection =
         <<T as DependOnAccountEventStore>::AccountEventStore as AccountEventStore>::Connection;

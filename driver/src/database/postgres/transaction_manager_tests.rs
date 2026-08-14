@@ -1,6 +1,6 @@
 use super::*;
-use sqlx::PgConnection;
 use error_stack::Report;
+use sqlx::PgConnection;
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
@@ -102,7 +102,10 @@ async fn savepoint_rolls_back_failed_work_and_keeps_transaction_usable() {
             .execute(&mut *con)
             .await
     };
-    assert!(failed.is_err(), "duplicate url must fail inside the savepoint");
+    assert!(
+        failed.is_err(),
+        "duplicate url must fail inside the savepoint"
+    );
     {
         let con = tx.connection();
         savepoint.rollback(con).await.unwrap();

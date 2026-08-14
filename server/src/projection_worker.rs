@@ -26,7 +26,10 @@ impl ProjectionShutdown {
 }
 
 impl ProjectionWorker {
-    pub fn spawn(module: Arc<AppModule>, interval: Duration) -> (JoinHandle<()>, ProjectionShutdown) {
+    pub fn spawn(
+        module: Arc<AppModule>,
+        interval: Duration,
+    ) -> (JoinHandle<()>, ProjectionShutdown) {
         let (tx, rx) = watch::channel(false);
         let worker = Self {
             module,

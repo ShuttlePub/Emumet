@@ -7,8 +7,7 @@ use kernel::interfaces::permission::{
 };
 use kernel::interfaces::projection::{
     AccountEventLog, AccountProjectionWriter, DependOnAccountEventLog,
-    DependOnAccountProjectionWriter, DependOnProjectionCheckpointStore,
-    ProjectionCheckpointStore,
+    DependOnAccountProjectionWriter, DependOnProjectionCheckpointStore, ProjectionCheckpointStore,
 };
 use kernel::interfaces::read_model::{
     AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
@@ -49,7 +48,9 @@ pub trait ProjectAccountBatch:
     + DependOnPermissionWriter
 {
     /// Run one tailing poll. Returns the checkpoint after the poll.
-    fn project_batch(&self) -> impl Future<Output = error_stack::Result<i64, KernelError>> + Send + '_ {
+    fn project_batch(
+        &self,
+    ) -> impl Future<Output = error_stack::Result<i64, KernelError>> + Send + '_ {
         async move {
             let mut transaction = self.database_connection().get_transaction().await?;
 
@@ -88,7 +89,10 @@ pub trait ProjectAccountBatch:
             for (account_id, mut envelopes) in groups {
                 envelopes.sort_by_key(|event| *event.version.as_ref());
                 let created_auth_account_id = envelopes.iter().find_map(|event| {
-                    if let AccountEvent::Created { auth_account_id, .. } = &event.event {
+                    if let AccountEvent::Created {
+                        auth_account_id, ..
+                    } = &event.event
+                    {
                         Some(auth_account_id.clone())
                     } else {
                         None
@@ -246,8 +250,7 @@ pub trait ProjectAccountBatch:
     }
 }
 
-impl<T> ProjectAccountBatch for T
-where
+impl<T> ProjectAccountBatch for T where
     T: DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
         + DependOnAccountEventLog
         + DependOnProjectionCheckpointStore
@@ -256,6 +259,6 @@ where
         + DependOnProfileReadModel
         + DependOnMetadataReadModel
         + DependOnFollowRepository
-        + DependOnPermissionWriter,
+        + DependOnPermissionWriter
 {
 }

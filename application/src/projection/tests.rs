@@ -1,12 +1,12 @@
 use super::ProjectAccountBatch;
 use driver::database::PostgresDatabase;
 use kernel::impl_database_delegation;
-use kernel::interfaces::database::{DatabaseConnection, Transaction, TransactionalDatabaseConnection};
+use kernel::interfaces::database::{
+    DatabaseConnection, Transaction, TransactionalDatabaseConnection,
+};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
-use kernel::interfaces::permission::{
-    DependOnPermissionWriter, PermissionWriter, RelationTarget,
-};
+use kernel::interfaces::permission::{DependOnPermissionWriter, PermissionWriter, RelationTarget};
 use kernel::interfaces::projection::{
     AccountProjectionWriter, DependOnAccountEventLog, DependOnAccountProjectionWriter,
     DependOnProjectionCheckpointStore,
@@ -60,8 +60,7 @@ impl DependOnPermissionWriter for ProjectorTest {
 }
 
 impl DependOnAccountEventLog for ProjectorTest {
-    type AccountEventLog =
-        <PostgresDatabase as DependOnAccountEventLog>::AccountEventLog;
+    type AccountEventLog = <PostgresDatabase as DependOnAccountEventLog>::AccountEventLog;
 
     fn account_event_log(&self) -> &Self::AccountEventLog {
         DependOnAccountEventLog::account_event_log(&self.db)
@@ -127,13 +126,12 @@ async fn seed_auth_account(db: &PostgresDatabase, auth_account_id: &AuthAccountI
 async fn max_seq_for(db: &PostgresDatabase, account_id: &AccountId) -> i64 {
     let mut conn = db.connection().await.unwrap();
     let con: &mut PgConnection = &mut conn;
-    let row: Option<(i64,)> = sqlx::query_as::<_, (i64,)>(
-        "SELECT MAX(seq) FROM account_events WHERE id = $1",
-    )
-    .bind(account_id.as_ref())
-    .fetch_optional(con)
-    .await
-    .unwrap();
+    let row: Option<(i64,)> =
+        sqlx::query_as::<_, (i64,)>("SELECT MAX(seq) FROM account_events WHERE id = $1")
+            .bind(account_id.as_ref())
+            .fetch_optional(con)
+            .await
+            .unwrap();
     row.map(|row| row.0).unwrap_or(0)
 }
 
@@ -193,10 +191,7 @@ async fn project_batch_is_idempotent_and_advances_checkpoint() {
     let state_1 = projector
         .db
         .account_read_model()
-        .find_by_id_unfiltered(
-            &mut projector.db.connection().await.unwrap(),
-            &account_id,
-        )
+        .find_by_id_unfiltered(&mut projector.db.connection().await.unwrap(), &account_id)
         .await
         .unwrap()
         .expect("first batch must materialize the account");
@@ -205,15 +200,15 @@ async fn project_batch_is_idempotent_and_advances_checkpoint() {
     let state_2 = projector
         .db
         .account_read_model()
-        .find_by_id_unfiltered(
-            &mut projector.db.connection().await.unwrap(),
-            &account_id,
-        )
+        .find_by_id_unfiltered(&mut projector.db.connection().await.unwrap(), &account_id)
         .await
         .unwrap()
         .expect("account must remain materialized");
 
-    assert!(checkpoint_1 >= account_max, "checkpoint must cover the batch");
+    assert!(
+        checkpoint_1 >= account_max,
+        "checkpoint must cover the batch"
+    );
     assert!(
         checkpoint_2 >= checkpoint_1,
         "checkpoint must never regress"
@@ -289,10 +284,7 @@ async fn older_version_upsert_is_a_noop() {
     let stored = projector
         .db
         .account_read_model()
-        .find_by_id_unfiltered(
-            &mut projector.db.connection().await.unwrap(),
-            &account_id,
-        )
+        .find_by_id_unfiltered(&mut projector.db.connection().await.unwrap(), &account_id)
         .await
         .unwrap()
         .unwrap();
@@ -369,10 +361,7 @@ async fn commit_order_inversion_eventually_projects_both_events() {
     let projected = projector
         .db
         .account_read_model()
-        .find_by_id_unfiltered(
-            &mut projector.db.connection().await.unwrap(),
-            &account_id,
-        )
+        .find_by_id_unfiltered(&mut projector.db.connection().await.unwrap(), &account_id)
         .await
         .unwrap()
         .expect("window re-read must project the late-committed create");
@@ -437,10 +426,7 @@ async fn per_aggregate_fold_uses_version_order_not_seq_order() {
     let projected = projector
         .db
         .account_read_model()
-        .find_by_id_unfiltered(
-            &mut projector.db.connection().await.unwrap(),
-            &account_id,
-        )
+        .find_by_id_unfiltered(&mut projector.db.connection().await.unwrap(), &account_id)
         .await
         .unwrap()
         .expect("version-ordered fold must converge");
