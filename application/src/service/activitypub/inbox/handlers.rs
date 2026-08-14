@@ -22,7 +22,7 @@ pub(super) async fn handle_follow_activity<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let followed_actor_url = activity_object_id(&dto.activity).ok_or_else(|| {
         Report::new(KernelError::Rejected)
@@ -124,7 +124,7 @@ pub(super) async fn handle_undo_follow<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let follow_activity = undo_follow_object(&dto.activity).ok_or_else(|| {
         Report::new(KernelError::Rejected)
@@ -164,7 +164,7 @@ pub(super) async fn handle_accept_activity<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let accept = &dto.activity;
     let nested_follow = accept
@@ -240,7 +240,7 @@ pub(super) async fn handle_block_activity<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let blocked_actor_url = activity_object_id(&dto.activity).ok_or_else(|| {
         Report::new(KernelError::Rejected)
@@ -300,7 +300,7 @@ pub(super) async fn handle_undo_block_activity<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let block_activity = undo_block_object(&dto.activity).ok_or_else(|| {
         Report::new(KernelError::Rejected)
