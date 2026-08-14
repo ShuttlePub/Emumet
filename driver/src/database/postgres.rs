@@ -13,6 +13,7 @@ mod mute;
 mod outbox_activity;
 mod profile;
 mod profile_event_store;
+mod projection;
 mod remote_account;
 mod signing_key;
 #[cfg(test)]
@@ -22,7 +23,7 @@ use crate::database::env;
 use crate::ConvertError;
 use error_stack::{Report, ResultExt};
 use kernel::interfaces::database::{
-    Connection, DatabaseConnection, Transaction as DbTransaction, TransactionManager,
+    Connection, DatabaseConnection, Savepoint, Transaction as DbTransaction, TransactionManager,
     TransactionalDatabaseConnection,
 };
 use kernel::KernelError;
@@ -97,8 +98,40 @@ impl DerefMut for PostgresConnection {
 
 pub struct PostgresTransaction(PostgresConnection);
 
+pub struct PostgresSavepoint;
+
+impl Savepoint for PostgresSavepoint {
+    type Connection = PostgresConnection;
+
+    async fn commit(self, executor: &mut Self::Connection) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query("RELEASE SAVEPOINT emumet_sp")
+            .execute(con)
+            .await
+            .convert_error()?;
+        Ok(())
+    }
+
+    async fn rollback(
+        self,
+        executor: &mut Self::Connection,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query("ROLLBACK TO SAVEPOINT emumet_sp")
+            .execute(&mut *con)
+            .await
+            .convert_error()?;
+        sqlx::query("RELEASE SAVEPOINT emumet_sp")
+            .execute(&mut *con)
+            .await
+            .convert_error()?;
+        Ok(())
+    }
+}
+
 impl DbTransaction for PostgresTransaction {
     type Connection = PostgresConnection;
+    type Savepoint = PostgresSavepoint;
 
     fn connection(&mut self) -> &mut Self::Connection {
         &mut self.0
@@ -112,6 +145,15 @@ impl DbTransaction for PostgresTransaction {
                 .change_context(KernelError::Internal),
             PostgresConnectionInner::Connection(_) => unreachable!(),
         }
+    }
+
+    async fn savepoint(&mut self) -> error_stack::Result<Self::Savepoint, KernelError> {
+        let con: &mut PgConnection = &mut self.0;
+        sqlx::query("SAVEPOINT emumet_sp")
+            .execute(con)
+            .await
+            .convert_error()?;
+        Ok(PostgresSavepoint)
     }
 }
 

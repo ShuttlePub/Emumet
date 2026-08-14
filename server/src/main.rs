@@ -5,12 +5,14 @@ mod handler;
 mod hydra;
 mod kratos;
 mod openapi;
+mod projection_worker;
 mod route;
 mod schema;
 
 use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
 use crate::handler::AppModule;
+use crate::projection_worker::{projection_poll_interval_from_env, ProjectionWorker};
 use crate::route::account::{AccountRouter, AdminAccountRouter};
 use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
 use crate::route::me::MeRouter;
@@ -72,6 +74,10 @@ async fn main() -> Result<(), StackTrace> {
 
     let app = AppModule::new().await?;
 
+    // Transactional log tailing worker for account projections (ADR 0006 Stage 3).
+    let (_projection_handle, projection_shutdown) =
+        ProjectionWorker::spawn(Arc::new(app.clone()), projection_poll_interval_from_env());
+
     #[cfg(feature = "test-mode")]
     {
         let token = std::env::var("EMUMET_TEST_MODE_TOKEN");
@@ -120,8 +126,13 @@ async fn main() -> Result<(), StackTrace> {
         .attach_printable_lazy(|| "Failed to bind to port 8080")?;
 
     axum::serve(tcp, router.into_make_service())
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
         .await
         .change_context_lazy(|| KernelError::Internal)?;
+
+    projection_shutdown.trigger();
 
     Ok(())
 }

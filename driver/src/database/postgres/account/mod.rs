@@ -277,6 +277,7 @@ impl AccountReadModel for PostgresAccountReadModel {
             //language=postgresql
             r#"
             INSERT INTO auth_emumet_accounts (emumet_id, auth_id) VALUES ($1, $2)
+            ON CONFLICT DO NOTHING
             "#,
         )
         .bind(account_id.as_ref())

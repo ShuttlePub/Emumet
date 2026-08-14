@@ -21,7 +21,7 @@ tracing-subscriber = { workspace = true }
 
 axum = { version = "0.8", features = ["json", "tracing"] }
 tower-http = { version = "0.6", features = ["tokio", "cors"] }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "sync", "signal"] }
 
 jsonwebtoken = "9"
 reqwest = { version = "0.12", features = ["json"] }
