@@ -64,12 +64,31 @@ pub trait DependOnDatabaseConnection: Sync + Send {
     fn database_connection(&self) -> &Self::DatabaseConnection;
 }
 
+pub trait DependOnTransactionManager: DependOnDatabaseConnection + Sync + Send {
+    type TransactionManager: TransactionManager<
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn transaction_manager(&self) -> &Self::TransactionManager;
+}
+
 impl<T> DependOnDatabaseConnection for T
 where
     T: DatabaseConnection,
 {
     type DatabaseConnection = T;
     fn database_connection(&self) -> &Self::DatabaseConnection {
+        self
+    }
+}
+
+impl<T> DependOnTransactionManager for T
+where
+    T: TransactionManager,
+{
+    type TransactionManager = T;
+
+    fn transaction_manager(&self) -> &Self::TransactionManager {
         self
     }
 }
