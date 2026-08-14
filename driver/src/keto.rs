@@ -168,18 +168,20 @@ impl PermissionWriter for KetoClient {
             subject_id: subject.as_ref().to_string(),
         };
 
-        self.http_client
+        let response = self
+            .http_client
             .put(format!("{}/admin/relation-tuples", self.write_url))
             .json(&tuple)
             .send()
             .await
             .change_context_lazy(|| KernelError::Internal)
-            .attach_printable("Failed to create relation tuple in Keto")?
-            .error_for_status()
-            .map_err(|e| {
-                Report::new(KernelError::Internal)
-                    .attach_printable(format!("Keto write error: {e}"))
-            })?;
+            .attach_printable("Failed to create relation tuple in Keto")?;
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            return Ok(());
+        }
+        response.error_for_status().map_err(|e| {
+            Report::new(KernelError::Internal).attach_printable(format!("Keto write error: {e}"))
+        })?;
 
         Ok(())
     }
@@ -189,7 +191,8 @@ impl PermissionWriter for KetoClient {
         target: &RelationTarget,
         subject: &AuthAccountId,
     ) -> error_stack::Result<(), KernelError> {
-        self.http_client
+        let response = self
+            .http_client
             .delete(format!("{}/admin/relation-tuples", self.write_url))
             .query(&[
                 ("namespace", target.namespace()),
@@ -200,12 +203,13 @@ impl PermissionWriter for KetoClient {
             .send()
             .await
             .change_context_lazy(|| KernelError::Internal)
-            .attach_printable("Failed to delete relation tuple from Keto")?
-            .error_for_status()
-            .map_err(|e| {
-                Report::new(KernelError::Internal)
-                    .attach_printable(format!("Keto delete error: {e}"))
-            })?;
+            .attach_printable("Failed to delete relation tuple from Keto")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        response.error_for_status().map_err(|e| {
+            Report::new(KernelError::Internal).attach_printable(format!("Keto delete error: {e}"))
+        })?;
 
         Ok(())
     }

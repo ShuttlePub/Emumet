@@ -18,6 +18,64 @@ fn keto_client(read_url: &str) -> KetoClient {
     )
 }
 
+fn keto_writer(write_url: &str) -> KetoClient {
+    KetoClient::new(
+        "http://unused-read.invalid".to_string(),
+        write_url.to_string(),
+    )
+}
+
+fn account_target() -> RelationTarget {
+    RelationTarget::Account {
+        account_id: kernel::prelude::entity::AccountId::default(),
+        relation: kernel::interfaces::permission::AccountRelation::Owner,
+    }
+}
+
+#[tokio::test]
+async fn create_relation_is_idempotent_when_tuple_already_exists() {
+    // Given
+    let server = MockServer::start().await;
+    let subject = new_subject();
+    Mock::given(method("PUT"))
+        .and(path("/admin/relation-tuples"))
+        .respond_with(ResponseTemplate::new(409))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // When
+    let result = keto_writer(&server.uri())
+        .create_relation(&account_target(), &subject)
+        .await;
+
+    // Then
+    assert!(result.is_ok());
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn delete_relation_is_idempotent_when_tuple_is_absent() {
+    // Given
+    let server = MockServer::start().await;
+    let subject = new_subject();
+    Mock::given(method("DELETE"))
+        .and(path("/admin/relation-tuples"))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // When
+    let result = keto_writer(&server.uri())
+        .delete_relation(&account_target(), &subject)
+        .await;
+
+    // Then
+    assert!(result.is_ok());
+    server.verify().await;
+}
+
 /// Given: Keto Read API が admins tuple を返す
 /// When: list_instance_roles を呼ぶ
 /// Then: GET {read_url}/relation-tuples に namespace=Instance&object=singleton&subject_id=<id> が送られ [Admin] が返る
