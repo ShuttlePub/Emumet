@@ -75,6 +75,33 @@ impl kernel::interfaces::event_store::DependOnAccountEventStore for AppModule {
     }
 }
 
+impl kernel::interfaces::projection::DependOnAccountEventLog for AppModule {
+    type AccountEventLog = <PostgresDatabase as kernel::interfaces::projection::DependOnAccountEventLog>::AccountEventLog;
+    fn account_event_log(&self) -> &Self::AccountEventLog {
+        kernel::interfaces::projection::DependOnAccountEventLog::account_event_log(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::projection::DependOnProjectionCheckpointStore for AppModule {
+    type ProjectionCheckpointStore = <PostgresDatabase as kernel::interfaces::projection::DependOnProjectionCheckpointStore>::ProjectionCheckpointStore;
+    fn projection_checkpoint_store(&self) -> &Self::ProjectionCheckpointStore {
+        kernel::interfaces::projection::DependOnProjectionCheckpointStore::projection_checkpoint_store(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::projection::DependOnAccountProjectionWriter for AppModule {
+    type AccountProjectionWriter = <PostgresDatabase as kernel::interfaces::projection::DependOnAccountProjectionWriter>::AccountProjectionWriter;
+    fn account_projection_writer(&self) -> &Self::AccountProjectionWriter {
+        kernel::interfaces::projection::DependOnAccountProjectionWriter::account_projection_writer(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
 impl DependOnPasswordProvider for AppModule {
     type PasswordProvider = FilePasswordProvider;
     fn password_provider(&self) -> &Self::PasswordProvider {

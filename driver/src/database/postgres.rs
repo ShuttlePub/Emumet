@@ -13,6 +13,7 @@ mod mute;
 mod outbox_activity;
 mod profile;
 mod profile_event_store;
+mod projection;
 mod remote_account;
 mod signing_key;
 #[cfg(test)]

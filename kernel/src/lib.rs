@@ -9,6 +9,7 @@ mod event_store;
 mod http_signing;
 pub mod id;
 mod permission;
+mod projection;
 mod read_model;
 mod repository;
 mod signal;
@@ -50,6 +51,9 @@ pub mod interfaces {
     }
     pub mod permission {
         pub use crate::permission::*;
+    }
+    pub mod projection {
+        pub use crate::projection::*;
     }
     pub mod signal {
         pub use crate::signal::*;
