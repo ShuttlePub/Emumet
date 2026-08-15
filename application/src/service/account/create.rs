@@ -1,5 +1,5 @@
+use crate::dto::account::{AccountDto, CreateAccountDto};
 use crate::signing_key::CreateSigningKeyUseCase;
-use crate::transfer::account::{AccountDto, CreateAccountDto};
 use adapter::crypto::DependOnSigningKeyGenerator;
 use adapter::processor::account::{
     AccountCommandProcessor, CreateAccountParam, DependOnAccountCommandProcessor,

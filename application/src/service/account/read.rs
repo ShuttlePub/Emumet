@@ -1,6 +1,6 @@
+use crate::dto::account::AccountDto;
+use crate::dto::pagination::{apply_pagination, Pagination};
 use crate::permission::{account_view, check_permission};
-use crate::transfer::account::AccountDto;
-use crate::transfer::pagination::{apply_pagination, Pagination};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::DependOnPermissionChecker;

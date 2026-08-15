@@ -1,7 +1,7 @@
+use crate::dto::block_mute::{MuteAccountDto, RelationDto};
 use crate::service::activitypub::remote_actor::{
     resolve_remote_actor_identifier, upsert_remote_account,
 };
-use crate::transfer::block_mute::{MuteAccountDto, RelationDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
 use kernel::interfaces::database::DatabaseConnection;

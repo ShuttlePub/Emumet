@@ -3,8 +3,8 @@ use super::account::{
     UnsuspendAccountUseCase,
 };
 use super::account_detail::UpdateAccountDetailUseCase;
+use crate::dto::account::{AccountFieldDto, CreateAccountDto, UpdateAccountDto};
 use crate::projection::{ProjectMetadataBatch, ProjectProfileBatch};
-use crate::transfer::account::{AccountFieldDto, CreateAccountDto, UpdateAccountDto};
 use driver::crypto::{Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator};
 use driver::database::PostgresDatabase;
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};

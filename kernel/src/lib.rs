@@ -12,7 +12,6 @@ mod permission;
 mod projection;
 mod read_model;
 mod repository;
-mod signal;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -54,9 +53,6 @@ pub mod interfaces {
     }
     pub mod projection {
         pub use crate::projection::*;
-    }
-    pub mod signal {
-        pub use crate::signal::*;
     }
     pub mod http_signing {
         pub use crate::http_signing::*;

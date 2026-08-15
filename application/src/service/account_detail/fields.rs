@@ -1,4 +1,4 @@
-use crate::transfer::account::AccountFieldDto;
+use crate::dto::account::AccountFieldDto;
 use adapter::processor::metadata::{
     CreateMetadataParam, DependOnMetadataCommandProcessor, MetadataCommandProcessor,
     UpdateMetadataParam,

@@ -1,3 +1,4 @@
+use crate::dto::block_mute::{BlockAccountDto, RelationDto};
 use crate::service::activitypub::outbound_block::{
     block_activity, deliver_block_activity, undo_block_activity,
 };
@@ -6,7 +7,6 @@ use crate::service::activitypub::{
     remote_actor::{resolve_remote_actor_identifier, upsert_remote_account},
     StoreOutboxActivityUseCase,
 };
-use crate::transfer::block_mute::{BlockAccountDto, RelationDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::{Report, ResultExt};
 use kernel::interfaces::config::DependOnPublicBaseUrl;

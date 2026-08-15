@@ -1,8 +1,8 @@
 use super::{find_account_id_by_nanoid, public_base_host_header};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
+use application::dto::activitypub::InboxActivityDto;
 use application::service::activitypub::InboxUseCase;
-use application::transfer::activitypub::InboxActivityDto;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};

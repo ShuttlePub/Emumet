@@ -1,8 +1,8 @@
 use super::{json_response, public_base_host_header, JRD_JSON};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
+use application::dto::activitypub::GetWebFingerDto;
 use application::service::activitypub::GetWebFingerUseCase;
-use application::transfer::activitypub::GetWebFingerDto;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;

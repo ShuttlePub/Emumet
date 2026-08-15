@@ -1,4 +1,4 @@
-use crate::transfer::activitypub::{GetActorDto, GetWebFingerDto};
+use crate::dto::activitypub::{GetActorDto, GetWebFingerDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
 use kernel::activitypub::{Actor, ActorUrlBuilder, WebFingerLink, WebFingerResponse};

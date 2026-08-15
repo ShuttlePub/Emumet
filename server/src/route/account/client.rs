@@ -6,9 +6,9 @@ use crate::schema::account::{
     account_dto_to_response, AccountResponse, AccountsResponse, CreateAccountRequest,
     GetAllAccountQuery, UpdateAccountRequest,
 };
+use application::dto::pagination::Pagination;
 use application::service::account::{CreateAccountUseCase, DeactivateAccountUseCase};
 use application::service::account_detail::{GetAccountDetailUseCase, UpdateAccountDetailUseCase};
-use application::transfer::pagination::Pagination;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};

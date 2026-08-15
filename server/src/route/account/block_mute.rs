@@ -4,9 +4,9 @@ use crate::handler::AppModule;
 use crate::schema::account::{
     BlockAccountRequest, MuteAccountRequest, RelationListResponse, RelationResponse,
 };
+use application::dto::block_mute::{BlockAccountDto, MuteAccountDto, RelationDto};
 use application::service::block::{BlockAccountUseCase, GetBlocksUseCase, UnblockAccountUseCase};
 use application::service::mute::{GetMutesUseCase, MuteAccountUseCase, UnmuteAccountUseCase};
-use application::transfer::block_mute::{BlockAccountDto, MuteAccountDto, RelationDto};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};

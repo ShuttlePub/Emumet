@@ -1,8 +1,8 @@
 use super::{json_response, ACTIVITY_JSON};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
+use application::dto::activitypub::GetActorDto;
 use application::service::activitypub::GetActorUseCase;
-use application::transfer::activitypub::GetActorDto;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::Response;

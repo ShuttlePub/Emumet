@@ -1,5 +1,5 @@
 use crate::error::ErrorStatus;
-use application::transfer::pagination::Direction;
+use application::dto::pagination::Direction;
 use axum::http::StatusCode;
 
 pub mod account;

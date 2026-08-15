@@ -1,7 +1,7 @@
 use super::fields::apply_field_updates;
 use super::validate::validate_update_account_dto;
+use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto, UpdateAccountDto};
 use crate::permission::{account_edit, check_permission};
-use crate::transfer::account::{AccountDetailDto, AccountDto, AccountFieldDto, UpdateAccountDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use adapter::processor::metadata::{
     DependOnMetadataCommandProcessor, DependOnMetadataQueryProcessor, MetadataQueryProcessor,

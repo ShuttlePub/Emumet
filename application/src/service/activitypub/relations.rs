@@ -1,4 +1,4 @@
-use crate::transfer::activitypub::FollowRelationDto;
+use crate::dto::activitypub::FollowRelationDto;
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
 use kernel::interfaces::database::{Connection, DatabaseConnection};

@@ -1,5 +1,5 @@
+use crate::dto::account::UpdateAccountDto;
 use crate::permission::{account_edit, check_permission};
-use crate::transfer::account::UpdateAccountDto;
 use adapter::processor::account::{
     AccountCommandProcessor, AccountQueryProcessor, DependOnAccountCommandProcessor,
     DependOnAccountQueryProcessor, UpdateAccountParam,

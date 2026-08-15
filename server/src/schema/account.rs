@@ -1,4 +1,4 @@
-use application::transfer::account::{
+use application::dto::account::{
     AccountDetailDto, AccountFieldDto, CreateAccountDto, ModerationDto, UpdateAccountDto,
 };
 use kernel::prelude::entity::FieldAction;
