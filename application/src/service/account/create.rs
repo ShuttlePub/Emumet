@@ -1,9 +1,10 @@
 use crate::dto::account::{AccountDto, CreateAccountDto};
 use crate::signing_key::CreateSigningKeyUseCase;
-use adapter::crypto::DependOnSigningKeyGenerator;
 use error_stack::Report;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
-use kernel::interfaces::crypto::{DependOnPasswordProvider, SigningAlgorithm};
+use kernel::interfaces::crypto::{
+    DependOnPasswordProvider, DependOnSigningKeyGenerator, SigningAlgorithm,
+};
 use kernel::interfaces::database::{DependOnTransactionManager, TransactionManager};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::permission::{

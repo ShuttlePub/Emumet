@@ -1,4 +1,3 @@
-use adapter::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
 use error_stack::Report;
 use kernel::activitypub::ActorUrlBuilder;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
@@ -6,6 +5,7 @@ use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, KeyEncryptor, PasswordProvider,
     SigningAlgorithm,
 };
+use kernel::interfaces::crypto::{DependOnSigningKeyGenerator, SigningKeyGenerator};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::http_signing::{
     DependOnHttpSigner, HttpSigner, HttpSigningRequest, HttpSigningResponse,
