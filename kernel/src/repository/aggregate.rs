@@ -58,6 +58,26 @@ where
         })?;
         Ok(Some(Rehydrated::new(aggregate, version)))
     }
+
+    /// Like [`from_events`](Self::from_events) but returns `Ok(None)` instead of
+    /// `Err(Internal)` when the event stream folds the aggregate to `None`.
+    /// Use this for aggregates that have a legitimate deletion event (e.g.
+    /// `Metadata::Deleted`) where `None` means "deleted", not corruption.
+    pub fn from_events_allow_deletion(
+        events: Vec<EventEnvelope<A::Event, A>>,
+    ) -> error_stack::Result<Option<Rehydrated<A>>, KernelError> {
+        let Some(version) = events
+            .last()
+            .map(|event| EventVersion::new(*event.version.as_ref()))
+        else {
+            return Ok(None);
+        };
+        let mut aggregate: Option<A> = None;
+        for event in events {
+            A::apply(&mut aggregate, event)?;
+        }
+        Ok(aggregate.map(|a| Rehydrated::new(a, version)))
+    }
 }
 
 /// Repository port for event-sourced aggregates (ADR 0006 decision 3).

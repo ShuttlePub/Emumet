@@ -22,7 +22,7 @@ impl AggregateRepository<Metadata> for PostgresMetadataRepository {
         let events = PostgresMetadataEventStore
             .find_by_id(executor, &EventId::from(id.clone()), None)
             .await?;
-        Rehydrated::<Metadata>::from_events(events)?.ok_or_else(|| {
+        Rehydrated::<Metadata>::from_events_allow_deletion(events)?.ok_or_else(|| {
             Report::new(KernelError::NotFound)
                 .attach_printable(format!("No events found for metadata: {}", id.as_ref()))
         })
@@ -169,6 +169,29 @@ mod test {
         let mut conn = db.connection().await.unwrap();
         let id = MetadataId::new(kernel::generate_id());
 
+        let result = PostgresMetadataRepository.load(&mut conn, &id).await;
+        assert!(result.is_err_and(|e| e.current_context() == &KernelError::NotFound));
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn load_deleted_metadata_returns_not_found() {
+        let db = PostgresDatabase::new().await.unwrap();
+        let mut conn = db.connection().await.unwrap();
+        let (id, _) = create_metadata(&db).await;
+
+        // Rehydrate to get the current version, then delete.
+        let initial = PostgresMetadataRepository
+            .load(&mut conn, &id)
+            .await
+            .unwrap();
+        let delete_command = Metadata::delete(id.clone(), initial.version().clone());
+        PostgresMetadataRepository
+            .save(&mut conn, delete_command)
+            .await
+            .unwrap();
+
+        // load should return NotFound, not Internal.
         let result = PostgresMetadataRepository.load(&mut conn, &id).await;
         assert!(result.is_err_and(|e| e.current_context() == &KernelError::NotFound));
     }

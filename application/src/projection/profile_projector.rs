@@ -6,7 +6,9 @@ use kernel::interfaces::projection::{
     DependOnProfileEventLog, DependOnProfileProjectionWriter, DependOnProjectionCheckpointStore,
     ProfileEventLog, ProfileProjectionWriter, ProjectionCheckpointStore,
 };
-use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
+use kernel::interfaces::read_model::{
+    AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
+};
 use kernel::prelude::entity::{EventEnvelope, Profile, ProfileEvent, ProfileId};
 use kernel::KernelError;
 use std::collections::HashMap;
@@ -20,6 +22,7 @@ pub const PROFILE_PROJECTOR_BATCH_LIMIT: i64 = 1000;
 
 pub trait ProjectProfileBatch:
     DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
+    + DependOnAccountReadModel
     + DependOnProfileEventLog
     + DependOnProfileReadModel
     + DependOnProjectionCheckpointStore
@@ -81,6 +84,35 @@ pub trait ProjectProfileBatch:
                     .collect();
                 if pending.is_empty() {
                     continue;
+                }
+
+                // On the fresh-materialization path (existing is None), check that
+                // the parent account has not been cascade-deleted.  If the account
+                // has been deleted (deleted_at present), skip upsert so the
+                // projector does not resurrect rows that the Account projector
+                // intentionally removed.
+                if existing.is_none() {
+                    let account_id = pending.iter().find_map(|event| match &event.event {
+                        ProfileEvent::Created { account_id, .. } => Some(account_id.clone()),
+                        _ => None,
+                    });
+                    if let Some(aid) = account_id {
+                        let executor = transaction.connection();
+                        if let Ok(Some(account)) = self
+                            .account_read_model()
+                            .find_by_id_including_deleted(executor, &aid)
+                            .await
+                        {
+                            if account.deleted_at().is_some() {
+                                tracing::debug!(
+                                    account_id = %aid.as_ref(),
+                                    "profile projector: skipping upsert for profile {} (parent account deleted)",
+                                    profile_id.as_ref()
+                                );
+                                continue;
+                            }
+                        }
+                    }
                 }
 
                 let mut entity = existing.map(Profile::from);
@@ -150,6 +182,7 @@ pub trait ProjectProfileBatch:
 
 impl<T> ProjectProfileBatch for T where
     T: DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
+        + DependOnAccountReadModel
         + DependOnProfileEventLog
         + DependOnProfileReadModel
         + DependOnProjectionCheckpointStore

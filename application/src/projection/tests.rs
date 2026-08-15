@@ -489,15 +489,18 @@ async fn checkpoint_advances_as_events_are_appended() {
 }
 
 mod profile {
-    use super::{clear_checkpoint, ProjectProfileBatch};
+    use super::{clear_checkpoint, ProjectAccountBatch, ProjectProfileBatch};
     use driver::database::PostgresDatabase;
     use kernel::impl_database_delegation;
     use kernel::interfaces::database::DatabaseConnection;
-    use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
+    use kernel::interfaces::event_store::{
+        AccountEventStore, DependOnAccountEventStore, DependOnProfileEventStore, ProfileEventStore,
+    };
     use kernel::interfaces::projection::DependOnProjectionCheckpointStore;
     use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
     use kernel::prelude::entity::{
-        AccountId, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+        Account, AccountId, AccountIsBot, AccountName, AuthAccountId, Nanoid, Profile,
+        ProfileDisplayName, ProfileId, ProfileSummary,
     };
 
     struct ProfileProjectorTest {
@@ -609,17 +612,30 @@ mod profile {
         // Move the event sequence and checkpoint far past the Created event so the
         // next batch no longer sees it, then append an Updated event.
         let mut conn = projector.db.connection().await.unwrap();
+        // The Created event's seq (and the current max seq) is the lower bound
+        // that must sit outside the projector window.  Query it instead of
+        // assuming a fresh DB so the test is robust to reruns.
+        let created_seq: i64 = sqlx::query_scalar(
+            //language=postgresql
+            "SELECT MAX(seq) FROM profile_events WHERE id = $1",
+        )
+        .bind(profile_id.as_ref())
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         sqlx::query(
             //language=postgresql
-            "SELECT setval(pg_get_serial_sequence('profile_events', 'seq'), 100000)",
+            "SELECT setval(pg_get_serial_sequence('profile_events', 'seq'), $1)",
         )
+        .bind(created_seq + 100_000)
         .execute(&mut *conn)
         .await
         .unwrap();
         sqlx::query(
             //language=postgresql
-            "UPDATE projection_checkpoints SET last_seq = 99999 WHERE projector_name = $1",
+            "UPDATE projection_checkpoints SET last_seq = $1 WHERE projector_name = $2",
         )
+        .bind(created_seq + 99_999)
         .bind("profile_projector")
         .execute(&mut *conn)
         .await
@@ -654,18 +670,127 @@ mod profile {
             Some("updated name")
         );
     }
+    /// Regression test: when the Account projector cascade-deletes a profile
+    /// row, the Profile projector must not resurrect it on the next tick.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn profile_projector_skips_deleted_account_on_fresh_materialization() {
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = super::ProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        super::clear_checkpoint(&projector.db).await;
+
+        // 1. Seed the auth account and create an account via the event store.
+        let auth_account_id = AuthAccountId::new(kernel::generate_id());
+        super::seed_auth_account(&projector.db, &auth_account_id).await;
+        let mut conn = projector.db.connection().await.unwrap();
+        let account_id = AccountId::new(kernel::generate_id());
+        let create_account = Account::create(
+            account_id.clone(),
+            AccountName::new(format!("testuser-{}", account_id.as_ref())),
+            AccountIsBot::new(false),
+            Nanoid::<Account>::default(),
+            auth_account_id.clone(),
+        );
+        let envelope = projector
+            .db
+            .account_event_store()
+            .persist_and_transform(&mut conn, create_account)
+            .await
+            .unwrap();
+        let account_version = envelope.version.clone();
+        drop(conn);
+
+        // 2. Project the account so the read-model row exists.
+        let ckpt_before = projector.project_batch().await.unwrap();
+        assert!(ckpt_before > 0);
+
+        // 3. Create a profile for the account via event store.
+        let mut conn = projector.db.connection().await.unwrap();
+        let profile_id = ProfileId::new(kernel::generate_id());
+        let create_profile = Profile::create(
+            profile_id.clone(),
+            account_id.clone(),
+            Some(ProfileDisplayName::new("test".to_string())),
+            None,
+            None,
+            None,
+            Nanoid::<Profile>::default(),
+        );
+        projector
+            .db
+            .profile_event_store()
+            .persist(&mut conn, &create_profile)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // 4. Project the profile — row should appear.
+        projector.project_profile_batch().await.unwrap();
+        let found = projector
+            .db
+            .profile_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &profile_id)
+            .await
+            .unwrap();
+        assert!(found.is_some(), "profile row should exist before delete");
+
+        // 5. Delete the account via event store.
+        let mut conn = projector.db.connection().await.unwrap();
+        let deactivate = Account::deactivate(account_id.clone(), account_version);
+        projector
+            .db
+            .account_event_store()
+            .persist_and_transform(&mut conn, deactivate)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // 6. Project the account — cascade-deletes the profile row.
+        projector.project_batch().await.unwrap();
+        let gone = projector
+            .db
+            .profile_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &profile_id)
+            .await
+            .unwrap();
+        assert!(
+            gone.is_none(),
+            "profile row should be gone after account cascade-delete"
+        );
+
+        // 7. Re-project the profile — the Created event is still in the
+        //    window, but the account is deleted so the row must NOT come back.
+        projector.project_profile_batch().await.unwrap();
+        let resurrected = projector
+            .db
+            .profile_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &profile_id)
+            .await
+            .unwrap();
+        assert!(
+            resurrected.is_none(),
+            "profile row must not be resurrected after account deletion"
+        );
+    }
 }
 
 mod metadata {
-    use super::{clear_checkpoint, ProjectMetadataBatch};
+    use super::{clear_checkpoint, ProjectAccountBatch, ProjectMetadataBatch};
     use driver::database::PostgresDatabase;
     use kernel::impl_database_delegation;
     use kernel::interfaces::database::DatabaseConnection;
-    use kernel::interfaces::event_store::{DependOnMetadataEventStore, MetadataEventStore};
+    use kernel::interfaces::event_store::{
+        AccountEventStore, DependOnAccountEventStore, DependOnMetadataEventStore,
+        MetadataEventStore,
+    };
     use kernel::interfaces::projection::DependOnProjectionCheckpointStore;
     use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
     use kernel::prelude::entity::{
-        AccountId, Metadata, MetadataContent, MetadataId, MetadataLabel,
+        Account, AccountId, AccountIsBot, AccountName, AuthAccountId, Metadata, MetadataContent,
+        MetadataId, MetadataLabel, Nanoid,
     };
 
     struct MetadataProjectorTest {
@@ -810,17 +935,27 @@ mod metadata {
         assert_eq!(before.label().as_ref(), "label");
 
         let mut conn = projector.db.connection().await.unwrap();
+        let created_seq: i64 = sqlx::query_scalar(
+            //language=postgresql
+            "SELECT MAX(seq) FROM metadata_events WHERE id = $1",
+        )
+        .bind(metadata_id.as_ref())
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         sqlx::query(
             //language=postgresql
-            "SELECT setval(pg_get_serial_sequence('metadata_events', 'seq'), 100000)",
+            "SELECT setval(pg_get_serial_sequence('metadata_events', 'seq'), $1)",
         )
+        .bind(created_seq + 100_000)
         .execute(&mut *conn)
         .await
         .unwrap();
         sqlx::query(
             //language=postgresql
-            "UPDATE projection_checkpoints SET last_seq = 99999 WHERE projector_name = $1",
+            "UPDATE projection_checkpoints SET last_seq = $1 WHERE projector_name = $2",
         )
+        .bind(created_seq + 99_999)
         .bind("metadata_projector")
         .execute(&mut *conn)
         .await
@@ -848,5 +983,111 @@ mod metadata {
             .unwrap()
             .unwrap();
         assert_eq!(after.label().as_ref(), "Updated Site");
+    }
+    /// Regression test: when the Account projector cascade-deletes a metadata
+    /// row, the Metadata projector must not resurrect it on the next tick.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn metadata_projector_skips_deleted_account_on_fresh_materialization() {
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = MetadataProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        super::clear_checkpoint(&projector.db).await;
+
+        // 1. Seed the auth account and create an account via the event store
+        //    using the shared ProjectorTest which has AccountEventLog.
+        let shared = super::ProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        let auth_account_id = AuthAccountId::new(kernel::generate_id());
+        super::seed_auth_account(&shared.db, &auth_account_id).await;
+        let mut conn = shared.db.connection().await.unwrap();
+        let account_id = AccountId::new(kernel::generate_id());
+        let create_account = Account::create(
+            account_id.clone(),
+            AccountName::new(format!("metauser-{}", account_id.as_ref())),
+            AccountIsBot::new(false),
+            Nanoid::<Account>::default(),
+            auth_account_id.clone(),
+        );
+        let envelope = shared
+            .db
+            .account_event_store()
+            .persist_and_transform(&mut conn, create_account)
+            .await
+            .unwrap();
+        let account_version = envelope.version.clone();
+        drop(conn);
+
+        // 2. Project the account so the read-model row exists.
+        shared.project_batch().await.unwrap();
+
+        // 3. Create a metadata via event store.
+        let mut conn = projector.db.connection().await.unwrap();
+        let metadata_id = MetadataId::new(kernel::generate_id());
+        let create_metadata = Metadata::create(
+            metadata_id.clone(),
+            account_id.clone(),
+            MetadataLabel::new("Website".to_string()),
+            MetadataContent::new("https://example.com".to_string()),
+            Nanoid::<Metadata>::default(),
+        );
+        projector
+            .db
+            .metadata_event_store()
+            .persist(&mut conn, &create_metadata)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // 4. Project the metadata — row should appear.
+        projector.project_metadata_batch().await.unwrap();
+        let found = projector
+            .db
+            .metadata_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &metadata_id)
+            .await
+            .unwrap();
+        assert!(found.is_some(), "metadata row should exist before delete");
+
+        // 5. Delete the account via event store.
+        let mut conn = shared.db.connection().await.unwrap();
+        let deactivate = Account::deactivate(account_id.clone(), account_version);
+        shared
+            .db
+            .account_event_store()
+            .persist_and_transform(&mut conn, deactivate)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // 6. Project the account — cascade-deletes the metadata row.
+        shared.project_batch().await.unwrap();
+        let gone = projector
+            .db
+            .metadata_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &metadata_id)
+            .await
+            .unwrap();
+        assert!(
+            gone.is_none(),
+            "metadata row should be gone after account cascade-delete"
+        );
+
+        // 7. Re-project the metadata — Created event is in window, but
+        //    account is deleted so row must NOT come back.
+        projector.project_metadata_batch().await.unwrap();
+        let resurrected = projector
+            .db
+            .metadata_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &metadata_id)
+            .await
+            .unwrap();
+        assert!(
+            resurrected.is_none(),
+            "metadata row must not be resurrected after account deletion"
+        );
     }
 }

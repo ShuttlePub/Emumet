@@ -6,7 +6,9 @@ use kernel::interfaces::projection::{
     DependOnMetadataEventLog, DependOnMetadataProjectionWriter, DependOnProjectionCheckpointStore,
     MetadataEventLog, MetadataProjectionWriter, ProjectionCheckpointStore,
 };
-use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
+use kernel::interfaces::read_model::{
+    AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel, MetadataReadModel,
+};
 use kernel::prelude::entity::{EventEnvelope, Metadata, MetadataEvent, MetadataId};
 use kernel::KernelError;
 use std::collections::HashMap;
@@ -20,6 +22,7 @@ pub const METADATA_PROJECTOR_BATCH_LIMIT: i64 = 1000;
 
 pub trait ProjectMetadataBatch:
     DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
+    + DependOnAccountReadModel
     + DependOnMetadataEventLog
     + DependOnMetadataReadModel
     + DependOnProjectionCheckpointStore
@@ -81,6 +84,35 @@ pub trait ProjectMetadataBatch:
                     .collect();
                 if pending.is_empty() {
                     continue;
+                }
+
+                // On the fresh-materialization path (existing is None), check that
+                // the parent account has not been cascade-deleted.  If the account
+                // has been deleted (deleted_at present), skip upsert so the
+                // projector does not resurrect rows that the Account projector
+                // intentionally removed.
+                if existing.is_none() {
+                    let account_id = pending.iter().find_map(|event| match &event.event {
+                        MetadataEvent::Created { account_id, .. } => Some(account_id.clone()),
+                        _ => None,
+                    });
+                    if let Some(aid) = account_id {
+                        let executor = transaction.connection();
+                        if let Ok(Some(account)) = self
+                            .account_read_model()
+                            .find_by_id_including_deleted(executor, &aid)
+                            .await
+                        {
+                            if account.deleted_at().is_some() {
+                                tracing::debug!(
+                                    account_id = %aid.as_ref(),
+                                    "metadata projector: skipping upsert for metadata {} (parent account deleted)",
+                                    metadata_id.as_ref()
+                                );
+                                continue;
+                            }
+                        }
+                    }
                 }
 
                 let mut entity = existing.map(Metadata::from);
@@ -150,6 +182,7 @@ pub trait ProjectMetadataBatch:
 
 impl<T> ProjectMetadataBatch for T where
     T: DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
+        + DependOnAccountReadModel
         + DependOnMetadataEventLog
         + DependOnMetadataReadModel
         + DependOnProjectionCheckpointStore
