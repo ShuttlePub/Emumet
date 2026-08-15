@@ -1,9 +1,7 @@
 use error_stack::Report;
 use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
-use kernel::interfaces::read_model::{
-    DependOnProfileReadModel, ProfileProjection, ProfileReadModel,
-};
+use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::interfaces::repository::{AggregateRepository, DependOnProfileRepository};
 use kernel::prelude::entity::{
     AccountId, FieldAction, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
@@ -122,81 +120,6 @@ where
 {
     type ProfileCommandProcessor = Self;
     fn profile_command_processor(&self) -> &Self::ProfileCommandProcessor {
-        self
-    }
-}
-
-pub trait ProfileQueryProcessor: Send + Sync + 'static {
-    type Connection: Connection;
-
-    fn find_by_id(
-        &self,
-        executor: &mut Self::Connection,
-        id: &ProfileId,
-    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
-
-    fn find_by_account_id(
-        &self,
-        executor: &mut Self::Connection,
-        account_id: &AccountId,
-    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
-
-    fn find_by_account_ids(
-        &self,
-        executor: &mut Self::Connection,
-        account_ids: &[AccountId],
-    ) -> impl Future<Output = error_stack::Result<Vec<ProfileProjection>, KernelError>> + Send;
-}
-
-impl<T> ProfileQueryProcessor for T
-where
-    T: DependOnProfileReadModel + Send + Sync + 'static,
-{
-    type Connection =
-        <<T as DependOnProfileReadModel>::ProfileReadModel as ProfileReadModel>::Connection;
-
-    async fn find_by_id(
-        &self,
-        executor: &mut Self::Connection,
-        id: &ProfileId,
-    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
-        self.profile_read_model().find_by_id(executor, id).await
-    }
-
-    async fn find_by_account_id(
-        &self,
-        executor: &mut Self::Connection,
-        account_id: &AccountId,
-    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
-        self.profile_read_model()
-            .find_by_account_id(executor, account_id)
-            .await
-    }
-
-    async fn find_by_account_ids(
-        &self,
-        executor: &mut Self::Connection,
-        account_ids: &[AccountId],
-    ) -> error_stack::Result<Vec<ProfileProjection>, KernelError> {
-        self.profile_read_model()
-            .find_by_account_ids(executor, account_ids)
-            .await
-    }
-}
-
-pub trait DependOnProfileQueryProcessor: DependOnDatabaseConnection + Send + Sync {
-    type ProfileQueryProcessor: ProfileQueryProcessor<
-        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
-    >;
-    fn profile_query_processor(&self) -> &Self::ProfileQueryProcessor;
-}
-
-impl<T> DependOnProfileQueryProcessor for T
-where
-    T: DependOnProfileReadModel + DependOnDatabaseConnection + Send + Sync + 'static,
-{
-    type ProfileQueryProcessor = Self;
-    fn profile_query_processor(&self) -> &Self::ProfileQueryProcessor {
         self
     }
 }

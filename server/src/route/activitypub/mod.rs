@@ -13,13 +13,13 @@ pub(crate) use inbox::{__path_post_inbox, post_inbox};
 
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use axum::extract::DefaultBodyLimit;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::prelude::entity::{Account, AccountId, Nanoid};
 use serde::Serialize;
 
@@ -71,7 +71,7 @@ pub(super) async fn find_account_id_by_nanoid(
         .map_err(ErrorStatus::from)?;
     let nanoid = Nanoid::<Account>::new(id);
     module
-        .account_query_processor()
+        .account_query()
         .find_by_nanoid(&mut executor, &nanoid)
         .await
         .map_err(ErrorStatus::from)?

@@ -5,7 +5,6 @@ use super::outbox::StoreOutboxActivityUseCase;
 use super::remote_actor::{resolve_remote_actor_identifier, upsert_remote_account};
 use super::{local_actor_url, ACTIVITYSTREAMS_CONTEXT};
 use crate::dto::activitypub::SendUndoFollowDto;
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::{Report, ResultExt};
 use kernel::activitypub::Activity;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
@@ -13,6 +12,7 @@ use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider}
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{
     DependOnFollowRepository, DependOnOutboxActivityRepository, DependOnRemoteAccountRepository,
     DependOnSigningKeyRepository, FollowRepository,
@@ -30,7 +30,7 @@ pub trait SendUndoFollowUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnFollowRepository
     + DependOnRemoteAccountRepository
     + DependOnSigningKeyRepository
@@ -54,7 +54,7 @@ pub trait SendUndoFollowUseCase:
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid);
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -73,7 +73,7 @@ pub trait SendUndoFollowUseCase:
 
             let source = FollowTargetId::from(account.id().clone());
             let target = resolve_unfollow_target(
-                self.account_query_processor(),
+                self.account_query(),
                 self.remote_account_repository(),
                 &mut executor,
                 self.public_base_url(),
@@ -179,7 +179,7 @@ impl<T> SendUndoFollowUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnFollowRepository
         + DependOnRemoteAccountRepository
         + DependOnSigningKeyRepository

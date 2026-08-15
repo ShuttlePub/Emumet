@@ -2,10 +2,10 @@ use crate::dto::block_mute::{MuteAccountDto, RelationDto};
 use crate::service::activitypub::remote_actor::{
     resolve_remote_actor_identifier, upsert_remote_account,
 };
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{
     DependOnMuteRepository, DependOnRemoteAccountRepository, MuteRepository,
     RemoteAccountRepository,
@@ -18,7 +18,7 @@ pub trait MuteAccountUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnMuteRepository
     + DependOnRemoteAccountRepository
     + DependOnPermissionChecker
@@ -35,7 +35,7 @@ pub trait MuteAccountUseCase:
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -54,7 +54,7 @@ pub trait MuteAccountUseCase:
 
             let source = MuteTargetId::from(account.id().clone());
             let (destination, target) = resolve_mute_target(
-                self.account_query_processor(),
+                self.account_query(),
                 self.remote_account_repository(),
                 &mut executor,
                 &dto.target,
@@ -102,7 +102,7 @@ impl<T> MuteAccountUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnMuteRepository
         + DependOnRemoteAccountRepository
         + DependOnPermissionChecker
@@ -113,7 +113,7 @@ pub trait UnmuteAccountUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnMuteRepository
     + DependOnRemoteAccountRepository
     + DependOnPermissionChecker
@@ -130,7 +130,7 @@ pub trait UnmuteAccountUseCase:
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -149,7 +149,7 @@ pub trait UnmuteAccountUseCase:
 
             let source = MuteTargetId::from(account.id().clone());
             let (destination, _) = resolve_mute_target(
-                self.account_query_processor(),
+                self.account_query(),
                 self.remote_account_repository(),
                 &mut executor,
                 &dto.target,
@@ -179,7 +179,7 @@ impl<T> UnmuteAccountUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnMuteRepository
         + DependOnRemoteAccountRepository
         + DependOnPermissionChecker
@@ -190,7 +190,7 @@ pub trait GetMutesUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnMuteRepository
     + DependOnRemoteAccountRepository
     + DependOnPermissionChecker
@@ -207,7 +207,7 @@ pub trait GetMutesUseCase:
             let account_nanoid = Nanoid::<Account>::new(account_nanoid);
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -235,7 +235,7 @@ pub trait GetMutesUseCase:
                 let relation = match mute.destination() {
                     MuteTargetId::Local(account_id) => {
                         let target_account = self
-                            .account_query_processor()
+                            .account_query()
                             .find_by_id(&mut executor, account_id)
                             .await?
                             .ok_or_else(|| {
@@ -279,7 +279,7 @@ impl<T> GetMutesUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnMuteRepository
         + DependOnRemoteAccountRepository
         + DependOnPermissionChecker
@@ -293,7 +293,7 @@ async fn resolve_mute_target<Q, R>(
     target: &str,
 ) -> error_stack::Result<(MuteTargetId, String), KernelError>
 where
-    Q: AccountQueryProcessor,
+    Q: AccountQuery,
     R: RemoteAccountRepository<Connection = Q::Connection>,
 {
     let target_nanoid = Nanoid::<Account>::new(target.to_string());

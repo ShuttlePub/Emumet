@@ -1,9 +1,7 @@
 use error_stack::Report;
 use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
-use kernel::interfaces::read_model::{
-    DependOnMetadataReadModel, MetadataProjection, MetadataReadModel,
-};
+use kernel::interfaces::read_model::DependOnMetadataReadModel;
 use kernel::interfaces::repository::{AggregateRepository, DependOnMetadataRepository};
 use kernel::prelude::entity::{
     AccountId, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
@@ -129,81 +127,6 @@ where
 {
     type MetadataCommandProcessor = Self;
     fn metadata_command_processor(&self) -> &Self::MetadataCommandProcessor {
-        self
-    }
-}
-
-pub trait MetadataQueryProcessor: Send + Sync + 'static {
-    type Connection: Connection;
-
-    fn find_by_id(
-        &self,
-        executor: &mut Self::Connection,
-        id: &MetadataId,
-    ) -> impl Future<Output = error_stack::Result<Option<MetadataProjection>, KernelError>> + Send;
-
-    fn find_by_account_id(
-        &self,
-        executor: &mut Self::Connection,
-        account_id: &AccountId,
-    ) -> impl Future<Output = error_stack::Result<Vec<MetadataProjection>, KernelError>> + Send;
-
-    fn find_by_account_ids(
-        &self,
-        executor: &mut Self::Connection,
-        account_ids: &[AccountId],
-    ) -> impl Future<Output = error_stack::Result<Vec<MetadataProjection>, KernelError>> + Send;
-}
-
-impl<T> MetadataQueryProcessor for T
-where
-    T: DependOnMetadataReadModel + Send + Sync + 'static,
-{
-    type Connection =
-        <<T as DependOnMetadataReadModel>::MetadataReadModel as MetadataReadModel>::Connection;
-
-    async fn find_by_id(
-        &self,
-        executor: &mut Self::Connection,
-        id: &MetadataId,
-    ) -> error_stack::Result<Option<MetadataProjection>, KernelError> {
-        self.metadata_read_model().find_by_id(executor, id).await
-    }
-
-    async fn find_by_account_id(
-        &self,
-        executor: &mut Self::Connection,
-        account_id: &AccountId,
-    ) -> error_stack::Result<Vec<MetadataProjection>, KernelError> {
-        self.metadata_read_model()
-            .find_by_account_id(executor, account_id)
-            .await
-    }
-
-    async fn find_by_account_ids(
-        &self,
-        executor: &mut Self::Connection,
-        account_ids: &[AccountId],
-    ) -> error_stack::Result<Vec<MetadataProjection>, KernelError> {
-        self.metadata_read_model()
-            .find_by_account_ids(executor, account_ids)
-            .await
-    }
-}
-
-pub trait DependOnMetadataQueryProcessor: DependOnDatabaseConnection + Send + Sync {
-    type MetadataQueryProcessor: MetadataQueryProcessor<
-        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
-    >;
-    fn metadata_query_processor(&self) -> &Self::MetadataQueryProcessor;
-}
-
-impl<T> DependOnMetadataQueryProcessor for T
-where
-    T: DependOnMetadataReadModel + DependOnDatabaseConnection + Send + Sync + 'static,
-{
-    type MetadataQueryProcessor = Self;
-    fn metadata_query_processor(&self) -> &Self::MetadataQueryProcessor {
         self
     }
 }

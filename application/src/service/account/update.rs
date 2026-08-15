@@ -1,12 +1,12 @@
 use crate::dto::account::UpdateAccountDto;
 use crate::permission::{account_edit, check_permission};
 use adapter::processor::account::{
-    AccountCommandProcessor, AccountQueryProcessor, DependOnAccountCommandProcessor,
-    DependOnAccountQueryProcessor, UpdateAccountParam,
+    AccountCommandProcessor, DependOnAccountCommandProcessor, UpdateAccountParam,
 };
 use error_stack::Report;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{Account, AccountIsBot, AuthAccountId, Nanoid};
 use kernel::KernelError;
@@ -17,7 +17,7 @@ pub trait UpdateAccountUseCase:
     + Sync
     + Send
     + DependOnAccountCommandProcessor
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnAccountRepository
     + DependOnPermissionChecker
 {
@@ -31,7 +31,7 @@ pub trait UpdateAccountUseCase:
 
             let nanoid = Nanoid::<Account>::new(dto.account_nanoid);
             let projection = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid_unfiltered(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -85,7 +85,7 @@ pub trait UpdateAccountUseCase:
 impl<T> UpdateAccountUseCase for T where
     T: 'static
         + DependOnAccountCommandProcessor
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnAccountRepository
         + DependOnPermissionChecker
 {

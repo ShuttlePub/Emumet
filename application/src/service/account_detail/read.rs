@@ -1,12 +1,12 @@
 use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto};
 use crate::dto::pagination::{apply_pagination, Pagination};
 use crate::permission::{account_view, check_permission};
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
-use adapter::processor::metadata::{DependOnMetadataQueryProcessor, MetadataQueryProcessor};
-use adapter::processor::profile::{DependOnProfileQueryProcessor, ProfileQueryProcessor};
 use error_stack::Report;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
+use kernel::interfaces::read_model::{DependOnMetadataQuery, MetadataQuery};
+use kernel::interfaces::read_model::{DependOnProfileQuery, ProfileQuery};
 use kernel::interfaces::repository::{DependOnImageRepository, ImageRepository};
 use kernel::prelude::entity::{Account, AccountId, AuthAccountId, Nanoid};
 use kernel::KernelError;
@@ -17,9 +17,9 @@ pub trait GetAccountDetailUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
-    + DependOnProfileQueryProcessor
-    + DependOnMetadataQueryProcessor
+    + DependOnAccountQuery
+    + DependOnProfileQuery
+    + DependOnMetadataQuery
     + DependOnImageRepository
     + DependOnPermissionChecker
 {
@@ -53,11 +53,11 @@ pub trait GetAccountDetailUseCase:
         async move {
             let mut executor = self.database_connection().connection().await?;
             let accounts = self
-                .account_query_processor()
+                .account_query()
                 .find_by_auth_id(&mut executor, auth_account_id)
                 .await?;
             let cursor = if let Some(cursor) = cursor {
-                self.account_query_processor()
+                self.account_query()
                     .find_by_nanoid(&mut executor, &Nanoid::<Account>::new(cursor))
                     .await?
             } else {
@@ -81,7 +81,7 @@ pub trait GetAccountDetailUseCase:
             let mut executor = self.database_connection().connection().await?;
             let nanoids: Vec<_> = ids.into_iter().map(Nanoid::<Account>::new).collect();
             let accounts = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoids(&mut executor, &nanoids)
                 .await?;
             let mut permitted = Vec::new();
@@ -102,9 +102,9 @@ impl<T> GetAccountDetailUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
-        + DependOnProfileQueryProcessor
-        + DependOnMetadataQueryProcessor
+        + DependOnAccountQuery
+        + DependOnProfileQuery
+        + DependOnMetadataQuery
         + DependOnImageRepository
         + DependOnPermissionChecker
 {
@@ -116,10 +116,7 @@ async fn compose_account_details<T>(
     accounts: Vec<Account>,
 ) -> error_stack::Result<Vec<AccountDetailDto>, KernelError>
 where
-    T: DependOnProfileQueryProcessor
-        + DependOnMetadataQueryProcessor
-        + DependOnImageRepository
-        + ?Sized,
+    T: DependOnProfileQuery + DependOnMetadataQuery + DependOnImageRepository + ?Sized,
 {
     if accounts.is_empty() {
         return Ok(Vec::new());
@@ -129,11 +126,11 @@ where
         .map(|account| account.id().clone())
         .collect();
     let profiles = deps
-        .profile_query_processor()
+        .profile_query()
         .find_by_account_ids(executor, &account_ids)
         .await?;
     let mut metadata = deps
-        .metadata_query_processor()
+        .metadata_query()
         .find_by_account_ids(executor, &account_ids)
         .await?;
     metadata.sort_by_key(|field| (*field.account_id().as_ref(), *field.id().as_ref()));

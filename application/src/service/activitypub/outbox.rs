@@ -1,8 +1,8 @@
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
 use kernel::activitypub::{ActorUrlBuilder, OrderedCollection};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::database::DatabaseConnection;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{DependOnOutboxActivityRepository, OutboxActivityRepository};
 use kernel::prelude::entity::{AccountId, OutboxActivity};
 use kernel::KernelError;
@@ -33,7 +33,7 @@ pub trait GetOutboxUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnOutboxActivityRepository
     + DependOnPublicBaseUrl
 {
@@ -46,7 +46,7 @@ pub trait GetOutboxUseCase:
         async move {
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_id(&mut executor, account_id)
                 .await?
                 .ok_or_else(|| {
@@ -86,7 +86,7 @@ impl<T> GetOutboxUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnOutboxActivityRepository
         + DependOnPublicBaseUrl
 {
@@ -119,11 +119,11 @@ mod tests {
         }
     }
 
-    struct MockAccountQueryProcessor {
+    struct MockAccountQuery {
         account: Account,
     }
 
-    impl AccountQueryProcessor for MockAccountQueryProcessor {
+    impl AccountQuery for MockAccountQuery {
         type Connection = MockConnection;
 
         async fn find_by_id(
@@ -245,7 +245,7 @@ mod tests {
 
     struct MockModule {
         database: MockDatabaseConnection,
-        accounts: MockAccountQueryProcessor,
+        accounts: MockAccountQuery,
         outbox: MockOutboxActivityRepository,
         public_base_url: PublicBaseUrl,
     }
@@ -258,10 +258,10 @@ mod tests {
         }
     }
 
-    impl DependOnAccountQueryProcessor for MockModule {
-        type AccountQueryProcessor = MockAccountQueryProcessor;
+    impl DependOnAccountQuery for MockModule {
+        type AccountQuery = MockAccountQuery;
 
-        fn account_query_processor(&self) -> &Self::AccountQueryProcessor {
+        fn account_query_processor(&self) -> &Self::AccountQuery {
             &self.accounts
         }
     }
@@ -292,7 +292,7 @@ mod tests {
         (
             MockModule {
                 database: MockDatabaseConnection,
-                accounts: MockAccountQueryProcessor { account },
+                accounts: MockAccountQuery { account },
                 outbox: MockOutboxActivityRepository {
                     activities: Mutex::new(vec![outbox_activity(1, account_id.clone(), "Create")]),
                 },

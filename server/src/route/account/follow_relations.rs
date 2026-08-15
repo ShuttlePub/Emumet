@@ -96,9 +96,9 @@ pub(crate) async fn get_following(
 #[cfg(test)]
 mod tests {
     use crate::handler::AppModule;
-    use adapter::processor::account::DependOnAccountQueryProcessor;
     use application::service::activitypub::relations::list_approved_relations;
     use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+    use kernel::interfaces::read_model::DependOnAccountQuery;
     use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
     use kernel::interfaces::repository::{
         DependOnFollowRepository, DependOnRemoteAccountRepository, FollowRepository,
@@ -163,7 +163,7 @@ mod tests {
             .unwrap();
 
         let relations = list_approved_relations(
-            module.account_query_processor(),
+            module.account_query(),
             module.follow_repository(),
             module.remote_account_repository(),
             &mut executor,

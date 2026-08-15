@@ -2,13 +2,9 @@ use super::fields::apply_field_updates;
 use super::validate::validate_update_account_dto;
 use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto, UpdateAccountDto};
 use crate::permission::{account_edit, check_permission};
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
-use adapter::processor::metadata::{
-    DependOnMetadataCommandProcessor, DependOnMetadataQueryProcessor, MetadataQueryProcessor,
-};
+use adapter::processor::metadata::DependOnMetadataCommandProcessor;
 use adapter::processor::profile::{
-    DependOnProfileCommandProcessor, DependOnProfileQueryProcessor, ProfileCommandProcessor,
-    ProfileQueryProcessor, UpdateProfileParam,
+    DependOnProfileCommandProcessor, ProfileCommandProcessor, UpdateProfileParam,
 };
 use error_stack::Report;
 use kernel::interfaces::database::{
@@ -16,6 +12,10 @@ use kernel::interfaces::database::{
 };
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{
+    AccountQuery, DependOnAccountQuery, DependOnMetadataQuery, DependOnProfileQuery, MetadataQuery,
+    ProfileQuery,
+};
 use kernel::interfaces::read_model::{
     AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
     DependOnProfileReadModel, ProfileReadModel,
@@ -37,15 +37,15 @@ pub trait UpdateAccountDetailUseCase:
     + Sync
     + Send
     + Clone
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnAccountRepository
     + DependOnAccountReadModel
     + DependOnProfileCommandProcessor
-    + DependOnProfileQueryProcessor
+    + DependOnProfileQuery
     + DependOnProfileReadModel
     + DependOnProfileRepository
     + DependOnMetadataCommandProcessor
-    + DependOnMetadataQueryProcessor
+    + DependOnMetadataQuery
     + DependOnMetadataReadModel
     + DependOnMetadataRepository
     + DependOnImageRepository
@@ -61,7 +61,7 @@ pub trait UpdateAccountDetailUseCase:
             validate_update_account_dto(&dto)?;
             let mut connection = self.database_connection().connection().await?;
             let projection = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid_unfiltered(
                     &mut connection,
                     &Nanoid::<Account>::new(dto.account_nanoid.clone()),
@@ -105,7 +105,7 @@ pub trait UpdateAccountDetailUseCase:
                         }
 
                         let profile = deps
-                            .profile_query_processor()
+                            .profile_query()
                             .find_by_account_id(executor, &account_id)
                             .await?
                             .ok_or_else(|| Report::new(KernelError::NotFound))?;
@@ -143,7 +143,7 @@ pub trait UpdateAccountDetailUseCase:
                         }
 
                         let mut existing_fields = deps
-                            .metadata_query_processor()
+                            .metadata_query()
                             .find_by_account_id(executor, &account_id)
                             .await?;
                         existing_fields.sort_by_key(|field| *field.id().as_ref());
@@ -159,7 +159,7 @@ pub trait UpdateAccountDetailUseCase:
                         }
 
                         let account = deps
-                            .account_query_processor()
+                            .account_query()
                             .find_by_id(executor, &account_id)
                             .await?
                             .ok_or_else(|| Report::new(KernelError::NotFound))?;
@@ -236,15 +236,15 @@ impl<T> UpdateAccountDetailUseCase for T where
         + Clone
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnAccountRepository
         + DependOnAccountReadModel
         + DependOnProfileCommandProcessor
-        + DependOnProfileQueryProcessor
+        + DependOnProfileQuery
         + DependOnProfileReadModel
         + DependOnProfileRepository
         + DependOnMetadataCommandProcessor
-        + DependOnMetadataQueryProcessor
+        + DependOnMetadataQuery
         + DependOnMetadataReadModel
         + DependOnMetadataRepository
         + DependOnImageRepository

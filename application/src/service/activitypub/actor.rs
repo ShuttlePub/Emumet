@@ -1,9 +1,9 @@
 use crate::dto::activitypub::{GetActorDto, GetWebFingerDto};
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
 use kernel::activitypub::{Actor, ActorUrlBuilder, WebFingerLink, WebFingerResponse};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::database::DatabaseConnection;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::interfaces::repository::{DependOnSigningKeyRepository, SigningKeyRepository};
 use kernel::prelude::entity::{Account, AccountName, Nanoid};
@@ -14,7 +14,7 @@ pub trait GetActorUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnProfileReadModel
     + DependOnSigningKeyRepository
     + DependOnPublicBaseUrl
@@ -27,7 +27,7 @@ pub trait GetActorUseCase:
             let mut executor = self.database_connection().connection().await?;
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid);
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -75,7 +75,7 @@ impl<T> GetActorUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnProfileReadModel
         + DependOnSigningKeyRepository
         + DependOnPublicBaseUrl
@@ -83,7 +83,7 @@ impl<T> GetActorUseCase for T where
 }
 
 pub trait GetWebFingerUseCase:
-    'static + Sync + Send + DependOnAccountQueryProcessor + DependOnPublicBaseUrl
+    'static + Sync + Send + DependOnAccountQuery + DependOnPublicBaseUrl
 {
     fn get_webfinger(
         &self,
@@ -94,7 +94,7 @@ pub trait GetWebFingerUseCase:
             let account_name = AccountName::new(dto.account_name);
             account_name.validate()?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_name(&mut executor, &account_name)
                 .await?
                 .ok_or_else(|| {
@@ -125,6 +125,6 @@ pub trait GetWebFingerUseCase:
 }
 
 impl<T> GetWebFingerUseCase for T where
-    T: 'static + Sync + Send + DependOnAccountQueryProcessor + DependOnPublicBaseUrl
+    T: 'static + Sync + Send + DependOnAccountQuery + DependOnPublicBaseUrl
 {
 }

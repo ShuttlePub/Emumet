@@ -333,9 +333,9 @@ impl DependOnPublicBaseUrl for AppModule {
     }
 }
 
-// Note: DependOnSigningKeyGenerator, DependOnAccountCommandProcessor,
-// DependOnAccountQueryProcessor, and all UseCase traits are provided
-// automatically via blanket impls in adapter.
+// Note: DependOnSigningKeyGenerator, DependOnAccountCommandProcessor, and all
+// UseCase traits are provided automatically via blanket impls in adapter;
+// DependOn*Query traits come from kernel blanket impls.
 
 #[derive(References)]
 pub struct Handler {

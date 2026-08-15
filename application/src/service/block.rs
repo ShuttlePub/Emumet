@@ -7,13 +7,13 @@ use crate::service::activitypub::{
     remote_actor::{resolve_remote_actor_identifier, upsert_remote_account},
     StoreOutboxActivityUseCase,
 };
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::{Report, ResultExt};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
 use kernel::interfaces::database::{Connection, DatabaseConnection};
 use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{
     BlockRepository, DependOnBlockRepository, DependOnFollowRepository,
     DependOnOutboxActivityRepository, DependOnRemoteAccountRepository,
@@ -30,7 +30,7 @@ pub trait BlockAccountUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnBlockRepository
     + DependOnFollowRepository
     + DependOnRemoteAccountRepository
@@ -55,7 +55,7 @@ pub trait BlockAccountUseCase:
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -74,7 +74,7 @@ pub trait BlockAccountUseCase:
 
             let source = BlockTargetId::from(account.id().clone());
             let resolved = resolve_block_target(
-                self.account_query_processor(),
+                self.account_query(),
                 self.remote_account_repository(),
                 &mut executor,
                 &dto.target,
@@ -172,7 +172,7 @@ impl<T> BlockAccountUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnBlockRepository
         + DependOnFollowRepository
         + DependOnRemoteAccountRepository
@@ -191,7 +191,7 @@ pub trait UnblockAccountUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnBlockRepository
     + DependOnRemoteAccountRepository
     + DependOnSigningKeyRepository
@@ -215,7 +215,7 @@ pub trait UnblockAccountUseCase:
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -234,7 +234,7 @@ pub trait UnblockAccountUseCase:
 
             let source = BlockTargetId::from(account.id().clone());
             let resolved = resolve_block_target(
-                self.account_query_processor(),
+                self.account_query(),
                 self.remote_account_repository(),
                 &mut executor,
                 &dto.target,
@@ -307,7 +307,7 @@ impl<T> UnblockAccountUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnBlockRepository
         + DependOnRemoteAccountRepository
         + DependOnSigningKeyRepository
@@ -325,7 +325,7 @@ pub trait GetBlocksUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnBlockRepository
     + DependOnRemoteAccountRepository
     + DependOnPermissionChecker
@@ -342,7 +342,7 @@ pub trait GetBlocksUseCase:
             let account_nanoid = Nanoid::<Account>::new(account_nanoid);
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -370,7 +370,7 @@ pub trait GetBlocksUseCase:
                 let relation = match block.destination() {
                     BlockTargetId::Local(account_id) => {
                         let target_account = self
-                            .account_query_processor()
+                            .account_query()
                             .find_by_id(&mut executor, account_id)
                             .await?
                             .ok_or_else(|| {
@@ -414,7 +414,7 @@ impl<T> GetBlocksUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnBlockRepository
         + DependOnRemoteAccountRepository
         + DependOnPermissionChecker
@@ -482,7 +482,7 @@ async fn resolve_block_target<Q, R>(
     target: &str,
 ) -> error_stack::Result<BlockTarget, KernelError>
 where
-    Q: AccountQueryProcessor,
+    Q: AccountQuery,
     R: RemoteAccountRepository<Connection = Q::Connection>,
 {
     let target_nanoid = Nanoid::<Account>::new(target.to_string());

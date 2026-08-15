@@ -1,7 +1,6 @@
 use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use application::permission::{account_sign, check_permission};
 use application::signing_key::{GetPublicKeyUseCase, SignRequestUseCase};
 use axum::extract::{Path, State};
@@ -9,6 +8,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::prelude::entity::{Account, Nanoid};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -89,7 +89,7 @@ pub(crate) async fn sign_request(
         .await
         .map_err(ErrorStatus::from)?;
     let account = module
-        .account_query_processor()
+        .account_query()
         .find_by_nanoid(&mut executor, &nanoid)
         .await
         .map_err(ErrorStatus::from)?
@@ -161,7 +161,7 @@ pub(crate) async fn get_public_key(
         .await
         .map_err(ErrorStatus::from)?;
     let account = module
-        .account_query_processor()
+        .account_query()
         .find_by_nanoid(&mut executor, &nanoid)
         .await
         .map_err(ErrorStatus::from)?
