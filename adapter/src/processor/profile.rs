@@ -1,23 +1,15 @@
 use error_stack::Report;
 use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
-use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
-use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
-use kernel::interfaces::signal::Signal;
+use kernel::interfaces::read_model::{
+    DependOnProfileReadModel, ProfileProjection, ProfileReadModel,
+};
+use kernel::interfaces::repository::{AggregateRepository, DependOnProfileRepository};
 use kernel::prelude::entity::{
     AccountId, FieldAction, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
 };
 use kernel::KernelError;
 use std::future::Future;
-
-// --- Signal DI trait (adapter-specific) ---
-
-pub trait DependOnProfileSignal: Send + Sync {
-    type ProfileSignal: Signal<ProfileId> + Send + Sync + 'static;
-    fn profile_signal(&self) -> &Self::ProfileSignal;
-}
-
-// --- Param structs ---
 
 #[derive(Debug)]
 pub struct CreateProfileParam {
@@ -38,8 +30,6 @@ pub struct UpdateProfileParam {
     pub banner: FieldAction<ImageId>,
 }
 
-// --- ProfileCommandProcessor ---
-
 pub trait ProfileCommandProcessor: Send + Sync + 'static {
     type Connection: Connection;
 
@@ -58,15 +48,10 @@ pub trait ProfileCommandProcessor: Send + Sync + 'static {
 
 impl<T> ProfileCommandProcessor for T
 where
-    T: DependOnProfileEventStore
-        + DependOnProfileReadModel
-        + DependOnProfileSignal
-        + Send
-        + Sync
-        + 'static,
+    T: DependOnProfileRepository + DependOnProfileReadModel + Send + Sync + 'static,
 {
     type Connection =
-        <<T as DependOnProfileEventStore>::ProfileEventStore as ProfileEventStore>::Connection;
+        <<T as DependOnProfileRepository>::ProfileRepository as AggregateRepository<Profile>>::Connection;
 
     async fn create(
         &self,
@@ -84,10 +69,7 @@ where
             param.nano_id,
         );
 
-        let event_envelope = self
-            .profile_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
+        let event_envelope = self.profile_repository().save(executor, command).await?;
 
         let mut profile = None;
         Profile::apply(&mut profile, event_envelope)?;
@@ -97,16 +79,8 @@ where
         })?;
 
         if let Err(e) = self.profile_read_model().create(executor, &profile).await {
-            tracing::error!(
-                ?e,
-                "Failed to create profile read model, emitting signal for recovery"
-            );
-            let _ = self.profile_signal().emit(profile_id).await;
+            tracing::error!(?e, "Failed to create profile read model");
             return Err(e);
-        }
-
-        if let Err(e) = self.profile_signal().emit(profile_id).await {
-            tracing::error!(?e, "Failed to emit profile signal");
         }
 
         Ok(profile)
@@ -125,14 +99,7 @@ where
             param.banner,
         );
 
-        self.profile_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
-
-        if let Err(e) = self.profile_signal().emit(param.profile_id).await {
-            tracing::error!(?e, "Failed to emit profile signal");
-        }
-
+        self.profile_repository().save(executor, command).await?;
         Ok(())
     }
 }
@@ -146,9 +113,8 @@ pub trait DependOnProfileCommandProcessor: DependOnDatabaseConnection + Send + S
 
 impl<T> DependOnProfileCommandProcessor for T
 where
-    T: DependOnProfileEventStore
+    T: DependOnProfileRepository
         + DependOnProfileReadModel
-        + DependOnProfileSignal
         + DependOnDatabaseConnection
         + Send
         + Sync
@@ -160,8 +126,6 @@ where
     }
 }
 
-// --- ProfileQueryProcessor ---
-
 pub trait ProfileQueryProcessor: Send + Sync + 'static {
     type Connection: Connection;
 
@@ -169,19 +133,19 @@ pub trait ProfileQueryProcessor: Send + Sync + 'static {
         &self,
         executor: &mut Self::Connection,
         id: &ProfileId,
-    ) -> impl Future<Output = error_stack::Result<Option<Profile>, KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
 
     fn find_by_account_id(
         &self,
         executor: &mut Self::Connection,
         account_id: &AccountId,
-    ) -> impl Future<Output = error_stack::Result<Option<Profile>, KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
 
     fn find_by_account_ids(
         &self,
         executor: &mut Self::Connection,
         account_ids: &[AccountId],
-    ) -> impl Future<Output = error_stack::Result<Vec<Profile>, KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<Vec<ProfileProjection>, KernelError>> + Send;
 }
 
 impl<T> ProfileQueryProcessor for T
@@ -195,7 +159,7 @@ where
         &self,
         executor: &mut Self::Connection,
         id: &ProfileId,
-    ) -> error_stack::Result<Option<Profile>, KernelError> {
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
         self.profile_read_model().find_by_id(executor, id).await
     }
 
@@ -203,7 +167,7 @@ where
         &self,
         executor: &mut Self::Connection,
         account_id: &AccountId,
-    ) -> error_stack::Result<Option<Profile>, KernelError> {
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
         self.profile_read_model()
             .find_by_account_id(executor, account_id)
             .await
@@ -213,7 +177,7 @@ where
         &self,
         executor: &mut Self::Connection,
         account_ids: &[AccountId],
-    ) -> error_stack::Result<Vec<Profile>, KernelError> {
+    ) -> error_stack::Result<Vec<ProfileProjection>, KernelError> {
         self.profile_read_model()
             .find_by_account_ids(executor, account_ids)
             .await

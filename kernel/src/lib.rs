@@ -204,5 +204,47 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnProfileRepository for $impl_type {
+            type ProfileRepository = <$db_type as $crate::interfaces::repository::DependOnProfileRepository>::ProfileRepository;
+            fn profile_repository(&self) -> &Self::ProfileRepository {
+                $crate::interfaces::repository::DependOnProfileRepository::profile_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnMetadataRepository for $impl_type {
+            type MetadataRepository = <$db_type as $crate::interfaces::repository::DependOnMetadataRepository>::MetadataRepository;
+            fn metadata_repository(&self) -> &Self::MetadataRepository {
+                $crate::interfaces::repository::DependOnMetadataRepository::metadata_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::projection::DependOnProfileEventLog for $impl_type {
+            type ProfileEventLog = <$db_type as $crate::interfaces::projection::DependOnProfileEventLog>::ProfileEventLog;
+            fn profile_event_log(&self) -> &Self::ProfileEventLog {
+                $crate::interfaces::projection::DependOnProfileEventLog::profile_event_log(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::projection::DependOnProfileProjectionWriter for $impl_type {
+            type ProfileProjectionWriter = <$db_type as $crate::interfaces::projection::DependOnProfileProjectionWriter>::ProfileProjectionWriter;
+            fn profile_projection_writer(&self) -> &Self::ProfileProjectionWriter {
+                $crate::interfaces::projection::DependOnProfileProjectionWriter::profile_projection_writer(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::projection::DependOnMetadataEventLog for $impl_type {
+            type MetadataEventLog = <$db_type as $crate::interfaces::projection::DependOnMetadataEventLog>::MetadataEventLog;
+            fn metadata_event_log(&self) -> &Self::MetadataEventLog {
+                $crate::interfaces::projection::DependOnMetadataEventLog::metadata_event_log(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::projection::DependOnMetadataProjectionWriter for $impl_type {
+            type MetadataProjectionWriter = <$db_type as $crate::interfaces::projection::DependOnMetadataProjectionWriter>::MetadataProjectionWriter;
+            fn metadata_projection_writer(&self) -> &Self::MetadataProjectionWriter {
+                $crate::interfaces::projection::DependOnMetadataProjectionWriter::metadata_projection_writer(&self.$field)
+            }
+        }
+
     };
 }

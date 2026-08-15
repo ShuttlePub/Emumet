@@ -1,5 +1,8 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
-use crate::entity::{Account, AccountEvent, EventEnvelope};
+use crate::entity::{
+    Account, AccountEvent, EventEnvelope, Metadata, MetadataEvent, MetadataId, Profile,
+    ProfileEvent, ProfileId,
+};
 use crate::KernelError;
 use std::future::Future;
 
@@ -89,4 +92,96 @@ pub trait DependOnAccountProjectionWriter: Sync + Send + DependOnDatabaseConnect
     >;
 
     fn account_projection_writer(&self) -> &Self::AccountProjectionWriter;
+}
+
+/// Transactional log tailing read for profile events (ADR 0006 decision 4).
+pub trait ProfileEventLog: Sync + Send + 'static {
+    type Connection: Connection;
+
+    fn find_by_seq_window(
+        &self,
+        executor: &mut Self::Connection,
+        from_seq_exclusive: i64,
+        limit: i64,
+    ) -> impl Future<Output = error_stack::Result<Vec<SeqEvent<ProfileEvent, Profile>>, KernelError>>
+           + Send;
+}
+
+pub trait DependOnProfileEventLog: Sync + Send + DependOnDatabaseConnection {
+    type ProfileEventLog: ProfileEventLog<
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn profile_event_log(&self) -> &Self::ProfileEventLog;
+}
+
+/// Version-gated projection writer for profiles.
+pub trait ProfileProjectionWriter: Sync + Send + 'static {
+    type Connection: Connection;
+
+    fn upsert(
+        &self,
+        executor: &mut Self::Connection,
+        profile: &Profile,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn delete(
+        &self,
+        executor: &mut Self::Connection,
+        profile_id: &ProfileId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+}
+
+pub trait DependOnProfileProjectionWriter: Sync + Send + DependOnDatabaseConnection {
+    type ProfileProjectionWriter: ProfileProjectionWriter<
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn profile_projection_writer(&self) -> &Self::ProfileProjectionWriter;
+}
+
+/// Transactional log tailing read for metadata events (ADR 0006 decision 4).
+pub trait MetadataEventLog: Sync + Send + 'static {
+    type Connection: Connection;
+
+    fn find_by_seq_window(
+        &self,
+        executor: &mut Self::Connection,
+        from_seq_exclusive: i64,
+        limit: i64,
+    ) -> impl Future<Output = error_stack::Result<Vec<SeqEvent<MetadataEvent, Metadata>>, KernelError>>
+           + Send;
+}
+
+pub trait DependOnMetadataEventLog: Sync + Send + DependOnDatabaseConnection {
+    type MetadataEventLog: MetadataEventLog<
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn metadata_event_log(&self) -> &Self::MetadataEventLog;
+}
+
+/// Version-gated projection writer for metadata.
+pub trait MetadataProjectionWriter: Sync + Send + 'static {
+    type Connection: Connection;
+
+    fn upsert(
+        &self,
+        executor: &mut Self::Connection,
+        metadata: &Metadata,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn delete(
+        &self,
+        executor: &mut Self::Connection,
+        metadata_id: &MetadataId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+}
+
+pub trait DependOnMetadataProjectionWriter: Sync + Send + DependOnDatabaseConnection {
+    type MetadataProjectionWriter: MetadataProjectionWriter<
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn metadata_projection_writer(&self) -> &Self::MetadataProjectionWriter;
 }

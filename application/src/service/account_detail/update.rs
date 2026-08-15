@@ -1,7 +1,6 @@
 use super::fields::apply_field_updates;
 use super::validate::validate_update_account_dto;
 use crate::permission::{account_edit, check_permission};
-use crate::service::profile::resolve_field_action_image_id;
 use crate::transfer::account::{AccountDetailDto, AccountDto, AccountFieldDto, UpdateAccountDto};
 use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use adapter::processor::metadata::{
@@ -13,22 +12,19 @@ use adapter::processor::profile::{
 };
 use error_stack::Report;
 use kernel::interfaces::database::{
-    DatabaseConnection, DependOnTransactionManager, TransactionManager,
+    DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
 };
 use kernel::interfaces::event::EventApplier;
-use kernel::interfaces::event_store::{
-    DependOnMetadataEventStore, DependOnProfileEventStore, ProfileEventStore,
-};
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::read_model::{
-    AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
-    DependOnProfileReadModel, ProfileReadModel,
+    AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel, DependOnProfileReadModel,
 };
 use kernel::interfaces::repository::{
-    AggregateRepository, DependOnAccountRepository, DependOnImageRepository, ImageRepository,
+    AggregateRepository, DependOnAccountRepository, DependOnImageRepository,
+    DependOnMetadataRepository, ImageRepository,
 };
 use kernel::prelude::entity::{
-    Account, AccountIsBot, AuthAccountId, EventId, FieldAction, ImageId, Nanoid, Profile,
+    Account, AccountIsBot, AuthAccountId, FieldAction, ImageId, ImageUrl, Nanoid,
     ProfileDisplayName, ProfileSummary,
 };
 use kernel::KernelError;
@@ -45,12 +41,11 @@ pub trait UpdateAccountDetailUseCase:
     + DependOnAccountReadModel
     + DependOnProfileCommandProcessor
     + DependOnProfileQueryProcessor
-    + DependOnProfileEventStore
     + DependOnProfileReadModel
     + DependOnMetadataCommandProcessor
     + DependOnMetadataQueryProcessor
-    + DependOnMetadataEventStore
     + DependOnMetadataReadModel
+    + DependOnMetadataRepository
     + DependOnImageRepository
     + DependOnPermissionChecker
     + DependOnTransactionManager
@@ -136,8 +131,6 @@ pub trait UpdateAccountDetailUseCase:
                                     },
                                 )
                                 .await?;
-                            let profile = rehydrate_profile(&deps, executor, profile.id()).await?;
-                            deps.profile_read_model().update(executor, &profile).await?;
                         }
 
                         let mut existing_fields = deps
@@ -161,51 +154,65 @@ pub trait UpdateAccountDetailUseCase:
                             .find_by_id(executor, &account_id)
                             .await?
                             .ok_or_else(|| Report::new(KernelError::NotFound))?;
-                        let profile = deps
-                            .profile_query_processor()
-                            .find_by_account_id(executor, &account_id)
-                            .await?
-                            .ok_or_else(|| Report::new(KernelError::NotFound))?;
-                        let mut current_fields = deps
-                            .metadata_query_processor()
-                            .find_by_account_id(executor, &account_id)
-                            .await?;
-                        current_fields.sort_by_key(|field| *field.id().as_ref());
-                        let fields = current_fields
-                            .into_iter()
-                            .map(|field| AccountFieldDto {
-                                label: field.label().as_ref().to_string(),
-                                content: field.content().as_ref().to_string(),
-                            })
-                            .collect();
-                        let image_ids: Vec<_> = profile
-                            .icon()
-                            .as_ref()
-                            .into_iter()
-                            .chain(profile.banner().as_ref())
-                            .cloned()
-                            .collect();
-                        let images: HashMap<ImageId, String> = deps
-                            .image_repository()
-                            .find_by_ids(executor, &image_ids)
-                            .await?
-                            .into_iter()
-                            .map(|image| (image.id().clone(), image.url().as_ref().to_string()))
-                            .collect();
-                        Ok(AccountDto::from(account).into_detail(
-                            profile
+                        // Read-after-write DTO is built from the command request and the
+                        // pre-update projection for unchanged fields; the tailing projector
+                        // eventually converges the read model.
+                        let display_name = match &dto.display_name {
+                            FieldAction::Unchanged => profile
                                 .display_name()
                                 .as_ref()
                                 .map(|v| v.as_ref().to_string()),
-                            profile.summary().as_ref().map(|v| v.as_ref().to_string()),
-                            profile
-                                .icon()
-                                .as_ref()
-                                .and_then(|id| images.get(id).cloned()),
-                            profile
-                                .banner()
-                                .as_ref()
-                                .and_then(|id| images.get(id).cloned()),
+                            FieldAction::Clear => None,
+                            FieldAction::Set(name) => Some(name.clone()),
+                        };
+                        let summary = match &dto.summary {
+                            FieldAction::Unchanged => {
+                                profile.summary().as_ref().map(|v| v.as_ref().to_string())
+                            }
+                            FieldAction::Clear => None,
+                            FieldAction::Set(text) => Some(text.clone()),
+                        };
+                        let icon_id = match &dto.icon_url {
+                            FieldAction::Unchanged => profile.icon().clone(),
+                            FieldAction::Clear => None,
+                            FieldAction::Set(url) => {
+                                resolve_image_id(&deps, executor, Some(url.as_str())).await?
+                            }
+                        };
+                        let banner_id = match &dto.banner_url {
+                            FieldAction::Unchanged => profile.banner().clone(),
+                            FieldAction::Clear => None,
+                            FieldAction::Set(url) => {
+                                resolve_image_id(&deps, executor, Some(url.as_str())).await?
+                            }
+                        };
+                        let fields = match &dto.fields {
+                            Some(fields) => fields.clone(),
+                            None => existing_fields
+                                .into_iter()
+                                .map(|field| AccountFieldDto {
+                                    label: field.label().as_ref().to_string(),
+                                    content: field.content().as_ref().to_string(),
+                                })
+                                .collect(),
+                        };
+                        let image_ids: Vec<_> =
+                            icon_id.iter().chain(banner_id.iter()).cloned().collect();
+                        let images: HashMap<ImageId, String> = if image_ids.is_empty() {
+                            HashMap::new()
+                        } else {
+                            deps.image_repository()
+                                .find_by_ids(executor, &image_ids)
+                                .await?
+                                .into_iter()
+                                .map(|image| (image.id().clone(), image.url().as_ref().to_string()))
+                                .collect()
+                        };
+                        Ok(AccountDto::from(account).into_detail(
+                            display_name,
+                            summary,
+                            icon_id.as_ref().and_then(|id| images.get(id).cloned()),
+                            banner_id.as_ref().and_then(|id| images.get(id).cloned()),
                             fields,
                         ))
                     })
@@ -225,12 +232,11 @@ impl<T> UpdateAccountDetailUseCase for T where
         + DependOnAccountReadModel
         + DependOnProfileCommandProcessor
         + DependOnProfileQueryProcessor
-        + DependOnProfileEventStore
         + DependOnProfileReadModel
         + DependOnMetadataCommandProcessor
         + DependOnMetadataQueryProcessor
-        + DependOnMetadataEventStore
         + DependOnMetadataReadModel
+        + DependOnMetadataRepository
         + DependOnImageRepository
         + DependOnPermissionChecker
         + DependOnTransactionManager
@@ -247,21 +253,41 @@ fn apply_is_bot(current: bool, action: FieldAction<bool>) -> bool {
     }
 }
 
-async fn rehydrate_profile<T>(
+async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(
     deps: &T,
-    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
-    profile_id: &kernel::prelude::entity::ProfileId,
-) -> error_stack::Result<Profile, KernelError>
-where
-    T: DependOnProfileEventStore + ?Sized,
-{
-    let events = deps
-        .profile_event_store()
-        .find_by_id(executor, &EventId::from(profile_id.clone()), None)
-        .await?;
-    let mut profile = None;
-    for event in events {
-        Profile::apply(&mut profile, event)?;
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
+    url: Option<&str>,
+) -> error_stack::Result<Option<ImageId>, KernelError> {
+    let Some(url) = url else {
+        return Ok(None);
+    };
+    let image_url = ImageUrl::new(url.to_string());
+    image_url.validate()?;
+    let image = deps
+        .image_repository()
+        .find_by_url(executor, &image_url)
+        .await?
+        .ok_or_else(|| {
+            Report::new(KernelError::NotFound)
+                .attach_printable(format!("Image not found with URL: {}", url))
+        })?;
+    Ok(Some(image.id().clone()))
+}
+
+async fn resolve_field_action_image_id<T: DependOnImageRepository + ?Sized>(
+    deps: &T,
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
+    action: &FieldAction<String>,
+) -> error_stack::Result<FieldAction<ImageId>, KernelError> {
+    match action {
+        FieldAction::Unchanged => Ok(FieldAction::Unchanged),
+        FieldAction::Clear => Ok(FieldAction::Clear),
+        FieldAction::Set(url) => {
+            match resolve_image_id(deps, executor, Some(url.as_str())).await? {
+                Some(id) => Ok(FieldAction::Set(id)),
+                None => Err(Report::new(KernelError::Internal)
+                    .attach_printable("Image resolution returned no ID for a provided URL")),
+            }
+        }
     }
-    profile.ok_or_else(|| Report::new(KernelError::NotFound))
 }

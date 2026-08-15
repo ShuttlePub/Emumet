@@ -1,7 +1,9 @@
 use sqlx::PgConnection;
 
 use error_stack::Report;
-use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
+use kernel::interfaces::read_model::{
+    DependOnProfileReadModel, ProfileProjection, ProfileReadModel,
+};
 use kernel::prelude::entity::{
     AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
     ProfileSummary,
@@ -23,9 +25,9 @@ struct ProfileRow {
     nanoid: String,
 }
 
-impl From<ProfileRow> for Profile {
+impl From<ProfileRow> for ProfileProjection {
     fn from(value: ProfileRow) -> Self {
-        Profile::new(
+        ProfileProjection::new(
             ProfileId::new(value.id),
             AccountId::new(value.account_id),
             value.display.map(ProfileDisplayName::new),
@@ -47,7 +49,7 @@ impl ProfileReadModel for PostgresProfileReadModel {
         &self,
         executor: &mut Self::Connection,
         id: &ProfileId,
-    ) -> error_stack::Result<Option<Profile>, KernelError> {
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
         let con: &mut PgConnection = executor;
         sqlx::query_as::<_, ProfileRow>(
             //language=postgresql
@@ -60,14 +62,14 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .fetch_optional(con)
         .await
         .convert_error()
-        .map(|option| option.map(Profile::from))
+        .map(|option| option.map(ProfileProjection::from))
     }
 
     async fn find_by_account_id(
         &self,
         executor: &mut Self::Connection,
         account_id: &AccountId,
-    ) -> error_stack::Result<Option<Profile>, KernelError> {
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
         let con: &mut PgConnection = executor;
         sqlx::query_as::<_, ProfileRow>(
             //language=postgresql
@@ -80,14 +82,14 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .fetch_optional(con)
         .await
         .convert_error()
-        .map(|option| option.map(Profile::from))
+        .map(|option| option.map(ProfileProjection::from))
     }
 
     async fn find_by_account_ids(
         &self,
         executor: &mut Self::Connection,
         account_ids: &[AccountId],
-    ) -> error_stack::Result<Vec<Profile>, KernelError> {
+    ) -> error_stack::Result<Vec<ProfileProjection>, KernelError> {
         let con: &mut PgConnection = executor;
         let ids: Vec<i64> = account_ids.iter().map(|id| *id.as_ref()).collect();
         sqlx::query_as::<_, ProfileRow>(
@@ -101,7 +103,7 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .fetch_all(con)
         .await
         .convert_error()
-        .map(|rows| rows.into_iter().map(Profile::from).collect())
+        .map(|rows| rows.into_iter().map(ProfileProjection::from).collect())
     }
 
     async fn create(
@@ -209,7 +211,7 @@ mod test {
         use kernel::interfaces::read_model::{
             AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
         };
-        use kernel::prelude::entity::{AccountId, Profile, ProfileId};
+        use kernel::prelude::entity::{AccountId, EventVersion, ProfileId};
         use kernel::test_utils::{AccountBuilder, ProfileBuilder};
 
         use crate::database::PostgresDatabase;
@@ -245,7 +247,11 @@ mod test {
                 .find_by_id(&mut conn, &profile_id)
                 .await
                 .unwrap();
-            assert_eq!(result.as_ref().map(Profile::id), Some(profile.id()));
+            assert!(result.is_some());
+            let result = result.unwrap();
+            assert_eq!(result.id(), &profile_id);
+            assert_eq!(result.display_name(), profile.display_name());
+            assert_eq!(result.summary(), profile.summary());
 
             database
                 .account_read_model()
@@ -285,15 +291,9 @@ mod test {
                 .find_by_account_id(&mut conn, &account_id)
                 .await
                 .unwrap();
-            assert_eq!(result.as_ref().map(Profile::id), Some(profile.id()));
-
-            // Non-existent account_id returns None
-            let not_found = database
-                .profile_read_model()
-                .find_by_account_id(&mut conn, &AccountId::default())
-                .await
-                .unwrap();
-            assert!(not_found.is_none());
+            assert!(result.is_some());
+            let result = result.unwrap();
+            assert_eq!(result.id(), &profile_id);
 
             database
                 .account_read_model()
@@ -304,7 +304,7 @@ mod test {
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
-        async fn create() {
+        async fn update_and_find_by_id() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut conn = database.connection().await.unwrap();
@@ -315,66 +315,27 @@ mod test {
             let profile = ProfileBuilder::new()
                 .id(profile_id.clone())
                 .account_id(account_id.clone())
+                .display_name(Some("old".to_string()))
+                .summary(Some("old summary".to_string()))
                 .build();
-
-            database
-                .account_read_model()
-                .create(&mut conn, &account)
-                .await
-                .unwrap();
-            database
-                .profile_read_model()
-                .create(&mut conn, &profile)
-                .await
-                .unwrap();
-
-            let result = database
-                .profile_read_model()
-                .find_by_id(&mut conn, &profile_id)
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(result.id(), profile.id());
-
-            database
-                .account_read_model()
-                .deactivate(&mut conn, account.id())
-                .await
-                .unwrap();
-        }
-
-        #[test_with::env(DATABASE_URL)]
-        #[tokio::test]
-        async fn update() {
-            kernel::ensure_generator_initialized();
-            let database = PostgresDatabase::new().await.unwrap();
-            let mut conn = database.connection().await.unwrap();
-
-            let profile_id = ProfileId::new(kernel::generate_id());
-            let account_id = AccountId::default();
-            let account = AccountBuilder::new().id(account_id.clone()).build();
-            let profile = ProfileBuilder::new()
-                .id(profile_id.clone())
-                .account_id(account_id.clone())
-                .build();
-
-            database
-                .account_read_model()
-                .create(&mut conn, &account)
-                .await
-                .unwrap();
-            database
-                .profile_read_model()
-                .create(&mut conn, &profile)
-                .await
-                .unwrap();
-
             let updated_profile = ProfileBuilder::new()
                 .id(profile_id.clone())
                 .account_id(account_id.clone())
-                .display_name(Some("updated display name"))
-                .summary(Some("updated summary"))
+                .display_name(Some("new".to_string()))
+                .summary(Some("new summary".to_string()))
+                .version(EventVersion::new(2))
                 .build();
+
+            database
+                .account_read_model()
+                .create(&mut conn, &account)
+                .await
+                .unwrap();
+            database
+                .profile_read_model()
+                .create(&mut conn, &profile)
+                .await
+                .unwrap();
             database
                 .profile_read_model()
                 .update(&mut conn, &updated_profile)

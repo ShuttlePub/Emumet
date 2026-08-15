@@ -1,4 +1,3 @@
-mod applier;
 mod auth;
 mod error;
 mod handler;

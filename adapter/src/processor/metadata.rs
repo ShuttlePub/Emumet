@@ -1,23 +1,15 @@
 use error_stack::Report;
 use kernel::interfaces::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::event::EventApplier;
-use kernel::interfaces::event_store::{DependOnMetadataEventStore, MetadataEventStore};
-use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
-use kernel::interfaces::signal::Signal;
+use kernel::interfaces::read_model::{
+    DependOnMetadataReadModel, MetadataProjection, MetadataReadModel,
+};
+use kernel::interfaces::repository::{AggregateRepository, DependOnMetadataRepository};
 use kernel::prelude::entity::{
     AccountId, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
 };
 use kernel::KernelError;
 use std::future::Future;
-
-// --- Signal DI trait (adapter-specific) ---
-
-pub trait DependOnMetadataSignal: Send + Sync {
-    type MetadataSignal: Signal<MetadataId> + Send + Sync + 'static;
-    fn metadata_signal(&self) -> &Self::MetadataSignal;
-}
-
-// --- Param structs ---
 
 #[derive(Debug)]
 pub struct CreateMetadataParam {
@@ -34,8 +26,6 @@ pub struct UpdateMetadataParam {
     pub content: MetadataContent,
     pub current_version: EventVersion<Metadata>,
 }
-
-// --- MetadataCommandProcessor ---
 
 pub trait MetadataCommandProcessor: Send + Sync + 'static {
     type Connection: Connection;
@@ -62,10 +52,10 @@ pub trait MetadataCommandProcessor: Send + Sync + 'static {
 
 impl<T> MetadataCommandProcessor for T
 where
-    T: DependOnMetadataEventStore + DependOnMetadataSignal + Send + Sync + 'static,
+    T: DependOnMetadataRepository + DependOnMetadataReadModel + Send + Sync + 'static,
 {
     type Connection =
-        <<T as DependOnMetadataEventStore>::MetadataEventStore as MetadataEventStore>::Connection;
+        <<T as DependOnMetadataRepository>::MetadataRepository as AggregateRepository<Metadata>>::Connection;
 
     async fn create(
         &self,
@@ -81,10 +71,7 @@ where
             param.nano_id,
         );
 
-        let event_envelope = self
-            .metadata_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
+        let event_envelope = self.metadata_repository().save(executor, command).await?;
 
         let mut metadata = None;
         Metadata::apply(&mut metadata, event_envelope)?;
@@ -93,8 +80,9 @@ where
                 .attach_printable("Failed to construct metadata from created event")
         })?;
 
-        if let Err(e) = self.metadata_signal().emit(metadata_id).await {
-            tracing::error!(?e, "Failed to emit metadata signal");
+        if let Err(e) = self.metadata_read_model().create(executor, &metadata).await {
+            tracing::error!(?e, "Failed to create metadata read model");
+            return Err(e);
         }
 
         Ok(metadata)
@@ -112,14 +100,7 @@ where
             param.current_version,
         );
 
-        self.metadata_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
-
-        if let Err(e) = self.metadata_signal().emit(param.metadata_id).await {
-            tracing::error!(?e, "Failed to emit metadata signal");
-        }
-
+        self.metadata_repository().save(executor, command).await?;
         Ok(())
     }
 
@@ -129,16 +110,8 @@ where
         metadata_id: MetadataId,
         current_version: EventVersion<Metadata>,
     ) -> error_stack::Result<(), KernelError> {
-        let command = Metadata::delete(metadata_id.clone(), current_version);
-
-        self.metadata_event_store()
-            .persist_and_transform(executor, command)
-            .await?;
-
-        if let Err(e) = self.metadata_signal().emit(metadata_id).await {
-            tracing::error!(?e, "Failed to emit metadata signal");
-        }
-
+        let command = Metadata::delete(metadata_id, current_version);
+        self.metadata_repository().save(executor, command).await?;
         Ok(())
     }
 }
@@ -152,8 +125,8 @@ pub trait DependOnMetadataCommandProcessor: DependOnDatabaseConnection + Send + 
 
 impl<T> DependOnMetadataCommandProcessor for T
 where
-    T: DependOnMetadataEventStore
-        + DependOnMetadataSignal
+    T: DependOnMetadataRepository
+        + DependOnMetadataReadModel
         + DependOnDatabaseConnection
         + Send
         + Sync
@@ -165,8 +138,6 @@ where
     }
 }
 
-// --- MetadataQueryProcessor ---
-
 pub trait MetadataQueryProcessor: Send + Sync + 'static {
     type Connection: Connection;
 
@@ -174,19 +145,19 @@ pub trait MetadataQueryProcessor: Send + Sync + 'static {
         &self,
         executor: &mut Self::Connection,
         id: &MetadataId,
-    ) -> impl Future<Output = error_stack::Result<Option<Metadata>, KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<Option<MetadataProjection>, KernelError>> + Send;
 
     fn find_by_account_id(
         &self,
         executor: &mut Self::Connection,
         account_id: &AccountId,
-    ) -> impl Future<Output = error_stack::Result<Vec<Metadata>, KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<Vec<MetadataProjection>, KernelError>> + Send;
 
     fn find_by_account_ids(
         &self,
         executor: &mut Self::Connection,
         account_ids: &[AccountId],
-    ) -> impl Future<Output = error_stack::Result<Vec<Metadata>, KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<Vec<MetadataProjection>, KernelError>> + Send;
 }
 
 impl<T> MetadataQueryProcessor for T
@@ -200,7 +171,7 @@ where
         &self,
         executor: &mut Self::Connection,
         id: &MetadataId,
-    ) -> error_stack::Result<Option<Metadata>, KernelError> {
+    ) -> error_stack::Result<Option<MetadataProjection>, KernelError> {
         self.metadata_read_model().find_by_id(executor, id).await
     }
 
@@ -208,7 +179,7 @@ where
         &self,
         executor: &mut Self::Connection,
         account_id: &AccountId,
-    ) -> error_stack::Result<Vec<Metadata>, KernelError> {
+    ) -> error_stack::Result<Vec<MetadataProjection>, KernelError> {
         self.metadata_read_model()
             .find_by_account_id(executor, account_id)
             .await
@@ -218,7 +189,7 @@ where
         &self,
         executor: &mut Self::Connection,
         account_ids: &[AccountId],
-    ) -> error_stack::Result<Vec<Metadata>, KernelError> {
+    ) -> error_stack::Result<Vec<MetadataProjection>, KernelError> {
         self.metadata_read_model()
             .find_by_account_ids(executor, account_ids)
             .await

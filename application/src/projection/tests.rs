@@ -1,4 +1,4 @@
-use super::ProjectAccountBatch;
+use super::{ProjectAccountBatch, ProjectMetadataBatch, ProjectProfileBatch};
 use driver::database::PostgresDatabase;
 use kernel::impl_database_delegation;
 use kernel::interfaces::database::{
@@ -329,7 +329,7 @@ async fn commit_order_inversion_eventually_projects_both_events() {
     .unwrap();
 
     let mut tx_update = projector.db.get_transaction().await.unwrap();
-    let updated = json!({ "type": "Updated", "is_bot": true });
+    let updated = json!({ "type": "Updated".to_string(), "is_bot": true });
     let update_con: &mut PgConnection = tx_update.connection();
     sqlx::query(
         "INSERT INTO account_events (version, id, event_name, data) VALUES ($1, $2, $3, $4)",
@@ -389,7 +389,7 @@ async fn per_aggregate_fold_uses_version_order_not_seq_order() {
     let con: &mut PgConnection = &mut conn;
     // seq order (insert order) is the inverse of version order: the Updated
     // event (version 2) is inserted before the Created event (version 1).
-    let updated = json!({ "type": "Updated", "is_bot": true });
+    let updated = json!({ "type": "Updated".to_string(), "is_bot": true });
     sqlx::query(
         "INSERT INTO account_events (version, id, event_name, data) VALUES ($1, $2, $3, $4)",
     )
@@ -486,4 +486,234 @@ async fn checkpoint_advances_as_events_are_appended() {
         checkpoint_2 > checkpoint_1,
         "checkpoint must advance when new events are appended"
     );
+}
+
+mod profile {
+    use super::{clear_checkpoint, ProjectProfileBatch};
+    use driver::database::PostgresDatabase;
+    use kernel::impl_database_delegation;
+    use kernel::interfaces::database::DatabaseConnection;
+    use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
+    use kernel::interfaces::projection::DependOnProjectionCheckpointStore;
+    use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
+    use kernel::prelude::entity::{
+        AccountId, Profile, ProfileDisplayName, ProfileId, ProfileSummary,
+    };
+
+    struct ProfileProjectorTest {
+        db: PostgresDatabase,
+    }
+
+    impl_database_delegation!(ProfileProjectorTest, db, PostgresDatabase);
+
+    impl DependOnProjectionCheckpointStore for ProfileProjectorTest {
+        type ProjectionCheckpointStore =
+            <PostgresDatabase as DependOnProjectionCheckpointStore>::ProjectionCheckpointStore;
+        fn projection_checkpoint_store(&self) -> &Self::ProjectionCheckpointStore {
+            DependOnProjectionCheckpointStore::projection_checkpoint_store(&self.db)
+        }
+    }
+
+    async fn seed_profile(db: &PostgresDatabase) -> (ProfileId, Profile) {
+        let mut conn = db.connection().await.unwrap();
+        let profile_id = ProfileId::new(kernel::generate_id());
+        let account_id = AccountId::new(kernel::generate_id());
+        let account_name = format!("test-{}", account_id.as_ref());
+        sqlx::query(
+            //language=postgresql
+            "INSERT INTO accounts (id, name, is_bot, version, nanoid, created_at) \
+             VALUES ($1, $2, false, 1, $3, NOW())",
+        )
+        .bind(account_id.as_ref())
+        .bind(&account_name)
+        .bind(format!("nanoid-{}", account_id.as_ref()))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let command = Profile::create(
+            profile_id.clone(),
+            account_id,
+            Some(ProfileDisplayName::new("old name".to_string())),
+            Some(ProfileSummary::new("old summary".to_string())),
+            None,
+            None,
+            kernel::prelude::entity::Nanoid::<Profile>::default(),
+        );
+        let created = db
+            .profile_event_store()
+            .persist_and_transform(&mut conn, command)
+            .await
+            .unwrap();
+        let mut profile = None;
+        kernel::interfaces::event::EventApplier::apply(&mut profile, created).unwrap();
+        (profile_id, profile.unwrap())
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn profile_projector_materializes_and_is_idempotent() {
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = ProfileProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        clear_checkpoint(&projector.db).await;
+        let (profile_id, expected) = seed_profile(&projector.db).await;
+        assert_eq!(expected.id(), &profile_id);
+
+        let checkpoint_1 = projector.project_profile_batch().await.unwrap();
+        let state_1 = projector
+            .db
+            .profile_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &profile_id)
+            .await
+            .unwrap()
+            .expect("profile must be materialized");
+        let checkpoint_2 = projector.project_profile_batch().await.unwrap();
+        let state_2 = projector
+            .db
+            .profile_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &profile_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(checkpoint_2 >= checkpoint_1);
+        assert_eq!(state_1.display_name(), expected.display_name());
+        assert_eq!(state_2.display_name(), expected.display_name());
+    }
+}
+
+mod metadata {
+    use super::{clear_checkpoint, ProjectMetadataBatch};
+    use driver::database::PostgresDatabase;
+    use kernel::impl_database_delegation;
+    use kernel::interfaces::database::DatabaseConnection;
+    use kernel::interfaces::event_store::{DependOnMetadataEventStore, MetadataEventStore};
+    use kernel::interfaces::projection::DependOnProjectionCheckpointStore;
+    use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
+    use kernel::prelude::entity::{
+        AccountId, Metadata, MetadataContent, MetadataId, MetadataLabel,
+    };
+
+    struct MetadataProjectorTest {
+        db: PostgresDatabase,
+    }
+
+    impl_database_delegation!(MetadataProjectorTest, db, PostgresDatabase);
+
+    impl DependOnProjectionCheckpointStore for MetadataProjectorTest {
+        type ProjectionCheckpointStore =
+            <PostgresDatabase as DependOnProjectionCheckpointStore>::ProjectionCheckpointStore;
+        fn projection_checkpoint_store(&self) -> &Self::ProjectionCheckpointStore {
+            DependOnProjectionCheckpointStore::projection_checkpoint_store(&self.db)
+        }
+    }
+
+    async fn seed_metadata(db: &PostgresDatabase) -> (MetadataId, Metadata) {
+        let mut conn = db.connection().await.unwrap();
+        let metadata_id = MetadataId::new(kernel::generate_id());
+        let account_id = AccountId::new(kernel::generate_id());
+        let account_name = format!("test-{}", account_id.as_ref());
+        sqlx::query(
+            //language=postgresql
+            "INSERT INTO accounts (id, name, is_bot, version, nanoid, created_at) \
+             VALUES ($1, $2, false, 1, $3, NOW())",
+        )
+        .bind(account_id.as_ref())
+        .bind(&account_name)
+        .bind(format!("nanoid-{}", account_id.as_ref()))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let command = Metadata::create(
+            metadata_id.clone(),
+            account_id,
+            MetadataLabel::new("label".to_string()),
+            MetadataContent::new("content".to_string()),
+            kernel::prelude::entity::Nanoid::<Metadata>::default(),
+        );
+        let created = db
+            .metadata_event_store()
+            .persist_and_transform(&mut conn, command)
+            .await
+            .unwrap();
+        let mut metadata = None;
+        kernel::interfaces::event::EventApplier::apply(&mut metadata, created).unwrap();
+        (metadata_id, metadata.unwrap())
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn metadata_projector_materializes_and_is_idempotent() {
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = MetadataProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        clear_checkpoint(&projector.db).await;
+        let (metadata_id, expected) = seed_metadata(&projector.db).await;
+
+        let checkpoint_1 = projector.project_metadata_batch().await.unwrap();
+        let state_1 = projector
+            .db
+            .metadata_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &metadata_id)
+            .await
+            .unwrap()
+            .expect("metadata must be materialized");
+        let checkpoint_2 = projector.project_metadata_batch().await.unwrap();
+        let state_2 = projector
+            .db
+            .metadata_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &metadata_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(checkpoint_2 >= checkpoint_1);
+        assert_eq!(state_1.label(), expected.label());
+        assert_eq!(state_2.label(), expected.label());
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn metadata_projector_deletes_on_deleted_event() {
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = MetadataProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        clear_checkpoint(&projector.db).await;
+        let (metadata_id, expected) = seed_metadata(&projector.db).await;
+
+        projector.project_metadata_batch().await.unwrap();
+        let exists = projector
+            .db
+            .metadata_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &metadata_id)
+            .await
+            .unwrap()
+            .is_some();
+        assert!(exists);
+
+        let mut conn = projector.db.connection().await.unwrap();
+        let delete = Metadata::delete(metadata_id.clone(), expected.version().clone());
+        projector
+            .db
+            .metadata_event_store()
+            .persist(&mut conn, &delete)
+            .await
+            .unwrap();
+        drop(conn);
+
+        projector.project_metadata_batch().await.unwrap();
+        let gone = projector
+            .db
+            .metadata_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &metadata_id)
+            .await
+            .unwrap();
+        assert!(gone.is_none());
+    }
 }

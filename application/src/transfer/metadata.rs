@@ -1,4 +1,4 @@
-use kernel::prelude::entity::Metadata;
+use kernel::interfaces::read_model::MetadataProjection;
 
 #[derive(Debug)]
 pub struct CreateMetadataDto {
@@ -24,7 +24,7 @@ pub struct MetadataDto {
 }
 
 impl MetadataDto {
-    pub fn new(metadata: Metadata, account_nanoid: String) -> Self {
+    pub fn new(metadata: MetadataProjection, account_nanoid: String) -> Self {
         Self {
             account_nanoid,
             nanoid: metadata.nanoid().as_ref().to_string(),
@@ -41,7 +41,7 @@ mod tests {
 
     #[test]
     fn test_metadata_dto_new() {
-        let metadata = MetadataBuilder::new().build();
+        let metadata = MetadataProjection::from(MetadataBuilder::new().build());
         let account_nanoid = "acc-nanoid-789".to_string();
         let nanoid_str = metadata.nanoid().as_ref().to_string();
 
