@@ -126,7 +126,7 @@ async fn savepoint_rolls_back_failed_work_and_keeps_transaction_usable() {
     // Then: only the first and third inserts are present.
     let mut conn = database.connection().await.unwrap();
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM auth_hosts WHERE id = ANY($1)")
-        .bind(&vec![id_a, id_b])
+        .bind(vec![id_a, id_b])
         .fetch_one(&mut *conn)
         .await
         .unwrap();

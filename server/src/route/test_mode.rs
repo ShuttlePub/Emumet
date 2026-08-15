@@ -71,7 +71,7 @@ async fn reset(headers: HeaderMap) -> Result<StatusCode, ErrorStatus> {
 
     sqlx::query(
         "TRUNCATE accounts, account_events, auth_accounts, auth_emumet_accounts, \
-         profiles, profile_events, metadatas, metadata_events, \
+         profiles, profile_events, metadatas, metadata_events, projection_checkpoints, \
          auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities \
          CASCADE",
     )

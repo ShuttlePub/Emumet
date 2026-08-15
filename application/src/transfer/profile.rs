@@ -1,4 +1,5 @@
-use kernel::prelude::entity::{FieldAction, Profile};
+use kernel::interfaces::read_model::ProfileProjection;
+use kernel::prelude::entity::FieldAction;
 
 #[derive(Debug)]
 pub struct UpdateProfileDto {
@@ -21,7 +22,7 @@ pub struct ProfileDto {
 
 impl ProfileDto {
     pub fn new(
-        profile: Profile,
+        profile: ProfileProjection,
         account_nanoid: String,
         icon_url: Option<String>,
         banner_url: Option<String>,
@@ -47,7 +48,7 @@ mod tests {
 
     #[test]
     fn test_profile_dto_with_all_fields() {
-        let profile = ProfileBuilder::new().build();
+        let profile = ProfileProjection::from(ProfileBuilder::new().build());
         let account_nanoid = "acc-nanoid-123".to_string();
 
         let icon_url = "https://example.com/icon.png".to_string();
@@ -70,10 +71,12 @@ mod tests {
 
     #[test]
     fn test_profile_dto_with_no_optional_fields() {
-        let profile = ProfileBuilder::new()
-            .display_name(None::<String>)
-            .summary(None::<String>)
-            .build();
+        let profile = ProfileProjection::from(
+            ProfileBuilder::new()
+                .display_name(None::<String>)
+                .summary(None::<String>)
+                .build(),
+        );
         let account_nanoid = "acc-nanoid-456".to_string();
         let nanoid_str = profile.nanoid().as_ref().to_string();
 

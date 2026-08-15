@@ -1,12 +1,9 @@
-use crate::applier::ApplierContainer;
 use crate::hydra::HydraAdminClient;
 use crate::kratos::KratosClient;
-use adapter::processor::metadata::DependOnMetadataSignal;
-use adapter::processor::profile::DependOnProfileSignal;
 use driver::crypto::{
     Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
 };
-use driver::database::{PostgresDatabase, RedisDatabase};
+use driver::database::PostgresDatabase;
 use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
 use driver::keto::KetoClient;
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
@@ -24,17 +21,12 @@ use vodca::References;
 #[derive(Clone, References)]
 pub struct AppModule {
     handler: Arc<Handler>,
-    applier_container: Arc<ApplierContainer>,
 }
 
 impl AppModule {
     pub async fn new() -> error_stack::Result<Self, KernelError> {
         let handler = Arc::new(Handler::init().await?);
-        let applier_container = Arc::new(ApplierContainer::new(handler.clone()));
-        Ok(Self {
-            handler,
-            applier_container,
-        })
+        Ok(Self { handler })
     }
 
     pub fn hydra_admin_client(&self) -> &HydraAdminClient {
@@ -46,7 +38,7 @@ impl AppModule {
     }
 }
 
-// --- DependOn* implementations for AppModule (delegate to handler/applier_container) ---
+// --- DependOn* implementations for AppModule (delegate to handler) ---
 
 impl kernel::interfaces::database::DependOnDatabaseConnection for AppModule {
     type DatabaseConnection = PostgresDatabase;
@@ -146,22 +138,6 @@ impl kernel::interfaces::read_model::DependOnProfileReadModel for AppModule {
     }
 }
 
-impl kernel::interfaces::event_store::DependOnProfileEventStore for AppModule {
-    type ProfileEventStore = <PostgresDatabase as kernel::interfaces::event_store::DependOnProfileEventStore>::ProfileEventStore;
-    fn profile_event_store(&self) -> &Self::ProfileEventStore {
-        kernel::interfaces::event_store::DependOnProfileEventStore::profile_event_store(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl DependOnProfileSignal for AppModule {
-    type ProfileSignal = ApplierContainer;
-    fn profile_signal(&self) -> &Self::ProfileSignal {
-        &self.applier_container
-    }
-}
-
 impl kernel::interfaces::read_model::DependOnMetadataReadModel for AppModule {
     type MetadataReadModel = <PostgresDatabase as kernel::interfaces::read_model::DependOnMetadataReadModel>::MetadataReadModel;
     fn metadata_read_model(&self) -> &Self::MetadataReadModel {
@@ -171,19 +147,66 @@ impl kernel::interfaces::read_model::DependOnMetadataReadModel for AppModule {
     }
 }
 
-impl kernel::interfaces::event_store::DependOnMetadataEventStore for AppModule {
-    type MetadataEventStore = <PostgresDatabase as kernel::interfaces::event_store::DependOnMetadataEventStore>::MetadataEventStore;
-    fn metadata_event_store(&self) -> &Self::MetadataEventStore {
-        kernel::interfaces::event_store::DependOnMetadataEventStore::metadata_event_store(
+impl kernel::interfaces::repository::DependOnProfileRepository for AppModule {
+    type ProfileRepository = <PostgresDatabase as kernel::interfaces::repository::DependOnProfileRepository>::ProfileRepository;
+    fn profile_repository(&self) -> &Self::ProfileRepository {
+        kernel::interfaces::repository::DependOnProfileRepository::profile_repository(
             self.handler.as_ref().database_connection(),
         )
     }
 }
 
-impl DependOnMetadataSignal for AppModule {
-    type MetadataSignal = ApplierContainer;
-    fn metadata_signal(&self) -> &Self::MetadataSignal {
-        &self.applier_container
+impl kernel::interfaces::projection::DependOnProfileEventLog for AppModule {
+    type ProfileEventLog = <PostgresDatabase as kernel::interfaces::projection::DependOnProfileEventLog>::ProfileEventLog;
+    fn profile_event_log(&self) -> &Self::ProfileEventLog {
+        kernel::interfaces::projection::DependOnProfileEventLog::profile_event_log(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::projection::DependOnProfileProjectionWriter for AppModule {
+    type ProfileProjectionWriter = <PostgresDatabase as kernel::interfaces::projection::DependOnProfileProjectionWriter>::ProfileProjectionWriter;
+    fn profile_projection_writer(&self) -> &Self::ProfileProjectionWriter {
+        kernel::interfaces::projection::DependOnProfileProjectionWriter::profile_projection_writer(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::event_store::DependOnProfileEventStore for AppModule {
+    type ProfileEventStore = <PostgresDatabase as kernel::interfaces::event_store::DependOnProfileEventStore>::ProfileEventStore;
+    fn profile_event_store(&self) -> &Self::ProfileEventStore {
+        kernel::interfaces::event_store::DependOnProfileEventStore::profile_event_store(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::repository::DependOnMetadataRepository for AppModule {
+    type MetadataRepository = <PostgresDatabase as kernel::interfaces::repository::DependOnMetadataRepository>::MetadataRepository;
+    fn metadata_repository(&self) -> &Self::MetadataRepository {
+        kernel::interfaces::repository::DependOnMetadataRepository::metadata_repository(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::projection::DependOnMetadataEventLog for AppModule {
+    type MetadataEventLog = <PostgresDatabase as kernel::interfaces::projection::DependOnMetadataEventLog>::MetadataEventLog;
+    fn metadata_event_log(&self) -> &Self::MetadataEventLog {
+        kernel::interfaces::projection::DependOnMetadataEventLog::metadata_event_log(
+            self.handler.as_ref().database_connection(),
+        )
+    }
+}
+
+impl kernel::interfaces::projection::DependOnMetadataProjectionWriter for AppModule {
+    type MetadataProjectionWriter = <PostgresDatabase as kernel::interfaces::projection::DependOnMetadataProjectionWriter>::MetadataProjectionWriter;
+    fn metadata_projection_writer(&self) -> &Self::MetadataProjectionWriter {
+        kernel::interfaces::projection::DependOnMetadataProjectionWriter::metadata_projection_writer(
+            self.handler.as_ref().database_connection(),
+        )
     }
 }
 
@@ -196,7 +219,6 @@ impl kernel::interfaces::repository::DependOnAuthHostRepository for AppModule {
         )
     }
 }
-
 impl kernel::interfaces::repository::DependOnFollowRepository for AppModule {
     type FollowRepository =
         <PostgresDatabase as kernel::interfaces::repository::DependOnFollowRepository>::FollowRepository;
@@ -318,7 +340,6 @@ impl DependOnPublicBaseUrl for AppModule {
 #[derive(References)]
 pub struct Handler {
     pgpool: PostgresDatabase,
-    redis: RedisDatabase,
     // Crypto providers
     password_provider: FilePasswordProvider,
     raw_key_generator: Rsa2048RawGenerator,
@@ -362,13 +383,11 @@ impl Handler {
         keto_write_url: String,
     ) -> error_stack::Result<Self, KernelError> {
         let pgpool = PostgresDatabase::new().await?;
-        let redis = RedisDatabase::new()?;
         let public_base_url = PublicBaseUrl::new(
             dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
         );
         Ok(Self {
             pgpool,
-            redis,
             password_provider: FilePasswordProvider::new(),
             raw_key_generator: Rsa2048RawGenerator,
             key_encryptor: Argon2Encryptor::default(),
@@ -393,13 +412,11 @@ impl Handler {
         keto_write_url: String,
     ) -> error_stack::Result<Self, KernelError> {
         let pgpool = PostgresDatabase::new().await?;
-        let redis = RedisDatabase::new_noop()?;
         let public_base_url = PublicBaseUrl::new(
             dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
         );
         Ok(Self {
             pgpool,
-            redis,
             password_provider: FilePasswordProvider::new(),
             raw_key_generator: Rsa2048RawGenerator,
             key_encryptor: Argon2Encryptor::default(),
@@ -432,11 +449,7 @@ impl AppModule {
             )
             .await?,
         );
-        let applier_container = Arc::new(ApplierContainer::new(handler.clone()));
-        Ok(Self {
-            handler,
-            applier_container,
-        })
+        Ok(Self { handler })
     }
 
     pub(crate) async fn new_for_oauth2_test(

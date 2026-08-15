@@ -89,6 +89,15 @@ pub trait AccountReadModel: Sync + Send + 'static {
         nanoids: &[Nanoid<Account>],
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
 
+    /// Load an account including deleted rows.  Used by child projectors
+    /// to detect cascade-deleted parents without weakening the corruption
+    /// detection that `find_by_id` / `find_by_id_unfiltered` provides.
+    fn find_by_id_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
+
     // Moderation operations
     fn suspend(
         &self,

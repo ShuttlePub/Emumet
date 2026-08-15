@@ -1,14 +1,15 @@
-use crate::service::metadata::rehydrate_metadata;
 use crate::transfer::account::AccountFieldDto;
 use adapter::processor::metadata::{
     CreateMetadataParam, DependOnMetadataCommandProcessor, MetadataCommandProcessor,
     UpdateMetadataParam,
 };
-use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::event_store::DependOnMetadataEventStore;
-use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
+use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::read_model::{
+    DependOnMetadataReadModel, MetadataProjection, MetadataReadModel,
+};
+use kernel::interfaces::repository::{AggregateRepository, DependOnMetadataRepository};
 use kernel::prelude::entity::{
-    AccountId, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
+    AccountId, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
 };
 use kernel::KernelError;
 
@@ -28,7 +29,10 @@ enum FieldUpdate {
     },
 }
 
-fn plan_field_updates(existing: &[Metadata], submitted: &[AccountFieldDto]) -> Vec<FieldUpdate> {
+fn plan_field_updates(
+    existing: &[MetadataProjection],
+    submitted: &[AccountFieldDto],
+) -> Vec<FieldUpdate> {
     let paired = existing.len().min(submitted.len());
     let mut operations = Vec::new();
     for index in 0..paired {
@@ -54,15 +58,15 @@ fn plan_field_updates(existing: &[Metadata], submitted: &[AccountFieldDto]) -> V
 
 pub(super) async fn apply_field_updates<T>(
     deps: &T,
-    executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     account_id: &AccountId,
-    existing: &[Metadata],
+    existing: &[MetadataProjection],
     submitted: &[AccountFieldDto],
 ) -> error_stack::Result<(), KernelError>
 where
     T: DependOnMetadataCommandProcessor
-        + DependOnMetadataEventStore
         + DependOnMetadataReadModel
+        + DependOnMetadataRepository
         + ?Sized,
 {
     for operation in plan_field_updates(existing, submitted) {
@@ -120,6 +124,21 @@ where
     Ok(())
 }
 
+async fn rehydrate_metadata<T>(
+    deps: &T,
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
+    metadata_id: &MetadataId,
+) -> error_stack::Result<(Metadata, EventVersion<Metadata>), KernelError>
+where
+    T: DependOnMetadataRepository + ?Sized,
+{
+    let rehydrated = deps
+        .metadata_repository()
+        .load(executor, metadata_id)
+        .await?;
+    Ok(rehydrated.into_parts())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,14 +147,18 @@ mod tests {
     #[test]
     fn field_diff_pairs_by_index_and_updates_only_changed_pairs() {
         let existing = vec![
-            MetadataBuilder::new()
-                .label("Website")
-                .content("old")
-                .build(),
-            MetadataBuilder::new()
-                .label("GitHub")
-                .content("same")
-                .build(),
+            MetadataProjection::from(
+                MetadataBuilder::new()
+                    .label("Website")
+                    .content("old")
+                    .build(),
+            ),
+            MetadataProjection::from(
+                MetadataBuilder::new()
+                    .label("GitHub")
+                    .content("same")
+                    .build(),
+            ),
         ];
         let submitted = vec![
             AccountFieldDto {
@@ -157,8 +180,8 @@ mod tests {
     #[test]
     fn field_diff_deletes_existing_items_left_after_pairing() {
         let existing = vec![
-            MetadataBuilder::new().build(),
-            MetadataBuilder::new().build(),
+            MetadataProjection::from(MetadataBuilder::new().build()),
+            MetadataProjection::from(MetadataBuilder::new().build()),
         ];
         let submitted = vec![AccountFieldDto {
             label: "Website".into(),
@@ -172,7 +195,7 @@ mod tests {
 
     #[test]
     fn field_diff_creates_submitted_items_left_after_pairing() {
-        let existing = vec![MetadataBuilder::new().build()];
+        let existing = vec![MetadataProjection::from(MetadataBuilder::new().build())];
         let submitted = vec![
             AccountFieldDto {
                 label: "Website".into(),

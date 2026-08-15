@@ -1,5 +1,8 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
-use crate::entity::{Account, AccountId, CommandEnvelope, EventEnvelope, EventVersion};
+use crate::entity::{
+    Account, AccountId, CommandEnvelope, EventEnvelope, EventVersion, Metadata, MetadataId,
+    Profile, ProfileId,
+};
 use crate::event::EventApplier;
 use crate::KernelError;
 use std::future::Future;
@@ -55,6 +58,26 @@ where
         })?;
         Ok(Some(Rehydrated::new(aggregate, version)))
     }
+
+    /// Like [`from_events`](Self::from_events) but returns `Ok(None)` instead of
+    /// `Err(Internal)` when the event stream folds the aggregate to `None`.
+    /// Use this for aggregates that have a legitimate deletion event (e.g.
+    /// `Metadata::Deleted`) where `None` means "deleted", not corruption.
+    pub fn from_events_allow_deletion(
+        events: Vec<EventEnvelope<A::Event, A>>,
+    ) -> error_stack::Result<Option<Rehydrated<A>>, KernelError> {
+        let Some(version) = events
+            .last()
+            .map(|event| EventVersion::new(*event.version.as_ref()))
+        else {
+            return Ok(None);
+        };
+        let mut aggregate: Option<A> = None;
+        for event in events {
+            A::apply(&mut aggregate, event)?;
+        }
+        Ok(aggregate.map(|a| Rehydrated::new(a, version)))
+    }
 }
 
 /// Repository port for event-sourced aggregates (ADR 0006 decision 3).
@@ -91,6 +114,26 @@ pub trait DependOnAccountRepository: Sync + Send + DependOnDatabaseConnection {
     >;
 
     fn account_repository(&self) -> &Self::AccountRepository;
+}
+
+pub trait DependOnProfileRepository: Sync + Send + DependOnDatabaseConnection {
+    type ProfileRepository: AggregateRepository<
+        Profile,
+        Id = ProfileId,
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn profile_repository(&self) -> &Self::ProfileRepository;
+}
+
+pub trait DependOnMetadataRepository: Sync + Send + DependOnDatabaseConnection {
+    type MetadataRepository: AggregateRepository<
+        Metadata,
+        Id = MetadataId,
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn metadata_repository(&self) -> &Self::MetadataRepository;
 }
 
 #[cfg(test)]

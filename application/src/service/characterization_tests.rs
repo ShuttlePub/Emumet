@@ -3,9 +3,8 @@ use super::account::{
     UnsuspendAccountUseCase,
 };
 use super::account_detail::UpdateAccountDetailUseCase;
+use crate::projection::{ProjectMetadataBatch, ProjectProfileBatch};
 use crate::transfer::account::{AccountFieldDto, CreateAccountDto, UpdateAccountDto};
-use adapter::processor::metadata::DependOnMetadataSignal;
-use adapter::processor::profile::DependOnProfileSignal;
 use driver::crypto::{Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator};
 use driver::database::PostgresDatabase;
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
@@ -17,19 +16,10 @@ use kernel::interfaces::permission::{
     DependOnPermissionChecker, DependOnPermissionWriter, InstanceRole, PermissionChecker,
     PermissionReq, PermissionWriter, RelationTarget,
 };
-use kernel::interfaces::signal::Signal;
 use kernel::prelude::entity::{AuthAccountId, FieldAction};
 use kernel::KernelError;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
-
-struct NoopSignal;
-
-impl<ID: Send> Signal<ID> for NoopSignal {
-    async fn emit(&self, _signal_id: ID) -> error_stack::Result<(), KernelError> {
-        Ok(())
-    }
-}
 
 struct AllowPermissions {
     writes: AtomicUsize,
@@ -114,7 +104,6 @@ struct TestModule {
     key_encryptor: std::sync::Arc<Argon2Encryptor>,
     permissions: std::sync::Arc<AllowPermissions>,
     public_base_url: PublicBaseUrl,
-    signal: std::sync::Arc<NoopSignal>,
 }
 
 impl TestModule {
@@ -130,7 +119,6 @@ impl TestModule {
             raw_key_generator: std::sync::Arc::new(Rsa2048RawGenerator),
             key_encryptor: std::sync::Arc::new(Argon2Encryptor::default()),
             public_base_url: PublicBaseUrl::new("https://example.com".to_string()),
-            signal: std::sync::Arc::new(NoopSignal),
         }
     }
 
@@ -198,22 +186,6 @@ impl DependOnPermissionWriter for TestModule {
 impl DependOnPublicBaseUrl for TestModule {
     fn public_base_url(&self) -> &PublicBaseUrl {
         &self.public_base_url
-    }
-}
-
-impl DependOnProfileSignal for TestModule {
-    type ProfileSignal = NoopSignal;
-
-    fn profile_signal(&self) -> &Self::ProfileSignal {
-        self.signal.as_ref()
-    }
-}
-
-impl DependOnMetadataSignal for TestModule {
-    type MetadataSignal = NoopSignal;
-
-    fn metadata_signal(&self) -> &Self::MetadataSignal {
-        self.signal.as_ref()
     }
 }
 
@@ -354,6 +326,10 @@ async fn update_account_detail_commits_all_current_database_writes() {
         )
         .await
         .unwrap();
+
+    // Tailing projectors apply the profile and metadata events to the read models.
+    module.database.project_profile_batch().await.unwrap();
+    module.database.project_metadata_batch().await.unwrap();
 
     // Then
     assert!(updated.is_bot);

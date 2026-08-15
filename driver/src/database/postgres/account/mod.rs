@@ -359,6 +359,28 @@ impl AccountReadModel for PostgresAccountReadModel {
         })
     }
 
+    async fn find_by_id_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        id: &AccountId,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, AccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
+            FROM accounts
+            WHERE id = $1
+            "#,
+        )
+        .bind(id.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(|row| account_from_row(row, true)))
+    }
+
     async fn suspend(
         &self,
         executor: &mut Self::Connection,
