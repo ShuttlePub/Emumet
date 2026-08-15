@@ -7,6 +7,7 @@ use kernel::KernelError;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone)]
 pub struct KetoClient {
     read_url: String,
     write_url: String,

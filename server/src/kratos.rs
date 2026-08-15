@@ -2,6 +2,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use url::Url;
 
+#[derive(Clone)]
 pub struct KratosClient {
     public_url: String,
     http_client: Client,

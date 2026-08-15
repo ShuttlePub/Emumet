@@ -7,10 +7,7 @@ use kernel::interfaces::database::{
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
 use kernel::interfaces::permission::{DependOnPermissionWriter, PermissionWriter, RelationTarget};
-use kernel::interfaces::projection::{
-    AccountProjectionWriter, DependOnAccountEventLog, DependOnAccountProjectionWriter,
-    DependOnProjectionCheckpointStore,
-};
+use kernel::interfaces::projection::{AccountProjectionWriter, DependOnAccountProjectionWriter};
 use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
 use kernel::prelude::entity::{
     Account, AccountEvent, AccountId, AccountIsBot, AccountName, AuthAccountId, EventEnvelope,
@@ -56,32 +53,6 @@ impl DependOnPermissionWriter for ProjectorTest {
 
     fn permission_writer(&self) -> &Self::PermissionWriter {
         &NoopPermissionWriter
-    }
-}
-
-impl DependOnAccountEventLog for ProjectorTest {
-    type AccountEventLog = <PostgresDatabase as DependOnAccountEventLog>::AccountEventLog;
-
-    fn account_event_log(&self) -> &Self::AccountEventLog {
-        DependOnAccountEventLog::account_event_log(&self.db)
-    }
-}
-
-impl DependOnProjectionCheckpointStore for ProjectorTest {
-    type ProjectionCheckpointStore =
-        <PostgresDatabase as DependOnProjectionCheckpointStore>::ProjectionCheckpointStore;
-
-    fn projection_checkpoint_store(&self) -> &Self::ProjectionCheckpointStore {
-        DependOnProjectionCheckpointStore::projection_checkpoint_store(&self.db)
-    }
-}
-
-impl DependOnAccountProjectionWriter for ProjectorTest {
-    type AccountProjectionWriter =
-        <PostgresDatabase as DependOnAccountProjectionWriter>::AccountProjectionWriter;
-
-    fn account_projection_writer(&self) -> &Self::AccountProjectionWriter {
-        DependOnAccountProjectionWriter::account_projection_writer(&self.db)
     }
 }
 
@@ -496,7 +467,7 @@ mod profile {
     use kernel::interfaces::event_store::{
         AccountEventStore, DependOnAccountEventStore, DependOnProfileEventStore, ProfileEventStore,
     };
-    use kernel::interfaces::projection::DependOnProjectionCheckpointStore;
+
     use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
     use kernel::prelude::entity::{
         Account, AccountId, AccountIsBot, AccountName, AuthAccountId, Nanoid, Profile,
@@ -508,14 +479,6 @@ mod profile {
     }
 
     impl_database_delegation!(ProfileProjectorTest, db, PostgresDatabase);
-
-    impl DependOnProjectionCheckpointStore for ProfileProjectorTest {
-        type ProjectionCheckpointStore =
-            <PostgresDatabase as DependOnProjectionCheckpointStore>::ProjectionCheckpointStore;
-        fn projection_checkpoint_store(&self) -> &Self::ProjectionCheckpointStore {
-            DependOnProjectionCheckpointStore::projection_checkpoint_store(&self.db)
-        }
-    }
 
     async fn seed_profile(db: &PostgresDatabase) -> (ProfileId, Profile) {
         let mut conn = db.connection().await.unwrap();
@@ -786,7 +749,7 @@ mod metadata {
         AccountEventStore, DependOnAccountEventStore, DependOnMetadataEventStore,
         MetadataEventStore,
     };
-    use kernel::interfaces::projection::DependOnProjectionCheckpointStore;
+
     use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
     use kernel::prelude::entity::{
         Account, AccountId, AccountIsBot, AccountName, AuthAccountId, Metadata, MetadataContent,
@@ -798,14 +761,6 @@ mod metadata {
     }
 
     impl_database_delegation!(MetadataProjectorTest, db, PostgresDatabase);
-
-    impl DependOnProjectionCheckpointStore for MetadataProjectorTest {
-        type ProjectionCheckpointStore =
-            <PostgresDatabase as DependOnProjectionCheckpointStore>::ProjectionCheckpointStore;
-        fn projection_checkpoint_store(&self) -> &Self::ProjectionCheckpointStore {
-            DependOnProjectionCheckpointStore::projection_checkpoint_store(&self.db)
-        }
-    }
 
     async fn seed_metadata(db: &PostgresDatabase) -> (MetadataId, Metadata) {
         let mut conn = db.connection().await.unwrap();

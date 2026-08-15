@@ -242,5 +242,40 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::projection::DependOnAccountEventLog for $impl_type {
+            type AccountEventLog = <$db_type as $crate::interfaces::projection::DependOnAccountEventLog>::AccountEventLog;
+            fn account_event_log(&self) -> &Self::AccountEventLog {
+                $crate::interfaces::projection::DependOnAccountEventLog::account_event_log(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::projection::DependOnProjectionCheckpointStore for $impl_type {
+            type ProjectionCheckpointStore = <$db_type as $crate::interfaces::projection::DependOnProjectionCheckpointStore>::ProjectionCheckpointStore;
+            fn projection_checkpoint_store(&self) -> &Self::ProjectionCheckpointStore {
+                $crate::interfaces::projection::DependOnProjectionCheckpointStore::projection_checkpoint_store(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::projection::DependOnAccountProjectionWriter for $impl_type {
+            type AccountProjectionWriter = <$db_type as $crate::interfaces::projection::DependOnAccountProjectionWriter>::AccountProjectionWriter;
+            fn account_projection_writer(&self) -> &Self::AccountProjectionWriter {
+                $crate::interfaces::projection::DependOnAccountProjectionWriter::account_projection_writer(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnBlockRepository for $impl_type {
+            type BlockRepository = <$db_type as $crate::interfaces::repository::DependOnBlockRepository>::BlockRepository;
+            fn block_repository(&self) -> &Self::BlockRepository {
+                $crate::interfaces::repository::DependOnBlockRepository::block_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnMuteRepository for $impl_type {
+            type MuteRepository = <$db_type as $crate::interfaces::repository::DependOnMuteRepository>::MuteRepository;
+            fn mute_repository(&self) -> &Self::MuteRepository {
+                $crate::interfaces::repository::DependOnMuteRepository::mute_repository(&self.$field)
+            }
+        }
+
     };
 }

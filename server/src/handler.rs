@@ -11,354 +11,33 @@ use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
     DependOnSignatureVerifier, DependOnSigner,
 };
-use kernel::interfaces::database::DependOnDatabaseConnection;
 use kernel::interfaces::http_signing::{DependOnHttpSignatureVerifier, DependOnHttpSigner};
 use kernel::interfaces::permission::{DependOnPermissionChecker, DependOnPermissionWriter};
 use kernel::KernelError;
-use std::sync::Arc;
-use vodca::References;
 
-#[derive(Clone, References)]
+/// Single wiring root for the HTTP server (ADR 0006 decision 7).
+///
+/// Database delegation goes through `kernel::impl_database_delegation!`;
+/// non-database infrastructure is wired by the small handwritten impls below.
+/// No use-case logic lives here.
+#[derive(Clone)]
 pub struct AppModule {
-    handler: Arc<Handler>,
-}
-
-impl AppModule {
-    pub async fn new() -> error_stack::Result<Self, KernelError> {
-        let handler = Arc::new(Handler::init().await?);
-        Ok(Self { handler })
-    }
-
-    pub fn hydra_admin_client(&self) -> &HydraAdminClient {
-        &self.handler.hydra_admin_client
-    }
-
-    pub fn kratos_client(&self) -> &KratosClient {
-        &self.handler.kratos_client
-    }
-}
-
-// --- DependOn* implementations for AppModule (delegate to handler) ---
-
-impl kernel::interfaces::database::DependOnDatabaseConnection for AppModule {
-    type DatabaseConnection = PostgresDatabase;
-    fn database_connection(&self) -> &Self::DatabaseConnection {
-        self.handler.as_ref().database_connection()
-    }
-}
-
-impl kernel::interfaces::database::DependOnTransactionManager for AppModule {
-    type TransactionManager = PostgresDatabase;
-    fn transaction_manager(&self) -> &Self::TransactionManager {
-        self.handler.as_ref().database_connection()
-    }
-}
-
-impl kernel::interfaces::read_model::DependOnAccountReadModel for AppModule {
-    type AccountReadModel = <PostgresDatabase as kernel::interfaces::read_model::DependOnAccountReadModel>::AccountReadModel;
-    fn account_read_model(&self) -> &Self::AccountReadModel {
-        kernel::interfaces::read_model::DependOnAccountReadModel::account_read_model(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::event_store::DependOnAccountEventStore for AppModule {
-    type AccountEventStore = <PostgresDatabase as kernel::interfaces::event_store::DependOnAccountEventStore>::AccountEventStore;
-    fn account_event_store(&self) -> &Self::AccountEventStore {
-        kernel::interfaces::event_store::DependOnAccountEventStore::account_event_store(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::projection::DependOnAccountEventLog for AppModule {
-    type AccountEventLog = <PostgresDatabase as kernel::interfaces::projection::DependOnAccountEventLog>::AccountEventLog;
-    fn account_event_log(&self) -> &Self::AccountEventLog {
-        kernel::interfaces::projection::DependOnAccountEventLog::account_event_log(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::projection::DependOnProjectionCheckpointStore for AppModule {
-    type ProjectionCheckpointStore = <PostgresDatabase as kernel::interfaces::projection::DependOnProjectionCheckpointStore>::ProjectionCheckpointStore;
-    fn projection_checkpoint_store(&self) -> &Self::ProjectionCheckpointStore {
-        kernel::interfaces::projection::DependOnProjectionCheckpointStore::projection_checkpoint_store(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::projection::DependOnAccountProjectionWriter for AppModule {
-    type AccountProjectionWriter = <PostgresDatabase as kernel::interfaces::projection::DependOnAccountProjectionWriter>::AccountProjectionWriter;
-    fn account_projection_writer(&self) -> &Self::AccountProjectionWriter {
-        kernel::interfaces::projection::DependOnAccountProjectionWriter::account_projection_writer(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl DependOnPasswordProvider for AppModule {
-    type PasswordProvider = FilePasswordProvider;
-    fn password_provider(&self) -> &Self::PasswordProvider {
-        self.handler.as_ref().password_provider()
-    }
-}
-
-impl DependOnRawKeyGenerator for AppModule {
-    type RawKeyGenerator = Rsa2048RawGenerator;
-    fn raw_key_generator(&self) -> &Self::RawKeyGenerator {
-        self.handler.as_ref().raw_key_generator()
-    }
-}
-
-impl DependOnKeyEncryptor for AppModule {
-    type KeyEncryptor = Argon2Encryptor;
-    fn key_encryptor(&self) -> &Self::KeyEncryptor {
-        self.handler.as_ref().key_encryptor()
-    }
-}
-
-impl kernel::interfaces::repository::DependOnAuthAccountRepository for AppModule {
-    type AuthAccountRepository = <PostgresDatabase as kernel::interfaces::repository::DependOnAuthAccountRepository>::AuthAccountRepository;
-    fn auth_account_repository(&self) -> &Self::AuthAccountRepository {
-        kernel::interfaces::repository::DependOnAuthAccountRepository::auth_account_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::read_model::DependOnProfileReadModel for AppModule {
-    type ProfileReadModel = <PostgresDatabase as kernel::interfaces::read_model::DependOnProfileReadModel>::ProfileReadModel;
-    fn profile_read_model(&self) -> &Self::ProfileReadModel {
-        kernel::interfaces::read_model::DependOnProfileReadModel::profile_read_model(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::read_model::DependOnMetadataReadModel for AppModule {
-    type MetadataReadModel = <PostgresDatabase as kernel::interfaces::read_model::DependOnMetadataReadModel>::MetadataReadModel;
-    fn metadata_read_model(&self) -> &Self::MetadataReadModel {
-        kernel::interfaces::read_model::DependOnMetadataReadModel::metadata_read_model(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::repository::DependOnProfileRepository for AppModule {
-    type ProfileRepository = <PostgresDatabase as kernel::interfaces::repository::DependOnProfileRepository>::ProfileRepository;
-    fn profile_repository(&self) -> &Self::ProfileRepository {
-        kernel::interfaces::repository::DependOnProfileRepository::profile_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::projection::DependOnProfileEventLog for AppModule {
-    type ProfileEventLog = <PostgresDatabase as kernel::interfaces::projection::DependOnProfileEventLog>::ProfileEventLog;
-    fn profile_event_log(&self) -> &Self::ProfileEventLog {
-        kernel::interfaces::projection::DependOnProfileEventLog::profile_event_log(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::projection::DependOnProfileProjectionWriter for AppModule {
-    type ProfileProjectionWriter = <PostgresDatabase as kernel::interfaces::projection::DependOnProfileProjectionWriter>::ProfileProjectionWriter;
-    fn profile_projection_writer(&self) -> &Self::ProfileProjectionWriter {
-        kernel::interfaces::projection::DependOnProfileProjectionWriter::profile_projection_writer(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::event_store::DependOnProfileEventStore for AppModule {
-    type ProfileEventStore = <PostgresDatabase as kernel::interfaces::event_store::DependOnProfileEventStore>::ProfileEventStore;
-    fn profile_event_store(&self) -> &Self::ProfileEventStore {
-        kernel::interfaces::event_store::DependOnProfileEventStore::profile_event_store(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::repository::DependOnMetadataRepository for AppModule {
-    type MetadataRepository = <PostgresDatabase as kernel::interfaces::repository::DependOnMetadataRepository>::MetadataRepository;
-    fn metadata_repository(&self) -> &Self::MetadataRepository {
-        kernel::interfaces::repository::DependOnMetadataRepository::metadata_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::projection::DependOnMetadataEventLog for AppModule {
-    type MetadataEventLog = <PostgresDatabase as kernel::interfaces::projection::DependOnMetadataEventLog>::MetadataEventLog;
-    fn metadata_event_log(&self) -> &Self::MetadataEventLog {
-        kernel::interfaces::projection::DependOnMetadataEventLog::metadata_event_log(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::projection::DependOnMetadataProjectionWriter for AppModule {
-    type MetadataProjectionWriter = <PostgresDatabase as kernel::interfaces::projection::DependOnMetadataProjectionWriter>::MetadataProjectionWriter;
-    fn metadata_projection_writer(&self) -> &Self::MetadataProjectionWriter {
-        kernel::interfaces::projection::DependOnMetadataProjectionWriter::metadata_projection_writer(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::repository::DependOnAuthHostRepository for AppModule {
-    type AuthHostRepository =
-        <PostgresDatabase as kernel::interfaces::repository::DependOnAuthHostRepository>::AuthHostRepository;
-    fn auth_host_repository(&self) -> &Self::AuthHostRepository {
-        kernel::interfaces::repository::DependOnAuthHostRepository::auth_host_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-impl kernel::interfaces::repository::DependOnFollowRepository for AppModule {
-    type FollowRepository =
-        <PostgresDatabase as kernel::interfaces::repository::DependOnFollowRepository>::FollowRepository;
-    fn follow_repository(&self) -> &Self::FollowRepository {
-        kernel::interfaces::repository::DependOnFollowRepository::follow_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::repository::DependOnBlockRepository for AppModule {
-    type BlockRepository =
-        <PostgresDatabase as kernel::interfaces::repository::DependOnBlockRepository>::BlockRepository;
-    fn block_repository(&self) -> &Self::BlockRepository {
-        kernel::interfaces::repository::DependOnBlockRepository::block_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::repository::DependOnMuteRepository for AppModule {
-    type MuteRepository =
-        <PostgresDatabase as kernel::interfaces::repository::DependOnMuteRepository>::MuteRepository;
-    fn mute_repository(&self) -> &Self::MuteRepository {
-        kernel::interfaces::repository::DependOnMuteRepository::mute_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::repository::DependOnOutboxActivityRepository for AppModule {
-    type OutboxActivityRepository =
-        <PostgresDatabase as kernel::interfaces::repository::DependOnOutboxActivityRepository>::OutboxActivityRepository;
-    fn outbox_activity_repository(&self) -> &Self::OutboxActivityRepository {
-        kernel::interfaces::repository::DependOnOutboxActivityRepository::outbox_activity_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::repository::DependOnRemoteAccountRepository for AppModule {
-    type RemoteAccountRepository =
-        <PostgresDatabase as kernel::interfaces::repository::DependOnRemoteAccountRepository>::RemoteAccountRepository;
-    fn remote_account_repository(&self) -> &Self::RemoteAccountRepository {
-        kernel::interfaces::repository::DependOnRemoteAccountRepository::remote_account_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::repository::DependOnImageRepository for AppModule {
-    type ImageRepository =
-        <PostgresDatabase as kernel::interfaces::repository::DependOnImageRepository>::ImageRepository;
-    fn image_repository(&self) -> &Self::ImageRepository {
-        kernel::interfaces::repository::DependOnImageRepository::image_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl DependOnPermissionChecker for AppModule {
-    type PermissionChecker = KetoClient;
-    fn permission_checker(&self) -> &Self::PermissionChecker {
-        self.handler.as_ref().permission_checker()
-    }
-}
-
-impl DependOnPermissionWriter for AppModule {
-    type PermissionWriter = KetoClient;
-    fn permission_writer(&self) -> &Self::PermissionWriter {
-        self.handler.as_ref().permission_writer()
-    }
-}
-
-impl kernel::interfaces::repository::DependOnSigningKeyRepository for AppModule {
-    type SigningKeyRepository =
-        <PostgresDatabase as kernel::interfaces::repository::DependOnSigningKeyRepository>::SigningKeyRepository;
-    fn signing_key_repository(&self) -> &Self::SigningKeyRepository {
-        kernel::interfaces::repository::DependOnSigningKeyRepository::signing_key_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::repository::DependOnAccountRepository for AppModule {
-    type AccountRepository =
-        <PostgresDatabase as kernel::interfaces::repository::DependOnAccountRepository>::AccountRepository;
-    fn account_repository(&self) -> &Self::AccountRepository {
-        kernel::interfaces::repository::DependOnAccountRepository::account_repository(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl DependOnHttpSigner for AppModule {
-    type HttpSigner = HttpSignerImpl;
-    fn http_signer(&self) -> &Self::HttpSigner {
-        self.handler.as_ref().http_signer()
-    }
-}
-
-impl DependOnHttpSignatureVerifier for AppModule {
-    type HttpSignatureVerifier = HttpSignatureVerifierImpl;
-    fn http_signature_verifier(&self) -> &Self::HttpSignatureVerifier {
-        self.handler.as_ref().http_signature_verifier()
-    }
-}
-
-impl DependOnPublicBaseUrl for AppModule {
-    fn public_base_url(&self) -> &PublicBaseUrl {
-        self.handler.as_ref().public_base_url()
-    }
-}
-
-// Note: DependOnSigningKeyGenerator and all UseCase traits are provided
-// automatically via blanket impls (adapter / application);
-// DependOn*Query traits come from kernel blanket impls.
-
-#[derive(References)]
-pub struct Handler {
     pgpool: PostgresDatabase,
-    // Crypto providers
     password_provider: FilePasswordProvider,
     raw_key_generator: Rsa2048RawGenerator,
     key_encryptor: Argon2Encryptor,
     signer: Rsa2048Signer,
     verifier: Rsa2048Verifier,
-    // HTTP signing
     http_signer: HttpSignerImpl,
     http_signature_verifier: HttpSignatureVerifierImpl,
-    // Config
     public_base_url: PublicBaseUrl,
-    // Ory clients
-    pub(crate) hydra_admin_client: HydraAdminClient,
-    pub(crate) kratos_client: KratosClient,
+    hydra_admin_client: HydraAdminClient,
+    kratos_client: KratosClient,
     keto_client: KetoClient,
 }
 
-impl Handler {
-    pub async fn init() -> error_stack::Result<Self, KernelError> {
+impl AppModule {
+    pub async fn new() -> error_stack::Result<Self, KernelError> {
         let hydra_admin_url =
             dotenvy::var("HYDRA_ADMIN_URL").unwrap_or_else(|_| "http://localhost:4445".to_string());
         let kratos_public_url = dotenvy::var("KRATOS_PUBLIC_URL")
@@ -367,25 +46,11 @@ impl Handler {
             dotenvy::var("KETO_READ_URL").unwrap_or_else(|_| "http://localhost:4466".to_string());
         let keto_write_url =
             dotenvy::var("KETO_WRITE_URL").unwrap_or_else(|_| "http://localhost:4467".to_string());
-        Self::init_with_urls(
-            hydra_admin_url,
-            kratos_public_url,
-            keto_read_url,
-            keto_write_url,
-        )
-        .await
-    }
+        let public_base_url =
+            dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
 
-    async fn init_with_urls(
-        hydra_admin_url: String,
-        kratos_public_url: String,
-        keto_read_url: String,
-        keto_write_url: String,
-    ) -> error_stack::Result<Self, KernelError> {
         let pgpool = PostgresDatabase::new().await?;
-        let public_base_url = PublicBaseUrl::new(
-            dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
-        );
+
         Ok(Self {
             pgpool,
             password_provider: FilePasswordProvider::new(),
@@ -395,63 +60,40 @@ impl Handler {
             verifier: Rsa2048Verifier,
             http_signer: HttpSignerImpl,
             http_signature_verifier: HttpSignatureVerifierImpl::new()?,
-            public_base_url,
+            public_base_url: PublicBaseUrl::new(public_base_url),
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_client: KratosClient::new(kratos_public_url),
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
         })
     }
-}
 
-#[cfg(test)]
-impl Handler {
-    async fn init_for_oauth2_test(
-        hydra_admin_url: String,
-        kratos_public_url: String,
-        keto_read_url: String,
-        keto_write_url: String,
-    ) -> error_stack::Result<Self, KernelError> {
-        let pgpool = PostgresDatabase::new().await?;
-        let public_base_url = PublicBaseUrl::new(
-            dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
-        );
-        Ok(Self {
-            pgpool,
-            password_provider: FilePasswordProvider::new(),
-            raw_key_generator: Rsa2048RawGenerator,
-            key_encryptor: Argon2Encryptor::default(),
-            signer: Rsa2048Signer,
-            verifier: Rsa2048Verifier,
-            http_signer: HttpSignerImpl,
-            http_signature_verifier: HttpSignatureVerifierImpl::new()?,
-            public_base_url,
-            hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
-            kratos_client: KratosClient::new(kratos_public_url),
-            keto_client: KetoClient::new(keto_read_url, keto_write_url),
-        })
-    }
-}
-
-#[cfg(test)]
-impl AppModule {
+    #[cfg(test)]
     pub(crate) async fn new_for_test_urls(
         hydra_admin_url: String,
         kratos_public_url: String,
         keto_read_url: String,
         keto_write_url: String,
     ) -> error_stack::Result<Self, KernelError> {
-        let handler = Arc::new(
-            Handler::init_for_oauth2_test(
-                hydra_admin_url,
-                kratos_public_url,
-                keto_read_url,
-                keto_write_url,
-            )
-            .await?,
-        );
-        Ok(Self { handler })
+        let pgpool = PostgresDatabase::new().await?;
+        let public_base_url =
+            dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+        Ok(Self {
+            pgpool,
+            password_provider: FilePasswordProvider::new(),
+            raw_key_generator: Rsa2048RawGenerator,
+            key_encryptor: Argon2Encryptor::default(),
+            signer: Rsa2048Signer,
+            verifier: Rsa2048Verifier,
+            http_signer: HttpSignerImpl,
+            http_signature_verifier: HttpSignatureVerifierImpl::new()?,
+            public_base_url: PublicBaseUrl::new(public_base_url),
+            hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
+            kratos_client: KratosClient::new(kratos_public_url),
+            keto_client: KetoClient::new(keto_read_url, keto_write_url),
+        })
     }
 
+    #[cfg(test)]
     pub(crate) async fn new_for_oauth2_test(
         hydra_admin_url: String,
         kratos_public_url: String,
@@ -468,78 +110,82 @@ impl AppModule {
         )
         .await
     }
+
+    pub fn hydra_admin_client(&self) -> &HydraAdminClient {
+        &self.hydra_admin_client
+    }
+
+    pub fn kratos_client(&self) -> &KratosClient {
+        &self.kratos_client
+    }
 }
 
-// --- Database DI implementations (via macro) ---
+kernel::impl_database_delegation!(AppModule, pgpool, PostgresDatabase);
 
-kernel::impl_database_delegation!(Handler, pgpool, PostgresDatabase);
-
-// --- Crypto DI implementations ---
-
-impl DependOnPasswordProvider for Handler {
+impl DependOnPasswordProvider for AppModule {
     type PasswordProvider = FilePasswordProvider;
     fn password_provider(&self) -> &Self::PasswordProvider {
         &self.password_provider
     }
 }
 
-impl DependOnRawKeyGenerator for Handler {
+impl DependOnRawKeyGenerator for AppModule {
     type RawKeyGenerator = Rsa2048RawGenerator;
     fn raw_key_generator(&self) -> &Self::RawKeyGenerator {
         &self.raw_key_generator
     }
 }
 
-impl DependOnKeyEncryptor for Handler {
+impl DependOnKeyEncryptor for AppModule {
     type KeyEncryptor = Argon2Encryptor;
     fn key_encryptor(&self) -> &Self::KeyEncryptor {
         &self.key_encryptor
     }
 }
 
-impl DependOnSigner for Handler {
+impl DependOnSigner for AppModule {
     type Signer = Rsa2048Signer;
     fn signer(&self) -> &Self::Signer {
         &self.signer
     }
 }
 
-impl DependOnSignatureVerifier for Handler {
+impl DependOnSignatureVerifier for AppModule {
     type SignatureVerifier = Rsa2048Verifier;
     fn signature_verifier(&self) -> &Self::SignatureVerifier {
         &self.verifier
     }
 }
 
-impl DependOnPermissionChecker for Handler {
+impl DependOnPermissionChecker for AppModule {
     type PermissionChecker = KetoClient;
     fn permission_checker(&self) -> &Self::PermissionChecker {
         &self.keto_client
     }
 }
 
-impl DependOnPermissionWriter for Handler {
+impl DependOnPermissionWriter for AppModule {
     type PermissionWriter = KetoClient;
     fn permission_writer(&self) -> &Self::PermissionWriter {
         &self.keto_client
     }
 }
 
-impl DependOnHttpSigner for Handler {
+impl DependOnHttpSigner for AppModule {
     type HttpSigner = HttpSignerImpl;
     fn http_signer(&self) -> &Self::HttpSigner {
         &self.http_signer
     }
 }
 
-impl DependOnHttpSignatureVerifier for Handler {
+impl DependOnHttpSignatureVerifier for AppModule {
     type HttpSignatureVerifier = HttpSignatureVerifierImpl;
     fn http_signature_verifier(&self) -> &Self::HttpSignatureVerifier {
         &self.http_signature_verifier
     }
 }
 
-impl DependOnPublicBaseUrl for Handler {
+impl DependOnPublicBaseUrl for AppModule {
     fn public_base_url(&self) -> &PublicBaseUrl {
         &self.public_base_url
     }
