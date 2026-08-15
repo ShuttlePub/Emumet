@@ -91,6 +91,25 @@ impl Metadata {
             Some(ExpectedVersion::At(current_version)),
         )
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reconstitute(
+        id: MetadataId,
+        account_id: AccountId,
+        label: MetadataLabel,
+        content: MetadataContent,
+        nanoid: Nanoid<Metadata>,
+        version: EventVersion<Metadata>,
+    ) -> Self {
+        Self {
+            id,
+            account_id,
+            label,
+            content,
+            nanoid,
+            version,
+        }
+    }
 }
 
 impl EventApplier for Metadata {

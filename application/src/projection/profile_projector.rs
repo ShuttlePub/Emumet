@@ -6,6 +6,7 @@ use kernel::interfaces::projection::{
     DependOnProfileEventLog, DependOnProfileProjectionWriter, DependOnProjectionCheckpointStore,
     ProfileEventLog, ProfileProjectionWriter, ProjectionCheckpointStore,
 };
+use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::prelude::entity::{EventEnvelope, Profile, ProfileEvent, ProfileId};
 use kernel::KernelError;
 use std::collections::HashMap;
@@ -20,6 +21,7 @@ pub const PROFILE_PROJECTOR_BATCH_LIMIT: i64 = 1000;
 pub trait ProjectProfileBatch:
     DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
     + DependOnProfileEventLog
+    + DependOnProfileReadModel
     + DependOnProjectionCheckpointStore
     + DependOnProfileProjectionWriter
 {
@@ -64,9 +66,26 @@ pub trait ProjectProfileBatch:
             for (profile_id, mut envelopes) in groups {
                 envelopes.sort_by_key(|event| *event.version.as_ref());
 
-                let mut entity: Option<Profile> = None;
+                let existing = {
+                    let executor = transaction.connection();
+                    self.profile_read_model()
+                        .find_by_id_unfiltered(executor, &profile_id)
+                        .await?
+                };
+                let pending: Vec<_> = envelopes
+                    .into_iter()
+                    .filter(|event| match &existing {
+                        Some(profile) => *event.version.as_ref() > *profile.version().as_ref(),
+                        None => true,
+                    })
+                    .collect();
+                if pending.is_empty() {
+                    continue;
+                }
+
+                let mut entity = existing.map(Profile::from);
                 let mut fold_failed = false;
-                for event in envelopes {
+                for event in pending {
                     if let Err(error) = Profile::apply(&mut entity, event) {
                         tracing::warn!(
                             ?error,
@@ -132,6 +151,7 @@ pub trait ProjectProfileBatch:
 impl<T> ProjectProfileBatch for T where
     T: DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
         + DependOnProfileEventLog
+        + DependOnProfileReadModel
         + DependOnProjectionCheckpointStore
         + DependOnProfileProjectionWriter
 {

@@ -82,6 +82,29 @@ impl Profile {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reconstitute(
+        id: ProfileId,
+        account_id: AccountId,
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+        version: EventVersion<Profile>,
+        nanoid: Nanoid<Profile>,
+    ) -> Self {
+        Self {
+            id,
+            account_id,
+            display_name,
+            summary,
+            icon,
+            banner,
+            version,
+            nanoid,
+        }
+    }
+
     /// Last-write-wins: no optimistic concurrency check.
     pub fn update(
         id: ProfileId,

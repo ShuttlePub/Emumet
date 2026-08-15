@@ -6,6 +6,7 @@ use kernel::interfaces::projection::{
     DependOnMetadataEventLog, DependOnMetadataProjectionWriter, DependOnProjectionCheckpointStore,
     MetadataEventLog, MetadataProjectionWriter, ProjectionCheckpointStore,
 };
+use kernel::interfaces::read_model::{DependOnMetadataReadModel, MetadataReadModel};
 use kernel::prelude::entity::{EventEnvelope, Metadata, MetadataEvent, MetadataId};
 use kernel::KernelError;
 use std::collections::HashMap;
@@ -20,6 +21,7 @@ pub const METADATA_PROJECTOR_BATCH_LIMIT: i64 = 1000;
 pub trait ProjectMetadataBatch:
     DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
     + DependOnMetadataEventLog
+    + DependOnMetadataReadModel
     + DependOnProjectionCheckpointStore
     + DependOnMetadataProjectionWriter
 {
@@ -64,9 +66,26 @@ pub trait ProjectMetadataBatch:
             for (metadata_id, mut envelopes) in groups {
                 envelopes.sort_by_key(|event| *event.version.as_ref());
 
-                let mut entity: Option<Metadata> = None;
+                let existing = {
+                    let executor = transaction.connection();
+                    self.metadata_read_model()
+                        .find_by_id_unfiltered(executor, &metadata_id)
+                        .await?
+                };
+                let pending: Vec<_> = envelopes
+                    .into_iter()
+                    .filter(|event| match &existing {
+                        Some(metadata) => *event.version.as_ref() > *metadata.version().as_ref(),
+                        None => true,
+                    })
+                    .collect();
+                if pending.is_empty() {
+                    continue;
+                }
+
+                let mut entity = existing.map(Metadata::from);
                 let mut fold_failed = false;
-                for event in envelopes {
+                for event in pending {
                     if let Err(error) = Metadata::apply(&mut entity, event) {
                         tracing::warn!(
                             ?error,
@@ -132,6 +151,7 @@ pub trait ProjectMetadataBatch:
 impl<T> ProjectMetadataBatch for T where
     T: DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
         + DependOnMetadataEventLog
+        + DependOnMetadataReadModel
         + DependOnProjectionCheckpointStore
         + DependOnMetadataProjectionWriter
 {

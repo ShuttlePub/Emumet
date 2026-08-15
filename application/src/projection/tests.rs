@@ -582,6 +582,78 @@ mod profile {
         assert_eq!(state_1.display_name(), expected.display_name());
         assert_eq!(state_2.display_name(), expected.display_name());
     }
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn profile_projector_applies_out_of_window_update_onto_existing_projection() {
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = ProfileProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        clear_checkpoint(&projector.db).await;
+        let (profile_id, _existing) = seed_profile(&projector.db).await;
+
+        projector.project_profile_batch().await.unwrap();
+        let before = projector
+            .db
+            .profile_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &profile_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            before.display_name().as_ref().map(|v| v.as_ref().as_str()),
+            Some("old name")
+        );
+
+        // Move the event sequence and checkpoint far past the Created event so the
+        // next batch no longer sees it, then append an Updated event.
+        let mut conn = projector.db.connection().await.unwrap();
+        sqlx::query(
+            //language=postgresql
+            "SELECT setval(pg_get_serial_sequence('profile_events', 'seq'), 100000)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            //language=postgresql
+            "UPDATE projection_checkpoints SET last_seq = 99999 WHERE projector_name = $1",
+        )
+        .bind("profile_projector")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let update = Profile::update(
+            profile_id.clone(),
+            kernel::prelude::entity::FieldAction::Set(ProfileDisplayName::new(
+                "updated name".to_string(),
+            )),
+            kernel::prelude::entity::FieldAction::Unchanged,
+            kernel::prelude::entity::FieldAction::Unchanged,
+            kernel::prelude::entity::FieldAction::Unchanged,
+        );
+        projector
+            .db
+            .profile_event_store()
+            .persist(&mut conn, &update)
+            .await
+            .unwrap();
+        drop(conn);
+
+        projector.project_profile_batch().await.unwrap();
+        let after = projector
+            .db
+            .profile_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &profile_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.display_name().as_ref().map(|v| v.as_ref().as_str()),
+            Some("updated name")
+        );
+    }
 }
 
 mod metadata {
@@ -715,5 +787,66 @@ mod metadata {
             .await
             .unwrap();
         assert!(gone.is_none());
+    }
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn metadata_projector_applies_out_of_window_update_onto_existing_projection() {
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = MetadataProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        clear_checkpoint(&projector.db).await;
+        let (metadata_id, existing) = seed_metadata(&projector.db).await;
+
+        projector.project_metadata_batch().await.unwrap();
+        let before = projector
+            .db
+            .metadata_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &metadata_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(before.label().as_ref(), "label");
+
+        let mut conn = projector.db.connection().await.unwrap();
+        sqlx::query(
+            //language=postgresql
+            "SELECT setval(pg_get_serial_sequence('metadata_events', 'seq'), 100000)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            //language=postgresql
+            "UPDATE projection_checkpoints SET last_seq = 99999 WHERE projector_name = $1",
+        )
+        .bind("metadata_projector")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let update = Metadata::update(
+            metadata_id.clone(),
+            MetadataLabel::new("Updated Site".to_string()),
+            MetadataContent::new("https://example.com/updated".to_string()),
+            existing.version().clone(),
+        );
+        projector
+            .db
+            .metadata_event_store()
+            .persist(&mut conn, &update)
+            .await
+            .unwrap();
+        drop(conn);
+
+        projector.project_metadata_batch().await.unwrap();
+        let after = projector
+            .db
+            .metadata_read_model()
+            .find_by_id(&mut projector.db.connection().await.unwrap(), &metadata_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.label().as_ref(), "Updated Site");
     }
 }

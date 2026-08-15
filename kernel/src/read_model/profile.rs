@@ -92,10 +92,31 @@ impl From<Profile> for ProfileProjection {
     }
 }
 
+impl From<ProfileProjection> for Profile {
+    fn from(value: ProfileProjection) -> Self {
+        Profile::reconstitute(
+            value.id().clone(),
+            value.account_id().clone(),
+            value.display_name().clone(),
+            value.summary().clone(),
+            value.icon().clone(),
+            value.banner().clone(),
+            value.version().clone(),
+            value.nanoid().clone(),
+        )
+    }
+}
+
 pub trait ProfileReadModel: Sync + Send + 'static {
     type Connection: Connection;
 
     fn find_by_id(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
+
+    fn find_by_id_unfiltered(
         &self,
         executor: &mut Self::Connection,
         id: &ProfileId,

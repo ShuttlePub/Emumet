@@ -65,6 +65,14 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .map(|option| option.map(ProfileProjection::from))
     }
 
+    async fn find_by_id_unfiltered(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
+        self.find_by_id(executor, id).await
+    }
+
     async fn find_by_account_id(
         &self,
         executor: &mut Self::Connection,

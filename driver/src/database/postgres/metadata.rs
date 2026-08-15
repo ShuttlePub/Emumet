@@ -59,6 +59,14 @@ impl MetadataReadModel for PostgresMetadataReadModel {
         .map(|option| option.map(MetadataProjection::from))
     }
 
+    async fn find_by_id_unfiltered(
+        &self,
+        executor: &mut Self::Connection,
+        id: &MetadataId,
+    ) -> error_stack::Result<Option<MetadataProjection>, KernelError> {
+        self.find_by_id(executor, id).await
+    }
+
     async fn find_by_account_id(
         &self,
         executor: &mut Self::Connection,

@@ -75,10 +75,29 @@ impl From<Metadata> for MetadataProjection {
     }
 }
 
+impl From<MetadataProjection> for Metadata {
+    fn from(value: MetadataProjection) -> Self {
+        Metadata::reconstitute(
+            value.id().clone(),
+            value.account_id().clone(),
+            value.label().clone(),
+            value.content().clone(),
+            value.nanoid().clone(),
+            value.version().clone(),
+        )
+    }
+}
+
 pub trait MetadataReadModel: Sync + Send + 'static {
     type Connection: Connection;
 
     fn find_by_id(
+        &self,
+        executor: &mut Self::Connection,
+        id: &MetadataId,
+    ) -> impl Future<Output = error_stack::Result<Option<MetadataProjection>, KernelError>> + Send;
+
+    fn find_by_id_unfiltered(
         &self,
         executor: &mut Self::Connection,
         id: &MetadataId,
