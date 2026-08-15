@@ -1,9 +1,8 @@
-use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
+use crate::api::AccountApi;
+use crate::auth::{AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
 use crate::schema::account::FollowAccountRequest;
-use application::service::activitypub::SendUndoFollowUseCase;
-use application::transfer::activitypub::SendUndoFollowDto;
+use application::dto::activitypub::SendUndoFollowDto;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -26,7 +25,7 @@ use axum::{Extension, Json};
 )]
 pub(crate) async fn unfollow_account(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<FollowAccountRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
@@ -44,18 +43,18 @@ pub(crate) async fn unfollow_account(
         )
             .into());
     }
-    let auth_account_id = resolve_auth_account_id(&module, OidcAuthInfo::from(claims))
+    let auth_account_id = api
+        .resolve_auth_account_id(OidcAuthInfo::from(claims))
         .await
         .map_err(ErrorStatus::from)?;
-    module
-        .send_undo_follow(
-            auth_account_id,
-            SendUndoFollowDto {
-                account_nanoid: account_id,
-                target: request.target,
-            },
-        )
-        .await
-        .map_err(ErrorStatus::from)?;
+    api.send_undo_follow(
+        auth_account_id,
+        SendUndoFollowDto {
+            account_nanoid: account_id,
+            target: request.target,
+        },
+    )
+    .await
+    .map_err(ErrorStatus::from)?;
     Ok(StatusCode::NO_CONTENT)
 }

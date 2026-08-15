@@ -1,14 +1,12 @@
-use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
+use crate::api::AccountApi;
+use crate::auth::{AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
 use crate::route::{parse_comma_ids, DirectionConverter};
 use crate::schema::account::{
     account_dto_to_response, AccountResponse, AccountsResponse, CreateAccountRequest,
     GetAllAccountQuery, UpdateAccountRequest,
 };
-use application::service::account::{CreateAccountUseCase, DeactivateAccountUseCase};
-use application::service::account_detail::{GetAccountDetailUseCase, UpdateAccountDetailUseCase};
-use application::transfer::pagination::Pagination;
+use application::dto::pagination::Pagination;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -33,7 +31,7 @@ use axum::{Extension, Json};
 )]
 pub(crate) async fn get_accounts(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Query(GetAllAccountQuery {
         ids,
         direction,
@@ -42,7 +40,8 @@ pub(crate) async fn get_accounts(
     }): Query<GetAllAccountQuery>,
 ) -> Result<Json<AccountsResponse>, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -54,15 +53,13 @@ pub(crate) async fn get_accounts(
             )));
         }
         let id_list = parse_comma_ids(&ids)?;
-        module
-            .get_account_details_by_ids(&auth_account_id, id_list)
+        api.get_account_details_by_ids(&auth_account_id, id_list)
             .await
             .map_err(ErrorStatus::from)?
     } else {
         let direction = direction.convert_to_direction()?;
         let pagination = Pagination::new(limit, cursor, direction);
-        module
-            .get_all_account_details(&auth_account_id, pagination)
+        api.get_all_account_details(&auth_account_id, pagination)
             .await
             .map_err(ErrorStatus::from)?
     };
@@ -89,13 +86,14 @@ pub(crate) async fn get_accounts(
 )]
 pub(crate) async fn get_account_by_id(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
 ) -> Result<Json<AccountResponse>, ErrorStatus> {
-    let auth_account_id = resolve_auth_account_id(&module, OidcAuthInfo::from(claims))
+    let auth_account_id = api
+        .resolve_auth_account_id(OidcAuthInfo::from(claims))
         .await
         .map_err(ErrorStatus::from)?;
-    let account = module
+    let account = api
         .get_account_detail(&auth_account_id, account_id)
         .await
         .map_err(ErrorStatus::from)?;
@@ -116,7 +114,7 @@ pub(crate) async fn get_account_by_id(
 )]
 pub(crate) async fn create_account(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Json(request): Json<CreateAccountRequest>,
 ) -> Result<(StatusCode, Json<crate::schema::account::AccountResponse>), ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
@@ -135,15 +133,16 @@ pub(crate) async fn create_account(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    let account = module
+    let account = api
         .create_account(auth_account_id.clone(), request.into_dto())
         .await
         .map_err(ErrorStatus::from)?;
-    let account = module
+    let account = api
         .get_account_detail(&auth_account_id, account.nanoid)
         .await
         .map_err(ErrorStatus::from)?;
@@ -165,7 +164,7 @@ pub(crate) async fn create_account(
 )]
 pub(crate) async fn update_account_by_id(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<UpdateAccountRequest>,
 ) -> Result<Json<AccountResponse>, ErrorStatus> {
@@ -178,14 +177,15 @@ pub(crate) async fn update_account_by_id(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
     let dto = request
         .into_dto(account_id)
         .map_err(|message| ErrorStatus::from((StatusCode::BAD_REQUEST, message.to_string())))?;
-    let account = module
+    let account = api
         .update_account_detail(&auth_account_id, dto)
         .await
         .map_err(ErrorStatus::from)?;
@@ -206,7 +206,7 @@ pub(crate) async fn update_account_by_id(
 )]
 pub(crate) async fn deactivate_account_by_id(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
 ) -> Result<StatusCode, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
@@ -218,12 +218,12 @@ pub(crate) async fn deactivate_account_by_id(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    module
-        .deactivate_account(&auth_account_id, account_id)
+    api.deactivate_account(&auth_account_id, account_id)
         .await
         .map_err(ErrorStatus::from)?;
 

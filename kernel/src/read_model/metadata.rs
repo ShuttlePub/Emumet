@@ -141,3 +141,82 @@ pub trait DependOnMetadataReadModel: Sync + Send + DependOnDatabaseConnection {
 
     fn metadata_read_model(&self) -> &Self::MetadataReadModel;
 }
+
+/// Read-model query facade for metadata (ADR 0006 decision 3: `*Query` 系統).
+///
+/// Blanket-implemented for any [`DependOnMetadataReadModel`]; obtain it via
+/// [`DependOnMetadataQuery::metadata_query`].
+pub trait MetadataQuery: Send + Sync + 'static {
+    type Connection: Connection;
+
+    fn find_by_id(
+        &self,
+        executor: &mut Self::Connection,
+        id: &MetadataId,
+    ) -> impl Future<Output = error_stack::Result<Option<MetadataProjection>, KernelError>> + Send;
+
+    fn find_by_account_id(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<Vec<MetadataProjection>, KernelError>> + Send;
+
+    fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Connection,
+        account_ids: &[AccountId],
+    ) -> impl Future<Output = error_stack::Result<Vec<MetadataProjection>, KernelError>> + Send;
+}
+
+impl<T> MetadataQuery for T
+where
+    T: DependOnMetadataReadModel + Send + Sync + 'static,
+{
+    type Connection =
+        <<T as DependOnMetadataReadModel>::MetadataReadModel as MetadataReadModel>::Connection;
+
+    async fn find_by_id(
+        &self,
+        executor: &mut Self::Connection,
+        id: &MetadataId,
+    ) -> error_stack::Result<Option<MetadataProjection>, KernelError> {
+        self.metadata_read_model().find_by_id(executor, id).await
+    }
+
+    async fn find_by_account_id(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> error_stack::Result<Vec<MetadataProjection>, KernelError> {
+        self.metadata_read_model()
+            .find_by_account_id(executor, account_id)
+            .await
+    }
+
+    async fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Connection,
+        account_ids: &[AccountId],
+    ) -> error_stack::Result<Vec<MetadataProjection>, KernelError> {
+        self.metadata_read_model()
+            .find_by_account_ids(executor, account_ids)
+            .await
+    }
+}
+
+pub trait DependOnMetadataQuery: DependOnDatabaseConnection + Send + Sync {
+    type MetadataQuery: MetadataQuery<
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+    fn metadata_query(&self) -> &Self::MetadataQuery;
+}
+
+impl<T> DependOnMetadataQuery for T
+where
+    T: DependOnMetadataReadModel + DependOnDatabaseConnection + Send + Sync + 'static,
+{
+    type MetadataQuery = Self;
+    fn metadata_query(&self) -> &Self::MetadataQuery {
+        self
+    }
+}

@@ -1,5 +1,4 @@
 use crate::permission::{account_deactivate, check_permission};
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnTransactionManager, TransactionManager,
@@ -8,6 +7,7 @@ use kernel::interfaces::permission::{
     AccountRelation, DependOnPermissionChecker, DependOnPermissionWriter, PermissionWriter,
     RelationTarget,
 };
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{Account, AuthAccountId, Nanoid};
 use kernel::KernelError;
@@ -18,7 +18,7 @@ pub trait DeactivateAccountUseCase:
     + Sync
     + Send
     + Clone
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnAccountRepository
     + DependOnTransactionManager
     + DependOnPermissionChecker
@@ -34,7 +34,7 @@ pub trait DeactivateAccountUseCase:
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let projection = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -93,7 +93,7 @@ pub trait DeactivateAccountUseCase:
 impl<T> DeactivateAccountUseCase for T where
     T: 'static
         + Clone
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnAccountRepository
         + DependOnTransactionManager
         + DependOnPermissionChecker

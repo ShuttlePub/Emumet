@@ -98,18 +98,17 @@ Account creation requires a master key password file for signing key encryption:
 
 ## Architecture
 
-### Workspace Structure (5 crates with dependency flow)
+### Workspace Structure (4 crates with dependency flow)
 
 ```
-kernel → adapter → application → server
-kernel → driver                → server
+kernel → application → server
+kernel → driver    → server
 ```
 
-- **kernel**: Domain entities, interface traits (EventStore, ReadModel, Repository), Event Sourcing core. Traits are exposed via logical `pub mod interfaces {}` block in `lib.rs` (not a physical directory).
-- **adapter**: CQRS processors (CommandProcessor/QueryProcessor) that compose kernel traits, crypto trait composition (SigningKeyGenerator)
-- **application**: Use case services (Account CRUD use cases), event appliers (projection update), DTOs
-- **driver**: PostgreSQL/Redis implementations of kernel interfaces
-- **server**: Axum HTTP server, JWT auth (Ory Hydra), OAuth2 Login/Consent Provider, route handlers, DI wiring (Handler/AppModule)
+- **kernel**: Domain entities, interface traits (EventStore, ReadModel, Repository, *Query), Event Sourcing core, crypto trait composition (SigningKeyGenerator). Traits are exposed via logical `pub mod interfaces {}` block in `lib.rs` (not a physical directory).
+- **application**: Use case services (Account CRUD use cases), projection projectors (tailing), DTOs
+- **driver**: PostgreSQL implementations of kernel interfaces
+- **server**: Axum HTTP server, JWT auth (Ory Hydra), OAuth2 Login/Consent Provider, route handlers, facade newtypes (server/src/api/), DI wiring (AppModule)
 
 ### CQRS + Event Sourcing Pattern
 
@@ -124,22 +123,19 @@ Command Flow:
   REST handler → CommandProcessor (adapter)
     → EventStore.persist_and_transform() (kernel trait, driver impl)
     → EventApplier (kernel) → entity reconstruction
-    → [AuthAccount only: ReadModel.create() for immediate consistency]
-    → Signal → async applier → ReadModel projection update
+    → ReadModel.create/update() for immediate consistency (synchronous write)
+    → ProjectionWorker (tailing projector) for guaranteed eventual consistency
 
 Query Flow:
-  REST handler → QueryProcessor (adapter)
+  REST handler → facade (server/src/api/) → *Query (kernel trait)
     → ReadModel.find_*() (kernel trait, driver impl)
 ```
 
 **kernel** defines per-entity interface traits:
 - `AccountEventStore` / `ProfileEventStore` / `MetadataEventStore` — event persistence + retrieval per entity-specific table
 - `AccountReadModel` / `ProfileReadModel` / `MetadataReadModel` — projection reads + writes
+- `AccountQuery` / `ProfileQuery` / `MetadataQuery` — read model facade traits (blanket impl over `DependOn*ReadModel`)
 - `AuthAccountRepository` — unified CRUD interface for `AuthAccount` (migrated from Event Sourcing to plain CRUD in ADR 0006 Stage 6)
-
-**adapter** provides processors with blanket impls:
-- `AccountCommandProcessor` / `ProfileCommandProcessor` / `MetadataCommandProcessor` — EventStore + EventApplier + Signal (projection via async applier)
-- `*QueryProcessor` — ReadModel facade
 
 **driver** implements per-entity stores:
 - `PostgresAccountEventStore` → `account_events` table
@@ -168,13 +164,13 @@ These use the Repository pattern — a single trait combining read and write ope
 
 **DependOn\* trait pattern**: Dependency injection via associated types. `DependOnFoo` provides `fn foo(&self) -> &Self::Foo`. Blanket impls auto-wire when dependencies are satisfied.
 
-**impl_database_delegation! macro** (kernel/src/lib.rs): Delegates all database `DependOn*` traits from a wrapper type to a database field. Used by `Handler` to wire `PostgresDatabase`.
+**impl_database_delegation! macro** (kernel/src/lib.rs): Delegates all database `DependOn*` traits from a wrapper type to a database field. Used by `AppModule` to wire `PostgresDatabase`.
 
 **EventApplier trait** (kernel/src/event.rs): Reconstructs entity state from events. `fn apply(entity: &mut Option<Self>, event: EventEnvelope) -> Result<()>`. Entity becomes `None` on Deleted events.
 
-**Optimistic concurrency control**: Commands carry `prev_version: Option<KnownEventVersion>`. `KnownEventVersion::Nothing` = must be first event, `KnownEventVersion::Prev(version)` = must match latest version. EventStore validates before persisting.
+**Optimistic concurrency control**: Commands carry `prev_version: Option<ExpectedVersion>`. `ExpectedVersion::Nothing` = must be first event, `ExpectedVersion::At(version)` = must match latest version. EventStore validates before persisting.
 
-**Signal → Applier pipeline**: `Signal` trait emits entity IDs via Redis (rikka-mq). `ApplierContainer` (server/src/applier.rs) receives and dispatches to entity-specific appliers that update ReadModel projections.
+**Projection (tailing projector)**: `ProjectionWorker` polls event tables (100ms default), `*Projector` folds events per aggregate in version order with version-gated upserts and checkpoint tracking. Account projector cascade-deletes dependent Profile/Metadata rows; Profile/Metadata projectors skip fresh materialization when parent account is deleted.
 
 ### Auth Architecture
 
@@ -206,9 +202,9 @@ Event Sourcing対象エンティティ (Account, AuthAccount, Profile, Metadata)
 
 ### Server DI Architecture
 
-`Handler` — owns PostgresDatabase + RedisDatabase + crypto providers + HydraAdminClient + KratosClient. `impl_database_delegation!` wires kernel traits.
+`AppModule` — single wiring root. Owns `PostgresDatabase` + crypto providers + HydraAdminClient + KratosClient. `impl_database_delegation!` wires all DB `DependOn*` traits; small handwritten impls for non-DB traits (crypto, permission, http_signing, config). Provides `hydra_admin_client()` and `kratos_client()` accessors.
 
-`AppModule` — wraps `Arc<Handler>` + `Arc<ApplierContainer>`. Manually implements `DependOn*` for adapter-layer traits (Signal, ReadModel, EventStore, Repository). Blanket impls provide CommandProcessor/QueryProcessor automatically. Provides `hydra_admin_client()` and `kratos_client()` accessors.
+**Facade newtypes** (server/src/api/): `AccountApi`, `AdminAccountApi`, `MeApi`, `OAuth2Api`, `ActivityPubApi`, `SigningApi`. Each wraps `AppModule` via `FromRef`, exposes only use-case methods + legitimate helpers. Facades do NOT implement `DependOn*` — route handlers cannot reach raw ports/executors (compile-time block).
 
 ### Testing
 

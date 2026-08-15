@@ -37,7 +37,6 @@ base64 = "0.22"
 
 utoipa = { version = "5.4.0", features = ["axum_extras", "time"] }
 
-adapter = { path = "../adapter" }
 application = { path = "../application" }
 driver = { path = "../driver" }
 kernel = { path = "../kernel", features = ["openapi"] }

@@ -2,8 +2,7 @@ use super::delivery::deliver_activity_to_inbox;
 use super::outbox::StoreOutboxActivityUseCase;
 use super::remote_actor::{resolve_remote_actor_identifier, upsert_remote_account};
 use super::{local_actor_url, ACTIVITYSTREAMS_CONTEXT};
-use crate::transfer::activitypub::{SendFollowDto, SendFollowResultDto};
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
+use crate::dto::activitypub::{SendFollowDto, SendFollowResultDto};
 use error_stack::{Report, ResultExt};
 use kernel::activitypub::Activity;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
@@ -11,6 +10,7 @@ use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider}
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{
     DependOnFollowRepository, DependOnOutboxActivityRepository, DependOnRemoteAccountRepository,
     DependOnSigningKeyRepository, FollowRepository,
@@ -26,7 +26,7 @@ pub trait SendFollowUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnFollowRepository
     + DependOnRemoteAccountRepository
     + DependOnSigningKeyRepository
@@ -50,7 +50,7 @@ pub trait SendFollowUseCase:
             let account_nanoid = Nanoid::<Account>::new(dto.account_nanoid.clone());
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -172,7 +172,7 @@ impl<T> SendFollowUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnFollowRepository
         + DependOnRemoteAccountRepository
         + DependOnSigningKeyRepository

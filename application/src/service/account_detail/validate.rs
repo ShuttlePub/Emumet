@@ -1,4 +1,4 @@
-use crate::transfer::account::UpdateAccountDto;
+use crate::dto::account::UpdateAccountDto;
 use kernel::prelude::entity::{
     FieldAction, MetadataContent, MetadataLabel, ProfileDisplayName, ProfileSummary,
 };
@@ -25,7 +25,7 @@ pub(super) fn validate_update_account_dto(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transfer::account::AccountFieldDto;
+    use crate::dto::account::AccountFieldDto;
 
     fn dto_with(
         display_name: FieldAction<String>,

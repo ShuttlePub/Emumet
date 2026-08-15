@@ -1,10 +1,7 @@
-use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
+use crate::api::AdminAccountApi;
+use crate::auth::{AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
 use crate::schema::account::{BanAccountRequest, SuspendAccountRequest};
-use application::service::account::{
-    BanAccountUseCase, SuspendAccountUseCase, UnsuspendAccountUseCase,
-};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -24,7 +21,7 @@ use axum::{Extension, Json};
 )]
 pub(crate) async fn suspend_account_by_id(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AdminAccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<SuspendAccountRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
@@ -37,19 +34,19 @@ pub(crate) async fn suspend_account_by_id(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    module
-        .suspend_account(
-            &auth_account_id,
-            account_id,
-            request.reason,
-            request.expires_at,
-        )
-        .await
-        .map_err(ErrorStatus::from)?;
+    api.suspend_account(
+        &auth_account_id,
+        account_id,
+        request.reason,
+        request.expires_at,
+    )
+    .await
+    .map_err(ErrorStatus::from)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -68,7 +65,7 @@ pub(crate) async fn suspend_account_by_id(
 )]
 pub(crate) async fn unsuspend_account_by_id(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AdminAccountApi>,
     Path(account_id): Path<String>,
 ) -> Result<StatusCode, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
@@ -80,12 +77,12 @@ pub(crate) async fn unsuspend_account_by_id(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    module
-        .unsuspend_account(&auth_account_id, account_id)
+    api.unsuspend_account(&auth_account_id, account_id)
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -107,7 +104,7 @@ pub(crate) async fn unsuspend_account_by_id(
 )]
 pub(crate) async fn ban_account_by_id(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AdminAccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<BanAccountRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
@@ -120,12 +117,12 @@ pub(crate) async fn ban_account_by_id(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    module
-        .ban_account(&auth_account_id, account_id, request.reason)
+    api.ban_account(&auth_account_id, account_id, request.reason)
         .await
         .map_err(ErrorStatus::from)?;
 

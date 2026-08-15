@@ -1,25 +1,16 @@
+use crate::dto::account::UpdateAccountDto;
 use crate::permission::{account_edit, check_permission};
-use crate::transfer::account::UpdateAccountDto;
-use adapter::processor::account::{
-    AccountCommandProcessor, AccountQueryProcessor, DependOnAccountCommandProcessor,
-    DependOnAccountQueryProcessor, UpdateAccountParam,
-};
 use error_stack::Report;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{Account, AccountIsBot, AuthAccountId, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
 
 pub trait UpdateAccountUseCase:
-    'static
-    + Sync
-    + Send
-    + DependOnAccountCommandProcessor
-    + DependOnAccountQueryProcessor
-    + DependOnAccountRepository
-    + DependOnPermissionChecker
+    'static + Sync + Send + DependOnAccountQuery + DependOnAccountRepository + DependOnPermissionChecker
 {
     fn update_account(
         &self,
@@ -31,7 +22,7 @@ pub trait UpdateAccountUseCase:
 
             let nanoid = Nanoid::<Account>::new(dto.account_nanoid);
             let projection = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid_unfiltered(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -66,14 +57,10 @@ pub trait UpdateAccountUseCase:
                 );
             }
 
-            self.account_command_processor()
-                .update(
+            self.account_repository()
+                .save(
                     &mut conn,
-                    UpdateAccountParam {
-                        account_id,
-                        is_bot: AccountIsBot::new(is_bot),
-                        current_version,
-                    },
+                    Account::update(account_id, AccountIsBot::new(is_bot), current_version),
                 )
                 .await?;
 
@@ -83,10 +70,6 @@ pub trait UpdateAccountUseCase:
 }
 
 impl<T> UpdateAccountUseCase for T where
-    T: 'static
-        + DependOnAccountCommandProcessor
-        + DependOnAccountQueryProcessor
-        + DependOnAccountRepository
-        + DependOnPermissionChecker
+    T: 'static + DependOnAccountQuery + DependOnAccountRepository + DependOnPermissionChecker
 {
 }

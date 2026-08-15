@@ -2,7 +2,7 @@ mod handlers;
 
 use super::delivery::deliver_activity_to_inbox;
 use super::outbox::StoreOutboxActivityUseCase;
-use crate::transfer::activitypub::InboxActivityDto;
+use crate::dto::activitypub::InboxActivityDto;
 use error_stack::Report;
 use kernel::activitypub::Activity;
 use kernel::interfaces::config::DependOnPublicBaseUrl;

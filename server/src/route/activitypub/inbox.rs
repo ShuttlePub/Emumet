@@ -1,16 +1,12 @@
-use super::{find_account_id_by_nanoid, public_base_host_header};
+use crate::api::ActivityPubApi;
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
-use application::service::activitypub::InboxUseCase;
-use application::transfer::activitypub::InboxActivityDto;
+use application::dto::activitypub::InboxActivityDto;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::http_signing::{
-    DependOnHttpSignatureVerifier, HttpSignatureVerificationInput, HttpSignatureVerifier,
-    SignatureVerificationResult,
+    HttpSignatureVerificationInput, SignatureVerificationResult,
 };
 use std::collections::HashMap;
 
@@ -29,7 +25,7 @@ use std::collections::HashMap;
     tag = "ActivityPub",
 )]
 pub(crate) async fn post_inbox(
-    State(module): State<AppModule>,
+    State(api): State<ActivityPubApi>,
     Path(nanoid): Path<String>,
     OriginalUri(original_uri): OriginalUri,
     method: Method,
@@ -46,21 +42,20 @@ pub(crate) async fn post_inbox(
             "Content-Type must be application/activity+json".to_string(),
         )));
     }
-    let account_id = find_account_id_by_nanoid(&module, nanoid.clone()).await?;
+    let account_id = api.find_account_id_by_nanoid(nanoid.clone()).await?;
     let verification_input = HttpSignatureVerificationInput {
         method: method.as_str().to_string(),
         url: format!(
             "{}{}",
-            module.public_base_url().as_str().trim_end_matches('/'),
+            api.public_base_url().as_str().trim_end_matches('/'),
             original_uri
         ),
         headers: headers_to_map(&headers),
         body: Some(body.to_vec()),
     };
-    ensure_host_matches_public_base_url(&module, &headers)?;
-    let key_id = match module
-        .http_signature_verifier()
-        .verify(&verification_input)
+    ensure_host_matches_public_base_url(&api.public_base_host_header()?, &headers)?;
+    let key_id = match api
+        .verify_http_signature(&verification_input)
         .await
         .map_err(ErrorStatus::from)?
     {
@@ -80,15 +75,14 @@ pub(crate) async fn post_inbox(
             format!("Malformed ActivityPub activity: {e}"),
         ))
     })?;
-    ensure_signature_owner_matches_actor(&module, &key_id, &activity).await?;
-    module
-        .handle_inbox_activity(InboxActivityDto {
-            account_id,
-            account_nanoid: nanoid,
-            activity,
-        })
-        .await
-        .map_err(ErrorStatus::from)?;
+    ensure_signature_owner_matches_actor(&api, &key_id, &activity).await?;
+    api.handle_inbox_activity(InboxActivityDto {
+        account_id,
+        account_nanoid: nanoid,
+        activity,
+    })
+    .await
+    .map_err(ErrorStatus::from)?;
 
     Ok(StatusCode::ACCEPTED.into_response())
 }
@@ -106,18 +100,14 @@ fn headers_to_map(headers: &HeaderMap) -> HashMap<String, String> {
 }
 
 async fn ensure_signature_owner_matches_actor(
-    module: &AppModule,
+    api: &ActivityPubApi,
     key_id: &str,
     activity: &kernel::activitypub::Activity,
 ) -> Result<(), ErrorStatus> {
-    let actor_key = module
-        .http_signature_verifier()
-        .fetch_actor_key(key_id)
-        .await
-        .map_err(|e| {
-            tracing::warn!(?e, key_id, "Failed to fetch ActivityPub signer actor key");
-            ErrorStatus::from(StatusCode::UNAUTHORIZED)
-        })?;
+    let actor_key = api.fetch_actor_key(key_id).await.map_err(|e| {
+        tracing::warn!(?e, key_id, "Failed to fetch ActivityPub signer actor key");
+        ErrorStatus::from(StatusCode::UNAUTHORIZED)
+    })?;
     if same_activitypub_id(&actor_key.owner, &activity.actor)
         && signature_key_document_matches_actor(key_id, &activity.actor)
     {
@@ -134,15 +124,14 @@ async fn ensure_signature_owner_matches_actor(
 }
 
 fn ensure_host_matches_public_base_url(
-    module: &AppModule,
+    expected: &str,
     headers: &HeaderMap,
 ) -> Result<(), ErrorStatus> {
-    let expected = public_base_host_header(module.public_base_url().as_str())?;
     let actual = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| ErrorStatus::from(StatusCode::UNAUTHORIZED))?;
-    if actual.eq_ignore_ascii_case(&expected) {
+    if actual.eq_ignore_ascii_case(expected) {
         return Ok(());
     }
     // In test mode, also accept localhost connections (e.g., when the test

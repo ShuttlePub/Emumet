@@ -136,3 +136,50 @@ pub trait DependOnSignatureVerifier: Send + Sync {
     type SignatureVerifier: SignatureVerifier;
     fn signature_verifier(&self) -> &Self::SignatureVerifier;
 }
+
+/// Signing key pair generator composed from [`RawKeyGenerator`] + [`KeyEncryptor`].
+///
+/// Blanket-implemented for any type that implements both [`DependOnRawKeyGenerator`]
+/// and [`DependOnKeyEncryptor`]. (ADR 0006 Stage 8: moved from adapter to kernel.)
+pub trait SigningKeyGenerator: Send + Sync {
+    /// Generate a new key pair, encrypting the private key with the given password
+    fn generate(&self, password: &[u8]) -> error_stack::Result<GeneratedKeyPair, KernelError>;
+
+    /// Returns the algorithm used by this generator
+    fn algorithm(&self) -> SigningAlgorithm;
+}
+
+impl<T> SigningKeyGenerator for T
+where
+    T: DependOnRawKeyGenerator + DependOnKeyEncryptor + Send + Sync,
+{
+    fn generate(&self, password: &[u8]) -> error_stack::Result<GeneratedKeyPair, KernelError> {
+        let raw = self.raw_key_generator().generate_raw()?;
+        let encrypted =
+            self.key_encryptor()
+                .encrypt(&raw.private_key_pem, password, raw.algorithm)?;
+        Ok(GeneratedKeyPair {
+            public_key_pem: raw.public_key_pem,
+            encrypted_private_key: encrypted,
+        })
+    }
+
+    fn algorithm(&self) -> SigningAlgorithm {
+        self.raw_key_generator().algorithm()
+    }
+}
+
+pub trait DependOnSigningKeyGenerator: Send + Sync {
+    type SigningKeyGenerator: SigningKeyGenerator;
+    fn signing_key_generator(&self) -> &Self::SigningKeyGenerator;
+}
+
+impl<T> DependOnSigningKeyGenerator for T
+where
+    T: DependOnRawKeyGenerator + DependOnKeyEncryptor + Send + Sync,
+{
+    type SigningKeyGenerator = Self;
+    fn signing_key_generator(&self) -> &Self::SigningKeyGenerator {
+        self
+    }
+}

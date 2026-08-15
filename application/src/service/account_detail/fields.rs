@@ -1,9 +1,7 @@
-use crate::transfer::account::AccountFieldDto;
-use adapter::processor::metadata::{
-    CreateMetadataParam, DependOnMetadataCommandProcessor, MetadataCommandProcessor,
-    UpdateMetadataParam,
-};
+use crate::dto::account::AccountFieldDto;
+use error_stack::Report;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::read_model::{
     DependOnMetadataReadModel, MetadataProjection, MetadataReadModel,
 };
@@ -64,10 +62,7 @@ pub(super) async fn apply_field_updates<T>(
     submitted: &[AccountFieldDto],
 ) -> error_stack::Result<(), KernelError>
 where
-    T: DependOnMetadataCommandProcessor
-        + DependOnMetadataReadModel
-        + DependOnMetadataRepository
-        + ?Sized,
+    T: DependOnMetadataReadModel + DependOnMetadataRepository + ?Sized,
 {
     for operation in plan_field_updates(existing, submitted) {
         match operation {
@@ -77,15 +72,15 @@ where
                 content,
             } => {
                 let (_, current_version) = rehydrate_metadata(deps, executor, &metadata_id).await?;
-                deps.metadata_command_processor()
-                    .update(
+                deps.metadata_repository()
+                    .save(
                         executor,
-                        UpdateMetadataParam {
-                            metadata_id: metadata_id.clone(),
-                            label: MetadataLabel::new(label),
-                            content: MetadataContent::new(content),
+                        Metadata::update(
+                            metadata_id.clone(),
+                            MetadataLabel::new(label),
+                            MetadataContent::new(content),
                             current_version,
-                        },
+                        ),
                     )
                     .await?;
                 let (metadata, _) = rehydrate_metadata(deps, executor, &metadata_id).await?;
@@ -95,26 +90,31 @@ where
             }
             FieldUpdate::Delete { metadata_id } => {
                 let (_, current_version) = rehydrate_metadata(deps, executor, &metadata_id).await?;
-                deps.metadata_command_processor()
-                    .delete(executor, metadata_id.clone(), current_version)
+                deps.metadata_repository()
+                    .save(
+                        executor,
+                        Metadata::delete(metadata_id.clone(), current_version),
+                    )
                     .await?;
                 deps.metadata_read_model()
                     .delete(executor, &metadata_id)
                     .await?;
             }
             FieldUpdate::Create { label, content } => {
-                let metadata = deps
-                    .metadata_command_processor()
-                    .create(
-                        executor,
-                        CreateMetadataParam {
-                            account_id: account_id.clone(),
-                            label: MetadataLabel::new(label),
-                            content: MetadataContent::new(content),
-                            nano_id: Nanoid::<Metadata>::default(),
-                        },
-                    )
-                    .await?;
+                let command = Metadata::create(
+                    MetadataId::new(kernel::generate_id()),
+                    account_id.clone(),
+                    MetadataLabel::new(label),
+                    MetadataContent::new(content),
+                    Nanoid::<Metadata>::default(),
+                );
+                let event_envelope = deps.metadata_repository().save(executor, command).await?;
+                let mut metadata = None;
+                Metadata::apply(&mut metadata, event_envelope)?;
+                let metadata = metadata.ok_or_else(|| {
+                    Report::new(KernelError::Internal)
+                        .attach_printable("Failed to construct metadata from created event")
+                })?;
                 deps.metadata_read_model()
                     .create(executor, &metadata)
                     .await?;

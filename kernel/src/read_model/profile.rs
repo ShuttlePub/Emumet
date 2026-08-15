@@ -160,3 +160,82 @@ pub trait DependOnProfileReadModel: Sync + Send + DependOnDatabaseConnection {
 
     fn profile_read_model(&self) -> &Self::ProfileReadModel;
 }
+
+/// Read-model query facade for profiles (ADR 0006 decision 3: `*Query` 系統).
+///
+/// Blanket-implemented for any [`DependOnProfileReadModel`]; obtain it via
+/// [`DependOnProfileQuery::profile_query`].
+pub trait ProfileQuery: Send + Sync + 'static {
+    type Connection: Connection;
+
+    fn find_by_id(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
+
+    fn find_by_account_id(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
+
+    fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Connection,
+        account_ids: &[AccountId],
+    ) -> impl Future<Output = error_stack::Result<Vec<ProfileProjection>, KernelError>> + Send;
+}
+
+impl<T> ProfileQuery for T
+where
+    T: DependOnProfileReadModel + Send + Sync + 'static,
+{
+    type Connection =
+        <<T as DependOnProfileReadModel>::ProfileReadModel as ProfileReadModel>::Connection;
+
+    async fn find_by_id(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
+        self.profile_read_model().find_by_id(executor, id).await
+    }
+
+    async fn find_by_account_id(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
+        self.profile_read_model()
+            .find_by_account_id(executor, account_id)
+            .await
+    }
+
+    async fn find_by_account_ids(
+        &self,
+        executor: &mut Self::Connection,
+        account_ids: &[AccountId],
+    ) -> error_stack::Result<Vec<ProfileProjection>, KernelError> {
+        self.profile_read_model()
+            .find_by_account_ids(executor, account_ids)
+            .await
+    }
+}
+
+pub trait DependOnProfileQuery: DependOnDatabaseConnection + Send + Sync {
+    type ProfileQuery: ProfileQuery<
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+    fn profile_query(&self) -> &Self::ProfileQuery;
+}
+
+impl<T> DependOnProfileQuery for T
+where
+    T: DependOnProfileReadModel + DependOnDatabaseConnection + Send + Sync + 'static,
+{
+    type ProfileQuery = Self;
+    fn profile_query(&self) -> &Self::ProfileQuery {
+        self
+    }
+}

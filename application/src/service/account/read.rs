@@ -1,15 +1,15 @@
+use crate::dto::account::AccountDto;
+use crate::dto::pagination::{apply_pagination, Pagination};
 use crate::permission::{account_view, check_permission};
-use crate::transfer::account::AccountDto;
-use crate::transfer::pagination::{apply_pagination, Pagination};
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::prelude::entity::{Account, AuthAccountId, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
 
 pub trait GetAccountUseCase:
-    'static + Sync + Send + DependOnAccountQueryProcessor + DependOnPermissionChecker
+    'static + Sync + Send + DependOnAccountQuery + DependOnPermissionChecker
 {
     // find_by_auth_id returns only accounts owned by the authenticated user,
     // so no additional permission check is needed.
@@ -26,14 +26,12 @@ pub trait GetAccountUseCase:
         async move {
             let mut conn = self.database_connection().connection().await?;
             let accounts = self
-                .account_query_processor()
+                .account_query()
                 .find_by_auth_id(&mut conn, auth_account_id)
                 .await?;
             let cursor = if let Some(cursor) = cursor {
                 let id: Nanoid<Account> = Nanoid::new(cursor);
-                self.account_query_processor()
-                    .find_by_nanoid(&mut conn, &id)
-                    .await?
+                self.account_query().find_by_nanoid(&mut conn, &id).await?
             } else {
                 None
             };
@@ -53,7 +51,7 @@ pub trait GetAccountUseCase:
             let nanoids: Vec<Nanoid<Account>> =
                 ids.into_iter().map(Nanoid::<Account>::new).collect();
             let accounts = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoids(&mut conn, &nanoids)
                 .await?;
 
@@ -72,7 +70,4 @@ pub trait GetAccountUseCase:
     }
 }
 
-impl<T> GetAccountUseCase for T where
-    T: 'static + DependOnAccountQueryProcessor + DependOnPermissionChecker
-{
-}
+impl<T> GetAccountUseCase for T where T: 'static + DependOnAccountQuery + DependOnPermissionChecker {}

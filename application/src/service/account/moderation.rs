@@ -1,10 +1,10 @@
 use crate::permission::{check_permission, instance_moderate};
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
 use error_stack::Report;
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnTransactionManager, TransactionManager,
 };
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{Account, AuthAccountId, ModerationReason, Nanoid};
 use kernel::KernelError;
@@ -15,7 +15,7 @@ pub trait SuspendAccountUseCase:
     + Sync
     + Send
     + Clone
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnAccountRepository
     + DependOnTransactionManager
     + DependOnPermissionChecker
@@ -33,7 +33,7 @@ pub trait SuspendAccountUseCase:
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let projection = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid_unfiltered(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -91,7 +91,7 @@ pub trait SuspendAccountUseCase:
 impl<T> SuspendAccountUseCase for T where
     T: 'static
         + Clone
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnAccountRepository
         + DependOnTransactionManager
         + DependOnPermissionChecker
@@ -103,7 +103,7 @@ pub trait UnsuspendAccountUseCase:
     + Sync
     + Send
     + Clone
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnAccountRepository
     + DependOnTransactionManager
     + DependOnPermissionChecker
@@ -118,7 +118,7 @@ pub trait UnsuspendAccountUseCase:
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let projection = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid_unfiltered(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -162,7 +162,7 @@ pub trait UnsuspendAccountUseCase:
 impl<T> UnsuspendAccountUseCase for T where
     T: 'static
         + Clone
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnAccountRepository
         + DependOnTransactionManager
         + DependOnPermissionChecker
@@ -174,7 +174,7 @@ pub trait BanAccountUseCase:
     + Sync
     + Send
     + Clone
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnAccountRepository
     + DependOnTransactionManager
     + DependOnPermissionChecker
@@ -191,7 +191,7 @@ pub trait BanAccountUseCase:
 
             let nanoid = Nanoid::<Account>::new(account_id);
             let projection = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid_unfiltered(&mut conn, &nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -239,7 +239,7 @@ pub trait BanAccountUseCase:
 impl<T> BanAccountUseCase for T where
     T: 'static
         + Clone
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnAccountRepository
         + DependOnTransactionManager
         + DependOnPermissionChecker

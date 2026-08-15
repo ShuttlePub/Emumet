@@ -24,7 +24,6 @@ base64 = "0.22"
 sha2 = "0.10"
 httpdate = "1"
 
-adapter = { path = "../adapter" }
 kernel = { path = "../kernel" }
 
 [dev-dependencies]

@@ -1,6 +1,6 @@
 use super::{resolve_remote_actor_identifier, upsert_remote_account};
-use adapter::processor::account::AccountQueryProcessor;
 use kernel::interfaces::config::PublicBaseUrl;
+use kernel::interfaces::read_model::AccountQuery;
 use kernel::interfaces::repository::RemoteAccountRepository;
 use kernel::prelude::entity::{Account, AccountName, Nanoid, RemoteAccount};
 use kernel::KernelError;
@@ -18,7 +18,7 @@ pub(super) async fn resolve_unfollow_target<Q, R>(
     target: &str,
 ) -> error_stack::Result<UnfollowTarget, KernelError>
 where
-    Q: AccountQueryProcessor,
+    Q: AccountQuery,
     R: RemoteAccountRepository<Connection = Q::Connection>,
 {
     if let Some(account) = accounts

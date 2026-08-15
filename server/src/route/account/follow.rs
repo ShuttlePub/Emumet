@@ -1,9 +1,8 @@
-use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
+use crate::api::AccountApi;
+use crate::auth::{AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
 use crate::schema::account::{FollowAccountRequest, FollowAccountResponse};
-use application::service::activitypub::SendFollowUseCase;
-use application::transfer::activitypub::SendFollowDto;
+use application::dto::activitypub::SendFollowDto;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -25,7 +24,7 @@ use axum::{Extension, Json};
 )]
 pub(crate) async fn follow_account(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<FollowAccountRequest>,
 ) -> Result<Json<FollowAccountResponse>, ErrorStatus> {
@@ -45,11 +44,12 @@ pub(crate) async fn follow_account(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    let result = module
+    let result = api
         .send_follow(
             auth_account_id,
             SendFollowDto {

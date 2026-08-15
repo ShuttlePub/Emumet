@@ -1,8 +1,8 @@
-use crate::transfer::activitypub::FollowRelationDto;
-use adapter::processor::account::{AccountQueryProcessor, DependOnAccountQueryProcessor};
+use crate::dto::activitypub::FollowRelationDto;
 use error_stack::Report;
 use kernel::interfaces::database::{Connection, DatabaseConnection};
 use kernel::interfaces::permission::DependOnPermissionChecker;
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{
     DependOnFollowRepository, DependOnRemoteAccountRepository, FollowRepository,
     RemoteAccountRepository,
@@ -15,7 +15,7 @@ pub trait GetFollowRelationsUseCase:
     'static
     + Sync
     + Send
-    + DependOnAccountQueryProcessor
+    + DependOnAccountQuery
     + DependOnFollowRepository
     + DependOnRemoteAccountRepository
     + DependOnPermissionChecker
@@ -61,7 +61,7 @@ pub trait GetFollowRelationsUseCase:
             let account_nanoid = Nanoid::<Account>::new(account_nanoid);
             let mut executor = self.database_connection().connection().await?;
             let account = self
-                .account_query_processor()
+                .account_query()
                 .find_by_nanoid(&mut executor, &account_nanoid)
                 .await?
                 .ok_or_else(|| {
@@ -77,7 +77,7 @@ pub trait GetFollowRelationsUseCase:
             )
             .await?;
             list_approved_relations(
-                self.account_query_processor(),
+                self.account_query(),
                 self.follow_repository(),
                 self.remote_account_repository(),
                 &mut executor,
@@ -93,7 +93,7 @@ impl<T> GetFollowRelationsUseCase for T where
     T: 'static
         + Sync
         + Send
-        + DependOnAccountQueryProcessor
+        + DependOnAccountQuery
         + DependOnFollowRepository
         + DependOnRemoteAccountRepository
         + DependOnPermissionChecker
@@ -109,7 +109,7 @@ pub async fn list_approved_relations<Q, F, R, E>(
     following: bool,
 ) -> error_stack::Result<Vec<FollowRelationDto>, KernelError>
 where
-    Q: AccountQueryProcessor<Connection = E>,
+    Q: AccountQuery<Connection = E>,
     F: FollowRepository<Connection = E>,
     R: RemoteAccountRepository<Connection = E>,
     E: Connection,

@@ -3,16 +3,6 @@
 version = 4
 
 [[package]]
-name = "adapter"
-version = "0.1.0"
-dependencies = [
- "error-stack",
- "kernel",
- "time",
- "tracing",
-]
-
-[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -105,7 +95,6 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "application"
 version = "0.1.0"
 dependencies = [
- "adapter",
  "base64 0.22.1",
  "driver",
  "error-stack",
@@ -2682,7 +2671,6 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
- "adapter",
  "application",
  "axum",
  "base64 0.22.1",

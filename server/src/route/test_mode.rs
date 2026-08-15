@@ -1,6 +1,5 @@
 use crate::error::ErrorStatus;
 use application::service::activitypub::inject_test_remote_actor;
-use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -176,7 +175,6 @@ struct CacheActorKeyRequest {
 #[cfg(feature = "test-mode")]
 async fn cache_actor_key(
     headers: HeaderMap,
-    State(_state): State<crate::handler::AppModule>,
     Json(body): Json<CacheActorKeyRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
     verify_token(&headers)?;
@@ -204,7 +202,6 @@ struct CacheRemoteActorRequest {
 #[cfg(feature = "test-mode")]
 async fn cache_remote_actor(
     headers: HeaderMap,
-    State(_state): State<crate::handler::AppModule>,
     Json(body): Json<CacheRemoteActorRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
     verify_token(&headers)?;

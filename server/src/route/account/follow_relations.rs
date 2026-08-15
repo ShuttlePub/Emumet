@@ -1,9 +1,8 @@
-use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
+use crate::api::AccountApi;
+use crate::auth::{AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
 use crate::schema::account::{RelationListResponse, RelationResponse};
-use application::service::activitypub::GetFollowRelationsUseCase;
-use application::transfer::activitypub::FollowRelationDto;
+use application::dto::activitypub::FollowRelationDto;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -43,14 +42,15 @@ fn validate_account_id(account_id: &str) -> Result<(), ErrorStatus> {
 )]
 pub(crate) async fn get_followers(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
 ) -> Result<Json<RelationListResponse>, ErrorStatus> {
     validate_account_id(&account_id)?;
-    let auth_account_id = resolve_auth_account_id(&module, OidcAuthInfo::from(claims))
+    let auth_account_id = api
+        .resolve_auth_account_id(OidcAuthInfo::from(claims))
         .await
         .map_err(ErrorStatus::from)?;
-    let items = module
+    let items = api
         .get_followers(auth_account_id, account_id)
         .await
         .map_err(ErrorStatus::from)?
@@ -76,14 +76,15 @@ pub(crate) async fn get_followers(
 )]
 pub(crate) async fn get_following(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
 ) -> Result<Json<RelationListResponse>, ErrorStatus> {
     validate_account_id(&account_id)?;
-    let auth_account_id = resolve_auth_account_id(&module, OidcAuthInfo::from(claims))
+    let auth_account_id = api
+        .resolve_auth_account_id(OidcAuthInfo::from(claims))
         .await
         .map_err(ErrorStatus::from)?;
-    let items = module
+    let items = api
         .get_following(auth_account_id, account_id)
         .await
         .map_err(ErrorStatus::from)?
@@ -96,9 +97,9 @@ pub(crate) async fn get_following(
 #[cfg(test)]
 mod tests {
     use crate::handler::AppModule;
-    use adapter::processor::account::DependOnAccountQueryProcessor;
     use application::service::activitypub::relations::list_approved_relations;
     use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+    use kernel::interfaces::read_model::DependOnAccountQuery;
     use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
     use kernel::interfaces::repository::{
         DependOnFollowRepository, DependOnRemoteAccountRepository, FollowRepository,
@@ -163,7 +164,7 @@ mod tests {
             .unwrap();
 
         let relations = list_approved_relations(
-            module.account_query_processor(),
+            module.account_query(),
             module.follow_repository(),
             module.remote_account_repository(),
             &mut executor,

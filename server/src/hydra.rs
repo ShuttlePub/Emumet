@@ -2,6 +2,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+#[derive(Clone)]
 pub struct HydraAdminClient {
     admin_url: String,
     http_client: Client,
