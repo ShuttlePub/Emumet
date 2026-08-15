@@ -2,10 +2,6 @@ use super::fields::apply_field_updates;
 use super::validate::validate_update_account_dto;
 use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto, UpdateAccountDto};
 use crate::permission::{account_edit, check_permission};
-use adapter::processor::metadata::DependOnMetadataCommandProcessor;
-use adapter::processor::profile::{
-    DependOnProfileCommandProcessor, ProfileCommandProcessor, UpdateProfileParam,
-};
 use error_stack::Report;
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
@@ -25,7 +21,7 @@ use kernel::interfaces::repository::{
     DependOnMetadataRepository, DependOnProfileRepository, ImageRepository,
 };
 use kernel::prelude::entity::{
-    Account, AccountIsBot, AuthAccountId, FieldAction, ImageId, ImageUrl, Nanoid,
+    Account, AccountIsBot, AuthAccountId, FieldAction, ImageId, ImageUrl, Nanoid, Profile,
     ProfileDisplayName, ProfileSummary,
 };
 use kernel::KernelError;
@@ -40,11 +36,9 @@ pub trait UpdateAccountDetailUseCase:
     + DependOnAccountQuery
     + DependOnAccountRepository
     + DependOnAccountReadModel
-    + DependOnProfileCommandProcessor
     + DependOnProfileQuery
     + DependOnProfileReadModel
     + DependOnProfileRepository
-    + DependOnMetadataCommandProcessor
     + DependOnMetadataQuery
     + DependOnMetadataReadModel
     + DependOnMetadataRepository
@@ -118,19 +112,16 @@ pub trait UpdateAccountDetailUseCase:
                             || !icon.is_unchanged()
                             || !banner.is_unchanged()
                         {
-                            deps.profile_command_processor()
-                                .update(
+                            deps.profile_repository()
+                                .save(
                                     executor,
-                                    UpdateProfileParam {
-                                        profile_id: profile.id().clone(),
-                                        display_name: dto
-                                            .display_name
-                                            .clone()
-                                            .map(ProfileDisplayName::new),
-                                        summary: dto.summary.clone().map(ProfileSummary::new),
+                                    Profile::update(
+                                        profile.id().clone(),
+                                        dto.display_name.clone().map(ProfileDisplayName::new),
+                                        dto.summary.clone().map(ProfileSummary::new),
                                         icon,
                                         banner,
-                                    },
+                                    ),
                                 )
                                 .await?;
                             let rehydrated = deps
@@ -239,11 +230,9 @@ impl<T> UpdateAccountDetailUseCase for T where
         + DependOnAccountQuery
         + DependOnAccountRepository
         + DependOnAccountReadModel
-        + DependOnProfileCommandProcessor
         + DependOnProfileQuery
         + DependOnProfileReadModel
         + DependOnProfileRepository
-        + DependOnMetadataCommandProcessor
         + DependOnMetadataQuery
         + DependOnMetadataReadModel
         + DependOnMetadataRepository

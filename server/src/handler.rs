@@ -333,8 +333,8 @@ impl DependOnPublicBaseUrl for AppModule {
     }
 }
 
-// Note: DependOnSigningKeyGenerator, DependOnAccountCommandProcessor, and all
-// UseCase traits are provided automatically via blanket impls in adapter;
+// Note: DependOnSigningKeyGenerator and all UseCase traits are provided
+// automatically via blanket impls (adapter / application);
 // DependOn*Query traits come from kernel blanket impls.
 
 #[derive(References)]

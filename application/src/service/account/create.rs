@@ -1,21 +1,24 @@
 use crate::dto::account::{AccountDto, CreateAccountDto};
 use crate::signing_key::CreateSigningKeyUseCase;
 use adapter::crypto::DependOnSigningKeyGenerator;
-use adapter::processor::account::{
-    AccountCommandProcessor, CreateAccountParam, DependOnAccountCommandProcessor,
-};
-use adapter::processor::profile::{
-    CreateProfileParam, DependOnProfileCommandProcessor, ProfileCommandProcessor,
-};
+use error_stack::Report;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{DependOnPasswordProvider, SigningAlgorithm};
 use kernel::interfaces::database::{DependOnTransactionManager, TransactionManager};
+use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::permission::{
     AccountRelation, DependOnPermissionWriter, PermissionWriter, RelationTarget,
 };
-use kernel::interfaces::repository::DependOnSigningKeyRepository;
+use kernel::interfaces::read_model::{
+    AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
+};
+use kernel::interfaces::repository::{
+    AggregateRepository, DependOnAccountRepository, DependOnProfileRepository,
+    DependOnSigningKeyRepository,
+};
 use kernel::prelude::entity::{
-    AccountIsBot, AccountName, AuthAccountId, Nanoid, Profile, ProfileDisplayName,
+    Account, AccountId, AccountIsBot, AccountName, AuthAccountId, Nanoid, Profile,
+    ProfileDisplayName, ProfileId,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -25,8 +28,10 @@ pub trait CreateAccountUseCase:
     + Sync
     + Send
     + Clone
-    + DependOnAccountCommandProcessor
-    + DependOnProfileCommandProcessor
+    + DependOnAccountRepository
+    + DependOnAccountReadModel
+    + DependOnProfileRepository
+    + DependOnProfileReadModel
     + DependOnPasswordProvider
     + DependOnSigningKeyGenerator
     + DependOnPermissionWriter
@@ -49,31 +54,65 @@ pub trait CreateAccountUseCase:
                 .transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
-                        let account = deps
-                            .account_command_processor()
-                            .create(
-                                executor,
-                                CreateAccountParam {
-                                    name: account_name,
-                                    is_bot: account_is_bot,
-                                    auth_account_id: transaction_auth_account_id,
-                                },
-                            )
+                        let account_id = AccountId::default();
+                        let command = Account::create(
+                            account_id.clone(),
+                            account_name,
+                            account_is_bot,
+                            Nanoid::<Account>::default(),
+                            transaction_auth_account_id.clone(),
+                        );
+
+                        let event_envelope =
+                            deps.account_repository().save(executor, command).await?;
+
+                        let mut account = None;
+                        Account::apply(&mut account, event_envelope)?;
+                        let account = account.ok_or_else(|| {
+                            Report::new(KernelError::Internal)
+                                .attach_printable("Failed to construct account from created event")
+                        })?;
+
+                        if let Err(e) = deps.account_read_model().create(executor, &account).await {
+                            tracing::error!(?e, "Failed to create account read model");
+                            return Err(e);
+                        }
+
+                        if let Err(e) = deps
+                            .account_read_model()
+                            .link_auth_account(executor, &account_id, &transaction_auth_account_id)
+                            .await
+                        {
+                            tracing::error!(?e, "Failed to link auth account");
+                            return Err(e);
+                        }
+
+                        let profile_command = Profile::create(
+                            ProfileId::new(kernel::generate_id()),
+                            account.id().clone(),
+                            Some(display_name),
+                            None,
+                            None,
+                            None,
+                            Nanoid::<Profile>::default(),
+                        );
+
+                        let event_envelope = deps
+                            .profile_repository()
+                            .save(executor, profile_command)
                             .await?;
 
-                        deps.profile_command_processor()
-                            .create(
-                                executor,
-                                CreateProfileParam {
-                                    account_id: account.id().clone(),
-                                    display_name: Some(display_name),
-                                    summary: None,
-                                    icon: None,
-                                    banner: None,
-                                    nano_id: Nanoid::<Profile>::default(),
-                                },
-                            )
-                            .await?;
+                        let mut profile = None;
+                        Profile::apply(&mut profile, event_envelope)?;
+                        let profile = profile.ok_or_else(|| {
+                            Report::new(KernelError::Internal)
+                                .attach_printable("Failed to construct profile from created event")
+                        })?;
+
+                        if let Err(e) = deps.profile_read_model().create(executor, &profile).await {
+                            tracing::error!(?e, "Failed to create profile read model");
+                            return Err(e);
+                        }
 
                         deps.create(
                             executor,
@@ -106,8 +145,10 @@ pub trait CreateAccountUseCase:
 impl<T> CreateAccountUseCase for T where
     T: 'static
         + Clone
-        + DependOnAccountCommandProcessor
-        + DependOnProfileCommandProcessor
+        + DependOnAccountRepository
+        + DependOnAccountReadModel
+        + DependOnProfileRepository
+        + DependOnProfileReadModel
         + DependOnPasswordProvider
         + DependOnSigningKeyGenerator
         + DependOnPermissionWriter

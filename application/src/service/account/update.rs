@@ -1,8 +1,5 @@
 use crate::dto::account::UpdateAccountDto;
 use crate::permission::{account_edit, check_permission};
-use adapter::processor::account::{
-    AccountCommandProcessor, DependOnAccountCommandProcessor, UpdateAccountParam,
-};
 use error_stack::Report;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::DependOnPermissionChecker;
@@ -13,13 +10,7 @@ use kernel::KernelError;
 use std::future::Future;
 
 pub trait UpdateAccountUseCase:
-    'static
-    + Sync
-    + Send
-    + DependOnAccountCommandProcessor
-    + DependOnAccountQuery
-    + DependOnAccountRepository
-    + DependOnPermissionChecker
+    'static + Sync + Send + DependOnAccountQuery + DependOnAccountRepository + DependOnPermissionChecker
 {
     fn update_account(
         &self,
@@ -66,14 +57,10 @@ pub trait UpdateAccountUseCase:
                 );
             }
 
-            self.account_command_processor()
-                .update(
+            self.account_repository()
+                .save(
                     &mut conn,
-                    UpdateAccountParam {
-                        account_id,
-                        is_bot: AccountIsBot::new(is_bot),
-                        current_version,
-                    },
+                    Account::update(account_id, AccountIsBot::new(is_bot), current_version),
                 )
                 .await?;
 
@@ -83,10 +70,6 @@ pub trait UpdateAccountUseCase:
 }
 
 impl<T> UpdateAccountUseCase for T where
-    T: 'static
-        + DependOnAccountCommandProcessor
-        + DependOnAccountQuery
-        + DependOnAccountRepository
-        + DependOnPermissionChecker
+    T: 'static + DependOnAccountQuery + DependOnAccountRepository + DependOnPermissionChecker
 {
 }
