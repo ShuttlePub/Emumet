@@ -223,16 +223,16 @@ where
     }
 }
 
-pub trait DependOnProfileQuery: DependOnProfileReadModel + Send + Sync {
+pub trait DependOnProfileQuery: DependOnDatabaseConnection + Send + Sync {
     type ProfileQuery: ProfileQuery<
-        Connection = <<Self as DependOnProfileReadModel>::ProfileReadModel as ProfileReadModel>::Connection,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn profile_query(&self) -> &Self::ProfileQuery;
 }
 
 impl<T> DependOnProfileQuery for T
 where
-    T: DependOnProfileReadModel + Send + Sync + 'static,
+    T: DependOnProfileReadModel + DependOnDatabaseConnection + Send + Sync + 'static,
 {
     type ProfileQuery = Self;
     fn profile_query(&self) -> &Self::ProfileQuery {

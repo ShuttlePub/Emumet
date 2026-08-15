@@ -254,7 +254,7 @@ mod tests {
     impl DependOnAccountQuery for MockModule {
         type AccountQuery = MockAccountQuery;
 
-        fn account_query_processor(&self) -> &Self::AccountQuery {
+        fn account_query(&self) -> &Self::AccountQuery {
             &self.accounts
         }
     }

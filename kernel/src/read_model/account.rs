@@ -269,16 +269,16 @@ where
     }
 }
 
-pub trait DependOnAccountQuery: DependOnAccountReadModel + Send + Sync {
+pub trait DependOnAccountQuery: DependOnDatabaseConnection + Send + Sync {
     type AccountQuery: AccountQuery<
-        Connection = <<Self as DependOnAccountReadModel>::AccountReadModel as AccountReadModel>::Connection,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn account_query(&self) -> &Self::AccountQuery;
 }
 
 impl<T> DependOnAccountQuery for T
 where
-    T: DependOnAccountReadModel + Send + Sync + 'static,
+    T: DependOnAccountReadModel + DependOnDatabaseConnection + Send + Sync + 'static,
 {
     type AccountQuery = Self;
     fn account_query(&self) -> &Self::AccountQuery {

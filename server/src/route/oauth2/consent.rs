@@ -1,5 +1,5 @@
 use super::REMEMBER_FOR_SECS;
-use crate::handler::AppModule;
+use crate::api::OAuth2Api;
 use crate::hydra::{AcceptConsentRequest, ConsentSession, RejectRequest};
 use crate::schema::oauth2::{ConsentDecision, ConsentQuery, OAuth2Response};
 use axum::extract::{Query, State};
@@ -47,10 +47,10 @@ fn build_consent_session(
     tag = "OAuth2",
 )]
 pub(crate) async fn get_consent(
-    State(module): State<AppModule>,
+    State(api): State<OAuth2Api>,
     Query(ConsentQuery { consent_challenge }): Query<ConsentQuery>,
 ) -> Result<Response, StatusCode> {
-    let hydra = module.hydra_admin_client();
+    let hydra = api.hydra_admin_client();
 
     let consent_request = hydra
         .get_consent_request(&consent_challenge)
@@ -127,10 +127,10 @@ pub(crate) async fn get_consent(
     tag = "OAuth2",
 )]
 pub(crate) async fn post_consent(
-    State(module): State<AppModule>,
+    State(api): State<OAuth2Api>,
     Json(decision): Json<ConsentDecision>,
 ) -> Result<Response, StatusCode> {
-    let hydra = module.hydra_admin_client();
+    let hydra = api.hydra_admin_client();
 
     if decision.accept {
         let grant_scope = decision.grant_scope.unwrap_or_default();

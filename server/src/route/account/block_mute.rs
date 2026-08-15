@@ -1,12 +1,10 @@
-use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
+use crate::api::AccountApi;
+use crate::auth::{AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
 use crate::schema::account::{
     BlockAccountRequest, MuteAccountRequest, RelationListResponse, RelationResponse,
 };
 use application::dto::block_mute::{BlockAccountDto, MuteAccountDto, RelationDto};
-use application::service::block::{BlockAccountUseCase, GetBlocksUseCase, UnblockAccountUseCase};
-use application::service::mute::{GetMutesUseCase, MuteAccountUseCase, UnmuteAccountUseCase};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -52,18 +50,19 @@ fn validate_relation_request(account_id: &str, target: &str) -> Result<(), Error
 )]
 pub(crate) async fn block_account(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<BlockAccountRequest>,
 ) -> Result<Json<RelationResponse>, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
     validate_relation_request(&account_id, &request.target)?;
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    let result = module
+    let result = api
         .block_account(
             auth_account_id,
             BlockAccountDto {
@@ -93,27 +92,27 @@ pub(crate) async fn block_account(
 )]
 pub(crate) async fn unblock_account(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<BlockAccountRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
     validate_relation_request(&account_id, &request.target)?;
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    module
-        .unblock_account(
-            auth_account_id,
-            BlockAccountDto {
-                account_nanoid: account_id,
-                target: request.target,
-            },
-        )
-        .await
-        .map_err(ErrorStatus::from)?;
+    api.unblock_account(
+        auth_account_id,
+        BlockAccountDto {
+            account_nanoid: account_id,
+            target: request.target,
+        },
+    )
+    .await
+    .map_err(ErrorStatus::from)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -133,7 +132,7 @@ pub(crate) async fn unblock_account(
 )]
 pub(crate) async fn get_blocks(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
 ) -> Result<Json<RelationListResponse>, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
@@ -145,11 +144,12 @@ pub(crate) async fn get_blocks(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    let blocks = module
+    let blocks = api
         .get_blocks(auth_account_id, account_id)
         .await
         .map_err(ErrorStatus::from)?;
@@ -176,18 +176,19 @@ pub(crate) async fn get_blocks(
 )]
 pub(crate) async fn mute_account(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<MuteAccountRequest>,
 ) -> Result<Json<RelationResponse>, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
     validate_relation_request(&account_id, &request.target)?;
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    let result = module
+    let result = api
         .mute_account(
             auth_account_id,
             MuteAccountDto {
@@ -217,27 +218,27 @@ pub(crate) async fn mute_account(
 )]
 pub(crate) async fn unmute_account(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<MuteAccountRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
     validate_relation_request(&account_id, &request.target)?;
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    module
-        .unmute_account(
-            auth_account_id,
-            MuteAccountDto {
-                account_nanoid: account_id,
-                target: request.target,
-            },
-        )
-        .await
-        .map_err(ErrorStatus::from)?;
+    api.unmute_account(
+        auth_account_id,
+        MuteAccountDto {
+            account_nanoid: account_id,
+            target: request.target,
+        },
+    )
+    .await
+    .map_err(ErrorStatus::from)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -257,7 +258,7 @@ pub(crate) async fn unmute_account(
 )]
 pub(crate) async fn get_mutes(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<AccountApi>,
     Path(account_id): Path<String>,
 ) -> Result<Json<RelationListResponse>, ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
@@ -269,11 +270,12 @@ pub(crate) async fn get_mutes(
         )));
     }
 
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
         .await
         .map_err(ErrorStatus::from)?;
 
-    let mutes = module
+    let mutes = api
         .get_mutes(auth_account_id, account_id)
         .await
         .map_err(ErrorStatus::from)?;

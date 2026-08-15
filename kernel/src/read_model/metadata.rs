@@ -204,16 +204,16 @@ where
     }
 }
 
-pub trait DependOnMetadataQuery: DependOnMetadataReadModel + Send + Sync {
+pub trait DependOnMetadataQuery: DependOnDatabaseConnection + Send + Sync {
     type MetadataQuery: MetadataQuery<
-        Connection = <<Self as DependOnMetadataReadModel>::MetadataReadModel as MetadataReadModel>::Connection,
+        Connection = <<Self as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     >;
     fn metadata_query(&self) -> &Self::MetadataQuery;
 }
 
 impl<T> DependOnMetadataQuery for T
 where
-    T: DependOnMetadataReadModel + Send + Sync + 'static,
+    T: DependOnMetadataReadModel + DependOnDatabaseConnection + Send + Sync + 'static,
 {
     type MetadataQuery = Self;
     fn metadata_query(&self) -> &Self::MetadataQuery {

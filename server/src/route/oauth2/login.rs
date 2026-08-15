@@ -1,5 +1,5 @@
 use super::REMEMBER_FOR_SECS;
-use crate::handler::AppModule;
+use crate::api::OAuth2Api;
 use crate::hydra::{AcceptLoginRequest, RejectRequest};
 use crate::kratos::KratosClient;
 use crate::schema::oauth2::{LoginQuery, OAuth2Response};
@@ -23,12 +23,12 @@ use axum::response::{IntoResponse, Response};
     tag = "OAuth2",
 )]
 pub(crate) async fn login(
-    State(module): State<AppModule>,
+    State(api): State<OAuth2Api>,
     Query(LoginQuery { login_challenge }): Query<LoginQuery>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, StatusCode> {
-    let hydra = module.hydra_admin_client();
-    let kratos = module.kratos_client();
+    let hydra = api.hydra_admin_client();
+    let kratos = api.kratos_client();
 
     // 1. Fetch login request from Hydra.
     let login_request = hydra

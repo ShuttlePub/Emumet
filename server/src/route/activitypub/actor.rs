@@ -1,8 +1,7 @@
 use super::{json_response, ACTIVITY_JSON};
+use crate::api::ActivityPubApi;
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
 use application::dto::activitypub::GetActorDto;
-use application::service::activitypub::GetActorUseCase;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -19,7 +18,7 @@ use axum::response::Response;
     tag = "ActivityPub",
 )]
 pub(crate) async fn get_actor(
-    State(module): State<AppModule>,
+    State(api): State<ActivityPubApi>,
     Path(account_id): Path<String>,
 ) -> Result<Response, ErrorStatus> {
     if account_id.trim().is_empty() {
@@ -29,7 +28,7 @@ pub(crate) async fn get_actor(
         )));
     }
 
-    let actor = module
+    let actor = api
         .get_actor(GetActorDto {
             account_nanoid: account_id.clone(),
         })

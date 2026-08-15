@@ -1,12 +1,10 @@
-use super::{json_response, public_base_host_header, JRD_JSON};
+use super::{json_response, JRD_JSON};
+use crate::api::ActivityPubApi;
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
 use application::dto::activitypub::GetWebFingerDto;
-use application::service::activitypub::GetWebFingerUseCase;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
-use kernel::interfaces::config::DependOnPublicBaseUrl;
 use std::collections::HashMap;
 
 #[utoipa::path(
@@ -22,7 +20,7 @@ use std::collections::HashMap;
     tag = "ActivityPub",
 )]
 pub(crate) async fn webfinger(
-    State(module): State<AppModule>,
+    State(api): State<ActivityPubApi>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, ErrorStatus> {
     let resource = params.get("resource").ok_or_else(|| {
@@ -32,12 +30,12 @@ pub(crate) async fn webfinger(
         ))
     })?;
     let dto = parse_webfinger_resource(resource)?;
-    let expected_domain = public_base_host_header(module.public_base_url().as_str())?;
+    let expected_domain = api.public_base_host_header()?;
     if !dto.domain.eq_ignore_ascii_case(&expected_domain) {
         tracing::debug!(resource, expected_domain, "WebFinger domain mismatch");
         return Err(ErrorStatus::from(StatusCode::NOT_FOUND));
     }
-    let response = module.get_webfinger(dto).await.map_err(ErrorStatus::from)?;
+    let response = api.get_webfinger(dto).await.map_err(ErrorStatus::from)?;
 
     json_response(&response, JRD_JSON)
 }

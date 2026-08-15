@@ -1,7 +1,6 @@
-use super::{find_account_id_by_nanoid, json_response, ACTIVITY_JSON};
+use super::{json_response, ACTIVITY_JSON};
+use crate::api::ActivityPubApi;
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
-use application::service::activitypub::{GetFollowersCollectionUseCase, GetOutboxUseCase};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -20,16 +19,17 @@ use std::collections::HashMap;
     tag = "ActivityPub",
 )]
 pub(crate) async fn get_followers(
-    State(module): State<AppModule>,
+    State(api): State<ActivityPubApi>,
     Path(account_id): Path<String>,
 ) -> Result<Response, ErrorStatus> {
-    let account_id = find_account_id_by_nanoid(&module, account_id.clone())
+    let account_id = api
+        .find_account_id_by_nanoid(account_id.clone())
         .await
         .map_err(|e| {
             tracing::debug!(nanoid = %account_id, error = ?e, "Followers collection not found");
             e
         })?;
-    let collection = module
+    let collection = api
         .get_followers_collection(&account_id)
         .await
         .map_err(ErrorStatus::from)?;
@@ -50,16 +50,17 @@ pub(crate) async fn get_followers(
     tag = "ActivityPub",
 )]
 pub(crate) async fn get_following(
-    State(module): State<AppModule>,
+    State(api): State<ActivityPubApi>,
     Path(account_id): Path<String>,
 ) -> Result<Response, ErrorStatus> {
-    let account_id = find_account_id_by_nanoid(&module, account_id.clone())
+    let account_id = api
+        .find_account_id_by_nanoid(account_id.clone())
         .await
         .map_err(|e| {
             tracing::debug!(nanoid = %account_id, error = ?e, "Following collection not found");
             e
         })?;
-    let collection = module
+    let collection = api
         .get_following_collection(&account_id)
         .await
         .map_err(ErrorStatus::from)?;
@@ -84,11 +85,12 @@ pub(crate) async fn get_following(
     tag = "ActivityPub",
 )]
 pub(crate) async fn get_outbox(
-    State(module): State<AppModule>,
+    State(api): State<ActivityPubApi>,
     Path(account_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, ErrorStatus> {
-    let account_id = find_account_id_by_nanoid(&module, account_id.clone())
+    let account_id = api
+        .find_account_id_by_nanoid(account_id.clone())
         .await
         .map_err(|e| {
             tracing::debug!(nanoid = %account_id, error = ?e, "Outbox collection not found");
@@ -96,7 +98,7 @@ pub(crate) async fn get_outbox(
         })?;
     let limit = parse_limit(params.get("limit"))?;
     let cursor = parse_cursor(params.get("cursor"))?;
-    let collection = module
+    let collection = api
         .get_outbox_collection(&account_id, limit, cursor)
         .await
         .map_err(ErrorStatus::from)?;

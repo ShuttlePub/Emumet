@@ -1,8 +1,8 @@
-use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
+use crate::api::MeApi;
+use crate::auth::{AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use crate::schema::me::MeResponse;
-use application::service::session_context::GetSessionContextUseCase;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -32,12 +32,13 @@ impl MeRouter for axum::Router<AppModule> {
 )]
 pub(crate) async fn get_me(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<MeApi>,
 ) -> Result<Json<MeResponse>, ErrorStatus> {
-    let auth_account_id = resolve_auth_account_id(&module, OidcAuthInfo::from(claims))
+    let auth_account_id = api
+        .resolve_auth_account_id(OidcAuthInfo::from(claims))
         .await
         .map_err(ErrorStatus::from)?;
-    let session_context = module
+    let session_context = api
         .get_session_context(&auth_account_id)
         .await
         .map_err(|_| ErrorStatus::StatusCode(StatusCode::SERVICE_UNAVAILABLE))?;

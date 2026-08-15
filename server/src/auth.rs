@@ -396,49 +396,6 @@ async fn auth_middleware_core(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// resolve_auth_account_id
-// ---------------------------------------------------------------------------
-
-use crate::handler::AppModule;
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
-use kernel::interfaces::repository::{
-    AuthAccountRepository, AuthHostRepository, DependOnAuthAccountRepository,
-    DependOnAuthHostRepository,
-};
-use kernel::prelude::entity::{
-    AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
-};
-use kernel::KernelError;
-
-pub async fn resolve_auth_account_id(
-    app: &AppModule,
-    auth_info: OidcAuthInfo,
-) -> error_stack::Result<AuthAccountId, KernelError> {
-    let client_id = AuthAccountClientId::new(auth_info.subject);
-    let mut executor = app.database_connection().connection().await?;
-    let url = AuthHostUrl::new(auth_info.issuer);
-    let auth_host = app
-        .auth_host_repository()
-        .find_by_url(&mut executor, &url)
-        .await?;
-    let auth_host = if let Some(auth_host) = auth_host {
-        auth_host
-    } else {
-        let auth_host = AuthHost::new(AuthHostId::default(), url);
-        app.auth_host_repository()
-            .create(&mut executor, &auth_host)
-            .await?;
-        auth_host
-    };
-    let host_id = auth_host.into_destruct().id;
-    let auth_account = app
-        .auth_account_repository()
-        .find_or_create(&mut executor, &host_id, &client_id)
-        .await?;
-    Ok(auth_account.id().clone())
-}
-
 /// Extract the raw Bearer token string from the `Authorization` header.
 fn extract_bearer_token(request: &Request<Body>) -> Result<&str, StatusCode> {
     let header_value = request

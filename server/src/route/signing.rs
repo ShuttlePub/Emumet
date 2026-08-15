@@ -1,15 +1,11 @@
-use crate::auth::{resolve_auth_account_id, AuthClaims, OidcAuthInfo};
+use crate::api::SigningApi;
+use crate::auth::{AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
-use application::permission::{account_sign, check_permission};
-use application::signing_key::{GetPublicKeyUseCase, SignRequestUseCase};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
-use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
-use kernel::prelude::entity::{Account, Nanoid};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
@@ -66,38 +62,18 @@ impl SigningRouter for Router<AppModule> {
 )]
 pub(crate) async fn sign_request(
     Extension(claims): Extension<AuthClaims>,
-    State(module): State<AppModule>,
+    State(api): State<SigningApi>,
     Path(id): Path<String>,
     Json(request): Json<SignRequestBody>,
 ) -> Result<Json<SignResponse>, ErrorStatus> {
-    if id.trim().is_empty() {
-        return Err(ErrorStatus::from((
-            StatusCode::BAD_REQUEST,
-            "Account ID cannot be empty".to_string(),
-        )));
-    }
-
-    let auth_info = OidcAuthInfo::from(claims);
-    let auth_account_id = resolve_auth_account_id(&module, auth_info)
+    let auth_account_id = api
+        .resolve_auth_account_id(OidcAuthInfo::from(claims))
         .await
         .map_err(ErrorStatus::from)?;
 
-    let nanoid = Nanoid::<Account>::new(id);
-    let mut executor = module
-        .database_connection()
-        .connection()
-        .await
-        .map_err(ErrorStatus::from)?;
-    let account = module
-        .account_query()
-        .find_by_nanoid(&mut executor, &nanoid)
-        .await
-        .map_err(ErrorStatus::from)?
-        .ok_or_else(|| {
-            ErrorStatus::from((StatusCode::NOT_FOUND, "Account not found".to_string()))
-        })?;
+    let account = api.find_account_by_nanoid(id).await?;
 
-    check_permission(&module, &auth_account_id, &account_sign(account.id()))
+    api.check_sign_permission(&auth_account_id, account.id())
         .await
         .map_err(ErrorStatus::from)?;
 
@@ -120,7 +96,7 @@ pub(crate) async fn sign_request(
         body,
     };
 
-    let response = module
+    let response = api
         .sign(account.id(), signing_request)
         .await
         .map_err(ErrorStatus::from)?;
@@ -144,33 +120,13 @@ pub(crate) async fn sign_request(
     tag = "Signing",
 )]
 pub(crate) async fn get_public_key(
-    State(module): State<AppModule>,
+    State(api): State<SigningApi>,
     Path(id): Path<String>,
 ) -> Result<Json<PublicKeyResponse>, ErrorStatus> {
-    if id.trim().is_empty() {
-        return Err(ErrorStatus::from((
-            StatusCode::BAD_REQUEST,
-            "Account ID cannot be empty".to_string(),
-        )));
-    }
+    let account = api.find_account_by_nanoid(id.clone()).await?;
 
-    let nanoid = Nanoid::<Account>::new(id);
-    let mut executor = module
-        .database_connection()
-        .connection()
-        .await
-        .map_err(ErrorStatus::from)?;
-    let account = module
-        .account_query()
-        .find_by_nanoid(&mut executor, &nanoid)
-        .await
-        .map_err(ErrorStatus::from)?
-        .ok_or_else(|| {
-            ErrorStatus::from((StatusCode::NOT_FOUND, "Account not found".to_string()))
-        })?;
-
-    let info = module
-        .get_public_key_info(account.id(), &nanoid)
+    let info = api
+        .get_public_key_info(account.id(), &kernel::prelude::entity::Nanoid::new(id))
         .await
         .map_err(ErrorStatus::from)?;
 
