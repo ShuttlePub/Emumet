@@ -17,11 +17,12 @@ use kernel::interfaces::database::{
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::read_model::{
-    AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel, DependOnProfileReadModel,
+    AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
+    DependOnProfileReadModel, ProfileReadModel,
 };
 use kernel::interfaces::repository::{
     AggregateRepository, DependOnAccountRepository, DependOnImageRepository,
-    DependOnMetadataRepository, ImageRepository,
+    DependOnMetadataRepository, DependOnProfileRepository, ImageRepository,
 };
 use kernel::prelude::entity::{
     Account, AccountIsBot, AuthAccountId, FieldAction, ImageId, ImageUrl, Nanoid,
@@ -42,6 +43,7 @@ pub trait UpdateAccountDetailUseCase:
     + DependOnProfileCommandProcessor
     + DependOnProfileQueryProcessor
     + DependOnProfileReadModel
+    + DependOnProfileRepository
     + DependOnMetadataCommandProcessor
     + DependOnMetadataQueryProcessor
     + DependOnMetadataReadModel
@@ -130,6 +132,13 @@ pub trait UpdateAccountDetailUseCase:
                                         banner,
                                     },
                                 )
+                                .await?;
+                            let rehydrated = deps
+                                .profile_repository()
+                                .load(executor, profile.id())
+                                .await?;
+                            deps.profile_read_model()
+                                .update(executor, rehydrated.aggregate())
                                 .await?;
                         }
 
@@ -233,6 +242,7 @@ impl<T> UpdateAccountDetailUseCase for T where
         + DependOnProfileCommandProcessor
         + DependOnProfileQueryProcessor
         + DependOnProfileReadModel
+        + DependOnProfileRepository
         + DependOnMetadataCommandProcessor
         + DependOnMetadataQueryProcessor
         + DependOnMetadataReadModel

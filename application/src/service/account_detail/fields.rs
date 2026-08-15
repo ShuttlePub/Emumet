@@ -4,7 +4,9 @@ use adapter::processor::metadata::{
     UpdateMetadataParam,
 };
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
-use kernel::interfaces::read_model::MetadataProjection;
+use kernel::interfaces::read_model::{
+    DependOnMetadataReadModel, MetadataProjection, MetadataReadModel,
+};
 use kernel::interfaces::repository::{AggregateRepository, DependOnMetadataRepository};
 use kernel::prelude::entity::{
     AccountId, EventVersion, Metadata, MetadataContent, MetadataId, MetadataLabel, Nanoid,
@@ -62,7 +64,10 @@ pub(super) async fn apply_field_updates<T>(
     submitted: &[AccountFieldDto],
 ) -> error_stack::Result<(), KernelError>
 where
-    T: DependOnMetadataCommandProcessor + DependOnMetadataRepository + ?Sized,
+    T: DependOnMetadataCommandProcessor
+        + DependOnMetadataReadModel
+        + DependOnMetadataRepository
+        + ?Sized,
 {
     for operation in plan_field_updates(existing, submitted) {
         match operation {
@@ -83,15 +88,23 @@ where
                         },
                     )
                     .await?;
+                let (metadata, _) = rehydrate_metadata(deps, executor, &metadata_id).await?;
+                deps.metadata_read_model()
+                    .update(executor, &metadata)
+                    .await?;
             }
             FieldUpdate::Delete { metadata_id } => {
                 let (_, current_version) = rehydrate_metadata(deps, executor, &metadata_id).await?;
                 deps.metadata_command_processor()
                     .delete(executor, metadata_id.clone(), current_version)
                     .await?;
+                deps.metadata_read_model()
+                    .delete(executor, &metadata_id)
+                    .await?;
             }
             FieldUpdate::Create { label, content } => {
-                deps.metadata_command_processor()
+                let metadata = deps
+                    .metadata_command_processor()
                     .create(
                         executor,
                         CreateMetadataParam {
@@ -101,6 +114,9 @@ where
                             nano_id: Nanoid::<Metadata>::default(),
                         },
                     )
+                    .await?;
+                deps.metadata_read_model()
+                    .create(executor, &metadata)
                     .await?;
             }
         }

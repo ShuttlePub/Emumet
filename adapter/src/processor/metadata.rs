@@ -80,11 +80,6 @@ where
                 .attach_printable("Failed to construct metadata from created event")
         })?;
 
-        if let Err(e) = self.metadata_read_model().create(executor, &metadata).await {
-            tracing::error!(?e, "Failed to create metadata read model");
-            return Err(e);
-        }
-
         Ok(metadata)
     }
 
