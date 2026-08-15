@@ -10,12 +10,29 @@ pub async fn truncate_tables() {
         .await
         .expect("failed to connect to postgres for e2e cleanup");
 
-    sqlx::query(
-        "TRUNCATE accounts, account_events, auth_accounts, auth_account_events, auth_emumet_accounts, profiles, profile_events, metadatas, metadata_events, auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities CASCADE",
-    )
-    .execute(&pool)
-    .await
-    .expect("failed to truncate e2e tables");
+    // The running Emumet server keeps its projection worker polling the
+    // database roughly every 100 ms. A TRUNCATE acquires AccessExclusiveLocks
+    // on many tables at once and can deadlock with that worker's transaction
+    // (PostgreSQL SQLSTATE 40P01). Retry the TRUNCATE a few times when that
+    // happens.
+    const MAX_ATTEMPTS: usize = 5;
+    for attempt in 1..=MAX_ATTEMPTS {
+        let result = sqlx::query(
+            "TRUNCATE accounts, account_events, auth_accounts, auth_account_events, auth_emumet_accounts, profiles, profile_events, metadatas, metadata_events, auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities CASCADE",
+        )
+        .execute(&pool)
+        .await;
+
+        match result {
+            Ok(_) => break,
+            Err(sqlx::Error::Database(e))
+                if e.code().as_deref() == Some("40P01") && attempt < MAX_ATTEMPTS =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            Err(e) => panic!("failed to truncate e2e tables: {e}"),
+        }
+    }
 
     pool.close().await;
 }
