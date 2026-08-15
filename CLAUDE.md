@@ -133,29 +133,28 @@ Query Flow:
 ```
 
 **kernel** defines per-entity interface traits:
-- `AccountEventStore` / `AuthAccountEventStore` / `ProfileEventStore` / `MetadataEventStore` — event persistence + retrieval per entity-specific table
-- `AccountReadModel` / `AuthAccountReadModel` / `ProfileReadModel` / `MetadataReadModel` — projection reads + writes
+- `AccountEventStore` / `ProfileEventStore` / `MetadataEventStore` — event persistence + retrieval per entity-specific table
+- `AccountReadModel` / `ProfileReadModel` / `MetadataReadModel` — projection reads + writes
+- `AuthAccountRepository` — unified CRUD interface for `AuthAccount` (migrated from Event Sourcing to plain CRUD in ADR 0006 Stage 6)
 
 **adapter** provides processors with blanket impls:
 - `AccountCommandProcessor` / `ProfileCommandProcessor` / `MetadataCommandProcessor` — EventStore + EventApplier + Signal (projection via async applier)
-- `AuthAccountCommandProcessor` — EventStore + EventApplier + ReadModel.create() + Signal (synchronous projection for find-or-create pattern)
 - `*QueryProcessor` — ReadModel facade
 
 **driver** implements per-entity stores:
 - `PostgresAccountEventStore` → `account_events` table
-- `PostgresAuthAccountEventStore` → `auth_account_events` table
 - `PostgresProfileEventStore` → `profile_events` table
 - `PostgresMetadataEventStore` → `metadata_events` table
 - `PostgresAccountReadModel` → `accounts` table
-- `PostgresAuthAccountReadModel` → `auth_accounts` table
 - `PostgresProfileReadModel` → `profiles` table
 - `PostgresMetadataReadModel` → `metadatas` table
+- `PostgresAuthAccountRepository` → `auth_accounts` table
 
 **application** provides use case services and event appliers:
 - `GetAccountUseCase` / `CreateAccountUseCase` / `UpdateAccountUseCase` / `DeactivateAccountUseCase` / `SuspendAccountUseCase` / `UnsuspendAccountUseCase` / `BanAccountUseCase` — Account CRUD + moderation orchestration via CommandProcessor/QueryProcessor
 - `GetProfileUseCase` / `UpdateProfileUseCase` — Profile read/update (Profile is auto-created during Account creation)
 - `GetMetadataUseCase` / `CreateMetadataUseCase` / `UpdateMetadataUseCase` / `DeleteMetadataUseCase` — Metadata CRUD
-- `UpdateAuthAccount` / `UpdateProfile` / `UpdateMetadata` — event appliers that replay events from EventStore, update ReadModel projections
+- `UpdateProfile` / `UpdateMetadata` — event appliers that replay events from EventStore, update ReadModel projections
 
 #### Repository entities (Follow, RemoteAccount, Image, AuthHost)
 
@@ -219,5 +218,5 @@ Database tests use `#[test_with::env(DATABASE_URL)]` attribute to skip when data
 
 If migrating from Keycloak to Ory, truncate auth-related tables:
 ```sql
-TRUNCATE auth_hosts, auth_accounts, auth_account_events;
+TRUNCATE auth_hosts, auth_accounts;
 ```

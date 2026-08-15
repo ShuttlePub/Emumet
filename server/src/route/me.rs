@@ -65,8 +65,10 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
     use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
-    use kernel::interfaces::read_model::{AuthAccountReadModel, DependOnAuthAccountReadModel};
-    use kernel::interfaces::repository::{AuthHostRepository, DependOnAuthHostRepository};
+    use kernel::interfaces::repository::{
+        AuthAccountRepository, AuthHostRepository, DependOnAuthAccountRepository,
+        DependOnAuthHostRepository,
+    };
     use kernel::prelude::entity::{AuthAccountId, AuthHostId};
     use kernel::test_utils::{AuthAccountBuilder, AuthHostBuilder};
     use std::sync::Arc;
@@ -132,7 +134,7 @@ mod tests {
             .await
             .expect("seed auth host");
         module
-            .auth_account_read_model()
+            .auth_account_repository()
             .create(&mut executor, &auth_account)
             .await
             .expect("seed auth account");

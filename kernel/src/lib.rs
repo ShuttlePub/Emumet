@@ -71,7 +71,7 @@ pub mod interfaces {
 /// This macro generates implementations for:
 /// - DependOnDatabaseConnection
 /// - DependOnAccountReadModel, DependOnAccountEventStore
-/// - DependOnAuthAccountReadModel, DependOnAuthAccountEventStore
+/// - DependOnAuthAccountRepository
 /// - DependOnProfileReadModel, DependOnProfileEventStore
 /// - DependOnMetadataReadModel, DependOnMetadataEventStore
 /// - DependOnAuthHostRepository
@@ -120,17 +120,10 @@ macro_rules! impl_database_delegation {
             }
         }
 
-        impl $crate::interfaces::read_model::DependOnAuthAccountReadModel for $impl_type {
-            type AuthAccountReadModel = <$db_type as $crate::interfaces::read_model::DependOnAuthAccountReadModel>::AuthAccountReadModel;
-            fn auth_account_read_model(&self) -> &Self::AuthAccountReadModel {
-                $crate::interfaces::read_model::DependOnAuthAccountReadModel::auth_account_read_model(&self.$field)
-            }
-        }
-
-        impl $crate::interfaces::event_store::DependOnAuthAccountEventStore for $impl_type {
-            type AuthAccountEventStore = <$db_type as $crate::interfaces::event_store::DependOnAuthAccountEventStore>::AuthAccountEventStore;
-            fn auth_account_event_store(&self) -> &Self::AuthAccountEventStore {
-                $crate::interfaces::event_store::DependOnAuthAccountEventStore::auth_account_event_store(&self.$field)
+        impl $crate::interfaces::repository::DependOnAuthAccountRepository for $impl_type {
+            type AuthAccountRepository = <$db_type as $crate::interfaces::repository::DependOnAuthAccountRepository>::AuthAccountRepository;
+            fn auth_account_repository(&self) -> &Self::AuthAccountRepository {
+                $crate::interfaces::repository::DependOnAuthAccountRepository::auth_account_repository(&self.$field)
             }
         }
 

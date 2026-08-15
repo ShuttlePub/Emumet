@@ -112,15 +112,13 @@ async fn seed_auth_account(db: &PostgresDatabase, auth_account_id: &AuthAccountI
         .execute(&mut *con)
         .await
         .unwrap();
-    sqlx::query(
-        "INSERT INTO auth_accounts (id, host_id, client_id, version) VALUES ($1, $2, $3, 0)",
-    )
-    .bind(auth_account_id.as_ref())
-    .bind(host_id)
-    .bind(format!("client-{host_id}"))
-    .execute(&mut *con)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO auth_accounts (id, host_id, client_id) VALUES ($1, $2, $3)")
+        .bind(auth_account_id.as_ref())
+        .bind(host_id)
+        .bind(format!("client-{host_id}"))
+        .execute(&mut *con)
+        .await
+        .unwrap();
 }
 
 async fn max_seq_for(db: &PostgresDatabase, account_id: &AccountId) -> i64 {

@@ -1,4 +1,3 @@
-use crate::entity::{AuthAccount, AuthAccountEvent, EventId};
 use serde::{Deserialize, Serialize};
 use vodca::{AsRefln, Fromln, Newln};
 
@@ -8,11 +7,5 @@ pub struct AuthAccountId(i64);
 impl Default for AuthAccountId {
     fn default() -> Self {
         AuthAccountId(crate::generate_id())
-    }
-}
-
-impl From<AuthAccountId> for EventId<AuthAccountEvent, AuthAccount> {
-    fn from(auth_account_id: AuthAccountId) -> Self {
-        EventId::new(auth_account_id.0)
     }
 }

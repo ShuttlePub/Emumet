@@ -1,4 +1,4 @@
-use crate::entity::{AuthAccount, AuthAccountClientId, AuthAccountId, AuthHostId, EventVersion};
+use crate::entity::{AuthAccount, AuthAccountClientId, AuthAccountId, AuthHostId};
 
 use super::DEFAULT_CLIENT_ID;
 
@@ -6,7 +6,6 @@ pub struct AuthAccountBuilder {
     id: Option<AuthAccountId>,
     host: Option<AuthHostId>,
     client_id: Option<AuthAccountClientId>,
-    version: Option<EventVersion<AuthAccount>>,
 }
 
 impl Default for AuthAccountBuilder {
@@ -21,7 +20,6 @@ impl AuthAccountBuilder {
             id: None,
             host: None,
             client_id: None,
-            version: None,
         }
     }
 
@@ -40,11 +38,6 @@ impl AuthAccountBuilder {
         self
     }
 
-    pub fn version(mut self, version: EventVersion<AuthAccount>) -> Self {
-        self.version = Some(version);
-        self
-    }
-
     pub fn build(self) -> AuthAccount {
         crate::ensure_generator_initialized();
         AuthAccount::new(
@@ -52,7 +45,6 @@ impl AuthAccountBuilder {
             self.host.unwrap_or_default(),
             self.client_id
                 .unwrap_or_else(|| AuthAccountClientId::new(DEFAULT_CLIENT_ID)),
-            self.version.unwrap_or_default(),
         )
     }
 }

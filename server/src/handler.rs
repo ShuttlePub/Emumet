@@ -1,7 +1,6 @@
 use crate::applier::ApplierContainer;
 use crate::hydra::HydraAdminClient;
 use crate::kratos::KratosClient;
-use adapter::processor::auth_account::DependOnAuthAccountSignal;
 use adapter::processor::metadata::DependOnMetadataSignal;
 use adapter::processor::profile::DependOnProfileSignal;
 use driver::crypto::{
@@ -129,26 +128,10 @@ impl DependOnKeyEncryptor for AppModule {
     }
 }
 
-impl DependOnAuthAccountSignal for AppModule {
-    type AuthAccountSignal = ApplierContainer;
-    fn auth_account_signal(&self) -> &Self::AuthAccountSignal {
-        &self.applier_container
-    }
-}
-
-impl kernel::interfaces::read_model::DependOnAuthAccountReadModel for AppModule {
-    type AuthAccountReadModel = <PostgresDatabase as kernel::interfaces::read_model::DependOnAuthAccountReadModel>::AuthAccountReadModel;
-    fn auth_account_read_model(&self) -> &Self::AuthAccountReadModel {
-        kernel::interfaces::read_model::DependOnAuthAccountReadModel::auth_account_read_model(
-            self.handler.as_ref().database_connection(),
-        )
-    }
-}
-
-impl kernel::interfaces::event_store::DependOnAuthAccountEventStore for AppModule {
-    type AuthAccountEventStore = <PostgresDatabase as kernel::interfaces::event_store::DependOnAuthAccountEventStore>::AuthAccountEventStore;
-    fn auth_account_event_store(&self) -> &Self::AuthAccountEventStore {
-        kernel::interfaces::event_store::DependOnAuthAccountEventStore::auth_account_event_store(
+impl kernel::interfaces::repository::DependOnAuthAccountRepository for AppModule {
+    type AuthAccountRepository = <PostgresDatabase as kernel::interfaces::repository::DependOnAuthAccountRepository>::AuthAccountRepository;
+    fn auth_account_repository(&self) -> &Self::AuthAccountRepository {
+        kernel::interfaces::repository::DependOnAuthAccountRepository::auth_account_repository(
             self.handler.as_ref().database_connection(),
         )
     }

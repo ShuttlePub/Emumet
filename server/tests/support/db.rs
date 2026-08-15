@@ -18,7 +18,7 @@ pub async fn truncate_tables() {
     const MAX_ATTEMPTS: usize = 5;
     for attempt in 1..=MAX_ATTEMPTS {
         let result = sqlx::query(
-            "TRUNCATE accounts, account_events, auth_accounts, auth_account_events, auth_emumet_accounts, profiles, profile_events, metadatas, metadata_events, auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities CASCADE",
+            "TRUNCATE accounts, account_events, auth_accounts, auth_emumet_accounts, profiles, profile_events, metadatas, metadata_events, auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities CASCADE",
         )
         .execute(&pool)
         .await;

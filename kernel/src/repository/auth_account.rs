@@ -1,25 +1,24 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
-use crate::entity::{AuthAccount, AuthAccountClientId, AuthAccountId};
+use crate::entity::{AuthAccount, AuthAccountClientId, AuthAccountId, AuthHostId};
 use crate::KernelError;
 use std::future::Future;
 
-pub trait AuthAccountReadModel: Sync + Send + 'static {
+pub trait AuthAccountRepository: Sync + Send + 'static {
     type Connection: Connection;
 
-    // Query operations (projection reads)
+    fn find_or_create(
+        &self,
+        executor: &mut Self::Connection,
+        host_id: &AuthHostId,
+        client_id: &AuthAccountClientId,
+    ) -> impl Future<Output = error_stack::Result<AuthAccount, KernelError>> + Send;
+
     fn find_by_id(
         &self,
         executor: &mut Self::Connection,
         id: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<Option<AuthAccount>, KernelError>> + Send;
 
-    fn find_by_client_id(
-        &self,
-        executor: &mut Self::Connection,
-        client_id: &AuthAccountClientId,
-    ) -> impl Future<Output = error_stack::Result<Option<AuthAccount>, KernelError>> + Send;
-
-    // Projection update operations (called by EventApplier pipeline)
     fn create(
         &self,
         executor: &mut Self::Connection,
@@ -27,10 +26,10 @@ pub trait AuthAccountReadModel: Sync + Send + 'static {
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
-pub trait DependOnAuthAccountReadModel: Sync + Send + DependOnDatabaseConnection {
-    type AuthAccountReadModel: AuthAccountReadModel<
+pub trait DependOnAuthAccountRepository: Sync + Send + DependOnDatabaseConnection {
+    type AuthAccountRepository: AuthAccountRepository<
         Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
     >;
 
-    fn auth_account_read_model(&self) -> &Self::AuthAccountReadModel;
+    fn auth_account_repository(&self) -> &Self::AuthAccountRepository;
 }

@@ -48,3 +48,4 @@ test-with.workspace = true
 tempfile = "3"
 nanoid = { workspace = true }
 wiremock = "0.6"
+futures = { version = "0.3", default-features = false, features = ["executor"] }
