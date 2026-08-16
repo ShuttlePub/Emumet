@@ -317,6 +317,9 @@ mod tests {
             })
             .to_string(),
             created_at: OffsetDateTime::now_utc(),
+            delivered_at: None,
+            attempted_at: None,
+            error: None,
         }
     }
 

@@ -25,6 +25,9 @@ impl From<OutboxActivityRow> for OutboxActivity {
             activity_type: value.activity_type,
             object_json: value.object_json,
             created_at: value.created_at,
+            delivered_at: None,
+            attempted_at: None,
+            error: None,
         }
     }
 }
@@ -139,6 +142,9 @@ mod tests {
             })
             .to_string(),
             created_at: OffsetDateTime::now_utc(),
+            delivered_at: Some(OffsetDateTime::now_utc()),
+            attempted_at: None,
+            error: None,
         };
 
         database

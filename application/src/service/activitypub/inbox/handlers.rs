@@ -11,7 +11,7 @@ use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::repository::{BlockRepository, FollowRepository, RemoteAccountRepository};
 use kernel::prelude::entity::{
     Block, BlockId, BlockTargetId, Follow, FollowApprovedAt, FollowId, FollowTargetId,
-    OutboxActivity, OutboxActivityId, RemoteAccountUrl,
+    OutboxActivity, RemoteAccountUrl,
 };
 use kernel::KernelError;
 use serde_json::Value;
@@ -86,7 +86,7 @@ where
     }
 
     let outbox_entry = OutboxActivity {
-        id: OutboxActivityId::default(),
+        id: 0,
         account_id: dto.account_id.clone(),
         activity_id: accept.id.clone(),
         activity_type: "Accept".to_string(),
@@ -95,6 +95,9 @@ where
                 .attach_printable(format!("Failed to serialize Accept activity to JSON: {e}"))
         })?,
         created_at: time::OffsetDateTime::now_utc(),
+        delivered_at: None,
+        attempted_at: None,
+        error: None,
     };
     module
         .store_outbox_activity(&outbox_entry)

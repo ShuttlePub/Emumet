@@ -21,7 +21,7 @@ use kernel::interfaces::repository::{
 };
 use kernel::prelude::entity::{
     Account, AuthAccountId, Block, BlockId, BlockTargetId, FollowTargetId, Nanoid, OutboxActivity,
-    OutboxActivityId, RemoteAccount,
+    RemoteAccount,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -138,7 +138,7 @@ pub trait BlockAccountUseCase:
 
             if let Some(activity) = delivered_activity {
                 let outbox_entry = OutboxActivity {
-                    id: OutboxActivityId::default(),
+                    id: 0,
                     account_id: account.id().clone(),
                     activity_id: activity.id.clone(),
                     activity_type: "Block".to_string(),
@@ -148,6 +148,9 @@ pub trait BlockAccountUseCase:
                         ))
                     })?,
                     created_at: time::OffsetDateTime::now_utc(),
+                    delivered_at: None,
+                    attempted_at: None,
+                    error: None,
                 };
                 self.store_outbox_activity(&outbox_entry)
                     .await
@@ -282,7 +285,7 @@ pub trait UnblockAccountUseCase:
 
             if let Some(activity) = delivered_activity {
                 let outbox_entry = OutboxActivity {
-                    id: OutboxActivityId::default(),
+                    id: 0,
                     account_id: account.id().clone(),
                     activity_id: activity.id.clone(),
                     activity_type: "Undo".to_string(),
@@ -292,6 +295,9 @@ pub trait UnblockAccountUseCase:
                         ))
                     })?,
                     created_at: time::OffsetDateTime::now_utc(),
+                    delivered_at: None,
+                    attempted_at: None,
+                    error: None,
                 };
                 self.store_outbox_activity(&outbox_entry)
                     .await
