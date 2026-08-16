@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use support::account_helper::{
     assert_collection_has_items, assert_content_type, assert_signature_header, e2e_http_client,
-    fetch_collection, get_blocks, post_block, post_follow, post_signed_accept_direct,
-    post_signed_block_direct, post_signed_follow_direct, post_signed_undo_block_direct,
-    post_unblock, post_unfollow, setup_test_account_details, start_server_with_peer,
+    fetch_collection, get_blocks, get_mutes, post_block, post_follow, post_mute,
+    post_signed_accept_direct, post_signed_block_direct, post_signed_follow_direct,
+    post_signed_undo_block_direct, post_unblock, post_unfollow, setup_test_account_details,
+    start_server_with_peer,
 };
 use support::ap_peer::{wait_for_activity, ApPeer};
 use support::auth;
@@ -343,22 +344,8 @@ async fn outbound_block_sends_block_to_remote_inbox() {
     let jwt = auth::get_jwt_for_test_user().await;
     let account_nanoid = setup_test_account_details().await.id;
 
-    peer.set_inbox_status(500);
-    let failed = post_block(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
-    assert_eq!(
-        failed.status(),
-        reqwest::StatusCode::UNPROCESSABLE_ENTITY,
-        "block delivery failure should be rejected with 422"
-    );
-    let blocks = get_blocks(&jwt, &account_nanoid, &cfg.server_base_url).await;
-    assert_eq!(
-        blocks["items"].as_array().map(Vec::len),
-        Some(0),
-        "failed block delivery must not create a local block"
-    );
-    peer.set_inbox_status(202);
-    peer.clear_inbox();
-
+    // Success path: the block is committed and the Block activity is
+    // delivered post-commit, marking the outbox row as delivered.
     let response = post_block(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
     assert_eq!(
         response.status(),
@@ -384,6 +371,44 @@ async fn outbound_block_sends_block_to_remote_inbox() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["target"], peer.actor_url);
     assert_eq!(items[0]["targetType"], "remote");
+
+    assert_eq!(
+        db::outbox_delivery_state(&account_nanoid, "Block").await,
+        Some((true, false, false)),
+        "successful delivery should mark the outbox row delivered"
+    );
+
+    // Failure path (transactional outbox semantics): DB writes and the outbox
+    // row commit first and delivery happens post-commit, so a failing peer
+    // inbox no longer fails the operation — the API returns 200, the block
+    // persists, and the outbox row records the failed attempt (retryable).
+    let failing_peer = ApPeer::new("remote-block-fail").await;
+    failing_peer.set_inbox_status(500);
+    let failed = post_block(
+        &jwt,
+        &account_nanoid,
+        &cfg.server_base_url,
+        &failing_peer.actor_url,
+    )
+    .await;
+    assert_eq!(
+        failed.status(),
+        reqwest::StatusCode::OK,
+        "block delivery failure must not fail the operation (post-commit delivery)"
+    );
+
+    let blocks = get_blocks(&jwt, &account_nanoid, &cfg.server_base_url).await;
+    assert_eq!(
+        blocks["items"].as_array().map(Vec::len),
+        Some(2),
+        "block must persist even when delivery fails"
+    );
+
+    assert_eq!(
+        db::outbox_delivery_state(&account_nanoid, "Block").await,
+        Some((false, true, true)),
+        "failed delivery should leave a retryable outbox row (attempted, not delivered, error set)"
+    );
 }
 
 #[tokio::test]
@@ -420,6 +445,38 @@ async fn outbound_unblock_sends_undo_block_to_remote_inbox() {
     assert_eq!(blocks["items"].as_array().map(Vec::len), Some(0));
     let missing = post_unblock(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
     assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+
+    // Failure path (transactional outbox semantics): a failing peer inbox does
+    // not fail the unblock — the block deletion is committed with the outbox
+    // row first, so the API returns 204, the block stays deleted, and the
+    // Undo outbox row records the failed attempt (retryable).
+    let reblock = post_block(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(reblock.status(), reqwest::StatusCode::OK);
+    wait_for_activity(&peer, "Block", Duration::from_secs(15))
+        .await
+        .expect("mock peer inbox did not receive Block activity");
+    peer.clear_inbox();
+    peer.set_inbox_status(500);
+
+    let failed = post_unblock(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(
+        failed.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "unblock delivery failure must not fail the operation (post-commit delivery)"
+    );
+
+    let blocks = get_blocks(&jwt, &account_nanoid, &cfg.server_base_url).await;
+    assert_eq!(
+        blocks["items"].as_array().map(Vec::len),
+        Some(0),
+        "block must stay deleted even when Undo delivery fails"
+    );
+
+    assert_eq!(
+        db::outbox_delivery_state(&account_nanoid, "Undo").await,
+        Some((false, true, true)),
+        "failed Undo delivery should leave a retryable outbox row (attempted, not delivered, error set)"
+    );
 }
 
 #[tokio::test]
@@ -491,5 +548,139 @@ async fn inbound_undo_block_removes_block() {
         db::count_remote_blocks_against_local_account(&account_nanoid).await,
         0,
         "inbound Undo(Block) should remove the remote-to-local block row"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn duplicate_inbound_follow_sends_single_accept() {
+    let peer = ApPeer::new("remote-dup-follow").await;
+    let _server = start_server_with_peer(&peer).await;
+    db::reset_test_data().await;
+    let cfg = config();
+    let account_nanoid = setup_test_account_details().await.id;
+
+    let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url);
+
+    let first = post_signed_follow_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(
+        first.status(),
+        reqwest::StatusCode::ACCEPTED,
+        "signed follow should be accepted with 202"
+    );
+    wait_for_activity(&peer, "Accept", Duration::from_secs(15))
+        .await
+        .expect("Emumet should send Accept activity for the first Follow");
+
+    // Inbound Follow is idempotent on the follow relationship: a duplicate
+    // Follow from the same actor to the same target is accepted but creates
+    // neither a second follow row nor a second Accept delivery.
+    let duplicate = post_signed_follow_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(
+        duplicate.status(),
+        reqwest::StatusCode::ACCEPTED,
+        "duplicate signed follow should still be accepted with 202"
+    );
+
+    let accepts = peer
+        .received_activities()
+        .iter()
+        .filter(|a| a.body["type"] == "Accept")
+        .count();
+    assert_eq!(
+        accepts, 1,
+        "duplicate Follow must not trigger a second Accept"
+    );
+
+    let followers = fetch_collection(&cfg.server_base_url, &account_nanoid, "followers").await;
+    assert_eq!(
+        followers["totalItems"], 1,
+        "duplicate Follow must not create a second follower"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn mute_twice_returns_ok_with_single_mute() {
+    let peer = ApPeer::new("remote-mute").await;
+    let _server = start_server_with_peer(&peer).await;
+    db::reset_test_data().await;
+    let cfg = config();
+    let jwt = auth::get_jwt_for_test_user().await;
+    let account_nanoid = setup_test_account_details().await.id;
+
+    let first = post_mute(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(
+        first.status(),
+        reqwest::StatusCode::OK,
+        "first mute should return 200 OK"
+    );
+
+    // Mute is idempotent: muting the same target again returns 200 instead of
+    // the old 422, and still results in a single mute relationship.
+    let second = post_mute(&jwt, &account_nanoid, &cfg.server_base_url, &peer.actor_url).await;
+    assert_eq!(
+        second.status(),
+        reqwest::StatusCode::OK,
+        "duplicate mute should return 200 OK"
+    );
+
+    let mutes = get_mutes(&jwt, &account_nanoid, &cfg.server_base_url).await;
+    let items = mutes["items"].as_array().expect("mutes should have items");
+    assert_eq!(
+        items.len(),
+        1,
+        "duplicate mute must not create a second mute row"
+    );
+    assert_eq!(items[0]["target"], peer.actor_url);
+}
+
+#[tokio::test]
+#[ignore]
+async fn undo_block_twice_returns_ok() {
+    let peer = ApPeer::new("remote-dup-undo-block").await;
+    let _server = start_server_with_peer(&peer).await;
+    db::reset_test_data().await;
+    let cfg = config();
+    let account_nanoid = setup_test_account_details().await.id;
+
+    let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url);
+
+    let block_resp = post_signed_block_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(block_resp.status(), reqwest::StatusCode::ACCEPTED);
+    assert_eq!(
+        db::count_remote_blocks_against_local_account(&account_nanoid).await,
+        1
+    );
+
+    let first = post_signed_undo_block_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(
+        first.status(),
+        reqwest::StatusCode::ACCEPTED,
+        "signed Undo(Block) should be accepted with 202"
+    );
+    assert_eq!(
+        db::count_remote_blocks_against_local_account(&account_nanoid).await,
+        0
+    );
+
+    // Inbox Undo(Block) is idempotent: a duplicate Undo is accepted with 202
+    // and leaves the already-removed block relationship untouched. (The REST
+    // unblock of a missing block still returns 404 — only the inbox flow is
+    // idempotent.)
+    let duplicate =
+        post_signed_undo_block_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(
+        duplicate.status(),
+        reqwest::StatusCode::ACCEPTED,
+        "duplicate inbound Undo(Block) should be accepted with 202"
+    );
+    assert_eq!(
+        db::count_remote_blocks_against_local_account(&account_nanoid).await,
+        0
     );
 }

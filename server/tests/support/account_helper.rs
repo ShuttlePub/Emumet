@@ -153,6 +153,32 @@ pub async fn get_blocks(jwt: &str, account_nanoid: &str, base_url: &str) -> serd
     resp.json().await.expect("blocks response not valid JSON")
 }
 
+pub async fn post_mute(
+    jwt: &str,
+    account_nanoid: &str,
+    base_url: &str,
+    target: &str,
+) -> reqwest::Response {
+    e2e_http_client()
+        .post(format!("{base_url}/api/v1/accounts/{account_nanoid}/mute"))
+        .bearer_auth(jwt)
+        .json(&serde_json::json!({"target": target}))
+        .send()
+        .await
+        .expect("mute request failed")
+}
+
+pub async fn get_mutes(jwt: &str, account_nanoid: &str, base_url: &str) -> serde_json::Value {
+    let resp = e2e_http_client()
+        .get(format!("{base_url}/api/v1/accounts/{account_nanoid}/mutes"))
+        .bearer_auth(jwt)
+        .send()
+        .await
+        .expect("get mutes request failed");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    resp.json().await.expect("mutes response not valid JSON")
+}
+
 pub fn assert_signature_header(activity: &ReceivedActivity) {
     let found = activity.headers.iter().any(|(k, _)| {
         let kl = k.to_lowercase();
