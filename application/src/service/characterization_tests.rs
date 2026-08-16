@@ -3,10 +3,11 @@ use super::account::{
     UnsuspendAccountUseCase,
 };
 use super::account_detail::UpdateAccountDetailUseCase;
-use super::activitypub::inject_test_remote_actor;
+use super::activitypub::{inject_test_remote_actor, InboxUseCase};
 use super::block::{BlockAccountUseCase, UnblockAccountUseCase};
 use super::mute::{MuteAccountUseCase, UnmuteAccountUseCase};
 use crate::dto::account::{AccountFieldDto, CreateAccountDto, UpdateAccountDto};
+use crate::dto::activitypub::InboxActivityDto;
 use crate::dto::block_mute::{BlockAccountDto, MuteAccountDto};
 use crate::projection::{ProjectMetadataBatch, ProjectProfileBatch};
 use driver::crypto::{Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator};
@@ -1274,4 +1275,442 @@ async fn unblock_equivalence_removes_block_and_creates_undo_outbox() {
         activity_types,
         vec![("Block".to_string(),), ("Undo".to_string(),)]
     );
+}
+
+fn local_actor_url_for(account_nanoid: &str) -> String {
+    format!("https://example.com/ap/accounts/{account_nanoid}")
+}
+
+fn inbox_activity(
+    id: &str,
+    type_: &str,
+    actor: &str,
+    object: serde_json::Value,
+) -> kernel::activitypub::Activity {
+    kernel::activitypub::Activity {
+        context: None,
+        id: id.to_string(),
+        type_: type_.to_string(),
+        actor: actor.to_string(),
+        object: Some(object),
+        target: None,
+        to: None,
+        cc: None,
+    }
+}
+
+fn inbox_dto(
+    account_id: i64,
+    account_nanoid: &str,
+    activity: kernel::activitypub::Activity,
+) -> InboxActivityDto {
+    InboxActivityDto {
+        account_id: AccountId::new(account_id),
+        account_nanoid: account_nanoid.to_string(),
+        activity,
+    }
+}
+
+fn inbound_follow_activity(
+    actor_url: &str,
+    local_actor_url: &str,
+) -> kernel::activitypub::Activity {
+    inbox_activity(
+        &format!("{actor_url}/activities/follow-1"),
+        "Follow",
+        actor_url,
+        serde_json::Value::String(local_actor_url.to_string()),
+    )
+}
+
+async fn inbox_follow_and_accept_outbox_counts(
+    database: &PostgresDatabase,
+    remote_id: i64,
+    account_id: i64,
+) -> (i64, i64) {
+    sqlx::query_as(
+        "SELECT \
+         (SELECT COUNT(*) FROM follows WHERE follower_remote_id = $1 AND followee_local_id = $2), \
+         (SELECT COUNT(*) FROM outbox_activities WHERE account_id = $2 AND activity_type = 'Accept')",
+    )
+    .bind(remote_id)
+    .bind(account_id)
+    .fetch_one(&mut *database.connection().await.unwrap())
+    .await
+    .unwrap()
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn inbox_follow_equivalence_creates_follow_and_accept_outbox() {
+    // Given: a local account and a remote follower whose inbox refuses
+    // connections, so the post-commit Accept delivery is attempted and fails
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let followed = create_test_account(&module, &auth_account_id).await;
+    let (actor_url, remote_id) =
+        seed_remote_actor(&module.database, "http://127.0.0.1:1/inbox").await;
+    let account_id = account_id_of(&module.database, &followed).await;
+
+    // When
+    module
+        .handle_inbox_activity(inbox_dto(
+            account_id,
+            &followed,
+            inbound_follow_activity(&actor_url, &local_actor_url_for(&followed)),
+        ))
+        .await
+        .unwrap();
+
+    // Then: an approved follow row and a single Accept outbox row whose
+    // delivery was attempted (and failed) after the transaction committed
+    let approved_counts: (i64, i64) = sqlx::query_as(
+        "SELECT \
+         (SELECT COUNT(*) FROM follows WHERE follower_remote_id = $1 AND followee_local_id = $2 AND approved_at IS NOT NULL), \
+         (SELECT COUNT(*) FROM outbox_activities WHERE account_id = $2 AND activity_type = 'Accept')",
+    )
+    .bind(remote_id)
+    .bind(account_id)
+    .fetch_one(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+    assert_eq!(approved_counts, (1, 1));
+    let attempt_state: (bool, bool) = sqlx::query_as(
+        "SELECT attempted_at IS NOT NULL, delivered_at IS NULL \
+         FROM outbox_activities WHERE account_id = $1 AND activity_type = 'Accept'",
+    )
+    .bind(account_id)
+    .fetch_one(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+    assert_eq!(
+        attempt_state,
+        (true, true),
+        "failed post-commit delivery must be recorded on the outbox row"
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn inbox_follow_duplicate_skips_accept() {
+    // Given: an inbound Follow already processed once
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let followed = create_test_account(&module, &auth_account_id).await;
+    let (actor_url, remote_id) =
+        seed_remote_actor(&module.database, "http://127.0.0.1:1/inbox").await;
+    let account_id = account_id_of(&module.database, &followed).await;
+    let dto = || {
+        inbox_dto(
+            account_id,
+            &followed,
+            inbound_follow_activity(&actor_url, &local_actor_url_for(&followed)),
+        )
+    };
+    module.handle_inbox_activity(dto()).await.unwrap();
+
+    // When: the identical Follow arrives again
+    let second = module.handle_inbox_activity(dto()).await;
+
+    // Then: still one follow row and one Accept outbox row
+    assert!(second.is_ok());
+    assert_eq!(
+        inbox_follow_and_accept_outbox_counts(&module.database, remote_id, account_id).await,
+        (1, 1),
+        "duplicate Follow must not create a second follow row or Accept outbox row"
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn inbox_follow_rolls_back_all_writes_when_transaction_fails() {
+    // Given: the fault-injecting transaction manager forces a rollback after
+    // the unit of work has run. The remote account upsert is intentionally
+    // pre-transaction (actor resolution is a side effect shared with the
+    // non-transactional path), so only the follow row and the Accept outbox
+    // row are asserted to roll back.
+    let (module, password_file, auth_account_id) = mute_test_module().await;
+    let followed = create_test_account(&module, &auth_account_id).await;
+    let (actor_url, _remote_id) =
+        seed_remote_actor(&module.database, "http://127.0.0.1:1/inbox").await;
+    let account_id = account_id_of(&module.database, &followed).await;
+    let fault_module = TestFaultModule::new(password_file.path()).await;
+
+    // When
+    let result = fault_module
+        .handle_inbox_activity(inbox_dto(
+            account_id,
+            &followed,
+            inbound_follow_activity(&actor_url, &local_actor_url_for(&followed)),
+        ))
+        .await;
+
+    // Then
+    assert!(result.is_err());
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT \
+         (SELECT COUNT(*) FROM follows WHERE followee_local_id = $1), \
+         (SELECT COUNT(*) FROM outbox_activities WHERE account_id = $1)",
+    )
+    .bind(account_id)
+    .fetch_one(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+    assert_eq!(
+        counts,
+        (0, 0),
+        "follow row and Accept outbox row must roll back together"
+    );
+}
+
+async fn inbox_block_and_follow_counts(
+    database: &PostgresDatabase,
+    remote_id: i64,
+    account_id: i64,
+) -> (i64, i64) {
+    sqlx::query_as(
+        "SELECT \
+         (SELECT COUNT(*) FROM blocks WHERE blocker_remote_id = $1 AND blocked_local_id = $2), \
+         (SELECT COUNT(*) FROM follows WHERE \
+           (follower_local_id = $2 AND followee_remote_id = $1) \
+           OR (follower_remote_id = $1 AND followee_local_id = $2))",
+    )
+    .bind(remote_id)
+    .bind(account_id)
+    .fetch_one(&mut *database.connection().await.unwrap())
+    .await
+    .unwrap()
+}
+
+fn inbound_block_activity(actor_url: &str, local_actor_url: &str) -> kernel::activitypub::Activity {
+    inbox_activity(
+        &format!("{actor_url}/activities/block-1"),
+        "Block",
+        actor_url,
+        serde_json::Value::String(local_actor_url.to_string()),
+    )
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn inbox_block_equivalence_creates_block_and_removes_follows() {
+    // Given: mutual follows between the local account and the remote actor
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let blocked = create_test_account(&module, &auth_account_id).await;
+    let (actor_url, remote_id) =
+        seed_remote_actor(&module.database, "http://127.0.0.1:1/inbox").await;
+    let account_id = account_id_of(&module.database, &blocked).await;
+    seed_follows_between(&module.database, account_id, remote_id).await;
+
+    // When
+    module
+        .handle_inbox_activity(inbox_dto(
+            account_id,
+            &blocked,
+            inbound_block_activity(&actor_url, &local_actor_url_for(&blocked)),
+        ))
+        .await
+        .unwrap();
+
+    // Then
+    assert_eq!(
+        inbox_block_and_follow_counts(&module.database, remote_id, account_id).await,
+        (1, 0),
+        "block row persisted, both-direction follows removed"
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn inbox_block_duplicate_is_skipped() {
+    // Given: an inbound Block already processed once
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let blocked = create_test_account(&module, &auth_account_id).await;
+    let (actor_url, remote_id) =
+        seed_remote_actor(&module.database, "http://127.0.0.1:1/inbox").await;
+    let account_id = account_id_of(&module.database, &blocked).await;
+    let dto = || {
+        inbox_dto(
+            account_id,
+            &blocked,
+            inbound_block_activity(&actor_url, &local_actor_url_for(&blocked)),
+        )
+    };
+    module.handle_inbox_activity(dto()).await.unwrap();
+
+    // When: the identical Block arrives again
+    let second = module.handle_inbox_activity(dto()).await;
+
+    // Then
+    assert!(second.is_ok());
+    assert_eq!(
+        inbox_block_and_follow_counts(&module.database, remote_id, account_id)
+            .await
+            .0,
+        1,
+        "duplicate Block must not create a second block row"
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn inbox_accept_is_idempotent() {
+    // Given: a pending (unapproved) outgoing follow from the local account to
+    // the remote actor
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let follower = create_test_account(&module, &auth_account_id).await;
+    let (actor_url, remote_id) =
+        seed_remote_actor(&module.database, "http://127.0.0.1:1/inbox").await;
+    let account_id = account_id_of(&module.database, &follower).await;
+    sqlx::query(
+        "INSERT INTO follows (id, follower_local_id, followee_remote_id, approved_at) \
+         VALUES ($1, $2, $3, NULL)",
+    )
+    .bind(kernel::generate_id())
+    .bind(account_id)
+    .bind(remote_id)
+    .execute(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+    // The Accept wraps the original Follow sent by the local actor
+    let original_follow = inbox_activity(
+        &format!("{actor_url}/activities/follow-1"),
+        "Follow",
+        &local_actor_url_for(&follower),
+        serde_json::Value::String(actor_url.clone()),
+    );
+    let accept = || {
+        inbox_activity(
+            &format!("{actor_url}/activities/accept-1"),
+            "Accept",
+            &actor_url,
+            serde_json::to_value(original_follow.clone()).unwrap(),
+        )
+    };
+
+    // When: the Accept arrives twice
+    module
+        .handle_inbox_activity(inbox_dto(account_id, &follower, accept()))
+        .await
+        .unwrap();
+    let second = module
+        .handle_inbox_activity(inbox_dto(account_id, &follower, accept()))
+        .await;
+
+    // Then
+    assert!(second.is_ok(), "duplicate Accept must not error");
+    let approved: (bool,) = sqlx::query_as(
+        "SELECT approved_at IS NOT NULL FROM follows \
+         WHERE follower_local_id = $1 AND followee_remote_id = $2",
+    )
+    .bind(account_id)
+    .bind(remote_id)
+    .fetch_one(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+    assert!(approved.0);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn inbox_undo_follow_is_idempotent() {
+    // Given: an approved inbound follow from the remote actor to the local
+    // account
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let followed = create_test_account(&module, &auth_account_id).await;
+    let (actor_url, remote_id) =
+        seed_remote_actor(&module.database, "http://127.0.0.1:1/inbox").await;
+    let account_id = account_id_of(&module.database, &followed).await;
+    sqlx::query(
+        "INSERT INTO follows (id, follower_remote_id, followee_local_id, approved_at) \
+         VALUES ($1, $2, $3, NOW())",
+    )
+    .bind(kernel::generate_id())
+    .bind(remote_id)
+    .bind(account_id)
+    .execute(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+    let undo = || {
+        inbox_activity(
+            &format!("{actor_url}/activities/undo-follow-1"),
+            "Undo",
+            &actor_url,
+            serde_json::to_value(inbound_follow_activity(
+                &actor_url,
+                &local_actor_url_for(&followed),
+            ))
+            .unwrap(),
+        )
+    };
+
+    // When: the Undo(Follow) arrives twice
+    module
+        .handle_inbox_activity(inbox_dto(account_id, &followed, undo()))
+        .await
+        .unwrap();
+    let second = module
+        .handle_inbox_activity(inbox_dto(account_id, &followed, undo()))
+        .await;
+
+    // Then
+    assert!(second.is_ok(), "duplicate Undo(Follow) must not error");
+    let remaining: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM follows WHERE follower_remote_id = $1 AND followee_local_id = $2",
+    )
+    .bind(remote_id)
+    .bind(account_id)
+    .fetch_one(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+    assert_eq!(remaining.0, 0);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn inbox_undo_block_is_idempotent_and_transactional() {
+    // Given: an inbound block from the remote actor on the local account
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let blocked = create_test_account(&module, &auth_account_id).await;
+    let (actor_url, remote_id) =
+        seed_remote_actor(&module.database, "http://127.0.0.1:1/inbox").await;
+    let account_id = account_id_of(&module.database, &blocked).await;
+    sqlx::query("INSERT INTO blocks (id, blocker_remote_id, blocked_local_id) VALUES ($1, $2, $3)")
+        .bind(kernel::generate_id())
+        .bind(remote_id)
+        .bind(account_id)
+        .execute(&mut *module.database.connection().await.unwrap())
+        .await
+        .unwrap();
+    let undo = || {
+        inbox_activity(
+            &format!("{actor_url}/activities/undo-block-1"),
+            "Undo",
+            &actor_url,
+            serde_json::to_value(inbound_block_activity(
+                &actor_url,
+                &local_actor_url_for(&blocked),
+            ))
+            .unwrap(),
+        )
+    };
+
+    // When: the Undo(Block) arrives twice
+    module
+        .handle_inbox_activity(inbox_dto(account_id, &blocked, undo()))
+        .await
+        .unwrap();
+    let second = module
+        .handle_inbox_activity(inbox_dto(account_id, &blocked, undo()))
+        .await;
+
+    // Then
+    assert!(second.is_ok(), "duplicate Undo(Block) must not error");
+    let remaining: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM blocks WHERE blocker_remote_id = $1 AND blocked_local_id = $2",
+    )
+    .bind(remote_id)
+    .bind(account_id)
+    .fetch_one(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+    assert_eq!(remaining.0, 0);
 }
