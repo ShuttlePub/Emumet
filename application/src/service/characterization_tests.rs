@@ -3,7 +3,9 @@ use super::account::{
     UnsuspendAccountUseCase,
 };
 use super::account_detail::UpdateAccountDetailUseCase;
+use super::mute::{MuteAccountUseCase, UnmuteAccountUseCase};
 use crate::dto::account::{AccountFieldDto, CreateAccountDto, UpdateAccountDto};
+use crate::dto::block_mute::MuteAccountDto;
 use crate::projection::{ProjectMetadataBatch, ProjectProfileBatch};
 use driver::crypto::{Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator};
 use driver::database::PostgresDatabase;
@@ -16,7 +18,8 @@ use kernel::interfaces::permission::{
     DependOnPermissionChecker, DependOnPermissionWriter, InstanceRole, PermissionChecker,
     PermissionReq, PermissionWriter, RelationTarget,
 };
-use kernel::prelude::entity::{AuthAccountId, FieldAction};
+use kernel::interfaces::repository::{DependOnMuteRepository, MuteRepository};
+use kernel::prelude::entity::{AccountId, AuthAccountId, FieldAction, MuteTargetId};
 use kernel::KernelError;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -487,4 +490,161 @@ async fn moderation_use_cases_preserve_current_event_sequence_and_post_commit_de
         ]
     );
     assert_eq!(module.permissions.deletes.load(Ordering::Relaxed), 3);
+}
+
+async fn mute_test_module() -> (TestModule, tempfile::NamedTempFile, AuthAccountId) {
+    kernel::ensure_generator_initialized();
+    let password_file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(password_file.path(), b"characterization-password").unwrap();
+    let module = TestModule::new(password_file.path()).await;
+    let auth_account_id = AuthAccountId::default();
+    module.seed_auth_account(&auth_account_id).await;
+    (module, password_file, auth_account_id)
+}
+
+async fn create_test_account(module: &TestModule, auth_account_id: &AuthAccountId) -> String {
+    module
+        .create_account(
+            auth_account_id.clone(),
+            CreateAccountDto {
+                name: kernel::test_utils::unique_account_name()
+                    .as_ref()
+                    .to_string(),
+                is_bot: false,
+            },
+        )
+        .await
+        .unwrap()
+        .nanoid
+}
+
+async fn find_local_mutes(
+    module: &TestModule,
+    muter_nanoid: &str,
+) -> Vec<kernel::prelude::entity::Mute> {
+    let mut executor = module.database.connection().await.unwrap();
+    let account_id: i64 = sqlx::query_scalar("SELECT id FROM accounts WHERE nanoid = $1")
+        .bind(muter_nanoid)
+        .fetch_one(&mut *executor)
+        .await
+        .unwrap();
+    module
+        .mute_repository()
+        .find_mutes(
+            &mut executor,
+            &MuteTargetId::from(AccountId::new(account_id)),
+        )
+        .await
+        .unwrap()
+}
+
+async fn outbox_activity_count(module: &TestModule, account_nanoid: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM outbox_activities o JOIN accounts a ON a.id = o.account_id \
+         WHERE a.nanoid = $1",
+    )
+    .bind(account_nanoid)
+    .fetch_one(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap()
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn mute_use_case_equivalence_preserves_state_effects() {
+    // Given
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let muter = create_test_account(&module, &auth_account_id).await;
+    let target = create_test_account(&module, &auth_account_id).await;
+
+    // When
+    let relation = module
+        .mute_account(
+            auth_account_id,
+            MuteAccountDto {
+                account_nanoid: muter.clone(),
+                target: target.clone(),
+            },
+        )
+        .await
+        .unwrap();
+
+    // Then
+    assert_eq!(relation.target_type, "local");
+    assert_eq!(relation.target, target);
+    let mutes = find_local_mutes(&module, &muter).await;
+    assert_eq!(mutes.len(), 1);
+    assert_eq!(relation.id, mutes[0].id().as_ref().to_string());
+    assert_eq!(outbox_activity_count(&module, &muter).await, 0);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn mute_twice_is_ok_no_rejected() {
+    // Given
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let muter = create_test_account(&module, &auth_account_id).await;
+    let target = create_test_account(&module, &auth_account_id).await;
+    let dto = || MuteAccountDto {
+        account_nanoid: muter.clone(),
+        target: target.clone(),
+    };
+    module
+        .mute_account(auth_account_id.clone(), dto())
+        .await
+        .unwrap();
+
+    // When
+    let second = module.mute_account(auth_account_id, dto()).await;
+
+    // Then
+    assert!(second.is_ok());
+    assert_eq!(find_local_mutes(&module, &muter).await.len(), 1);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn unmute_missing_is_ok_no_not_found() {
+    // Given
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let muter = create_test_account(&module, &auth_account_id).await;
+    let target = create_test_account(&module, &auth_account_id).await;
+
+    // When
+    let result = module
+        .unmute_account(
+            auth_account_id,
+            MuteAccountDto {
+                account_nanoid: muter,
+                target,
+            },
+        )
+        .await;
+
+    // Then
+    assert!(result.is_ok());
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn unmute_removes_mute() {
+    // Given
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let muter = create_test_account(&module, &auth_account_id).await;
+    let target = create_test_account(&module, &auth_account_id).await;
+    let dto = || MuteAccountDto {
+        account_nanoid: muter.clone(),
+        target: target.clone(),
+    };
+    module
+        .mute_account(auth_account_id.clone(), dto())
+        .await
+        .unwrap();
+    assert_eq!(find_local_mutes(&module, &muter).await.len(), 1);
+
+    // When
+    module.unmute_account(auth_account_id, dto()).await.unwrap();
+
+    // Then
+    assert_eq!(find_local_mutes(&module, &muter).await.len(), 0);
 }
