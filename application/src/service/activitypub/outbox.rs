@@ -19,7 +19,8 @@ pub trait StoreOutboxActivityUseCase:
             let mut executor = self.database_connection().connection().await?;
             self.outbox_activity_repository()
                 .create(&mut executor, activity)
-                .await
+                .await?;
+            Ok(())
         }
     }
 }
@@ -99,7 +100,7 @@ mod tests {
     use kernel::interfaces::database::{
         Connection, DatabaseConnection, DependOnDatabaseConnection,
     };
-    use kernel::prelude::entity::{Account, AccountName, AuthAccountId, Nanoid};
+    use kernel::prelude::entity::{Account, AccountName, AuthAccountId, Nanoid, OutboxActivityId};
     use kernel::test_utils::AccountBuilder;
     use std::sync::Mutex;
     use time::OffsetDateTime;
@@ -193,6 +194,7 @@ mod tests {
 
     struct MockOutboxActivityRepository {
         activities: Mutex<Vec<OutboxActivity>>,
+        next_id: Mutex<i64>,
     }
 
     impl OutboxActivityRepository for MockOutboxActivityRepository {
@@ -202,9 +204,17 @@ mod tests {
             &self,
             _executor: &mut Self::Connection,
             activity: &OutboxActivity,
-        ) -> error_stack::Result<(), KernelError> {
-            self.activities.lock().unwrap().push(activity.clone());
-            Ok(())
+        ) -> error_stack::Result<OutboxActivityId, KernelError> {
+            let id = {
+                let mut next_id = self.next_id.lock().unwrap();
+                let id = *next_id;
+                *next_id += 1;
+                id
+            };
+            let mut activity = activity.clone();
+            activity.id = id;
+            self.activities.lock().unwrap().push(activity);
+            Ok(id)
         }
 
         async fn find_by_account_id(
@@ -220,6 +230,7 @@ mod tests {
                 .unwrap()
                 .iter()
                 .filter(|activity| &activity.account_id == account_id)
+                .filter(|activity| activity.delivered_at.is_some())
                 .filter(|activity| cursor.is_none_or(|cursor| activity.id < cursor))
                 .cloned()
                 .collect::<Vec<_>>();
@@ -239,7 +250,53 @@ mod tests {
                 .unwrap()
                 .iter()
                 .filter(|activity| &activity.account_id == account_id)
+                .filter(|activity| activity.delivered_at.is_some())
                 .count() as u64)
+        }
+
+        async fn find_pending_deliveries(
+            &self,
+            _executor: &mut Self::Connection,
+            limit: usize,
+        ) -> error_stack::Result<Vec<OutboxActivity>, KernelError> {
+            let activities = self
+                .activities
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|activity| activity.delivered_at.is_none())
+                .take(limit)
+                .cloned()
+                .collect::<Vec<_>>();
+            Ok(activities)
+        }
+
+        async fn mark_delivered(
+            &self,
+            _executor: &mut Self::Connection,
+            id: &OutboxActivityId,
+        ) -> error_stack::Result<(), KernelError> {
+            let mut activities = self.activities.lock().unwrap();
+            if let Some(activity) = activities.iter_mut().find(|activity| activity.id == *id) {
+                activity.delivered_at = Some(OffsetDateTime::now_utc());
+                activity.attempted_at = None;
+                activity.error = None;
+            }
+            Ok(())
+        }
+
+        async fn mark_delivery_attempt(
+            &self,
+            _executor: &mut Self::Connection,
+            id: &OutboxActivityId,
+            error: Option<&str>,
+        ) -> error_stack::Result<(), KernelError> {
+            let mut activities = self.activities.lock().unwrap();
+            if let Some(activity) = activities.iter_mut().find(|activity| activity.id == *id) {
+                activity.attempted_at = Some(OffsetDateTime::now_utc());
+                activity.error = error.map(str::to_string);
+            }
+            Ok(())
         }
     }
 
@@ -295,6 +352,7 @@ mod tests {
                 accounts: MockAccountQuery { account },
                 outbox: MockOutboxActivityRepository {
                     activities: Mutex::new(vec![outbox_activity(1, account_id.clone(), "Create")]),
+                    next_id: Mutex::new(2),
                 },
                 public_base_url: PublicBaseUrl::new("https://example.com/".to_string()),
             },
@@ -317,7 +375,7 @@ mod tests {
             })
             .to_string(),
             created_at: OffsetDateTime::now_utc(),
-            delivered_at: None,
+            delivered_at: Some(OffsetDateTime::now_utc()),
             attempted_at: None,
             error: None,
         }

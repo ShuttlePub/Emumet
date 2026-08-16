@@ -1,5 +1,5 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
-use crate::entity::{AccountId, OutboxActivity};
+use crate::entity::{AccountId, OutboxActivity, OutboxActivityId};
 use crate::KernelError;
 use std::future::Future;
 
@@ -10,7 +10,7 @@ pub trait OutboxActivityRepository: Sync + Send + 'static {
         &self,
         executor: &mut Self::Connection,
         activity: &OutboxActivity,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+    ) -> impl Future<Output = error_stack::Result<OutboxActivityId, KernelError>> + Send;
 
     fn find_by_account_id(
         &self,
@@ -25,6 +25,25 @@ pub trait OutboxActivityRepository: Sync + Send + 'static {
         executor: &mut Self::Connection,
         account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<u64, KernelError>> + Send;
+
+    fn find_pending_deliveries(
+        &self,
+        executor: &mut Self::Connection,
+        limit: usize,
+    ) -> impl Future<Output = error_stack::Result<Vec<OutboxActivity>, KernelError>> + Send;
+
+    fn mark_delivered(
+        &self,
+        executor: &mut Self::Connection,
+        id: &OutboxActivityId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn mark_delivery_attempt(
+        &self,
+        executor: &mut Self::Connection,
+        id: &OutboxActivityId,
+        error: Option<&str>,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DependOnOutboxActivityRepository: Sync + Send + DependOnDatabaseConnection {

@@ -23,6 +23,19 @@ pub trait BlockRepository: Sync + Send + 'static {
         executor: &mut Self::Connection,
         block_id: &BlockId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    fn insert_if_absent(
+        &self,
+        executor: &mut Self::Connection,
+        block: &Block,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
+
+    fn delete_if_exists(
+        &self,
+        executor: &mut Self::Connection,
+        source: &BlockTargetId,
+        destination: &BlockTargetId,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
 }
 
 pub trait DependOnBlockRepository: Sync + Send + DependOnDatabaseConnection {
