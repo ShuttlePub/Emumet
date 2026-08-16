@@ -1,10 +1,15 @@
+use super::delivery::deliver_activity_to_inbox;
 use error_stack::Report;
-use kernel::activitypub::{ActorUrlBuilder, OrderedCollection};
+use kernel::activitypub::{Activity, ActorUrlBuilder, OrderedCollection};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
-use kernel::interfaces::database::DatabaseConnection;
+use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
+use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
-use kernel::interfaces::repository::{DependOnOutboxActivityRepository, OutboxActivityRepository};
-use kernel::prelude::entity::{AccountId, OutboxActivity};
+use kernel::interfaces::repository::{
+    DependOnOutboxActivityRepository, DependOnSigningKeyRepository, OutboxActivityRepository,
+};
+use kernel::prelude::entity::{AccountId, OutboxActivity, OutboxActivityId};
 use kernel::KernelError;
 use std::future::Future;
 
@@ -14,19 +19,76 @@ pub trait StoreOutboxActivityUseCase:
     fn store_outbox_activity(
         &self,
         activity: &OutboxActivity,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+    ) -> impl Future<Output = error_stack::Result<OutboxActivityId, KernelError>> + Send {
         async move {
             let mut executor = self.database_connection().connection().await?;
             self.outbox_activity_repository()
                 .create(&mut executor, activity)
-                .await?;
-            Ok(())
+                .await
         }
     }
 }
 
 impl<T> StoreOutboxActivityUseCase for T where
     T: 'static + Sync + Send + DependOnOutboxActivityRepository
+{
+}
+
+pub trait DeliverOutboxActivityUseCase:
+    'static
+    + Sync
+    + Send
+    + DependOnOutboxActivityRepository
+    + DependOnDatabaseConnection
+    + DependOnSigningKeyRepository
+    + DependOnPasswordProvider
+    + DependOnKeyEncryptor
+    + DependOnHttpSigner
+{
+    fn deliver_outbox_activity(
+        &self,
+        outbox_id: &OutboxActivityId,
+        account_id: &AccountId,
+        inbox_url: &str,
+        activity: &Activity,
+        activity_name: &str,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send {
+        async move {
+            match deliver_activity_to_inbox(self, account_id, inbox_url, activity, activity_name)
+                .await
+            {
+                Ok(()) => {
+                    let mut executor = self.database_connection().connection().await?;
+                    self.outbox_activity_repository()
+                        .mark_delivered(&mut executor, outbox_id)
+                        .await
+                }
+                Err(error) => {
+                    let mut executor = self.database_connection().connection().await?;
+                    self.outbox_activity_repository()
+                        .mark_delivery_attempt(
+                            &mut executor,
+                            outbox_id,
+                            Some(&format!("{error:?}")),
+                        )
+                        .await?;
+                    Err(error)
+                }
+            }
+        }
+    }
+}
+
+impl<T> DeliverOutboxActivityUseCase for T where
+    T: 'static
+        + Sync
+        + Send
+        + DependOnOutboxActivityRepository
+        + DependOnDatabaseConnection
+        + DependOnSigningKeyRepository
+        + DependOnPasswordProvider
+        + DependOnKeyEncryptor
+        + DependOnHttpSigner
 {
 }
 
@@ -386,7 +448,7 @@ mod tests {
         let (module, account_id) = module();
         let activity = outbox_activity(2, account_id.clone(), "Accept");
 
-        module.store_outbox_activity(&activity).await.unwrap();
+        let id = module.store_outbox_activity(&activity).await.unwrap();
 
         let mut executor = MockConnection;
         let activities = module
@@ -394,7 +456,7 @@ mod tests {
             .find_by_account_id(&mut executor, &account_id, 10, None)
             .await
             .unwrap();
-        assert!(activities.iter().any(|stored| stored.id == 2));
+        assert!(activities.iter().any(|stored| stored.id == id));
     }
 
     #[tokio::test]

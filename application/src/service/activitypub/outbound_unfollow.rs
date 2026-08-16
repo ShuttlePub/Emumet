@@ -137,7 +137,8 @@ pub trait SendUndoFollowUseCase:
                 attempted_at: None,
                 error: None,
             };
-            self.store_outbox_activity(&outbox_entry)
+            let _ = self
+                .store_outbox_activity(&outbox_entry)
                 .await
                 .change_context_lazy(|| KernelError::Internal)
                 .attach_printable("Failed to store outbox activity")?;
