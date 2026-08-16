@@ -18,7 +18,7 @@ pub use collections::GetFollowersCollectionUseCase;
 pub use inbox::InboxUseCase;
 pub use outbound_follow::SendFollowUseCase;
 pub use outbound_unfollow::SendUndoFollowUseCase;
-pub use outbox::{GetOutboxUseCase, StoreOutboxActivityUseCase};
+pub use outbox::{DeliverOutboxActivityUseCase, GetOutboxUseCase, StoreOutboxActivityUseCase};
 pub use relations::GetFollowRelationsUseCase;
 #[cfg(any(test, feature = "test-mode"))]
 pub use remote_actor::inject_test_remote_actor;

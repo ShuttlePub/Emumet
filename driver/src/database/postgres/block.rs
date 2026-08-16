@@ -156,6 +156,67 @@ impl BlockRepository for PostgresBlockRepository {
         }
         Ok(())
     }
+
+    async fn insert_if_absent(
+        &self,
+        executor: &mut Self::Connection,
+        block: &Block,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (blocker_local_id, blocker_remote_id) = split_block_target_id(block.source());
+        let (blocked_local_id, blocked_remote_id) = split_block_target_id(block.destination());
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO blocks (id, blocker_local_id, blocker_remote_id, blocked_local_id, blocked_remote_id)
+            VALUES ($1, $2, $3, $4, $5)
+            "#
+        ).bind(block.id().as_ref())
+            .bind(blocker_local_id)
+            .bind(blocker_remote_id)
+            .bind(blocked_local_id)
+            .bind(blocked_remote_id)
+            .execute(con)
+            .await;
+        match result {
+            Ok(_) => Ok(true),
+            Err(sqlx::Error::Database(db_err))
+                if db_err.code().is_some_and(|code| code == "23505") =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(Report::from(e).change_context(KernelError::Internal)),
+        }
+    }
+
+    async fn delete_if_exists(
+        &self,
+        executor: &mut Self::Connection,
+        source: &BlockTargetId,
+        destination: &BlockTargetId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (blocker_local_id, blocker_remote_id) = split_block_target_id(source);
+        let (blocked_local_id, blocked_remote_id) = split_block_target_id(destination);
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            DELETE FROM blocks
+            WHERE blocker_local_id IS NOT DISTINCT FROM $1
+              AND blocker_remote_id IS NOT DISTINCT FROM $2
+              AND blocked_local_id IS NOT DISTINCT FROM $3
+              AND blocked_remote_id IS NOT DISTINCT FROM $4
+            "#,
+        )
+        .bind(blocker_local_id)
+        .bind(blocker_remote_id)
+        .bind(blocked_local_id)
+        .bind(blocked_remote_id)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 impl DependOnBlockRepository for PostgresDatabase {
@@ -362,6 +423,182 @@ mod test {
             database
                 .account_read_model()
                 .deactivate(&mut conn, blocked_account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn insert_if_absent_returns_true_then_false_on_duplicate() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
+            let blocker_id = AccountId::default();
+            let blocker_account = AccountBuilder::new()
+                .id(blocker_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &blocker_account)
+                .await
+                .unwrap();
+            let blocked_id = AccountId::default();
+            let blocked_account = AccountBuilder::new()
+                .id(blocked_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &blocked_account)
+                .await
+                .unwrap();
+            let block = BlockBuilder::new()
+                .source_local(blocker_id.clone())
+                .destination_local(blocked_id.clone())
+                .build();
+            let duplicate = BlockBuilder::new()
+                .source_local(blocker_id.clone())
+                .destination_local(blocked_id.clone())
+                .build();
+
+            let inserted = database
+                .block_repository()
+                .insert_if_absent(&mut conn, &block)
+                .await
+                .unwrap();
+            assert!(inserted);
+            let inserted = database
+                .block_repository()
+                .insert_if_absent(&mut conn, &duplicate)
+                .await
+                .unwrap();
+            assert!(!inserted);
+
+            let blocks = database
+                .block_repository()
+                .find_blocks(&mut conn, &BlockTargetId::from(blocker_id.clone()))
+                .await
+                .unwrap();
+            assert_eq!(blocks.len(), 1);
+            database
+                .block_repository()
+                .delete(&mut conn, block.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, blocker_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, blocked_account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn delete_if_exists_returns_true_when_present_false_when_absent() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
+            let blocker_id = AccountId::default();
+            let blocker_account = AccountBuilder::new()
+                .id(blocker_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &blocker_account)
+                .await
+                .unwrap();
+            let blocked_id = AccountId::default();
+            let blocked_account = AccountBuilder::new()
+                .id(blocked_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &blocked_account)
+                .await
+                .unwrap();
+            let other_blocked_id = AccountId::default();
+            let other_blocked_account = AccountBuilder::new()
+                .id(other_blocked_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &other_blocked_account)
+                .await
+                .unwrap();
+            let block = BlockBuilder::new()
+                .source_local(blocker_id.clone())
+                .destination_local(blocked_id.clone())
+                .build();
+            let other_block = BlockBuilder::new()
+                .source_local(blocker_id.clone())
+                .destination_local(other_blocked_id.clone())
+                .build();
+            database
+                .block_repository()
+                .create(&mut conn, &block)
+                .await
+                .unwrap();
+            database
+                .block_repository()
+                .create(&mut conn, &other_block)
+                .await
+                .unwrap();
+
+            let deleted = database
+                .block_repository()
+                .delete_if_exists(
+                    &mut conn,
+                    &BlockTargetId::from(blocker_id.clone()),
+                    &BlockTargetId::from(blocked_id.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(deleted);
+            let deleted = database
+                .block_repository()
+                .delete_if_exists(
+                    &mut conn,
+                    &BlockTargetId::from(blocker_id.clone()),
+                    &BlockTargetId::from(blocked_id.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(!deleted);
+
+            let blocks = database
+                .block_repository()
+                .find_blocks(&mut conn, &BlockTargetId::from(blocker_id))
+                .await
+                .unwrap();
+            assert_eq!(blocks.len(), 1);
+            assert_eq!(blocks[0].id(), other_block.id());
+            database
+                .block_repository()
+                .delete(&mut conn, other_block.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, blocker_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, blocked_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, other_blocked_account.id())
                 .await
                 .unwrap();
         }

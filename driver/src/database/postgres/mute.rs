@@ -157,6 +157,68 @@ impl MuteRepository for PostgresMuteRepository {
         }
         Ok(())
     }
+
+    async fn insert_if_absent(
+        &self,
+        executor: &mut Self::Connection,
+        mute: &Mute,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (muter_local_id, muter_remote_id) = split_mute_target_id(mute.source());
+        let (muted_local_id, muted_remote_id) = split_mute_target_id(mute.destination());
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO mutes (id, muter_local_id, muter_remote_id, muted_local_id, muted_remote_id)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+        )
+        .bind(mute.id().as_ref())
+        .bind(muter_local_id)
+        .bind(muter_remote_id)
+        .bind(muted_local_id)
+        .bind(muted_remote_id)
+        .execute(con)
+        .await;
+        match result {
+            Ok(_) => Ok(true),
+            Err(sqlx::Error::Database(db_err))
+                if db_err.code().is_some_and(|code| code == "23505") =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(Report::from(e).change_context(KernelError::Internal)),
+        }
+    }
+
+    async fn delete_if_exists(
+        &self,
+        executor: &mut Self::Connection,
+        source: &MuteTargetId,
+        destination: &MuteTargetId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (muter_local_id, muter_remote_id) = split_mute_target_id(source);
+        let (muted_local_id, muted_remote_id) = split_mute_target_id(destination);
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            DELETE FROM mutes
+            WHERE muter_local_id IS NOT DISTINCT FROM $1
+              AND muter_remote_id IS NOT DISTINCT FROM $2
+              AND muted_local_id IS NOT DISTINCT FROM $3
+              AND muted_remote_id IS NOT DISTINCT FROM $4
+            "#,
+        )
+        .bind(muter_local_id)
+        .bind(muter_remote_id)
+        .bind(muted_local_id)
+        .bind(muted_remote_id)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 impl DependOnMuteRepository for PostgresDatabase {
@@ -363,6 +425,182 @@ mod test {
             database
                 .account_read_model()
                 .deactivate(&mut conn, muted_account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn insert_if_absent_returns_true_then_false_on_duplicate() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
+            let muter_id = AccountId::default();
+            let muter_account = AccountBuilder::new()
+                .id(muter_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &muter_account)
+                .await
+                .unwrap();
+            let muted_id = AccountId::default();
+            let muted_account = AccountBuilder::new()
+                .id(muted_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &muted_account)
+                .await
+                .unwrap();
+            let mute = MuteBuilder::new()
+                .source_local(muter_id.clone())
+                .destination_local(muted_id.clone())
+                .build();
+            let duplicate = MuteBuilder::new()
+                .source_local(muter_id.clone())
+                .destination_local(muted_id.clone())
+                .build();
+
+            let inserted = database
+                .mute_repository()
+                .insert_if_absent(&mut conn, &mute)
+                .await
+                .unwrap();
+            assert!(inserted);
+            let inserted = database
+                .mute_repository()
+                .insert_if_absent(&mut conn, &duplicate)
+                .await
+                .unwrap();
+            assert!(!inserted);
+
+            let mutes = database
+                .mute_repository()
+                .find_mutes(&mut conn, &MuteTargetId::from(muter_id.clone()))
+                .await
+                .unwrap();
+            assert_eq!(mutes.len(), 1);
+            database
+                .mute_repository()
+                .delete(&mut conn, mute.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, muter_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, muted_account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn delete_if_exists_returns_true_when_present_false_when_absent() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
+            let muter_id = AccountId::default();
+            let muter_account = AccountBuilder::new()
+                .id(muter_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &muter_account)
+                .await
+                .unwrap();
+            let muted_id = AccountId::default();
+            let muted_account = AccountBuilder::new()
+                .id(muted_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &muted_account)
+                .await
+                .unwrap();
+            let other_muted_id = AccountId::default();
+            let other_muted_account = AccountBuilder::new()
+                .id(other_muted_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &other_muted_account)
+                .await
+                .unwrap();
+            let mute = MuteBuilder::new()
+                .source_local(muter_id.clone())
+                .destination_local(muted_id.clone())
+                .build();
+            let other_mute = MuteBuilder::new()
+                .source_local(muter_id.clone())
+                .destination_local(other_muted_id.clone())
+                .build();
+            database
+                .mute_repository()
+                .create(&mut conn, &mute)
+                .await
+                .unwrap();
+            database
+                .mute_repository()
+                .create(&mut conn, &other_mute)
+                .await
+                .unwrap();
+
+            let deleted = database
+                .mute_repository()
+                .delete_if_exists(
+                    &mut conn,
+                    &MuteTargetId::from(muter_id.clone()),
+                    &MuteTargetId::from(muted_id.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(deleted);
+            let deleted = database
+                .mute_repository()
+                .delete_if_exists(
+                    &mut conn,
+                    &MuteTargetId::from(muter_id.clone()),
+                    &MuteTargetId::from(muted_id.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(!deleted);
+
+            let mutes = database
+                .mute_repository()
+                .find_mutes(&mut conn, &MuteTargetId::from(muter_id))
+                .await
+                .unwrap();
+            assert_eq!(mutes.len(), 1);
+            assert_eq!(mutes[0].id(), other_mute.id());
+            database
+                .mute_repository()
+                .delete(&mut conn, other_mute.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, muter_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, muted_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, other_muted_account.id())
                 .await
                 .unwrap();
         }

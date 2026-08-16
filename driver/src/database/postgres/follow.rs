@@ -223,6 +223,99 @@ impl FollowRepository for PostgresFollowRepository {
         }
         Ok(())
     }
+
+    async fn insert_if_absent(
+        &self,
+        executor: &mut Self::Connection,
+        follow: &Follow,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (follower_local_id, follower_remote_id) = split_follow_target_id(follow.source());
+        let (followee_local_id, followee_remote_id) = split_follow_target_id(follow.destination());
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO follows (id, follower_local_id, follower_remote_id, followee_local_id, followee_remote_id, approved_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#
+        ).bind(follow.id().as_ref())
+            .bind(follower_local_id)
+            .bind(follower_remote_id)
+            .bind(followee_local_id)
+            .bind(followee_remote_id)
+            .bind(follow.approved_at().as_ref().map(FollowApprovedAt::as_ref))
+            .execute(con)
+            .await;
+        match result {
+            Ok(_) => Ok(true),
+            Err(sqlx::Error::Database(db_err))
+                if db_err.code().is_some_and(|code| code == "23505") =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(Report::from(e).change_context(KernelError::Internal)),
+        }
+    }
+
+    async fn approve_follow_if_pending(
+        &self,
+        executor: &mut Self::Connection,
+        source: &FollowTargetId,
+        destination: &FollowTargetId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (follower_local_id, follower_remote_id) = split_follow_target_id(source);
+        let (followee_local_id, followee_remote_id) = split_follow_target_id(destination);
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            UPDATE follows
+            SET approved_at = NOW()
+            WHERE follower_local_id IS NOT DISTINCT FROM $1
+              AND follower_remote_id IS NOT DISTINCT FROM $2
+              AND followee_local_id IS NOT DISTINCT FROM $3
+              AND followee_remote_id IS NOT DISTINCT FROM $4
+              AND approved_at IS NULL
+            "#,
+        )
+        .bind(follower_local_id)
+        .bind(follower_remote_id)
+        .bind(followee_local_id)
+        .bind(followee_remote_id)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_if_exists(
+        &self,
+        executor: &mut Self::Connection,
+        source: &FollowTargetId,
+        destination: &FollowTargetId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let (follower_local_id, follower_remote_id) = split_follow_target_id(source);
+        let (followee_local_id, followee_remote_id) = split_follow_target_id(destination);
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            DELETE FROM follows
+            WHERE follower_local_id IS NOT DISTINCT FROM $1
+              AND follower_remote_id IS NOT DISTINCT FROM $2
+              AND followee_local_id IS NOT DISTINCT FROM $3
+              AND followee_remote_id IS NOT DISTINCT FROM $4
+            "#,
+        )
+        .bind(follower_local_id)
+        .bind(follower_remote_id)
+        .bind(followee_local_id)
+        .bind(followee_remote_id)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 impl DependOnFollowRepository for PostgresDatabase {
@@ -579,6 +672,274 @@ mod test {
             database
                 .account_read_model()
                 .deactivate(&mut conn, followee_account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn insert_if_absent_returns_true_then_false_on_duplicate() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
+            let follower_id = AccountId::default();
+            let follower_account = AccountBuilder::new()
+                .id(follower_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &follower_account)
+                .await
+                .unwrap();
+            let followee_id = AccountId::default();
+            let followee_account = AccountBuilder::new()
+                .id(followee_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &followee_account)
+                .await
+                .unwrap();
+            let follow = FollowBuilder::new()
+                .source_local(follower_id.clone())
+                .destination_local(followee_id.clone())
+                .build();
+            let duplicate = FollowBuilder::new()
+                .source_local(follower_id.clone())
+                .destination_local(followee_id.clone())
+                .build();
+
+            let inserted = database
+                .follow_repository()
+                .insert_if_absent(&mut conn, &follow)
+                .await
+                .unwrap();
+            assert!(inserted);
+            let inserted = database
+                .follow_repository()
+                .insert_if_absent(&mut conn, &duplicate)
+                .await
+                .unwrap();
+            assert!(!inserted);
+
+            let followings = database
+                .follow_repository()
+                .find_followings(&mut conn, &FollowTargetId::from(follower_id.clone()))
+                .await
+                .unwrap();
+            assert_eq!(followings.len(), 1);
+            database
+                .follow_repository()
+                .delete(&mut conn, follow.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, follower_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, followee_account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn approve_follow_if_pending_approves_pending_only() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
+            let follower_id = AccountId::default();
+            let follower_account = AccountBuilder::new()
+                .id(follower_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &follower_account)
+                .await
+                .unwrap();
+            let followee_id = AccountId::default();
+            let followee_account = AccountBuilder::new()
+                .id(followee_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &followee_account)
+                .await
+                .unwrap();
+            let follow = FollowBuilder::new()
+                .source_local(follower_id.clone())
+                .destination_local(followee_id.clone())
+                .build();
+            database
+                .follow_repository()
+                .create(&mut conn, &follow)
+                .await
+                .unwrap();
+
+            let approved = database
+                .follow_repository()
+                .approve_follow_if_pending(
+                    &mut conn,
+                    &FollowTargetId::from(follower_id.clone()),
+                    &FollowTargetId::from(followee_id.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(approved);
+            let followers = database
+                .follow_repository()
+                .find_followers(&mut conn, &FollowTargetId::from(followee_id.clone()))
+                .await
+                .unwrap();
+            assert_eq!(followers.len(), 1);
+            assert!(followers[0].approved_at().is_some());
+
+            let approved = database
+                .follow_repository()
+                .approve_follow_if_pending(
+                    &mut conn,
+                    &FollowTargetId::from(follower_id.clone()),
+                    &FollowTargetId::from(followee_id.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(!approved);
+            let approved = database
+                .follow_repository()
+                .approve_follow_if_pending(
+                    &mut conn,
+                    &FollowTargetId::from(followee_id.clone()),
+                    &FollowTargetId::from(follower_id.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(!approved);
+
+            database
+                .follow_repository()
+                .delete(&mut conn, follow.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, follower_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, followee_account.id())
+                .await
+                .unwrap();
+        }
+
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn delete_if_exists_removes_matching_only() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
+            let follower_id = AccountId::default();
+            let follower_account = AccountBuilder::new()
+                .id(follower_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &follower_account)
+                .await
+                .unwrap();
+            let followee_id = AccountId::default();
+            let followee_account = AccountBuilder::new()
+                .id(followee_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &followee_account)
+                .await
+                .unwrap();
+            let other_followee_id = AccountId::default();
+            let other_followee_account = AccountBuilder::new()
+                .id(other_followee_id.clone())
+                .name(unique_account_name())
+                .build();
+            database
+                .account_read_model()
+                .create(&mut conn, &other_followee_account)
+                .await
+                .unwrap();
+            let follow = FollowBuilder::new()
+                .source_local(follower_id.clone())
+                .destination_local(followee_id.clone())
+                .build();
+            let other_follow = FollowBuilder::new()
+                .source_local(follower_id.clone())
+                .destination_local(other_followee_id.clone())
+                .build();
+            database
+                .follow_repository()
+                .create(&mut conn, &follow)
+                .await
+                .unwrap();
+            database
+                .follow_repository()
+                .create(&mut conn, &other_follow)
+                .await
+                .unwrap();
+
+            let deleted = database
+                .follow_repository()
+                .delete_if_exists(
+                    &mut conn,
+                    &FollowTargetId::from(follower_id.clone()),
+                    &FollowTargetId::from(followee_id.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(deleted);
+            let deleted = database
+                .follow_repository()
+                .delete_if_exists(
+                    &mut conn,
+                    &FollowTargetId::from(follower_id.clone()),
+                    &FollowTargetId::from(followee_id.clone()),
+                )
+                .await
+                .unwrap();
+            assert!(!deleted);
+
+            let followings = database
+                .follow_repository()
+                .find_followings(&mut conn, &FollowTargetId::from(follower_id))
+                .await
+                .unwrap();
+            assert_eq!(followings.len(), 1);
+            assert_eq!(followings[0].id(), other_follow.id());
+            database
+                .follow_repository()
+                .delete(&mut conn, other_follow.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, follower_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, followee_account.id())
+                .await
+                .unwrap();
+            database
+                .account_read_model()
+                .deactivate(&mut conn, other_followee_account.id())
                 .await
                 .unwrap();
         }

@@ -1,12 +1,8 @@
-use super::delivery::deliver_activity_to_inbox;
 use super::ACTIVITYSTREAMS_CONTEXT;
 use error_stack::Report;
 use kernel::activitypub::Activity;
 use kernel::interfaces::config::PublicBaseUrl;
-use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
-use kernel::interfaces::http_signing::DependOnHttpSigner;
-use kernel::interfaces::repository::DependOnSigningKeyRepository;
-use kernel::prelude::entity::{AccountId, BlockId, RemoteAccount};
+use kernel::prelude::entity::BlockId;
 use kernel::KernelError;
 use serde_json::Value;
 
@@ -56,27 +52,6 @@ pub(crate) fn undo_block_activity(
         to: Some(vec![remote_actor_url.to_string()]),
         cc: None,
     })
-}
-
-pub(crate) async fn deliver_block_activity<T>(
-    module: &T,
-    account_id: &AccountId,
-    activity: &Activity,
-    remote_account: &RemoteAccount,
-    activity_name: &str,
-) -> error_stack::Result<(), KernelError>
-where
-    T: DependOnSigningKeyRepository
-        + DependOnPasswordProvider
-        + DependOnKeyEncryptor
-        + DependOnHttpSigner
-        + ?Sized,
-{
-    let inbox_url = remote_account.inbox_url().as_deref().ok_or_else(|| {
-        Report::new(KernelError::Rejected)
-            .attach_printable("Remote actor does not expose an inbox URL")
-    })?;
-    deliver_activity_to_inbox(module, account_id, inbox_url, activity, activity_name).await
 }
 
 #[cfg(test)]

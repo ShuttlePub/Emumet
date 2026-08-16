@@ -1,17 +1,18 @@
-use super::super::outbound_follow::find_existing_following;
 use super::super::remote_actor::{resolve_remote_actor, upsert_remote_account};
 use super::super::{local_actor_url, ACTIVITYSTREAMS_CONTEXT};
 use super::InboxUseCase;
 use crate::dto::activitypub::InboxActivityDto;
 use crate::service::block::{block_target_to_follow_target, remove_follows_between};
-use error_stack::{Report, ResultExt};
+use error_stack::Report;
 use kernel::activitypub::Activity;
 use kernel::interfaces::config::PublicBaseUrl;
-use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::repository::{BlockRepository, FollowRepository, RemoteAccountRepository};
+use kernel::interfaces::database::{DatabaseConnection, TransactionManager};
+use kernel::interfaces::repository::{
+    BlockRepository, FollowRepository, OutboxActivityRepository, RemoteAccountRepository,
+};
 use kernel::prelude::entity::{
     Block, BlockId, BlockTargetId, Follow, FollowApprovedAt, FollowId, FollowTargetId,
-    OutboxActivity, OutboxActivityId, RemoteAccountUrl,
+    OutboxActivity, RemoteAccountUrl,
 };
 use kernel::KernelError;
 use serde_json::Value;
@@ -21,7 +22,7 @@ pub(super) async fn handle_follow_activity<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let followed_actor_url = activity_object_id(&dto.activity).ok_or_else(|| {
         Report::new(KernelError::Rejected)
@@ -44,63 +45,83 @@ where
 
     let source = FollowTargetId::from(remote_account.id().clone());
     let destination = FollowTargetId::from(dto.account_id.clone());
-    let follow = match find_existing_follow(
-        module.follow_repository(),
-        &mut executor,
-        &source,
-        &destination,
-    )
-    .await?
-    {
-        Some(_existing) => {
-            tracing::debug!("Follow already exists, skipping Accept creation");
-            return Ok(());
-        }
-        None => {
-            let follow = Follow::new(
-                FollowId::new(kernel::generate_id()),
-                source,
-                destination,
-                Some(FollowApprovedAt::default()),
-            )?;
-            module
-                .follow_repository()
-                .create(&mut executor, &follow)
-                .await?;
-            follow
-        }
-    };
-
-    let local_actor_url = local_actor_url(module.public_base_url(), &dto.account_nanoid);
-    let accept = accept_activity(
-        module.public_base_url(),
-        &follow,
-        &local_actor_url,
-        dto.activity.clone(),
+    let follow = Follow::new(
+        FollowId::new(kernel::generate_id()),
+        source,
+        destination,
+        Some(FollowApprovedAt::default()),
     )?;
-    if let Err(error) = module
-        .deliver_accept(&dto.account_id, remote_account.inbox_url(), &accept)
-        .await
-    {
-        tracing::warn!(?error, inbox_url = ?remote_account.inbox_url(), "Failed to deliver ActivityPub Accept");
-    }
 
-    let outbox_entry = OutboxActivity {
-        id: OutboxActivityId::default(),
-        account_id: dto.account_id.clone(),
-        activity_id: accept.id.clone(),
-        activity_type: "Accept".to_string(),
-        object_json: serde_json::to_string(&accept).map_err(|e| {
-            Report::new(KernelError::Internal)
-                .attach_printable(format!("Failed to serialize Accept activity to JSON: {e}"))
-        })?,
-        created_at: time::OffsetDateTime::now_utc(),
-    };
-    module
-        .store_outbox_activity(&outbox_entry)
-        .await
-        .change_context_lazy(|| KernelError::Internal)
-        .attach_printable("Failed to store outbox activity")?;
+    let deps = module.clone();
+    let account_id = dto.account_id.clone();
+    let account_id_for_delivery = account_id.clone();
+    let account_nanoid = dto.account_nanoid.clone();
+    let inbox_url = remote_account.inbox_url().clone();
+    let original_follow = dto.activity.clone();
+    let (accepted, delivery) = module
+        .transaction_manager()
+        .transaction(move |executor| {
+            Box::pin(async move {
+                let inserted = deps
+                    .follow_repository()
+                    .insert_if_absent(executor, &follow)
+                    .await?;
+
+                if !inserted {
+                    tracing::debug!("Follow already exists, skipping Accept creation");
+                    return Ok((false, None));
+                }
+
+                let local_actor_url = local_actor_url(deps.public_base_url(), &account_nanoid);
+                let accept = accept_activity(
+                    deps.public_base_url(),
+                    &follow,
+                    &local_actor_url,
+                    original_follow,
+                )?;
+
+                let outbox_entry = OutboxActivity {
+                    id: 0,
+                    account_id: account_id.clone(),
+                    activity_id: accept.id.clone(),
+                    activity_type: "Accept".to_string(),
+                    object_json: serde_json::to_string(&accept).map_err(|error| {
+                        Report::new(KernelError::Internal).attach_printable(format!(
+                            "Failed to serialize Accept activity to JSON: {error}"
+                        ))
+                    })?,
+                    created_at: time::OffsetDateTime::now_utc(),
+                    delivered_at: None,
+                    attempted_at: None,
+                    error: None,
+                };
+                let outbox_id = deps
+                    .outbox_activity_repository()
+                    .create(executor, &outbox_entry)
+                    .await?;
+
+                Ok((true, Some((outbox_id, accept))))
+            })
+        })
+        .await?;
+
+    if let (true, Some((outbox_id, accept))) = (accepted, delivery) {
+        match &inbox_url {
+            Some(inbox_url) => {
+                if let Err(error) = module
+                    .deliver_accept(&account_id_for_delivery, &outbox_id, inbox_url, &accept)
+                    .await
+                {
+                    tracing::warn!(?error, inbox_url, "Failed to deliver ActivityPub Accept");
+                }
+            }
+            None => {
+                tracing::warn!(
+                    "Remote actor does not expose an inbox URL; Accept stays pending in the outbox"
+                );
+            }
+        }
+    }
 
     Ok(())
 }
@@ -110,7 +131,7 @@ pub(super) async fn handle_undo_follow<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let follow_activity = undo_follow_object(&dto.activity).ok_or_else(|| {
         Report::new(KernelError::Rejected)
@@ -138,19 +159,10 @@ where
 
     let source = FollowTargetId::from(remote_account.id().clone());
     let destination = FollowTargetId::from(dto.account_id);
-    if let Some(follow) = find_existing_follow(
-        module.follow_repository(),
-        &mut executor,
-        &source,
-        &destination,
-    )
-    .await?
-    {
-        module
-            .follow_repository()
-            .delete(&mut executor, follow.id())
-            .await?;
-    }
+    module
+        .follow_repository()
+        .delete_if_exists(&mut executor, &source, &destination)
+        .await?;
     Ok(())
 }
 
@@ -159,7 +171,7 @@ pub(super) async fn handle_accept_activity<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let accept = &dto.activity;
     let nested_follow = accept
@@ -211,30 +223,16 @@ where
 
     let source = FollowTargetId::from(dto.account_id.clone());
     let destination = FollowTargetId::from(remote_account.id().clone());
-    if let Some(existing) = find_existing_following(
-        module.follow_repository(),
-        &mut executor,
-        &source,
-        &destination,
-    )
-    .await?
-    {
-        if existing.approved_at().is_none() {
-            let approved = Follow::new(
-                existing.id().clone(),
-                existing.source().clone(),
-                existing.destination().clone(),
-                Some(FollowApprovedAt::default()),
-            )?;
-            module
-                .follow_repository()
-                .update(&mut executor, &approved)
-                .await?;
-            tracing::info!(
-                remote_actor = %remote_actor_url,
-                "Follow approved via Accept activity"
-            );
-        }
+    let approved = module
+        .follow_repository()
+        .approve_follow_if_pending(&mut executor, &source, &destination)
+        .await?;
+
+    if approved {
+        tracing::info!(
+            remote_actor = %remote_actor_url,
+            "Follow approved via Accept activity"
+        );
     } else {
         tracing::debug!(
             remote_actor = %remote_actor_url,
@@ -249,7 +247,7 @@ pub(super) async fn handle_block_activity<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let blocked_actor_url = activity_object_id(&dto.activity).ok_or_else(|| {
         Report::new(KernelError::Rejected)
@@ -272,35 +270,41 @@ where
 
     let source = BlockTargetId::from(remote_account.id().clone());
     let destination = BlockTargetId::from(dto.account_id.clone());
-    let existing = module
-        .block_repository()
-        .find_blocks(&mut executor, &source)
-        .await?;
-    if existing
-        .iter()
-        .any(|block| block.destination() == &destination)
-    {
-        tracing::debug!("Block already exists, skipping creation");
-        return Ok(());
-    }
-
     let block = Block::new(
         BlockId::new(kernel::generate_id()),
         source.clone(),
         destination.clone(),
     )?;
+
+    let deps = module.clone();
+    let account_id = dto.account_id;
     module
-        .block_repository()
-        .create(&mut executor, &block)
+        .transaction_manager()
+        .transaction(move |executor| {
+            Box::pin(async move {
+                let inserted = deps
+                    .block_repository()
+                    .insert_if_absent(executor, &block)
+                    .await?;
+
+                // A duplicate Block aborts the Postgres transaction at the
+                // failed INSERT, so no further statement may run; the first
+                // Block already removed the follows, so skipping is a no-op.
+                if inserted {
+                    remove_follows_between(
+                        deps.follow_repository(),
+                        executor,
+                        &block_target_to_follow_target(&source),
+                        &block_target_to_follow_target(&destination),
+                    )
+                    .await?;
+                }
+                Ok(())
+            })
+        })
         .await?;
 
-    remove_follows_between(
-        module.follow_repository(),
-        &mut executor,
-        &block_target_to_follow_target(&source),
-        &block_target_to_follow_target(&destination),
-    )
-    .await?;
+    tracing::debug!(account_id = ?account_id, "Processed inbound Block");
     Ok(())
 }
 
@@ -309,7 +313,7 @@ pub(super) async fn handle_undo_block_activity<T>(
     dto: InboxActivityDto,
 ) -> error_stack::Result<(), KernelError>
 where
-    T: InboxUseCase + ?Sized,
+    T: InboxUseCase,
 {
     let block_activity = undo_block_object(&dto.activity).ok_or_else(|| {
         Report::new(KernelError::Rejected)
@@ -336,20 +340,19 @@ where
     };
 
     let source = BlockTargetId::from(remote_account.id().clone());
-    let destination = BlockTargetId::from(dto.account_id.clone());
-    let blocks = module
-        .block_repository()
-        .find_blocks(&mut executor, &source)
+    let destination = BlockTargetId::from(dto.account_id);
+    let deps = module.clone();
+    module
+        .transaction_manager()
+        .transaction(move |executor| {
+            Box::pin(async move {
+                deps.block_repository()
+                    .delete_if_exists(executor, &source, &destination)
+                    .await?;
+                Ok(())
+            })
+        })
         .await?;
-    if let Some(block) = blocks
-        .into_iter()
-        .find(|block| block.destination() == &destination)
-    {
-        module
-            .block_repository()
-            .delete(&mut executor, block.id())
-            .await?;
-    }
     Ok(())
 }
 
@@ -396,22 +399,6 @@ fn ensure_local_actor_matches(
             "Follow object does not match local actor: expected {expected}, got {object_id}"
         )))
     }
-}
-
-async fn find_existing_follow<R, E>(
-    repository: &R,
-    executor: &mut E,
-    source: &FollowTargetId,
-    destination: &FollowTargetId,
-) -> error_stack::Result<Option<Follow>, KernelError>
-where
-    R: FollowRepository<Connection = E>,
-    E: kernel::interfaces::database::Connection,
-{
-    let followers = repository.find_followers(executor, destination).await?;
-    Ok(followers
-        .into_iter()
-        .find(|follow| follow.source() == source && follow.destination() == destination))
 }
 
 fn accept_activity(

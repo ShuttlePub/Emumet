@@ -69,6 +69,45 @@ pub async fn count_remote_blocks_against_local_account(account_nanoid: &str) -> 
     count
 }
 
+/// Delivery state of the latest outbox row for the given account and activity
+/// type: `(delivered, attempted, has_error)` derived from the
+/// `delivered_at` / `attempted_at` / `error` columns.  Returns `None` when no
+/// matching row exists.
+pub async fn outbox_delivery_state(
+    account_nanoid: &str,
+    activity_type: &str,
+) -> Option<(bool, bool, bool)> {
+    dotenvy::dotenv().ok();
+
+    let url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set for E2E tests (refusing to use default to avoid accidental data loss)");
+
+    validate_database_url(&url);
+
+    let pool = sqlx::PgPool::connect(&url)
+        .await
+        .expect("failed to connect to postgres for outbox assertion");
+
+    let row: Option<(bool, bool, bool)> = sqlx::query_as(
+        r#"
+        SELECT delivered_at IS NOT NULL, attempted_at IS NOT NULL, error IS NOT NULL
+        FROM outbox_activities
+        WHERE account_id = (SELECT id FROM accounts WHERE nanoid = $1)
+          AND activity_type = $2
+        ORDER BY id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(account_nanoid)
+    .bind(activity_type)
+    .fetch_optional(&pool)
+    .await
+    .expect("failed to query outbox delivery state");
+
+    pool.close().await;
+    row
+}
+
 fn validate_database_url(url: &str) {
     let parsed: url::Url = url.parse().expect("DATABASE_URL is not a valid URL");
 

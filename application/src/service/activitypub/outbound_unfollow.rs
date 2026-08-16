@@ -18,7 +18,7 @@ use kernel::interfaces::repository::{
     DependOnSigningKeyRepository, FollowRepository,
 };
 use kernel::prelude::entity::{
-    Account, AuthAccountId, Follow, FollowTargetId, Nanoid, OutboxActivity, OutboxActivityId,
+    Account, AuthAccountId, Follow, FollowTargetId, Nanoid, OutboxActivity,
 };
 use kernel::KernelError;
 use serde_json::Value;
@@ -121,8 +121,9 @@ pub trait SendUndoFollowUseCase:
                 .delete(&mut executor, follow.id())
                 .await?;
 
+            // Already delivered inline above, so mark delivered at insert to keep it out of pending deliveries.
             let outbox_entry = OutboxActivity {
-                id: OutboxActivityId::default(),
+                id: 0,
                 account_id: account.id().clone(),
                 activity_id: activity.id.clone(),
                 activity_type: "Undo".to_string(),
@@ -132,8 +133,12 @@ pub trait SendUndoFollowUseCase:
                     ))
                 })?,
                 created_at: time::OffsetDateTime::now_utc(),
+                delivered_at: Some(time::OffsetDateTime::now_utc()),
+                attempted_at: None,
+                error: None,
             };
-            self.store_outbox_activity(&outbox_entry)
+            let _ = self
+                .store_outbox_activity(&outbox_entry)
                 .await
                 .change_context_lazy(|| KernelError::Internal)
                 .attach_printable("Failed to store outbox activity")?;
