@@ -30,6 +30,8 @@ zeroize = "1.7"
 sha2 = "0.10"
 httpdate = "1"
 tokio = { workspace = true, features = ["net"] }
+aws-config = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
 
 http = "1"
 http-body-util = "0.1"

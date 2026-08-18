@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 pub mod account;
 pub mod activitypub;
 pub mod me;
+pub mod media;
 pub mod oauth2;
 pub mod signing;
 
@@ -75,12 +76,14 @@ pub(crate) fn build_test_router_with_auth(
     use crate::route::account::{AccountRouter, AdminAccountRouter};
     use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
     use crate::route::me::MeRouter;
+    use crate::route::media::MediaRouter;
     use crate::route::oauth2::OAuth2Router;
     use crate::route::signing::SigningRouter;
 
     let api_v1 = axum::Router::new()
         .route_account()
         .route_me()
+        .route_media()
         .nest("/admin", axum::Router::new().route_admin_account());
 
     let authed_routes = axum::Router::new()

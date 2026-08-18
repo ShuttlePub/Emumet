@@ -2,11 +2,15 @@ use super::fields::apply_field_updates;
 use super::validate::validate_update_account_dto;
 use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto, UpdateAccountDto};
 use crate::permission::{account_edit, check_permission};
+use crate::service::activitypub::DeliverUpdatePersonUseCase;
 use error_stack::Report;
+use kernel::interfaces::config::DependOnPublicBaseUrl;
+use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
 };
 use kernel::interfaces::event::EventApplier;
+use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::read_model::{
     AccountQuery, DependOnAccountQuery, DependOnMetadataQuery, DependOnProfileQuery, MetadataQuery,
@@ -17,8 +21,9 @@ use kernel::interfaces::read_model::{
     DependOnProfileReadModel, ProfileReadModel,
 };
 use kernel::interfaces::repository::{
-    AggregateRepository, DependOnAccountRepository, DependOnImageRepository,
-    DependOnMetadataRepository, DependOnProfileRepository, ImageRepository,
+    AggregateRepository, DependOnAccountRepository, DependOnFollowRepository,
+    DependOnImageRepository, DependOnMetadataRepository, DependOnProfileRepository,
+    DependOnRemoteAccountRepository, DependOnSigningKeyRepository, ImageRepository,
 };
 use kernel::prelude::entity::{
     Account, AccountIsBot, AuthAccountId, FieldAction, ImageId, ImageUrl, Nanoid, Profile,
@@ -44,7 +49,15 @@ pub trait UpdateAccountDetailUseCase:
     + DependOnMetadataRepository
     + DependOnImageRepository
     + DependOnPermissionChecker
+    + DependOnFollowRepository
+    + DependOnRemoteAccountRepository
+    + DependOnSigningKeyRepository
+    + DependOnHttpSigner
+    + DependOnPasswordProvider
+    + DependOnKeyEncryptor
+    + DependOnPublicBaseUrl
     + DependOnTransactionManager
+    + DeliverUpdatePersonUseCase
 {
     fn update_account_detail<'a>(
         &'a self,
@@ -70,7 +83,11 @@ pub trait UpdateAccountDetailUseCase:
 
             let account_id = projection.id().clone();
             let deps = self.clone();
-            self.transaction_manager()
+            let media_changed = !dto.icon_url.is_unchanged() || !dto.banner_url.is_unchanged();
+            let account_nanoid = dto.account_nanoid.clone();
+            let delivery_account_id = account_id.clone();
+            let updated = self
+                .transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
                         let (mut account, version) = deps
@@ -217,7 +234,12 @@ pub trait UpdateAccountDetailUseCase:
                         ))
                     })
                 })
-                .await
+                .await?;
+            if media_changed {
+                self.deliver_update_person(&delivery_account_id, &account_nanoid)
+                    .await?;
+            }
+            Ok(updated)
         }
     }
 }
@@ -238,7 +260,15 @@ impl<T> UpdateAccountDetailUseCase for T where
         + DependOnMetadataRepository
         + DependOnImageRepository
         + DependOnPermissionChecker
+        + DependOnFollowRepository
+        + DependOnRemoteAccountRepository
+        + DependOnSigningKeyRepository
+        + DependOnHttpSigner
+        + DependOnPasswordProvider
+        + DependOnKeyEncryptor
+        + DependOnPublicBaseUrl
         + DependOnTransactionManager
+        + DeliverUpdatePersonUseCase
         + Sync
         + Send
 {

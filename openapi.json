@@ -1139,6 +1139,45 @@
         ]
       }
     },
+    "/api/v1/images": {
+      "post": {
+        "tags": [
+          "Media"
+        ],
+        "description": "Upload an image to Emumet media storage.",
+        "operationId": "upload_image",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Image uploaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadedImageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid image upload"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/me": {
       "get": {
         "tags": [
@@ -1511,6 +1550,16 @@
           },
           "id": {
             "type": "string"
+          },
+          "image": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageObject"
+              }
+            ]
           },
           "inbox": {
             "type": "string"
@@ -2048,6 +2097,29 @@
           }
         }
       },
+      "UploadedImageResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "url",
+          "hash",
+          "blur_hash"
+        ],
+        "properties": {
+          "blur_hash": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
       "WebFingerLink": {
         "type": "object",
         "description": "A single link entry within a WebFinger response.",
@@ -2115,6 +2187,10 @@
     {
       "name": "Me",
       "description": "Authenticated session"
+    },
+    {
+      "name": "Media",
+      "description": "Image uploads"
     },
     {
       "name": "OAuth2",

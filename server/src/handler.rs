@@ -6,6 +6,7 @@ use driver::crypto::{
 use driver::database::PostgresDatabase;
 use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
 use driver::keto::KetoClient;
+use driver::storage::S3ImageStorage;
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
@@ -34,6 +35,7 @@ pub struct AppModule {
     hydra_admin_client: HydraAdminClient,
     kratos_client: KratosClient,
     keto_client: KetoClient,
+    image_storage: S3ImageStorage,
 }
 
 impl AppModule {
@@ -50,6 +52,7 @@ impl AppModule {
             dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
 
         let pgpool = PostgresDatabase::new().await?;
+        let image_storage = S3ImageStorage::from_env().await?;
 
         Ok(Self {
             pgpool,
@@ -64,6 +67,7 @@ impl AppModule {
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_client: KratosClient::new(kratos_public_url),
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
+            image_storage,
         })
     }
 
@@ -75,6 +79,7 @@ impl AppModule {
         keto_write_url: String,
     ) -> error_stack::Result<Self, KernelError> {
         let pgpool = PostgresDatabase::new().await?;
+        let image_storage = S3ImageStorage::from_env().await?;
         let public_base_url =
             dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
         Ok(Self {
@@ -90,6 +95,7 @@ impl AppModule {
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_client: KratosClient::new(kratos_public_url),
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
+            image_storage,
         })
     }
 
@@ -188,5 +194,13 @@ impl DependOnHttpSignatureVerifier for AppModule {
 impl DependOnPublicBaseUrl for AppModule {
     fn public_base_url(&self) -> &PublicBaseUrl {
         &self.public_base_url
+    }
+}
+
+impl kernel::interfaces::storage::DependOnImageStorage for AppModule {
+    type ImageStorage = S3ImageStorage;
+
+    fn image_storage(&self) -> &Self::ImageStorage {
+        &self.image_storage
     }
 }

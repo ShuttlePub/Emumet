@@ -111,6 +111,8 @@ pub struct Actor {
     pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<ImageObject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<ImageObject>,
     pub url: String,
     pub inbox: String,
     pub outbox: String,
@@ -132,6 +134,7 @@ impl Actor {
     /// * `preferred_username` - Account username (used as `preferredUsername`)
     /// * `display_name`       - Optional display name (used as `name`)
     /// * `summary`            - Optional profile bio/summary
+    /// * `images`             - Optional profile icon/banner URLs
     /// * `public_key_pem`     - PEM-encoded public key string
     /// * `public_key_id`      - Canonical URI for the public key
     pub fn new(
@@ -139,6 +142,7 @@ impl Actor {
         preferred_username: &str,
         display_name: Option<&str>,
         summary: Option<&str>,
+        images: &ActorImages<'_>,
         public_key_pem: &str,
         public_key_id: &str,
     ) -> Self {
@@ -158,7 +162,8 @@ impl Actor {
             preferred_username: preferred_username.to_string(),
             name: display_name.map(|s| s.to_string()),
             summary: summary.map(|s| s.to_string()),
-            icon: None,
+            icon: images.icon_url.map(ImageObject::new),
+            image: images.banner_url.map(ImageObject::new),
             inbox: urls.inbox(),
             outbox: urls.outbox(),
             followers: urls.followers(),
@@ -168,6 +173,22 @@ impl Actor {
                 owner: actor_id,
                 public_key_pem: public_key_pem.to_string(),
             },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ActorImages<'a> {
+    pub icon_url: Option<&'a str>,
+    pub banner_url: Option<&'a str>,
+}
+
+impl ImageObject {
+    pub fn new(url: &str) -> Self {
+        Self {
+            type_: "Image".to_string(),
+            url: Some(url.to_string()),
+            media_type: None,
         }
     }
 }
@@ -355,6 +376,7 @@ mod tests {
             "alice",
             Some("Alice"),
             Some("Hello, I'm Alice!"),
+            &ActorImages::default(),
             "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----",
             "https://example.com/accounts/abc123#main-key",
         )
@@ -457,6 +479,7 @@ mod tests {
             "bob",
             None, // display_name
             None, // summary
+            &ActorImages::default(),
             "pem-content",
             "https://example.com/accounts/xyz789#main-key",
         );
@@ -466,6 +489,30 @@ mod tests {
         assert!(!map.contains_key("name"), "name should be absent");
         assert!(!map.contains_key("summary"), "summary should be absent");
         assert!(!map.contains_key("icon"), "icon should be absent");
+    }
+
+    #[test]
+    fn actor_serialization_includes_profile_icon_and_banner() {
+        // Given
+        let actor = Actor::new(
+            &ActorUrlBuilder::new("https://example.com", "abc123"),
+            "alice",
+            Some("Alice"),
+            None,
+            &ActorImages {
+                icon_url: Some("https://media.example.com/avatar.png"),
+                banner_url: Some("https://media.example.com/banner.png"),
+            },
+            "pem-content",
+            "https://example.com/ap/accounts/abc123#main-key",
+        );
+
+        // When
+        let json = serde_json::to_value(actor).unwrap();
+
+        // Then
+        assert_eq!(json["icon"]["url"], "https://media.example.com/avatar.png");
+        assert_eq!(json["image"]["url"], "https://media.example.com/banner.png");
     }
 
     #[test]
@@ -747,6 +794,7 @@ mod tests {
             "test",
             None,
             None,
+            &ActorImages::default(),
             "pem",
             "https://example.com/ap/accounts/abc123#main-key",
         );
