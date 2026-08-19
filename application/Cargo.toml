@@ -23,6 +23,8 @@ tokio = { workspace = true, features = ["net"] }
 base64 = "0.22"
 sha2 = "0.10"
 httpdate = "1"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+blurhash = "0.2.3"
 
 kernel = { path = "../kernel" }
 

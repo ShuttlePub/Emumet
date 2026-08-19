@@ -9,6 +9,7 @@ mod outbound_unfollow;
 mod outbox;
 pub mod relations;
 pub(crate) mod remote_actor;
+mod update_person;
 
 use kernel::activitypub::ActorUrlBuilder;
 use kernel::interfaces::config::PublicBaseUrl;
@@ -22,6 +23,7 @@ pub use outbox::{DeliverOutboxActivityUseCase, GetOutboxUseCase, StoreOutboxActi
 pub use relations::GetFollowRelationsUseCase;
 #[cfg(any(test, feature = "test-mode"))]
 pub use remote_actor::inject_test_remote_actor;
+pub use update_person::DeliverUpdatePersonUseCase;
 
 pub(super) const ACTIVITY_JSON: &str = "application/activity+json";
 pub(super) const ACTIVITYSTREAMS_CONTEXT: &str = "https://www.w3.org/ns/activitystreams";

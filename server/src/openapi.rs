@@ -48,6 +48,7 @@ impl Modify for SecurityAddon {
         crate::route::account::unmute_account,
         crate::route::account::get_mutes,
         crate::route::me::get_me,
+        crate::route::media::upload_image,
         crate::route::oauth2::login,
         crate::route::oauth2::get_consent,
         crate::route::oauth2::post_consent,
@@ -87,11 +88,13 @@ impl Modify for SecurityAddon {
         crate::schema::account::RelationResponse,
         crate::schema::account::RelationListResponse,
         crate::schema::me::MeResponse,
+        crate::schema::media::UploadedImageResponse,
     )),
     modifiers(&SecurityAddon),
     tags(
         (name = "Account", description = "Account management"),
         (name = "Me", description = "Authenticated session"),
+        (name = "Media", description = "Image uploads"),
         (name = "OAuth2", description = "OAuth2 Login/Consent Provider"),
         (name = "Signing", description = "HTTP Signature signing"),
         (name = "ActivityPub", description = "ActivityPub discovery and actor endpoints"),
@@ -187,5 +190,24 @@ mod tests {
                 serde_json::json!([{"bearer_auth": []}])
             );
         }
+    }
+
+    #[test]
+    fn media_upload_contract_is_registered() {
+        let spec: serde_json::Value = serde_json::from_str(&generate_openapi_json())
+            .expect("generated OpenAPI spec is valid JSON");
+        let operation = &spec["paths"]["/api/v1/images"]["post"];
+
+        assert!(operation.is_object());
+        assert_eq!(
+            operation["security"],
+            serde_json::json!([{"bearer_auth": []}])
+        );
+        assert_eq!(
+            operation["requestBody"]["content"]
+                .as_object()
+                .map(|content| content.contains_key("multipart/form-data")),
+            Some(true)
+        );
     }
 }

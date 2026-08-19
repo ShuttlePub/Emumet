@@ -7,6 +7,7 @@ pub(crate) mod account;
 pub(crate) mod activitypub;
 pub(crate) mod admin_account;
 pub(crate) mod me;
+pub(crate) mod media;
 pub(crate) mod oauth2;
 pub(crate) mod signing;
 
@@ -26,6 +27,7 @@ pub(crate) use account::AccountApi;
 pub(crate) use activitypub::ActivityPubApi;
 pub(crate) use admin_account::AdminAccountApi;
 pub(crate) use me::MeApi;
+pub(crate) use media::MediaApi;
 pub(crate) use oauth2::OAuth2Api;
 pub(crate) use signing::SigningApi;
 

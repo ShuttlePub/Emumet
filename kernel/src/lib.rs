@@ -12,6 +12,7 @@ mod permission;
 mod projection;
 mod read_model;
 mod repository;
+mod storage;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -59,6 +60,9 @@ pub mod interfaces {
     }
     pub mod config {
         pub use crate::config::*;
+    }
+    pub mod storage {
+        pub use crate::storage::*;
     }
 }
 

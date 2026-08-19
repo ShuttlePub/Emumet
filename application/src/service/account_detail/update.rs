@@ -2,11 +2,15 @@ use super::fields::apply_field_updates;
 use super::validate::validate_update_account_dto;
 use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto, UpdateAccountDto};
 use crate::permission::{account_edit, check_permission};
+use crate::service::activitypub::DeliverUpdatePersonUseCase;
 use error_stack::Report;
+use kernel::interfaces::config::DependOnPublicBaseUrl;
+use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
 };
 use kernel::interfaces::event::EventApplier;
+use kernel::interfaces::http_signing::DependOnHttpSigner;
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::read_model::{
     AccountQuery, DependOnAccountQuery, DependOnMetadataQuery, DependOnProfileQuery, MetadataQuery,
@@ -17,8 +21,9 @@ use kernel::interfaces::read_model::{
     DependOnProfileReadModel, ProfileReadModel,
 };
 use kernel::interfaces::repository::{
-    AggregateRepository, DependOnAccountRepository, DependOnImageRepository,
-    DependOnMetadataRepository, DependOnProfileRepository, ImageRepository,
+    AggregateRepository, DependOnAccountRepository, DependOnFollowRepository,
+    DependOnImageRepository, DependOnMetadataRepository, DependOnProfileRepository,
+    DependOnRemoteAccountRepository, DependOnSigningKeyRepository, ImageRepository,
 };
 use kernel::prelude::entity::{
     Account, AccountIsBot, AuthAccountId, FieldAction, ImageId, ImageUrl, Nanoid, Profile,
@@ -44,7 +49,15 @@ pub trait UpdateAccountDetailUseCase:
     + DependOnMetadataRepository
     + DependOnImageRepository
     + DependOnPermissionChecker
+    + DependOnFollowRepository
+    + DependOnRemoteAccountRepository
+    + DependOnSigningKeyRepository
+    + DependOnHttpSigner
+    + DependOnPasswordProvider
+    + DependOnKeyEncryptor
+    + DependOnPublicBaseUrl
     + DependOnTransactionManager
+    + DeliverUpdatePersonUseCase
 {
     fn update_account_detail<'a>(
         &'a self,
@@ -70,7 +83,10 @@ pub trait UpdateAccountDetailUseCase:
 
             let account_id = projection.id().clone();
             let deps = self.clone();
-            self.transaction_manager()
+            let account_nanoid = dto.account_nanoid.clone();
+            let delivery_account_id = account_id.clone();
+            let (updated, media_changed) = self
+                .transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
                         let (mut account, version) = deps
@@ -107,6 +123,10 @@ pub trait UpdateAccountDetailUseCase:
                             resolve_field_action_image_id(&deps, executor, &dto.icon_url).await?;
                         let banner =
                             resolve_field_action_image_id(&deps, executor, &dto.banner_url).await?;
+                        let icon_after = effective_image_id(&icon, profile.icon());
+                        let banner_after = effective_image_id(&banner, profile.banner());
+                        let media_changed =
+                            icon_after != *profile.icon() || banner_after != *profile.banner();
                         if !dto.display_name.is_unchanged()
                             || !dto.summary.is_unchanged()
                             || !icon.is_unchanged()
@@ -208,16 +228,31 @@ pub trait UpdateAccountDetailUseCase:
                                 .map(|image| (image.id().clone(), image.url().as_ref().to_string()))
                                 .collect()
                         };
-                        Ok(AccountDto::from(account).into_detail(
-                            display_name,
-                            summary,
-                            icon_id.as_ref().and_then(|id| images.get(id).cloned()),
-                            banner_id.as_ref().and_then(|id| images.get(id).cloned()),
-                            fields,
+                        Ok((
+                            AccountDto::from(account).into_detail(
+                                display_name,
+                                summary,
+                                icon_id.as_ref().and_then(|id| images.get(id).cloned()),
+                                banner_id.as_ref().and_then(|id| images.get(id).cloned()),
+                                fields,
+                            ),
+                            media_changed,
                         ))
                     })
                 })
-                .await
+                .await?;
+            if media_changed {
+                if let Err(error) = self
+                    .deliver_update_person(&delivery_account_id, &account_nanoid)
+                    .await
+                {
+                    tracing::warn!(
+                        ?error,
+                        "Update(Person) delivery failed after committed profile update"
+                    );
+                }
+            }
+            Ok(updated)
         }
     }
 }
@@ -238,7 +273,15 @@ impl<T> UpdateAccountDetailUseCase for T where
         + DependOnMetadataRepository
         + DependOnImageRepository
         + DependOnPermissionChecker
+        + DependOnFollowRepository
+        + DependOnRemoteAccountRepository
+        + DependOnSigningKeyRepository
+        + DependOnHttpSigner
+        + DependOnPasswordProvider
+        + DependOnKeyEncryptor
+        + DependOnPublicBaseUrl
         + DependOnTransactionManager
+        + DeliverUpdatePersonUseCase
         + Sync
         + Send
 {
@@ -271,6 +314,14 @@ async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(
                 .attach_printable(format!("Image not found with URL: {}", url))
         })?;
     Ok(Some(image.id().clone()))
+}
+
+fn effective_image_id(action: &FieldAction<ImageId>, current: &Option<ImageId>) -> Option<ImageId> {
+    match action {
+        FieldAction::Unchanged => current.clone(),
+        FieldAction::Clear => None,
+        FieldAction::Set(id) => Some(id.clone()),
+    }
 }
 
 async fn resolve_field_action_image_id<T: DependOnImageRepository + ?Sized>(

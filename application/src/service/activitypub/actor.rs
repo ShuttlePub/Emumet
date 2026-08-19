@@ -1,12 +1,14 @@
 use crate::dto::activitypub::{GetActorDto, GetWebFingerDto};
 use error_stack::Report;
-use kernel::activitypub::{Actor, ActorUrlBuilder, WebFingerLink, WebFingerResponse};
+use kernel::activitypub::{Actor, ActorImages, ActorUrlBuilder, WebFingerLink, WebFingerResponse};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
-use kernel::interfaces::repository::{DependOnSigningKeyRepository, SigningKeyRepository};
-use kernel::prelude::entity::{Account, AccountName, Nanoid};
+use kernel::interfaces::repository::{
+    DependOnImageRepository, DependOnSigningKeyRepository, ImageRepository, SigningKeyRepository,
+};
+use kernel::prelude::entity::{Account, AccountName, ImageId, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
 
@@ -17,6 +19,7 @@ pub trait GetActorUseCase:
     + DependOnAccountQuery
     + DependOnProfileReadModel
     + DependOnSigningKeyRepository
+    + DependOnImageRepository
     + DependOnPublicBaseUrl
 {
     fn get_actor(
@@ -58,12 +61,45 @@ pub trait GetActorUseCase:
                 .as_ref()
                 .and_then(|profile| profile.summary().as_ref())
                 .map(|summary| summary.as_ref().to_string());
+            let image_ids: Vec<ImageId> = profile
+                .as_ref()
+                .into_iter()
+                .flat_map(|profile| {
+                    profile
+                        .icon()
+                        .iter()
+                        .chain(profile.banner().iter())
+                        .cloned()
+                })
+                .collect();
+            let images = self
+                .image_repository()
+                .find_by_ids(&mut executor, &image_ids)
+                .await?;
+            let image_url = |id: Option<&ImageId>| {
+                id.and_then(|id| {
+                    images
+                        .iter()
+                        .find(|image| image.id() == id)
+                        .map(|image| image.url().as_ref())
+                })
+            };
+            let icon_url = profile
+                .as_ref()
+                .and_then(|profile| image_url(profile.icon().as_ref()));
+            let banner_url = profile
+                .as_ref()
+                .and_then(|profile| image_url(profile.banner().as_ref()));
 
             Ok(Actor::new(
                 &ActorUrlBuilder::new(self.public_base_url().as_str(), account.nanoid().as_ref()),
                 account.name().as_ref(),
                 display_name.as_deref(),
                 summary.as_deref(),
+                &ActorImages {
+                    icon_url: icon_url.map(String::as_str),
+                    banner_url: banner_url.map(String::as_str),
+                },
                 &signing_key.public_key_pem,
                 &signing_key.key_id_uri,
             ))
@@ -78,6 +114,7 @@ impl<T> GetActorUseCase for T where
         + DependOnAccountQuery
         + DependOnProfileReadModel
         + DependOnSigningKeyRepository
+        + DependOnImageRepository
         + DependOnPublicBaseUrl
 {
 }
