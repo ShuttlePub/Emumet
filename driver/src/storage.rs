@@ -1,5 +1,6 @@
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::config::Credentials;
+use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::primitives::ByteStream;
 use error_stack::Report;
 use kernel::interfaces::storage::{ImageStorage, StoredObject};
@@ -59,15 +60,23 @@ impl ImageStorage for S3ImageStorage {
             .await
             .is_err()
         {
-            self.client
+            let create_result = self
+                .client
                 .create_bucket()
                 .bucket(&self.bucket)
                 .send()
-                .await
-                .map_err(|error| {
-                    Report::new(KernelError::Internal)
-                        .attach_printable(format!("Failed to create S3 bucket: {error}"))
-                })?;
+                .await;
+            if let Err(error) = create_result {
+                let service_error = error.into_service_error();
+                let already_exists = matches!(
+                    service_error.code(),
+                    Some("BucketAlreadyOwnedByYou") | Some("BucketAlreadyExists")
+                );
+                if !already_exists {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable(format!("Failed to create S3 bucket: {service_error}")));
+                }
+            }
             let policy = format!(
                 r#"{{"Version":"2012-10-17","Statement":[{{"Effect":"Allow","Principal":{{"AWS":["*"]}},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{bucket}/*"]}}]}}"#,
                 bucket = self.bucket

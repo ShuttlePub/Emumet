@@ -684,3 +684,90 @@ async fn undo_block_twice_returns_ok() {
         0
     );
 }
+
+const PIXEL_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d,
+    0x24, 0x00, 0x00, 0x00, 0x11, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
+    0x1f, 0x84, 0x19, 0x60, 0x0c, 0x00, 0x47, 0xca, 0x07, 0xf9, 0x67, 0x59, 0x6e, 0xb7, 0x00, 0x00,
+    0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+#[tokio::test]
+#[ignore]
+async fn icon_change_delivers_signed_update_person_to_follower() {
+    // Given: a local account followed by an approved remote peer.
+    let peer = ApPeer::new("remote-upd").await;
+    let _server = start_server_with_peer(&peer).await;
+    db::reset_test_data().await;
+    let cfg = config();
+    let account_nanoid = setup_test_account_details().await.id;
+    let jwt = auth::get_jwt_for_test_user().await;
+    let client = e2e_http_client();
+
+    let sign_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.public_base_url);
+    let send_inbox = format!("{}/ap/accounts/{account_nanoid}/inbox", cfg.server_base_url);
+    let target_actor = format!("{}/ap/accounts/{account_nanoid}", cfg.public_base_url);
+    let follow = post_signed_follow_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    assert_eq!(follow.status(), reqwest::StatusCode::ACCEPTED);
+    wait_for_activity(&peer, "Accept", Duration::from_secs(15))
+        .await
+        .expect("Emumet should accept the remote follow");
+
+    // When: only the display name changes (no icon/banner change).
+    let name_patch = client
+        .patch(format!(
+            "{}/api/v1/accounts/{account_nanoid}",
+            cfg.server_base_url
+        ))
+        .bearer_auth(&jwt)
+        .json(&serde_json::json!({"display_name": "No Delivery Expected"}))
+        .send()
+        .await
+        .expect("display-name patch failed");
+
+    // Then: the patch succeeds but no Update(Person) is delivered.
+    assert_eq!(name_patch.status(), reqwest::StatusCode::OK);
+    assert!(
+        wait_for_activity(&peer, "Update", Duration::from_secs(5))
+            .await
+            .is_none(),
+        "display-name-only change must not deliver Update(Person)"
+    );
+
+    // When: an uploaded image is set as the account icon.
+    let file_part = reqwest::multipart::Part::bytes(PIXEL_PNG.to_vec())
+        .file_name("icon.png")
+        .mime_str("image/png")
+        .expect("invalid MIME type");
+    let uploaded = client
+        .post(format!("{}/api/v1/images", cfg.server_base_url))
+        .bearer_auth(&jwt)
+        .multipart(reqwest::multipart::Form::new().part("file", file_part))
+        .send()
+        .await
+        .expect("image upload failed");
+    assert_eq!(uploaded.status(), reqwest::StatusCode::CREATED);
+    let uploaded: serde_json::Value = uploaded.json().await.expect("invalid upload response");
+    let icon_url = uploaded["url"].as_str().expect("missing url").to_string();
+
+    let icon_patch = client
+        .patch(format!(
+            "{}/api/v1/accounts/{account_nanoid}",
+            cfg.server_base_url
+        ))
+        .bearer_auth(&jwt)
+        .json(&serde_json::json!({"icon_url": icon_url}))
+        .send()
+        .await
+        .expect("icon patch failed");
+    assert_eq!(icon_patch.status(), reqwest::StatusCode::OK);
+
+    // Then: the follower receives a signed Update wrapping the Person with the new icon.
+    let update = wait_for_activity(&peer, "Update", Duration::from_secs(15))
+        .await
+        .expect("Emumet should deliver Update(Person) to follower inbox after icon change");
+    assert_signature_header(&update);
+    assert_eq!(update.body["object"]["type"], "Person");
+    assert_eq!(update.body["object"]["icon"]["url"], icon_url);
+}

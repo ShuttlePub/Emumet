@@ -83,10 +83,9 @@ pub trait UpdateAccountDetailUseCase:
 
             let account_id = projection.id().clone();
             let deps = self.clone();
-            let media_changed = !dto.icon_url.is_unchanged() || !dto.banner_url.is_unchanged();
             let account_nanoid = dto.account_nanoid.clone();
             let delivery_account_id = account_id.clone();
-            let updated = self
+            let (updated, media_changed) = self
                 .transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
@@ -124,6 +123,10 @@ pub trait UpdateAccountDetailUseCase:
                             resolve_field_action_image_id(&deps, executor, &dto.icon_url).await?;
                         let banner =
                             resolve_field_action_image_id(&deps, executor, &dto.banner_url).await?;
+                        let icon_after = effective_image_id(&icon, profile.icon());
+                        let banner_after = effective_image_id(&banner, profile.banner());
+                        let media_changed =
+                            icon_after != *profile.icon() || banner_after != *profile.banner();
                         if !dto.display_name.is_unchanged()
                             || !dto.summary.is_unchanged()
                             || !icon.is_unchanged()
@@ -225,19 +228,29 @@ pub trait UpdateAccountDetailUseCase:
                                 .map(|image| (image.id().clone(), image.url().as_ref().to_string()))
                                 .collect()
                         };
-                        Ok(AccountDto::from(account).into_detail(
-                            display_name,
-                            summary,
-                            icon_id.as_ref().and_then(|id| images.get(id).cloned()),
-                            banner_id.as_ref().and_then(|id| images.get(id).cloned()),
-                            fields,
+                        Ok((
+                            AccountDto::from(account).into_detail(
+                                display_name,
+                                summary,
+                                icon_id.as_ref().and_then(|id| images.get(id).cloned()),
+                                banner_id.as_ref().and_then(|id| images.get(id).cloned()),
+                                fields,
+                            ),
+                            media_changed,
                         ))
                     })
                 })
                 .await?;
             if media_changed {
-                self.deliver_update_person(&delivery_account_id, &account_nanoid)
-                    .await?;
+                if let Err(error) = self
+                    .deliver_update_person(&delivery_account_id, &account_nanoid)
+                    .await
+                {
+                    tracing::warn!(
+                        ?error,
+                        "Update(Person) delivery failed after committed profile update"
+                    );
+                }
             }
             Ok(updated)
         }
@@ -301,6 +314,14 @@ async fn resolve_image_id<T: DependOnImageRepository + ?Sized>(
                 .attach_printable(format!("Image not found with URL: {}", url))
         })?;
     Ok(Some(image.id().clone()))
+}
+
+fn effective_image_id(action: &FieldAction<ImageId>, current: &Option<ImageId>) -> Option<ImageId> {
+    match action {
+        FieldAction::Unchanged => current.clone(),
+        FieldAction::Clear => None,
+        FieldAction::Set(id) => Some(id.clone()),
+    }
 }
 
 async fn resolve_field_action_image_id<T: DependOnImageRepository + ?Sized>(
