@@ -239,6 +239,31 @@ impl MastodonClient {
         Ok(resp.json().await?)
     }
 
+    /// POST /api/v1/accounts/{account_id}/unfollow — send an Undo(Follow)
+    /// activity to the account.
+    pub async fn unfollow_account(
+        &self,
+        account_id: &str,
+        token: &str,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        let url = format!("{}/api/v1/accounts/{account_id}/unfollow", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!(
+                "POST /api/v1/accounts/{account_id}/unfollow failed: status={status}, body={text}"
+            )
+            .into());
+        }
+        Ok(resp.json().await?)
+    }
+
     /// GET /api/v1/accounts/{account_id}/followers — get the list of
     /// followers.
     pub async fn get_followers(

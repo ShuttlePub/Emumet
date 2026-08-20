@@ -337,6 +337,72 @@ pub async fn wait_for_mastodon_following_contains(
     false
 }
 
+pub async fn wait_for_mastodon_followers_absent(
+    client: &super::mastodon::MastodonClient,
+    local_account_id: &str,
+    token: &str,
+    expected_actor_url: &str,
+) -> bool {
+    for _ in 1..=60 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if let Ok(followers) = client.get_followers(local_account_id, token).await {
+            let still_present = followers.iter().any(|follower| {
+                follower["url"]
+                    .as_str()
+                    .is_some_and(|u| u == expected_actor_url)
+                    || follower["uri"]
+                        .as_str()
+                        .is_some_and(|u| u == expected_actor_url)
+            });
+            if !still_present {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+pub async fn wait_for_mastodon_following_absent(
+    client: &super::mastodon::MastodonClient,
+    local_account_id: &str,
+    token: &str,
+    expected_actor_url: &str,
+) -> bool {
+    for _ in 1..=60 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if let Ok(following) = client.get_following(local_account_id, token).await {
+            let still_present = following.iter().any(|followee| {
+                followee["url"]
+                    .as_str()
+                    .is_some_and(|u| u == expected_actor_url)
+                    || followee["uri"]
+                        .as_str()
+                        .is_some_and(|u| u == expected_actor_url)
+            });
+            if !still_present {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+pub async fn wait_for_emumet_collection_count_at_most(
+    base_url: &str,
+    account_id: &str,
+    collection: &str,
+    max_items: u64,
+) -> bool {
+    for _ in 1..=60 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let col = fetch_collection(base_url, account_id, collection).await;
+        if col["totalItems"].as_u64().unwrap_or(u64::MAX) <= max_items {
+            return true;
+        }
+    }
+    false
+}
+
 pub async fn wait_for_emumet_collection_count(
     base_url: &str,
     account_id: &str,

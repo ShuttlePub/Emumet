@@ -135,6 +135,7 @@ Iceshrimp のテストユーザー認証情報は `run-ap-e2e.sh` の出力か�
 | S5 | `followers_and_following_collections_are_accurate` | コレクション整合性 |
 | S6 | `inbox_rejects_unsigned_requests` | 未署名リクエスト拒否 |
 | S7-S9 | `iceshrimp_full_federation_scenario` | クロスインスタンス連携統合: Iceshrimp → Emumet Follow → Emumet → Iceshrimp Follow → 署名付きCreate/Note配送 |
+| S7-S10 | `mastodon_full_federation_scenario` | クロスインスタンス連携統合 (Mastodon): Mastodon → Emumet Follow → Emumet → Mastodon Follow → 署名付きCreate/Note配送 → 双方向 Undo(Follow) |
 
 ### ファイル構成
 
@@ -142,6 +143,7 @@ Iceshrimp のテストユーザー認証情報は `run-ap-e2e.sh` の出力か�
 server/tests/
 ├── e2e_ap_mock.rs          # S1-S6 Mock peer テスト
 ├── e2e_ap_iceshrimp.rs     # S7-S9 Iceshrimp 連携テスト
+├── e2e_ap_mastodon.rs      # S7-S10 Mastodon 連携テスト
 └── support/
     ├── ap_peer.rs           # Mock AP peer + HTTP Signature
     ├── iceshrimp.rs         # Iceshrimp REST API クライアント
