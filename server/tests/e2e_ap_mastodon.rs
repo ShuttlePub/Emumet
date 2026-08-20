@@ -1,4 +1,4 @@
-//! ActivityPub Federation E2E Tests — Mastodon Scenarios (S7-S9 equivalent)
+//! ActivityPub Federation E2E Tests — Mastodon Scenarios (S7-S10 equivalent)
 //!
 //! These tests verify cross-instance ActivityPub federation between Emumet
 //! and a real Mastodon instance running in a compose profile
@@ -9,6 +9,7 @@
 //! | S7   | Mastodon → Emumet | Mastodon follows Emumet, both collections update |
 //! | S8   | Emumet → Mastodon | Emumet follows Mastodon, both collections update |
 //! | S9   | Emumet → Mastodon | Emumet signs and delivers a Create/Note activity |
+//! | S10  | Both | Bidirectional Undo(Follow), both collections drain to 0 |
 //!
 //! Run with:
 //!   EMUMET_E2E_EXTERNAL_SERVER=1 cargo test -p server \
@@ -17,7 +18,9 @@
 #[allow(dead_code)]
 mod support;
 
-use support::account_helper::{e2e_http_client, post_follow, setup_test_account_details};
+use support::account_helper::{
+    e2e_http_client, post_follow, post_unfollow, setup_test_account_details,
+};
 use support::auth;
 use support::config::ap_e2e_config;
 use support::db;
@@ -37,14 +40,15 @@ fn init_test_tracing() {
     });
 }
 
-// ── S7-S9: Combined Federation Scenario ────────────────────────────────
+// ── S7-S10: Combined Federation Scenario ───────────────────────────────
 // Mastodon → Emumet follow → Emumet → Mastodon follow → signed Create/Note
+// → bidirectional Undo(Follow)
 
 #[tokio::test]
 #[ignore]
 async fn mastodon_full_federation_scenario() {
     init_test_tracing();
-    mastodon_setup::require_ap_e2e_external_server("S7-S9 (Mastodon)");
+    mastodon_setup::require_ap_e2e_external_server("S7-S10 (Mastodon)");
 
     let cfg = ap_e2e_config();
     db::reset_test_data().await;
@@ -60,7 +64,7 @@ async fn mastodon_full_federation_scenario() {
         mastodon_account_id = %fixture.user.account_id,
         emumet_account_id = %emumet_account.id,
         emumet_account_name = %emumet_account.name,
-        "S7-S9: combined Mastodon federation scenario — account credentials for manual verification"
+        "S7-S10: combined Mastodon federation scenario — account credentials for manual verification"
     );
 
     let public_base_url = cfg.public_base_url.trim_end_matches('/');
@@ -289,4 +293,72 @@ async fn mastodon_full_federation_scenario() {
          (uri: {note_id}). Reason: {err}"
         )
     });
+
+    // ── S10: Bidirectional Undo(Follow) ──────────────────────────────
+
+    // S10a: Emumet → Mastodon — local unfollow delivers Undo(Follow)
+    let unfollow_resp = post_unfollow(
+        &jwt,
+        &emumet_account.id,
+        &cfg.server_base_url,
+        &fixture.user.actor_url,
+    )
+    .await;
+    assert_eq!(
+        unfollow_resp.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "S10: Emumet unfollow request should return 204 (signed Undo(Follow) delivered)"
+    );
+
+    assert!(
+        mastodon_setup::wait_for_mastodon_followers_absent(
+            &fixture.client,
+            &fixture.user.account_id,
+            &fixture.user.token,
+            &emumet_actor_url,
+        )
+        .await,
+        "S10: Mastodon followers should drop the Emumet account after receiving Undo(Follow)"
+    );
+
+    assert!(
+        mastodon_setup::wait_for_emumet_collection_count_at_most(
+            &cfg.server_base_url,
+            &emumet_account.id,
+            "following",
+            0,
+        )
+        .await,
+        "S10: Emumet following totalItems should return to 0 after unfollow"
+    );
+
+    // S10b: Mastodon → Emumet — Mastodon REST unfollow delivers Undo(Follow)
+    // to the Emumet inbox
+    fixture
+        .client
+        .unfollow_account(&remote_account_id, &fixture.user.token)
+        .await
+        .expect("S10: failed to unfollow Emumet account from Mastodon");
+
+    assert!(
+        mastodon_setup::wait_for_emumet_collection_count_at_most(
+            &cfg.server_base_url,
+            &emumet_account.id,
+            "followers",
+            0,
+        )
+        .await,
+        "S10: Emumet followers totalItems should return to 0 after Mastodon Undo(Follow)"
+    );
+
+    assert!(
+        mastodon_setup::wait_for_mastodon_following_absent(
+            &fixture.client,
+            &fixture.user.account_id,
+            &fixture.user.token,
+            &emumet_actor_url,
+        )
+        .await,
+        "S10: Mastodon following should drop the Emumet account after unfollow"
+    );
 }
