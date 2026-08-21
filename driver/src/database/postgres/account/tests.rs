@@ -112,6 +112,80 @@ mod read_model {
 
     #[test_with::env(DATABASE_URL)]
     #[tokio::test]
+    async fn linkage_and_nanoid_lookup_include_deactivated_account() {
+        kernel::ensure_generator_initialized();
+        let database = PostgresDatabase::new().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
+
+        let host_id = AuthHostId::default();
+        let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
+        database
+            .auth_host_repository()
+            .create(&mut conn, &auth_host)
+            .await
+            .unwrap();
+
+        let auth_account_id = AuthAccountId::default();
+        let auth_account = AuthAccountBuilder::new()
+            .id(auth_account_id.clone())
+            .host(host_id)
+            .build();
+        database
+            .auth_account_repository()
+            .create(&mut conn, &auth_account)
+            .await
+            .unwrap();
+
+        let account = AccountBuilder::new().build();
+        database
+            .account_read_model()
+            .create(&mut conn, &account)
+            .await
+            .unwrap();
+        database
+            .account_read_model()
+            .link_auth_account(&mut conn, account.id(), &auth_account_id)
+            .await
+            .unwrap();
+        database
+            .account_read_model()
+            .deactivate(&mut conn, account.id())
+            .await
+            .unwrap();
+
+        let linked = database
+            .account_read_model()
+            .is_linked_including_deleted(&mut conn, &auth_account_id, account.id())
+            .await
+            .unwrap();
+        assert!(linked, "linkage must survive deactivation");
+
+        let stranger = AuthAccountId::default();
+        let linked = database
+            .account_read_model()
+            .is_linked_including_deleted(&mut conn, &stranger, account.id())
+            .await
+            .unwrap();
+        assert!(!linked, "unlinked auth account must not pass the check");
+
+        let found = database
+            .account_read_model()
+            .find_by_nanoid_including_deleted(&mut conn, account.nanoid())
+            .await
+            .unwrap();
+        let found = found.expect("deactivated account must be resolvable by nanoid");
+        assert_eq!(found.id(), account.id());
+        assert!(found.deleted_at().is_some());
+
+        database
+            .account_read_model()
+            .unlink_all_auth_accounts(&mut conn, account.id())
+            .await
+            .unwrap();
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
     async fn find_auth_account_id_by_account_id_after_link_and_unlink() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();

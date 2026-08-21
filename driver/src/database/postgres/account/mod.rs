@@ -400,6 +400,51 @@ impl AccountReadModel for PostgresAccountReadModel {
         .map(|option| option.map(|row| account_from_row(row, true)))
     }
 
+    async fn find_by_nanoid_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        nanoid: &Nanoid<Account>,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, AccountRow>(
+            //language=postgresql
+            r#"
+            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+                   suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
+            FROM accounts
+            WHERE nanoid = $1
+            "#,
+        )
+        .bind(nanoid.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(|row| account_from_row(row, true)))
+    }
+
+    async fn is_linked_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        auth_id: &AuthAccountId,
+        account_id: &AccountId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_scalar::<_, bool>(
+            //language=postgresql
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM auth_emumet_accounts
+                WHERE auth_id = $1 AND emumet_id = $2
+            )
+            "#,
+        )
+        .bind(auth_id.as_ref())
+        .bind(account_id.as_ref())
+        .fetch_one(con)
+        .await
+        .convert_error()
+    }
+
     async fn suspend(
         &self,
         executor: &mut Self::Connection,

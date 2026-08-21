@@ -193,6 +193,23 @@ mod tests {
         ) -> error_stack::Result<Vec<Account>, KernelError> {
             self.find_by_nanoids(executor, nanoids).await
         }
+
+        async fn find_by_nanoid_including_deleted(
+            &self,
+            executor: &mut Self::Connection,
+            nanoid: &Nanoid<Account>,
+        ) -> error_stack::Result<Option<Account>, KernelError> {
+            self.find_by_nanoid(executor, nanoid).await
+        }
+
+        async fn is_linked_including_deleted(
+            &self,
+            _executor: &mut Self::Connection,
+            _auth_id: &AuthAccountId,
+            _account_id: &AccountId,
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(false)
+        }
     }
 
     struct MockFollowRepository {
