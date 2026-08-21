@@ -70,6 +70,25 @@ impl AccountReadModel for PostgresAccountReadModel {
         })
     }
 
+    async fn find_auth_account_id_by_account_id(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> error_stack::Result<Option<AuthAccountId>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_scalar::<_, i64>(
+            //language=postgresql
+            r#"
+            SELECT auth_id FROM auth_emumet_accounts WHERE emumet_id = $1 LIMIT 1
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(AuthAccountId::new))
+    }
+
     async fn find_by_name(
         &self,
         executor: &mut Self::Connection,

@@ -20,6 +20,12 @@ pub trait AccountReadModel: Sync + Send + 'static {
         auth_id: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
 
+    fn find_auth_account_id_by_account_id(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<Option<AuthAccountId>, KernelError>> + Send;
+
     fn find_by_name(
         &self,
         executor: &mut Self::Connection,
@@ -148,6 +154,12 @@ pub trait AccountQuery: Send + Sync + 'static {
         auth_id: &AuthAccountId,
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
 
+    fn find_auth_account_id_by_account_id(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<Option<AuthAccountId>, KernelError>> + Send;
+
     fn find_by_name(
         &self,
         executor: &mut Self::Connection,
@@ -207,6 +219,16 @@ where
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         self.account_read_model()
             .find_by_auth_id(executor, auth_id)
+            .await
+    }
+
+    async fn find_auth_account_id_by_account_id(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> error_stack::Result<Option<AuthAccountId>, KernelError> {
+        self.account_read_model()
+            .find_auth_account_id_by_account_id(executor, account_id)
             .await
     }
 
