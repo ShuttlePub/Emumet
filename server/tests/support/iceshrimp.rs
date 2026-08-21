@@ -171,6 +171,26 @@ impl IceshrimpClient {
             .any(|note| note.get("uri").and_then(|v| v.as_str()) == Some(uri)))
     }
 
+    /// POST /api/users/show — check whether the given user is blocking the
+    /// authenticated user (the `isBlocked` relation field).
+    ///
+    /// `isBlocked` means "this user is blocking you"; it is only present in
+    /// the detailed response for an authenticated viewer, so a missing or
+    /// non-boolean field is reported as an error instead of a false negative.
+    pub async fn is_blocked_by_user(
+        &self,
+        user_id: &str,
+        token: &str,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let user = self.show_user(user_id, token).await?;
+        user.get("isBlocked")
+            .and_then(|value| value.as_bool())
+            .ok_or_else(|| {
+                format!("users/show response missing boolean 'isBlocked' field for user {user_id}")
+                    .into()
+            })
+    }
+
     // ── private helpers ──────────────────────────────────────────
 
     /// Send a POST request and deserialize the body as a JSON value.
