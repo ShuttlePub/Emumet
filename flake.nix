@@ -30,13 +30,13 @@
         nativeBuildInputs = [ pkg-config ];
         buildInputs = [ openssl ];
         packages = [
-          nodePackages.pnpm
+          pnpm
           sqlx-cli
           psmisc
           intent-system
         ];
         env = {
-            LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
+          LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
         };
         shellHook = ''
           #export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="${pkgs.clang}/bin/clang"

@@ -20,11 +20,11 @@
     "intent-system": {
       "flake": false,
       "locked": {
-        "lastModified": 1784538199,
-        "narHash": "sha256-MdDdCTrhjn1knCHW53tyuC1j+tlC2ganz39JtMjzrhc=",
+        "lastModified": 1787269806,
+        "narHash": "sha256-Sgxc2c6oR0tIBmGpRI5i5UlPep7n2fg4pfdDcrC+tFE=",
         "owner": "J-Tech-Japan",
         "repo": "intent-system",
-        "rev": "cf4df97f9d42451bae9e43f044d3ea4c728a4a0d",
+        "rev": "fce87922ef32e1ad1c59f53e5bfce80805a5249b",
         "type": "github"
       },
       "original": {
@@ -39,11 +39,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1784593637,
-        "narHash": "sha256-hfCHsq5iv1GUPY7sPGwSc7vtilDfxTeBYxh0XiV3Wek=",
+        "lastModified": 1787271103,
+        "narHash": "sha256-KN3aRKlLD7uv+fhx8FOTl36lW1V0yBZ8z/ZCryHBu2Y=",
         "owner": "turtton",
         "repo": "intent-system-flake",
-        "rev": "4aa244189512dce2cccfde61b2075986bb28ba85",
+        "rev": "abcc46a876093d4c0b1eae84eb4d20f2c97e190b",
         "type": "github"
       },
       "original": {
@@ -70,11 +70,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1767242400,
-        "narHash": "sha256-knFaYjeg7swqG1dljj1hOxfg39zrIy8pfGuicjm9s+o=",
+        "lastModified": 1787172299,
+        "narHash": "sha256-PShzS87awOlE5XWkxUGBd/58/F+AtE2ZMgFffKj4r8s=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "c04833a1e584401bb63c1a63ddc51a71e6aa457a",
+        "rev": "07e1d92cdc0ed416cfa11ff3ca40d17e61cfba7a",
         "type": "github"
       },
       "original": {
