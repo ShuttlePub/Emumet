@@ -329,6 +329,17 @@ async fn iceshrimp_full_federation_scenario() {
         "S10: Iceshrimp followers should drop the Emumet account after receiving Block"
     );
 
+    assert!(
+        iceshrimp_setup::wait_for_iceshrimp_block_present(
+            &fixture.client,
+            &remote_user_id,
+            &fixture.user.token,
+        )
+        .await,
+        "S10: Iceshrimp should report the Emumet account as blocking the local user \
+         after receiving Block (users/show isBlocked == true)"
+    );
+
     let unblock_resp = post_unblock(
         &jwt,
         &emumet_account.id,
@@ -340,5 +351,16 @@ async fn iceshrimp_full_federation_scenario() {
         unblock_resp.status(),
         reqwest::StatusCode::NO_CONTENT,
         "S10: Emumet unblock request should return 204 (signed Undo(Block) delivered)"
+    );
+
+    assert!(
+        iceshrimp_setup::wait_for_iceshrimp_block_absent(
+            &fixture.client,
+            &remote_user_id,
+            &fixture.user.token,
+        )
+        .await,
+        "S10: Iceshrimp should clear the block state after processing Undo(Block) \
+         (users/show isBlocked == false)"
     );
 }

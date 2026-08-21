@@ -299,6 +299,38 @@ pub async fn wait_for_iceshrimp_following_contains(
     false
 }
 
+/// Poll Iceshrimp's `users/show` until the remote user is observed blocking
+/// the local user (`isBlocked == true`), or timeout after ~15 s.
+pub async fn wait_for_iceshrimp_block_present(
+    client: &super::iceshrimp::IceshrimpClient,
+    remote_user_id: &str,
+    token: &str,
+) -> bool {
+    for _ in 1..=30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(true) = client.is_blocked_by_user(remote_user_id, token).await {
+            return true;
+        }
+    }
+    false
+}
+
+/// Poll Iceshrimp's `users/show` until the remote user is no longer blocking
+/// the local user (`isBlocked == false`), or timeout after ~15 s.
+pub async fn wait_for_iceshrimp_block_absent(
+    client: &super::iceshrimp::IceshrimpClient,
+    remote_user_id: &str,
+    token: &str,
+) -> bool {
+    for _ in 1..=30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(false) = client.is_blocked_by_user(remote_user_id, token).await {
+            return true;
+        }
+    }
+    false
+}
+
 /// Poll an Emumet ActivityPub collection (followers / following) until
 /// `totalItems >= min_items` (or timeout after ~15 s).
 pub async fn wait_for_emumet_collection_count(
