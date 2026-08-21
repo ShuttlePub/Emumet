@@ -112,6 +112,72 @@ mod read_model {
 
     #[test_with::env(DATABASE_URL)]
     #[tokio::test]
+    async fn find_auth_account_id_by_account_id_after_link_and_unlink() {
+        kernel::ensure_generator_initialized();
+        let database = PostgresDatabase::new().await.unwrap();
+        let mut conn = database.connection().await.unwrap();
+
+        let host_id = AuthHostId::default();
+        let auth_host = AuthHostBuilder::new().id(host_id.clone()).build();
+        database
+            .auth_host_repository()
+            .create(&mut conn, &auth_host)
+            .await
+            .unwrap();
+
+        let auth_account_id = AuthAccountId::default();
+        let auth_account = AuthAccountBuilder::new()
+            .id(auth_account_id.clone())
+            .host(host_id)
+            .build();
+        database
+            .auth_account_repository()
+            .create(&mut conn, &auth_account)
+            .await
+            .unwrap();
+
+        let account = AccountBuilder::new().build();
+        database
+            .account_read_model()
+            .create(&mut conn, &account)
+            .await
+            .unwrap();
+
+        database
+            .account_read_model()
+            .link_auth_account(&mut conn, account.id(), &auth_account_id)
+            .await
+            .unwrap();
+
+        let linked_auth_account_id = database
+            .account_read_model()
+            .find_auth_account_id_by_account_id(&mut conn, account.id())
+            .await
+            .unwrap();
+        assert_eq!(linked_auth_account_id, Some(auth_account_id));
+
+        database
+            .account_read_model()
+            .unlink_all_auth_accounts(&mut conn, account.id())
+            .await
+            .unwrap();
+
+        let unlinked_auth_account_id = database
+            .account_read_model()
+            .find_auth_account_id_by_account_id(&mut conn, account.id())
+            .await
+            .unwrap();
+        assert_eq!(unlinked_auth_account_id, None);
+
+        database
+            .account_read_model()
+            .deactivate(&mut conn, account.id())
+            .await
+            .unwrap();
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
     async fn find_by_name() {
         kernel::ensure_generator_initialized();
         let database = PostgresDatabase::new().await.unwrap();

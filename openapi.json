@@ -1063,6 +1063,100 @@
         ]
       }
     },
+    "/api/v1/admin/accounts/{account_id}/roles/{role}": {
+      "put": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Assign an instance role (admin or moderator) to the owner of an account.",
+        "operationId": "assign_instance_role",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "role",
+            "in": "path",
+            "description": "Instance role: admin or moderator",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Instance role assigned"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Revoke an instance role (admin or moderator) from the owner of an account. Admins cannot revoke their own admin role.",
+        "operationId": "revoke_instance_role",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "role",
+            "in": "path",
+            "description": "Instance role: admin or moderator",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Instance role revoked"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/accounts/{account_id}/suspend": {
       "post": {
         "tags": [

@@ -33,5 +33,7 @@ class Instance implements Namespace {
     moderate: (ctx: Context): boolean =>
       this.related.admins.includes(ctx.subject) ||
       this.related.moderators.includes(ctx.subject),
+    administrate: (ctx: Context): boolean =>
+      this.related.admins.includes(ctx.subject),
   }
 }

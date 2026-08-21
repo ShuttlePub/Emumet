@@ -25,6 +25,10 @@ pub fn instance_moderate() -> Permission {
     Permission::new(PermissionReq::instance("moderate"))
 }
 
+pub fn instance_administrate() -> Permission {
+    Permission::new(PermissionReq::instance("administrate"))
+}
+
 pub async fn check_permission<T: DependOnPermissionChecker + ?Sized>(
     deps: &T,
     subject: &AuthAccountId,

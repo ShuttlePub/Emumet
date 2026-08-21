@@ -37,6 +37,8 @@ impl Modify for SecurityAddon {
         crate::route::account::suspend_account_by_id,
         crate::route::account::unsuspend_account_by_id,
         crate::route::account::ban_account_by_id,
+        crate::route::account::assign_instance_role,
+        crate::route::account::revoke_instance_role,
         crate::route::account::follow_account,
         crate::route::account::unfollow_account,
         crate::route::account::get_followers,
@@ -189,6 +191,31 @@ mod tests {
                 operation["security"],
                 serde_json::json!([{"bearer_auth": []}])
             );
+        }
+    }
+
+    #[test]
+    fn admin_instance_role_contract_is_registered() {
+        let spec: serde_json::Value = serde_json::from_str(&generate_openapi_json())
+            .expect("generated OpenAPI spec is valid JSON");
+        for method in ["put", "delete"] {
+            let operation =
+                &spec["paths"]["/api/v1/admin/accounts/{account_id}/roles/{role}"][method];
+            assert!(
+                operation.is_object(),
+                "{method} /api/v1/admin/accounts/{{account_id}}/roles/{{role}} must be registered"
+            );
+            assert_eq!(
+                operation["security"],
+                serde_json::json!([{"bearer_auth": []}]),
+                "{method} roles endpoint must require bearer authentication"
+            );
+            for status in ["204", "400", "403", "404"] {
+                assert!(
+                    operation["responses"].get(status).is_some(),
+                    "{method} roles endpoint must document {status}"
+                );
+            }
         }
     }
 

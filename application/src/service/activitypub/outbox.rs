@@ -205,6 +205,14 @@ mod tests {
             Ok(Vec::new())
         }
 
+        async fn find_auth_account_id_by_account_id(
+            &self,
+            _executor: &mut Self::Connection,
+            _account_id: &AccountId,
+        ) -> error_stack::Result<Option<AuthAccountId>, KernelError> {
+            Ok(None)
+        }
+
         async fn find_by_name(
             &self,
             _executor: &mut Self::Connection,
