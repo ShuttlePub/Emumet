@@ -181,9 +181,8 @@ pub trait ProjectAccountBatch:
                                         .delete(executor, follow.id())
                                         .await?;
                                 }
-                                self.account_read_model()
-                                    .unlink_all_auth_accounts(executor, account_id)
-                                    .await?;
+                                // auth_emumet_accounts linkage survives
+                                // deactivation: owners need it to reactivate.
                             }
                             (Some(account), _) => {
                                 self.account_projection_writer()
