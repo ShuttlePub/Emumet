@@ -104,6 +104,24 @@ pub trait AccountReadModel: Sync + Send + 'static {
         id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
 
+    /// Resolve an account by nanoid including deactivated rows.  Used by the
+    /// reactivate flow, which must address deactivated accounts by nanoid.
+    fn find_by_nanoid_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        nanoid: &Nanoid<Account>,
+    ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
+
+    /// Check the `auth_emumet_accounts` linkage regardless of the account's
+    /// `deleted_at`.  Linkage rows survive deactivation so that owners can
+    /// reactivate their accounts.
+    fn is_linked_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        auth_id: &AuthAccountId,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
+
     // Moderation operations
     fn suspend(
         &self,
@@ -195,6 +213,19 @@ pub trait AccountQuery: Send + Sync + 'static {
         executor: &mut Self::Connection,
         nanoids: &[Nanoid<Account>],
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
+
+    fn find_by_nanoid_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        nanoid: &Nanoid<Account>,
+    ) -> impl Future<Output = error_stack::Result<Option<Account>, KernelError>> + Send;
+
+    fn is_linked_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        auth_id: &AuthAccountId,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
 }
 
 impl<T> AccountQuery for T
@@ -287,6 +318,27 @@ where
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         self.account_read_model()
             .find_by_nanoids_unfiltered(executor, nanoids)
+            .await
+    }
+
+    async fn find_by_nanoid_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        nanoid: &Nanoid<Account>,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        self.account_read_model()
+            .find_by_nanoid_including_deleted(executor, nanoid)
+            .await
+    }
+
+    async fn is_linked_including_deleted(
+        &self,
+        executor: &mut Self::Connection,
+        auth_id: &AuthAccountId,
+        account_id: &AccountId,
+    ) -> error_stack::Result<bool, KernelError> {
+        self.account_read_model()
+            .is_linked_including_deleted(executor, auth_id, account_id)
             .await
     }
 }

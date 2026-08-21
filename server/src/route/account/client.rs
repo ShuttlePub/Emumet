@@ -229,3 +229,43 @@ pub(crate) async fn deactivate_account_by_id(
 
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/accounts/{account_id}/reactivate",
+    description = "Reactivate a deactivated account owned by the authenticated principal.",
+    params(("account_id" = String, Path, description = "Account nanoid")),
+    responses(
+        (status = 204, description = "Account reactivated"),
+        (status = 400, description = "Invalid request"),
+        (status = 403, description = "Account is not linked to the authenticated principal"),
+        (status = 404, description = "Account not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn reactivate_account_by_id(
+    Extension(claims): Extension<AuthClaims>,
+    State(api): State<AccountApi>,
+    Path(account_id): Path<String>,
+) -> Result<StatusCode, ErrorStatus> {
+    let auth_info = OidcAuthInfo::from(claims);
+
+    if account_id.trim().is_empty() {
+        return Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            "Account ID cannot be empty".to_string(),
+        )));
+    }
+
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
+        .await
+        .map_err(ErrorStatus::from)?;
+
+    api.reactivate_account(&auth_account_id, account_id)
+        .await
+        .map_err(ErrorStatus::from)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}

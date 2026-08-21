@@ -3,7 +3,7 @@ use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
 use application::service::account::{
     AssignInstanceRoleUseCase, BanAccountUseCase, RevokeInstanceRoleUseCase, SuspendAccountUseCase,
-    UnsuspendAccountUseCase,
+    UnbanAccountUseCase, UnsuspendAccountUseCase,
 };
 use axum::extract::FromRef;
 use kernel::interfaces::permission::InstanceRole;
@@ -59,6 +59,14 @@ impl AdminAccountApi {
         self.module
             .ban_account(auth_account_id, account_id, reason)
             .await
+    }
+
+    pub async fn unban_account(
+        &self,
+        auth_account_id: &AuthAccountId,
+        account_id: String,
+    ) -> error_stack::Result<(), KernelError> {
+        self.module.unban_account(auth_account_id, account_id).await
     }
 
     pub async fn assign_instance_role(

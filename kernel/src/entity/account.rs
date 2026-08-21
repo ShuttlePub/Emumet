@@ -71,6 +71,8 @@ pub enum AccountEvent {
         #[serde(with = "time::serde::rfc3339")]
         banned_at: OffsetDateTime,
     },
+    Unbanned,
+    Reactivated,
 }
 
 impl Account {
@@ -163,6 +165,32 @@ impl Account {
             reason,
             banned_at: OffsetDateTime::now_utc(),
         };
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(ExpectedVersion::At(current_version)),
+        )
+    }
+
+    pub fn unban(
+        id: AccountId,
+        current_version: EventVersion<Account>,
+    ) -> CommandEnvelope<AccountEvent, Account> {
+        let event = AccountEvent::Unbanned;
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(ExpectedVersion::At(current_version)),
+        )
+    }
+
+    pub fn reactivate(
+        id: AccountId,
+        current_version: EventVersion<Account>,
+    ) -> CommandEnvelope<AccountEvent, Account> {
+        let event = AccountEvent::Reactivated;
         CommandEnvelope::new(
             EventId::from(id),
             event.name(),
@@ -287,6 +315,32 @@ impl EventApplier for Account {
                             .attach_printable("Account is deactivated"));
                     }
                     account.status = AccountStatus::Banned { reason, banned_at };
+                    account.version = event.version;
+                } else {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable(Self::not_exists(event.id.as_ref())));
+                }
+            }
+            AccountEvent::Unbanned => {
+                if let Some(account) = entity {
+                    if !account.status.is_banned() {
+                        return Err(Report::new(KernelError::Internal)
+                            .attach_printable("Account is not banned"));
+                    }
+                    account.status = AccountStatus::Active;
+                    account.version = event.version;
+                } else {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable(Self::not_exists(event.id.as_ref())));
+                }
+            }
+            AccountEvent::Reactivated => {
+                if let Some(account) = entity {
+                    if account.deleted_at.is_none() {
+                        return Err(Report::new(KernelError::Internal)
+                            .attach_printable("Account is not deactivated"));
+                    }
+                    account.deleted_at = None;
                     account.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
@@ -608,6 +662,98 @@ mod test {
             .build();
         let version = account.version().clone();
         let event = Account::ban(id, "another".into(), version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::default(),
+        );
+        let mut account = Some(account);
+        assert!(Account::apply(&mut account, envelope)
+            .is_err_and(|e| e.current_context() == &KernelError::Internal));
+    }
+
+    #[test]
+    fn unban_account() {
+        crate::ensure_generator_initialized();
+        use crate::entity::AccountStatus;
+        use time::OffsetDateTime;
+
+        let id = AccountId::default();
+        let account = AccountBuilder::new()
+            .id(id.clone())
+            .status(AccountStatus::Banned {
+                reason: "violation".into(),
+                banned_at: OffsetDateTime::now_utc(),
+            })
+            .build();
+        let version = account.version().clone();
+        let event = Account::unban(id, version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::default(),
+        );
+        let mut account = Some(account);
+        Account::apply(&mut account, envelope).unwrap();
+        let account = account.unwrap();
+        assert!(account.status().is_active());
+    }
+
+    #[test]
+    fn unban_non_banned_account() {
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
+        let account = AccountBuilder::new().id(id.clone()).build();
+        let version = account.version().clone();
+        let event = Account::unban(id, version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::default(),
+        );
+        let mut account = Some(account);
+        assert!(Account::apply(&mut account, envelope)
+            .is_err_and(|e| e.current_context() == &KernelError::Internal));
+    }
+
+    #[test]
+    fn reactivate_account() {
+        crate::ensure_generator_initialized();
+        use crate::entity::{AccountStatus, DeletedAt};
+        use time::OffsetDateTime;
+
+        // A banned-then-deactivated account must come back still banned:
+        // reactivation clears deleted_at only and never touches status.
+        let id = AccountId::default();
+        let account = AccountBuilder::new()
+            .id(id.clone())
+            .status(AccountStatus::Banned {
+                reason: "violation".into(),
+                banned_at: OffsetDateTime::now_utc(),
+            })
+            .deleted_at(Some(DeletedAt::now()))
+            .build();
+        let version = account.version().clone();
+        let event = Account::reactivate(id, version);
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::default(),
+        );
+        let mut account = Some(account);
+        Account::apply(&mut account, envelope).unwrap();
+        let account = account.unwrap();
+        assert!(account.deleted_at().is_none());
+        assert!(account.status().is_banned());
+    }
+
+    #[test]
+    fn reactivate_non_deactivated_account() {
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
+        let account = AccountBuilder::new().id(id.clone()).build();
+        let version = account.version().clone();
+        let event = Account::reactivate(id, version);
         let envelope = EventEnvelope::new(
             event.id().clone(),
             event.event().clone(),

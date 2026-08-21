@@ -876,6 +876,45 @@
         ]
       }
     },
+    "/api/v1/accounts/{account_id}/reactivate": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Reactivate a deactivated account owned by the authenticated principal.",
+        "operationId": "reactivate_account_by_id",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Account reactivated"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Account is not linked to the authenticated principal"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/accounts/{account_id}/unblock": {
       "post": {
         "tags": [
@@ -1191,6 +1230,45 @@
           },
           "400": {
             "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/accounts/{account_id}/unban": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Remove ban from an account.",
+        "operationId": "unban_account_by_id",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Account unbanned"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Account not found"
           }
         },
         "security": [

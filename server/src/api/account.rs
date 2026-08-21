@@ -7,7 +7,9 @@ use application::dto::activitypub::{
 };
 use application::dto::block_mute::{BlockAccountDto, MuteAccountDto, RelationDto};
 use application::dto::pagination::Pagination;
-use application::service::account::{CreateAccountUseCase, DeactivateAccountUseCase};
+use application::service::account::{
+    CreateAccountUseCase, DeactivateAccountUseCase, ReactivateAccountUseCase,
+};
 use application::service::account_detail::{GetAccountDetailUseCase, UpdateAccountDetailUseCase};
 use application::service::activitypub::{
     GetFollowRelationsUseCase, SendFollowUseCase, SendUndoFollowUseCase,
@@ -91,6 +93,16 @@ impl AccountApi {
     ) -> error_stack::Result<(), KernelError> {
         self.module
             .deactivate_account(auth_account_id, account_id)
+            .await
+    }
+
+    pub async fn reactivate_account(
+        &self,
+        auth_account_id: &AuthAccountId,
+        account_id: String,
+    ) -> error_stack::Result<(), KernelError> {
+        self.module
+            .reactivate_account(auth_account_id, account_id)
             .await
     }
 

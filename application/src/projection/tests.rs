@@ -199,6 +199,72 @@ async fn project_batch_is_idempotent_and_advances_checkpoint() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
+async fn projected_deactivation_preserves_auth_account_linkage() {
+    let _projector_test_guard = PROJECTOR_TEST_LOCK.lock().await;
+    kernel::ensure_generator_initialized();
+    let projector = ProjectorTest {
+        db: PostgresDatabase::new().await.unwrap(),
+    };
+    clear_checkpoint(&projector.db).await;
+    let account_id = AccountId::default();
+    let auth_account_id = AuthAccountId::default();
+    seed_auth_account(&projector.db, &auth_account_id).await;
+    let events = persist_account_events(&projector.db, &account_id, &auth_account_id, false).await;
+    let account_version = events.last().unwrap().version.clone();
+
+    projector.project_batch().await.unwrap();
+    let linked = projector
+        .db
+        .account_read_model()
+        .find_auth_account_id_by_account_id(
+            &mut projector.db.connection().await.unwrap(),
+            &account_id,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        linked.as_ref(),
+        Some(&auth_account_id),
+        "projection must link the creator auth account"
+    );
+
+    let mut conn = projector.db.connection().await.unwrap();
+    let deactivate = Account::deactivate(account_id.clone(), account_version);
+    projector
+        .db
+        .account_event_store()
+        .persist_and_transform(&mut conn, deactivate)
+        .await
+        .unwrap();
+    drop(conn);
+
+    projector.project_batch().await.unwrap();
+    let linked = projector
+        .db
+        .account_read_model()
+        .find_auth_account_id_by_account_id(
+            &mut projector.db.connection().await.unwrap(),
+            &account_id,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        linked.as_ref(),
+        Some(&auth_account_id),
+        "deactivation must not unlink auth accounts: owners need the linkage to reactivate"
+    );
+
+    let mut conn = projector.db.connection().await.unwrap();
+    projector
+        .db
+        .account_read_model()
+        .unlink_all_auth_accounts(&mut conn, &account_id)
+        .await
+        .unwrap();
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
 async fn older_version_upsert_is_a_noop() {
     let _projector_test_guard = PROJECTOR_TEST_LOCK.lock().await;
     kernel::ensure_generator_initialized();
