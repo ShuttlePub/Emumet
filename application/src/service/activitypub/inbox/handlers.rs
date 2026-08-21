@@ -435,10 +435,489 @@ fn accept_activity(
 mod tests {
     use super::*;
     use kernel::interfaces::config::DependOnPublicBaseUrl;
-    use kernel::prelude::entity::AccountId;
+    use kernel::interfaces::crypto::{
+        DependOnKeyEncryptor, DependOnPasswordProvider, EncryptedPrivateKey, KeyEncryptor,
+        PasswordProvider, SigningAlgorithm,
+    };
+    use kernel::interfaces::database::{
+        Connection, DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager,
+    };
+    use kernel::interfaces::http_signing::{
+        DependOnHttpSigner, HttpSigner, HttpSigningRequest, HttpSigningResponse,
+    };
+    use kernel::interfaces::repository::{
+        DependOnBlockRepository, DependOnFollowRepository, DependOnOutboxActivityRepository,
+        DependOnRemoteAccountRepository, DependOnSigningKeyRepository, SigningKeyRepository,
+    };
+    use kernel::prelude::entity::{
+        AccountId, OutboxActivityId, RemoteAccount, RemoteAccountAcct, RemoteAccountId, SigningKey,
+        SigningKeyId,
+    };
+    use std::pin::Pin;
+    use zeroize::Zeroizing;
 
+    #[derive(Clone)]
+    struct MockConnection;
+
+    impl Connection for MockConnection {}
+
+    #[derive(Clone)]
+    struct MockDatabaseConnection;
+
+    impl DatabaseConnection for MockDatabaseConnection {
+        type Connection = MockConnection;
+
+        async fn connection(&self) -> error_stack::Result<Self::Connection, KernelError> {
+            Ok(MockConnection)
+        }
+    }
+
+    impl TransactionManager for MockDatabaseConnection {
+        fn transaction<'a, F, T>(
+            &'a self,
+            operation: F,
+        ) -> Pin<
+            Box<dyn std::future::Future<Output = error_stack::Result<T, KernelError>> + Send + 'a>,
+        >
+        where
+            F: for<'connection> FnOnce(
+                    &'connection mut Self::Connection,
+                ) -> Pin<
+                    Box<
+                        dyn std::future::Future<Output = error_stack::Result<T, KernelError>>
+                            + Send
+                            + 'connection,
+                    >,
+                > + Send
+                + 'a,
+            T: Send + 'a,
+        {
+            Box::pin(async move {
+                let mut connection = MockConnection;
+                operation(&mut connection).await
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockFollowRepository;
+
+    impl FollowRepository for MockFollowRepository {
+        type Connection = MockConnection;
+
+        async fn find_followings(
+            &self,
+            _executor: &mut Self::Connection,
+            _source: &FollowTargetId,
+        ) -> error_stack::Result<Vec<Follow>, KernelError> {
+            Ok(Vec::new())
+        }
+
+        async fn find_followers(
+            &self,
+            _executor: &mut Self::Connection,
+            _destination: &FollowTargetId,
+        ) -> error_stack::Result<Vec<Follow>, KernelError> {
+            Ok(Vec::new())
+        }
+
+        async fn create(
+            &self,
+            _executor: &mut Self::Connection,
+            _follow: &Follow,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _executor: &mut Self::Connection,
+            _follow: &Follow,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+
+        async fn delete(
+            &self,
+            _executor: &mut Self::Connection,
+            _follow_id: &FollowId,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+
+        async fn insert_if_absent(
+            &self,
+            _executor: &mut Self::Connection,
+            _follow: &Follow,
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(false)
+        }
+
+        async fn approve_follow_if_pending(
+            &self,
+            _executor: &mut Self::Connection,
+            _source: &FollowTargetId,
+            _destination: &FollowTargetId,
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(false)
+        }
+
+        async fn delete_if_exists(
+            &self,
+            _executor: &mut Self::Connection,
+            _source: &FollowTargetId,
+            _destination: &FollowTargetId,
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(false)
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockBlockRepository;
+
+    impl BlockRepository for MockBlockRepository {
+        type Connection = MockConnection;
+
+        async fn find_blocks(
+            &self,
+            _executor: &mut Self::Connection,
+            _source: &BlockTargetId,
+        ) -> error_stack::Result<Vec<Block>, KernelError> {
+            Ok(Vec::new())
+        }
+
+        async fn create(
+            &self,
+            _executor: &mut Self::Connection,
+            _block: &Block,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+
+        async fn delete(
+            &self,
+            _executor: &mut Self::Connection,
+            _block_id: &BlockId,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+
+        async fn insert_if_absent(
+            &self,
+            _executor: &mut Self::Connection,
+            _block: &Block,
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(false)
+        }
+
+        async fn delete_if_exists(
+            &self,
+            _executor: &mut Self::Connection,
+            _source: &BlockTargetId,
+            _destination: &BlockTargetId,
+        ) -> error_stack::Result<bool, KernelError> {
+            Ok(false)
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockRemoteAccountRepository;
+
+    impl RemoteAccountRepository for MockRemoteAccountRepository {
+        type Connection = MockConnection;
+
+        async fn find_by_id(
+            &self,
+            _executor: &mut Self::Connection,
+            _id: &RemoteAccountId,
+        ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
+            Ok(None)
+        }
+
+        async fn find_by_acct(
+            &self,
+            _executor: &mut Self::Connection,
+            _acct: &RemoteAccountAcct,
+        ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
+            Ok(None)
+        }
+
+        async fn find_by_url(
+            &self,
+            _executor: &mut Self::Connection,
+            _url: &RemoteAccountUrl,
+        ) -> error_stack::Result<Option<RemoteAccount>, KernelError> {
+            Ok(None)
+        }
+
+        async fn create(
+            &self,
+            _executor: &mut Self::Connection,
+            _account: &RemoteAccount,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _executor: &mut Self::Connection,
+            _account: &RemoteAccount,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+
+        async fn delete(
+            &self,
+            _executor: &mut Self::Connection,
+            _account_id: &RemoteAccountId,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockSigningKeyRepository;
+
+    impl SigningKeyRepository for MockSigningKeyRepository {
+        type Connection = MockConnection;
+
+        async fn find_by_id(
+            &self,
+            _executor: &mut Self::Connection,
+            _id: &SigningKeyId,
+        ) -> error_stack::Result<SigningKey, KernelError> {
+            Err(Report::new(KernelError::Internal).attach_printable("unused mock"))
+        }
+
+        async fn find_by_account_id(
+            &self,
+            _executor: &mut Self::Connection,
+            _account_id: &AccountId,
+        ) -> error_stack::Result<Vec<SigningKey>, KernelError> {
+            Ok(Vec::new())
+        }
+
+        async fn find_active_by_account_id(
+            &self,
+            _executor: &mut Self::Connection,
+            _account_id: &AccountId,
+        ) -> error_stack::Result<Vec<SigningKey>, KernelError> {
+            Ok(Vec::new())
+        }
+
+        async fn create(
+            &self,
+            _executor: &mut Self::Connection,
+            _signing_key: &SigningKey,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+
+        async fn revoke(
+            &self,
+            _executor: &mut Self::Connection,
+            _id: &SigningKeyId,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockOutboxActivityRepository;
+
+    impl OutboxActivityRepository for MockOutboxActivityRepository {
+        type Connection = MockConnection;
+
+        async fn create(
+            &self,
+            _executor: &mut Self::Connection,
+            _activity: &OutboxActivity,
+        ) -> error_stack::Result<OutboxActivityId, KernelError> {
+            Ok(0)
+        }
+
+        async fn find_by_account_id(
+            &self,
+            _executor: &mut Self::Connection,
+            _account_id: &AccountId,
+            _limit: usize,
+            _cursor: Option<i64>,
+        ) -> error_stack::Result<Vec<OutboxActivity>, KernelError> {
+            Ok(Vec::new())
+        }
+
+        async fn count_by_account_id(
+            &self,
+            _executor: &mut Self::Connection,
+            _account_id: &AccountId,
+        ) -> error_stack::Result<u64, KernelError> {
+            Ok(0)
+        }
+
+        async fn find_pending_deliveries(
+            &self,
+            _executor: &mut Self::Connection,
+            _limit: usize,
+        ) -> error_stack::Result<Vec<OutboxActivity>, KernelError> {
+            Ok(Vec::new())
+        }
+
+        async fn mark_delivered(
+            &self,
+            _executor: &mut Self::Connection,
+            _id: &OutboxActivityId,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+
+        async fn mark_delivery_attempt(
+            &self,
+            _executor: &mut Self::Connection,
+            _id: &OutboxActivityId,
+            _error: Option<&str>,
+        ) -> error_stack::Result<(), KernelError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockPasswordProvider;
+
+    impl PasswordProvider for MockPasswordProvider {
+        fn get_password(&self) -> error_stack::Result<Zeroizing<Vec<u8>>, KernelError> {
+            Ok(Zeroizing::new(b"unused".to_vec()))
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockKeyEncryptor;
+
+    impl KeyEncryptor for MockKeyEncryptor {
+        fn encrypt(
+            &self,
+            _private_key_pem: &[u8],
+            _password: &[u8],
+            _algorithm: SigningAlgorithm,
+        ) -> error_stack::Result<EncryptedPrivateKey, KernelError> {
+            Err(Report::new(KernelError::Internal).attach_printable("unused mock"))
+        }
+
+        fn decrypt(
+            &self,
+            _encrypted: &EncryptedPrivateKey,
+            _password: &[u8],
+        ) -> error_stack::Result<Zeroizing<Vec<u8>>, KernelError> {
+            Err(Report::new(KernelError::Internal).attach_printable("unused mock"))
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockHttpSigner;
+
+    impl HttpSigner for MockHttpSigner {
+        async fn sign(
+            &self,
+            _request: &HttpSigningRequest,
+            _private_key_pem: &[u8],
+            _key_id: &str,
+            _algorithm: &SigningAlgorithm,
+        ) -> error_stack::Result<HttpSigningResponse, KernelError> {
+            Err(Report::new(KernelError::Internal).attach_printable("unused mock"))
+        }
+    }
+
+    #[derive(Clone)]
     struct MockModule {
+        database: MockDatabaseConnection,
+        follows: MockFollowRepository,
+        blocks: MockBlockRepository,
+        remote_accounts: MockRemoteAccountRepository,
+        signing_keys: MockSigningKeyRepository,
+        outbox: MockOutboxActivityRepository,
+        password_provider: MockPasswordProvider,
+        key_encryptor: MockKeyEncryptor,
+        http_signer: MockHttpSigner,
         public_base_url: PublicBaseUrl,
+    }
+
+    impl DependOnDatabaseConnection for MockModule {
+        type DatabaseConnection = MockDatabaseConnection;
+
+        fn database_connection(&self) -> &Self::DatabaseConnection {
+            &self.database
+        }
+    }
+
+    impl DependOnTransactionManager for MockModule {
+        type TransactionManager = MockDatabaseConnection;
+
+        fn transaction_manager(&self) -> &Self::TransactionManager {
+            &self.database
+        }
+    }
+
+    impl DependOnFollowRepository for MockModule {
+        type FollowRepository = MockFollowRepository;
+
+        fn follow_repository(&self) -> &Self::FollowRepository {
+            &self.follows
+        }
+    }
+
+    impl DependOnBlockRepository for MockModule {
+        type BlockRepository = MockBlockRepository;
+
+        fn block_repository(&self) -> &Self::BlockRepository {
+            &self.blocks
+        }
+    }
+
+    impl DependOnRemoteAccountRepository for MockModule {
+        type RemoteAccountRepository = MockRemoteAccountRepository;
+
+        fn remote_account_repository(&self) -> &Self::RemoteAccountRepository {
+            &self.remote_accounts
+        }
+    }
+
+    impl DependOnSigningKeyRepository for MockModule {
+        type SigningKeyRepository = MockSigningKeyRepository;
+
+        fn signing_key_repository(&self) -> &Self::SigningKeyRepository {
+            &self.signing_keys
+        }
+    }
+
+    impl DependOnOutboxActivityRepository for MockModule {
+        type OutboxActivityRepository = MockOutboxActivityRepository;
+
+        fn outbox_activity_repository(&self) -> &Self::OutboxActivityRepository {
+            &self.outbox
+        }
+    }
+
+    impl DependOnPasswordProvider for MockModule {
+        type PasswordProvider = MockPasswordProvider;
+
+        fn password_provider(&self) -> &Self::PasswordProvider {
+            &self.password_provider
+        }
+    }
+
+    impl DependOnKeyEncryptor for MockModule {
+        type KeyEncryptor = MockKeyEncryptor;
+
+        fn key_encryptor(&self) -> &Self::KeyEncryptor {
+            &self.key_encryptor
+        }
+    }
+
+    impl DependOnHttpSigner for MockModule {
+        type HttpSigner = MockHttpSigner;
+
+        fn http_signer(&self) -> &Self::HttpSigner {
+            &self.http_signer
+        }
     }
 
     impl DependOnPublicBaseUrl for MockModule {
@@ -464,6 +943,15 @@ mod tests {
 
         (
             MockModule {
+                database: MockDatabaseConnection,
+                follows: MockFollowRepository,
+                blocks: MockBlockRepository,
+                remote_accounts: MockRemoteAccountRepository,
+                signing_keys: MockSigningKeyRepository,
+                outbox: MockOutboxActivityRepository,
+                password_provider: MockPasswordProvider,
+                key_encryptor: MockKeyEncryptor,
+                http_signer: MockHttpSigner,
                 public_base_url: PublicBaseUrl::new("https://example.com/".to_string()),
             },
             account_id,
@@ -480,6 +968,40 @@ mod tests {
             target: None,
             to: None,
             cc: None,
+        }
+    }
+
+    fn block_activity(object: serde_json::Value) -> Activity {
+        Activity {
+            context: None,
+            id: "https://remote.example/activities/block-1".to_string(),
+            type_: "Block".to_string(),
+            actor: "https://remote.example/users/bob".to_string(),
+            object: Some(object),
+            target: None,
+            to: None,
+            cc: None,
+        }
+    }
+
+    fn undo_activity(object: Activity) -> Activity {
+        Activity {
+            context: None,
+            id: "https://remote.example/activities/undo-1".to_string(),
+            type_: "Undo".to_string(),
+            actor: "https://remote.example/users/bob".to_string(),
+            object: Some(serde_json::to_value(object).unwrap()),
+            target: None,
+            to: None,
+            cc: None,
+        }
+    }
+
+    fn inbox_dto(account_id: AccountId, activity: Activity) -> InboxActivityDto {
+        InboxActivityDto {
+            account_id,
+            account_nanoid: "alice".to_string(),
+            activity,
         }
     }
 
@@ -584,5 +1106,65 @@ mod tests {
             "https://example.com/accounts/bob"
         )
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn block_for_other_local_actor_is_rejected() {
+        let (module, account_id) = module();
+        let activity = block_activity(serde_json::Value::String(
+            "https://example.com/ap/accounts/bob".to_string(),
+        ));
+
+        let error = module
+            .handle_block_activity(inbox_dto(account_id, activity))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error.current_context(), KernelError::Rejected));
+    }
+
+    #[tokio::test]
+    async fn block_with_non_actor_object_is_rejected() {
+        let (module, account_id) = module();
+        let activity = block_activity(serde_json::json!({"type": "Note"}));
+
+        let error = module
+            .handle_block_activity(inbox_dto(account_id, activity))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error.current_context(), KernelError::Rejected));
+        assert!(format!("{error:?}").contains("Block activity object must be an actor id"));
+    }
+
+    #[tokio::test]
+    async fn undo_block_wrapping_follow_is_rejected() {
+        let (module, account_id) = module();
+        let follow = follow_activity(
+            "https://remote.example/users/bob",
+            "https://example.com/ap/accounts/alice",
+        );
+
+        let error = module
+            .handle_undo_block_activity(inbox_dto(account_id, undo_activity(follow)))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error.current_context(), KernelError::Rejected));
+        assert!(format!("{error:?}").contains("Undo activity object must be a Block activity"));
+    }
+
+    #[tokio::test]
+    async fn undo_block_from_unknown_remote_actor_is_ok() {
+        let (module, account_id) = module();
+        let block = block_activity(serde_json::Value::String(
+            "https://example.com/ap/accounts/alice".to_string(),
+        ));
+
+        let result = module
+            .handle_undo_block_activity(inbox_dto(account_id, undo_activity(block)))
+            .await;
+
+        assert!(result.is_ok());
     }
 }
