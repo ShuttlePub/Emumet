@@ -142,6 +142,46 @@ pub(crate) async fn ban_account_by_id(
 }
 
 #[utoipa::path(
+    post,
+    path = "/api/v1/admin/accounts/{account_id}/unban",
+    description = "Remove ban from an account.",
+    params(("account_id" = String, Path, description = "Account nanoid")),
+    responses(
+        (status = 204, description = "Account unbanned"),
+        (status = 400, description = "Invalid request"),
+        (status = 403, description = "Permission denied"),
+        (status = 404, description = "Account not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn unban_account_by_id(
+    Extension(claims): Extension<AuthClaims>,
+    State(api): State<AdminAccountApi>,
+    Path(account_id): Path<String>,
+) -> Result<StatusCode, ErrorStatus> {
+    let auth_info = OidcAuthInfo::from(claims);
+
+    if account_id.trim().is_empty() {
+        return Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            "Account ID cannot be empty".to_string(),
+        )));
+    }
+
+    let auth_account_id = api
+        .resolve_auth_account_id(auth_info)
+        .await
+        .map_err(ErrorStatus::from)?;
+
+    api.unban_account(&auth_account_id, account_id)
+        .await
+        .map_err(ErrorStatus::from)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
     put,
     path = "/api/v1/admin/accounts/{account_id}/roles/{role}",
     description = "Assign an instance role (admin or moderator) to the owner of an account.",

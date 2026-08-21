@@ -6,8 +6,9 @@ mod follow_relations;
 mod unfollow;
 pub(crate) use admin::{
     __path_assign_instance_role, __path_ban_account_by_id, __path_revoke_instance_role,
-    __path_suspend_account_by_id, __path_unsuspend_account_by_id, assign_instance_role,
-    ban_account_by_id, revoke_instance_role, suspend_account_by_id, unsuspend_account_by_id,
+    __path_suspend_account_by_id, __path_unban_account_by_id, __path_unsuspend_account_by_id,
+    assign_instance_role, ban_account_by_id, revoke_instance_role, suspend_account_by_id,
+    unban_account_by_id, unsuspend_account_by_id,
 };
 pub(crate) use block_mute::{
     __path_block_account, __path_get_blocks, __path_get_mutes, __path_mute_account,
@@ -16,8 +17,9 @@ pub(crate) use block_mute::{
 };
 pub(crate) use client::{
     __path_create_account, __path_deactivate_account_by_id, __path_get_account_by_id,
-    __path_get_accounts, __path_update_account_by_id, create_account, deactivate_account_by_id,
-    get_account_by_id, get_accounts, update_account_by_id,
+    __path_get_accounts, __path_reactivate_account_by_id, __path_update_account_by_id,
+    create_account, deactivate_account_by_id, get_account_by_id, get_accounts,
+    reactivate_account_by_id, update_account_by_id,
 };
 pub(crate) use follow::{__path_follow_account, follow_account};
 pub(crate) use follow_relations::{
@@ -44,6 +46,10 @@ impl AccountRouter for Router<AppModule> {
             .route("/accounts/{account_id}", get(get_account_by_id))
             .route("/accounts/{account_id}", patch(update_account_by_id))
             .route("/accounts/{account_id}", delete(deactivate_account_by_id))
+            .route(
+                "/accounts/{account_id}/reactivate",
+                post(reactivate_account_by_id),
+            )
             .route("/accounts/{account_id}/follow", post(follow_account))
             .route("/accounts/{account_id}/unfollow", post(unfollow_account))
             .route("/accounts/{account_id}/followers", get(get_followers))
@@ -68,6 +74,7 @@ impl AdminAccountRouter for Router<AppModule> {
             post(unsuspend_account_by_id),
         )
         .route("/accounts/{account_id}/ban", post(ban_account_by_id))
+        .route("/accounts/{account_id}/unban", post(unban_account_by_id))
         .route(
             "/accounts/{account_id}/roles/{role}",
             put(assign_instance_role).delete(revoke_instance_role),
