@@ -1552,6 +1552,57 @@ async fn inbox_block_duplicate_is_skipped() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
+async fn inbox_block_duplicate_does_not_re_run_follow_removal() {
+    // Given: an inbound Block already processed once, which removed the
+    // mutual follows between the local account and the remote actor
+    let (module, _password_file, auth_account_id) = mute_test_module().await;
+    let blocked = create_test_account(&module, &auth_account_id).await;
+    let (actor_url, remote_id) =
+        seed_remote_actor(&module.database, "http://127.0.0.1:1/inbox").await;
+    let account_id = account_id_of(&module.database, &blocked).await;
+    seed_follows_between(&module.database, account_id, remote_id).await;
+    let dto = || {
+        inbox_dto(
+            account_id,
+            &blocked,
+            inbound_block_activity(&actor_url, &local_actor_url_for(&blocked)),
+        )
+    };
+    module.handle_inbox_activity(dto()).await.unwrap();
+    assert_eq!(
+        inbox_block_and_follow_counts(&module.database, remote_id, account_id).await,
+        (1, 0),
+        "first delivery persists the block and removes both-direction follows"
+    );
+    // And: a follow created after the first Block (re-follow prevention is a
+    // separate design; today nothing stops a new follow row from appearing)
+    sqlx::query(
+        "INSERT INTO follows (id, follower_local_id, followee_remote_id, approved_at) \
+         VALUES ($1, $2, $3, NOW())",
+    )
+    .bind(kernel::generate_id())
+    .bind(account_id)
+    .bind(remote_id)
+    .execute(&mut *module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+
+    // When: the identical Block arrives again
+    let second = module.handle_inbox_activity(dto()).await;
+
+    // Then: the duplicate is a no-op guarded by the first-delivery check
+    // (`if inserted` in handle_block_activity) — it must neither fail nor
+    // re-run the follow removal, so the new follow row survives
+    assert!(second.is_ok(), "duplicate Block must not error");
+    assert_eq!(
+        inbox_block_and_follow_counts(&module.database, remote_id, account_id).await,
+        (1, 1),
+        "duplicate Block must not create a second block row nor re-remove follows"
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
 async fn inbox_accept_is_idempotent() {
     // Given: a pending (unapproved) outgoing follow from the local account to
     // the remote actor
