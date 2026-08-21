@@ -5,8 +5,9 @@ mod follow;
 mod follow_relations;
 mod unfollow;
 pub(crate) use admin::{
-    __path_ban_account_by_id, __path_suspend_account_by_id, __path_unsuspend_account_by_id,
-    ban_account_by_id, suspend_account_by_id, unsuspend_account_by_id,
+    __path_assign_instance_role, __path_ban_account_by_id, __path_revoke_instance_role,
+    __path_suspend_account_by_id, __path_unsuspend_account_by_id, assign_instance_role,
+    ban_account_by_id, revoke_instance_role, suspend_account_by_id, unsuspend_account_by_id,
 };
 pub(crate) use block_mute::{
     __path_block_account, __path_get_blocks, __path_get_mutes, __path_mute_account,
@@ -25,7 +26,7 @@ pub(crate) use follow_relations::{
 pub(crate) use unfollow::{__path_unfollow_account, unfollow_account};
 
 use crate::handler::AppModule;
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::Router;
 
 pub trait AccountRouter {
@@ -67,5 +68,9 @@ impl AdminAccountRouter for Router<AppModule> {
             post(unsuspend_account_by_id),
         )
         .route("/accounts/{account_id}/ban", post(ban_account_by_id))
+        .route(
+            "/accounts/{account_id}/roles/{role}",
+            put(assign_instance_role).delete(revoke_instance_role),
+        )
     }
 }

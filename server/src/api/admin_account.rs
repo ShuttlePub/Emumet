@@ -2,9 +2,11 @@ use super::resolve_auth_account_id;
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
 use application::service::account::{
-    BanAccountUseCase, SuspendAccountUseCase, UnsuspendAccountUseCase,
+    AssignInstanceRoleUseCase, BanAccountUseCase, RevokeInstanceRoleUseCase, SuspendAccountUseCase,
+    UnsuspendAccountUseCase,
 };
 use axum::extract::FromRef;
+use kernel::interfaces::permission::InstanceRole;
 use kernel::prelude::entity::AuthAccountId;
 use kernel::KernelError;
 use std::sync::Arc;
@@ -56,6 +58,28 @@ impl AdminAccountApi {
     ) -> error_stack::Result<(), KernelError> {
         self.module
             .ban_account(auth_account_id, account_id, reason)
+            .await
+    }
+
+    pub async fn assign_instance_role(
+        &self,
+        auth_account_id: &AuthAccountId,
+        account_id: String,
+        role: InstanceRole,
+    ) -> error_stack::Result<(), KernelError> {
+        self.module
+            .assign_instance_role(auth_account_id, account_id, role)
+            .await
+    }
+
+    pub async fn revoke_instance_role(
+        &self,
+        auth_account_id: &AuthAccountId,
+        account_id: String,
+        role: InstanceRole,
+    ) -> error_stack::Result<(), KernelError> {
+        self.module
+            .revoke_instance_role(auth_account_id, account_id, role)
             .await
     }
 }
