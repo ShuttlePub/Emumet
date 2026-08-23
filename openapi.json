@@ -1311,6 +1311,150 @@
         ]
       }
     },
+    "/api/v1/admin/reports": {
+      "get": {
+        "tags": [
+          "Report"
+        ],
+        "description": "List open account reports for the moderator queue.",
+        "operationId": "list_reports",
+        "responses": {
+          "200": {
+            "description": "Open reports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountReportListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/reports/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "Report"
+        ],
+        "description": "Dismiss an open account report.",
+        "operationId": "dismiss_report",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account report ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Report dismissed"
+          },
+          "400": {
+            "description": "Invalid report ID or close reason"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Report not found"
+          },
+          "422": {
+            "description": "Report already closed"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/reports/{id}/resolve": {
+      "post": {
+        "tags": [
+          "Report"
+        ],
+        "description": "Resolve an open account report.",
+        "operationId": "resolve_report",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account report ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Report resolved"
+          },
+          "400": {
+            "description": "Invalid report ID or close reason"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Report not found"
+          },
+          "422": {
+            "description": "Report already closed"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/images": {
       "post": {
         "tags": [
@@ -1373,6 +1517,51 @@
           },
           "503": {
             "description": "Instance role service unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/reports": {
+      "post": {
+        "tags": [
+          "Report"
+        ],
+        "description": "Create an account moderation report.",
+        "operationId": "create_report",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Report created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountReportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid report"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "description": "Target account not found"
           }
         },
         "security": [
@@ -1593,6 +1782,77 @@
           }
         }
       },
+      "AccountReportListResponse": {
+        "type": "object",
+        "required": [
+          "reports",
+          "open_count"
+        ],
+        "properties": {
+          "open_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountReportResponse"
+            }
+          }
+        }
+      },
+      "AccountReportResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "nanoid",
+          "target",
+          "reported_by",
+          "category",
+          "status"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "close_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "nanoid": {
+            "type": "string"
+          },
+          "reported_by": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolution": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "target": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "AccountResponse": {
         "type": "object",
         "required": [
@@ -1788,6 +2048,17 @@
           }
         }
       },
+      "CloseReportRequest": {
+        "type": "object",
+        "required": [
+          "close_reason"
+        ],
+        "properties": {
+          "close_reason": {
+            "type": "string"
+          }
+        }
+      },
       "ConsentDecision": {
         "type": "object",
         "required": [
@@ -1823,6 +2094,27 @@
             "type": "boolean"
           },
           "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateReportRequest": {
+        "type": "object",
+        "required": [
+          "target",
+          "category"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
             "type": "string"
           }
         }
@@ -2375,6 +2667,10 @@
     {
       "name": "ActivityPub",
       "description": "ActivityPub discovery and actor endpoints"
+    },
+    {
+      "name": "Report",
+      "description": "Account moderation reports"
     }
   ]
 }

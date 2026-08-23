@@ -1,4 +1,5 @@
 mod account_projector;
+mod account_report_projector;
 mod metadata_projector;
 mod profile_projector;
 
@@ -6,5 +7,6 @@ mod profile_projector;
 mod tests;
 
 pub use account_projector::*;
+pub use account_report_projector::*;
 pub use metadata_projector::*;
 pub use profile_projector::*;

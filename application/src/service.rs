@@ -5,6 +5,7 @@ pub mod auth_account;
 pub mod block;
 pub mod media;
 pub mod mute;
+pub mod report;
 pub mod session_context;
 
 #[cfg(test)]

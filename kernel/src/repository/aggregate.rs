@@ -1,7 +1,7 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::{
-    Account, AccountId, CommandEnvelope, EventEnvelope, EventVersion, Metadata, MetadataId,
-    Profile, ProfileId,
+    Account, AccountId, AccountReport, AccountReportId, CommandEnvelope, EventEnvelope,
+    EventVersion, Metadata, MetadataId, Profile, ProfileId,
 };
 use crate::event::EventApplier;
 use crate::KernelError;
@@ -134,6 +134,16 @@ pub trait DependOnMetadataRepository: Sync + Send + DependOnDatabaseConnection {
     >;
 
     fn metadata_repository(&self) -> &Self::MetadataRepository;
+}
+
+pub trait DependOnAccountReportRepository: Sync + Send + DependOnDatabaseConnection {
+    type AccountReportRepository: AggregateRepository<
+        AccountReport,
+        Id = AccountReportId,
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn account_report_repository(&self) -> &Self::AccountReportRepository;
 }
 
 #[cfg(test)]

@@ -1112,3 +1112,247 @@ mod metadata {
         );
     }
 }
+
+mod account_report {
+    use super::{clear_checkpoint, persist_account_events, seed_auth_account};
+    use driver::database::PostgresDatabase;
+    use kernel::impl_database_delegation;
+    use kernel::interfaces::database::DatabaseConnection;
+    use kernel::interfaces::event_store::{
+        AccountReportEventStore, DependOnAccountReportEventStore,
+    };
+    use kernel::prelude::entity::{
+        AccountId, AccountReport, AccountReportId, AuthAccountId, CloseReason, EventVersion,
+        Nanoid, ReportCategory, ReportComment, ReportResolution,
+    };
+
+    use crate::projection::ProjectAccountReportBatch;
+
+    const PROJECTOR_NAME: &str = "account_report_projector";
+
+    struct AccountReportProjectorTest {
+        db: PostgresDatabase,
+    }
+
+    impl_database_delegation!(AccountReportProjectorTest, db, PostgresDatabase);
+
+    struct OpenReportFixture {
+        id: AccountReportId,
+        target: AccountId,
+        reported_by: AccountId,
+        comment: ReportComment,
+        version: EventVersion<AccountReport>,
+        nanoid: Nanoid<AccountReport>,
+    }
+
+    #[derive(Debug, PartialEq, sqlx::FromRow)]
+    struct StoredReport {
+        target_account_id: i64,
+        reported_by_account_id: i64,
+        category: String,
+        comment: Option<String>,
+        status: String,
+        resolution: Option<String>,
+        close_reason: Option<String>,
+        version: i64,
+        nanoid: String,
+    }
+
+    async fn seed_accounts(db: &PostgresDatabase) -> (AccountId, AccountId) {
+        let target = AccountId::new(kernel::generate_id());
+        let target_auth = AuthAccountId::new(kernel::generate_id());
+        seed_auth_account(db, &target_auth).await;
+        persist_account_events(db, &target, &target_auth, false).await;
+
+        let reported_by = AccountId::new(kernel::generate_id());
+        let reporter_auth = AuthAccountId::new(kernel::generate_id());
+        seed_auth_account(db, &reporter_auth).await;
+        persist_account_events(db, &reported_by, &reporter_auth, false).await;
+
+        (target, reported_by)
+    }
+
+    async fn seed_open_report(db: &PostgresDatabase) -> OpenReportFixture {
+        let (target, reported_by) = seed_accounts(db).await;
+        let id = AccountReportId::new(kernel::generate_id());
+        let category = ReportCategory::Harassment;
+        let comment = ReportComment::new("repeated targeted harassment".to_string());
+        let nanoid = Nanoid::<AccountReport>::default();
+        let command = AccountReport::create(
+            id.clone(),
+            target.clone(),
+            reported_by.clone(),
+            category.clone(),
+            Some(comment.clone()),
+            nanoid.clone(),
+        );
+        let mut conn = db.connection().await.unwrap();
+        let created = db
+            .account_report_event_store()
+            .persist_and_transform(&mut conn, command)
+            .await
+            .unwrap();
+
+        OpenReportFixture {
+            id,
+            target,
+            reported_by,
+            comment,
+            version: created.version,
+            nanoid,
+        }
+    }
+
+    async fn load_report(db: &PostgresDatabase, id: &AccountReportId) -> StoredReport {
+        sqlx::query_as(
+            //language=postgresql
+            r#"
+            SELECT target_account_id, reported_by_account_id, category, comment, status,
+                   resolution, close_reason, version, nanoid
+            FROM account_reports
+            WHERE id = $1
+            "#,
+        )
+        .bind(id.as_ref())
+        .fetch_one(&mut *db.connection().await.unwrap())
+        .await
+        .unwrap()
+    }
+
+    async fn checkpoint(db: &PostgresDatabase) -> i64 {
+        sqlx::query_scalar(
+            //language=postgresql
+            "SELECT last_seq FROM projection_checkpoints WHERE projector_name = $1",
+        )
+        .bind(PROJECTOR_NAME)
+        .fetch_one(&mut *db.connection().await.unwrap())
+        .await
+        .unwrap()
+    }
+
+    async fn report_max_seq(db: &PostgresDatabase, id: &AccountReportId) -> i64 {
+        sqlx::query_scalar(
+            //language=postgresql
+            "SELECT MAX(seq) FROM account_report_events WHERE id = $1",
+        )
+        .bind(id.as_ref())
+        .fetch_one(&mut *db.connection().await.unwrap())
+        .await
+        .unwrap()
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn account_report_projector_materializes_created_report_and_advances_checkpoint() {
+        // Given
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = AccountReportProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        clear_checkpoint(&projector.db).await;
+        let expected = seed_open_report(&projector.db).await;
+        let event_seq = report_max_seq(&projector.db, &expected.id).await;
+
+        // When
+        let projected_checkpoint = projector.project_account_report_batch().await.unwrap();
+
+        // Then
+        let stored = load_report(&projector.db, &expected.id).await;
+        assert_eq!(stored.target_account_id, *expected.target.as_ref());
+        assert_eq!(
+            stored.reported_by_account_id,
+            *expected.reported_by.as_ref()
+        );
+        assert_eq!(stored.category, "harassment");
+        assert_eq!(
+            stored.comment.as_deref(),
+            Some(expected.comment.as_ref().as_str())
+        );
+        assert_eq!(stored.status, "open");
+        assert_eq!(stored.resolution, None);
+        assert_eq!(stored.close_reason, None);
+        assert_eq!(stored.version, *expected.version.as_ref());
+        assert_eq!(stored.nanoid.as_str(), expected.nanoid.as_ref());
+        assert!(projected_checkpoint >= event_seq);
+        assert_eq!(checkpoint(&projector.db).await, projected_checkpoint);
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn account_report_projector_applies_closed_event() {
+        // Given
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = AccountReportProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        clear_checkpoint(&projector.db).await;
+        let open = seed_open_report(&projector.db).await;
+        projector.project_account_report_batch().await.unwrap();
+        let close_reason = CloseReason::new("moderation action completed".to_string());
+        let close = AccountReport::close(
+            open.id.clone(),
+            ReportResolution::Resolved,
+            close_reason.clone(),
+            open.version,
+        );
+        let mut conn = projector.db.connection().await.unwrap();
+        let closed = projector
+            .db
+            .account_report_event_store()
+            .persist_and_transform(&mut conn, close)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // When
+        projector.project_account_report_batch().await.unwrap();
+
+        // Then
+        let stored = load_report(&projector.db, &open.id).await;
+        assert_eq!(stored.status, "resolved");
+        assert_eq!(stored.resolution.as_deref(), Some("resolved"));
+        assert_eq!(
+            stored.close_reason.as_deref(),
+            Some(close_reason.as_ref().as_str())
+        );
+        assert_eq!(stored.version, *closed.version.as_ref());
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn account_report_projector_is_idempotent_without_new_events() {
+        // Given
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = AccountReportProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        clear_checkpoint(&projector.db).await;
+        let report = seed_open_report(&projector.db).await;
+
+        // When
+        let checkpoint_1 = projector.project_account_report_batch().await.unwrap();
+        let state_1 = load_report(&projector.db, &report.id).await;
+        let count_1: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM account_reports WHERE id = $1")
+            .bind(report.id.as_ref())
+            .fetch_one(&mut *projector.db.connection().await.unwrap())
+            .await
+            .unwrap();
+        let checkpoint_2 = projector.project_account_report_batch().await.unwrap();
+
+        // Then
+        let state_2 = load_report(&projector.db, &report.id).await;
+        let count_2: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM account_reports WHERE id = $1")
+            .bind(report.id.as_ref())
+            .fetch_one(&mut *projector.db.connection().await.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(state_2, state_1);
+        assert_eq!(count_1, 1);
+        assert_eq!(count_2, count_1);
+        assert!(checkpoint_2 >= checkpoint_1);
+        assert_eq!(checkpoint(&projector.db).await, checkpoint_2);
+    }
+}

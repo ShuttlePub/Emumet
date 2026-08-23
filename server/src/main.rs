@@ -18,6 +18,7 @@ use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
 use crate::route::me::MeRouter;
 use crate::route::media::MediaRouter;
 use crate::route::oauth2::OAuth2Router;
+use crate::route::report::{AdminReportRouter, ReportRouter};
 use crate::route::signing::SigningRouter;
 #[cfg(feature = "test-mode")]
 use crate::route::test_mode::TestModeRouter;
@@ -94,9 +95,15 @@ async fn main() -> Result<(), StackTrace> {
     // Admin authorization (Keto instance_moderate) lives inside the use cases.
     let api_v1 = axum::Router::new()
         .route_account()
+        .route_reports()
         .route_me()
         .route_media()
-        .nest("/admin", axum::Router::new().route_admin_account());
+        .nest(
+            "/admin",
+            axum::Router::new()
+                .route_admin_account()
+                .route_admin_reports(),
+        );
 
     let authed_routes = axum::Router::new()
         .nest("/api/v1", api_v1)

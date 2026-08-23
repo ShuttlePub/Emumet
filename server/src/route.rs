@@ -7,6 +7,7 @@ pub mod activitypub;
 pub mod me;
 pub mod media;
 pub mod oauth2;
+pub mod report;
 pub mod signing;
 
 #[cfg(feature = "test-mode")]
@@ -78,13 +79,20 @@ pub(crate) fn build_test_router_with_auth(
     use crate::route::me::MeRouter;
     use crate::route::media::MediaRouter;
     use crate::route::oauth2::OAuth2Router;
+    use crate::route::report::{AdminReportRouter, ReportRouter};
     use crate::route::signing::SigningRouter;
 
     let api_v1 = axum::Router::new()
         .route_account()
+        .route_reports()
         .route_me()
         .route_media()
-        .nest("/admin", axum::Router::new().route_admin_account());
+        .nest(
+            "/admin",
+            axum::Router::new()
+                .route_admin_account()
+                .route_admin_reports(),
+        );
 
     let authed_routes = axum::Router::new()
         .nest("/api/v1", api_v1)
@@ -103,197 +111,5 @@ pub(crate) fn build_test_router_with_auth(
 }
 
 #[cfg(test)]
-mod route_smoke_tests {
-    use super::build_test_router;
-    use crate::handler::AppModule;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use tower::ServiceExt;
-
-    const HTTP_METHODS: &[&str] = &[
-        "get", "post", "put", "delete", "patch", "options", "head", "trace",
-    ];
-
-    async fn app() -> axum::Router {
-        let module = AppModule::new_for_oauth2_test(
-            "http://localhost:65535".into(),
-            "http://localhost:65535".into(),
-        )
-        .await
-        .expect("AppModule init failed (is DATABASE_URL set?)");
-        build_test_router(module)
-    }
-
-    struct RouteCase {
-        method: String,
-        uri: String,
-        requires_auth: bool,
-        allows_not_found: bool,
-        accept: Option<&'static str>,
-    }
-
-    fn replace_path_params(template: &str) -> String {
-        let mut result = String::with_capacity(template.len());
-        let mut chars = template.chars();
-        while let Some(c) = chars.next() {
-            if c == '{' {
-                let param_name: String = chars.by_ref().take_while(|&ch| ch != '}').collect();
-                result.push_str(&format!("test-{param_name}"));
-            } else {
-                result.push(c);
-            }
-        }
-        result
-    }
-
-    fn is_authed(security: Option<&serde_json::Value>) -> bool {
-        match security {
-            Some(arr) => arr.as_array().is_some_and(|a| !a.is_empty()),
-            None => false,
-        }
-    }
-
-    fn has_not_found_response(operation: &serde_json::Value) -> bool {
-        operation
-            .get("responses")
-            .and_then(|responses| responses.as_object())
-            .is_some_and(|responses| responses.contains_key("404"))
-    }
-
-    fn is_activitypub_operation(operation: &serde_json::Value) -> bool {
-        operation
-            .get("tags")
-            .and_then(|tags| tags.as_array())
-            .into_iter()
-            .flatten()
-            .any(|tag| tag.as_str() == Some("ActivityPub"))
-    }
-
-    fn load_routes_from_openapi() -> Vec<RouteCase> {
-        let spec_json = crate::openapi::generate_openapi_json();
-        let spec: serde_json::Value =
-            serde_json::from_str(&spec_json).expect("Failed to parse generated OpenAPI spec");
-
-        let paths = spec["paths"].as_object().expect("paths must be an object");
-        let mut cases = Vec::new();
-
-        for (path_template, path_item) in paths {
-            let path_item = path_item.as_object().expect("path item must be an object");
-
-            for (key, operation) in path_item {
-                if !HTTP_METHODS.contains(&key.as_str()) {
-                    continue;
-                }
-
-                let requires_auth = is_authed(operation.get("security"));
-                let concrete_path = replace_path_params(path_template);
-
-                let query_params: Vec<String> = operation
-                    .get("parameters")
-                    .and_then(|p| p.as_array())
-                    .into_iter()
-                    .flatten()
-                    .filter(|p| p["in"] == "query" && p["required"] == true)
-                    .map(|p| format!("{}=smoke", p["name"].as_str().unwrap_or("unknown")))
-                    .collect();
-
-                let uri = if query_params.is_empty() {
-                    concrete_path
-                } else {
-                    format!("{}?{}", concrete_path, query_params.join("&"))
-                };
-
-                cases.push(RouteCase {
-                    method: key.to_uppercase(),
-                    uri,
-                    requires_auth,
-                    allows_not_found: !requires_auth && has_not_found_response(operation),
-                    accept: is_activitypub_operation(operation)
-                        .then_some("application/activity+json"),
-                });
-            }
-        }
-
-        cases
-    }
-
-    #[test_with::env(DATABASE_URL)]
-    #[tokio::test]
-    async fn all_openapi_routes_are_reachable() {
-        let cases = load_routes_from_openapi();
-        assert!(!cases.is_empty(), "No routes found in OpenAPI spec");
-
-        let router = app().await;
-
-        for case in &cases {
-            let mut request = Request::builder()
-                .method(case.method.as_str())
-                .uri(&case.uri)
-                .header("content-type", "application/json");
-            if let Some(accept) = case.accept {
-                request = request.header("accept", accept);
-            }
-            let request = request.body(Body::from("{}")).unwrap();
-
-            let response = router.clone().oneshot(request).await.unwrap();
-            let status = response.status();
-
-            if !case.allows_not_found {
-                assert_ne!(
-                    status,
-                    StatusCode::NOT_FOUND,
-                    "Route {} {} returned 404 — is it registered?",
-                    case.method,
-                    case.uri,
-                );
-            }
-            assert_ne!(
-                status,
-                StatusCode::METHOD_NOT_ALLOWED,
-                "Route {} {} returned 405 — method mismatch?",
-                case.method,
-                case.uri,
-            );
-
-            if case.requires_auth {
-                assert_eq!(
-                    status,
-                    StatusCode::UNAUTHORIZED,
-                    "Authed route {} {} expected 401 without token, got {}",
-                    case.method,
-                    case.uri,
-                    status,
-                );
-            } else {
-                assert!(
-                    status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
-                    "Public route {} {} returned {} — accidentally wrapped with auth middleware?",
-                    case.method,
-                    case.uri,
-                    status,
-                );
-                assert!(
-                    !status.is_server_error() || status == StatusCode::BAD_GATEWAY,
-                    "Public route {} {} returned {} — handler or wiring broken?",
-                    case.method,
-                    case.uri,
-                    status,
-                );
-            }
-        }
-    }
-
-    #[test_with::env(DATABASE_URL)]
-    #[tokio::test]
-    async fn nonexistent_route_returns_404() {
-        let router = app().await;
-        let request = Request::builder()
-            .method("GET")
-            .uri("/this/route/does/not/exist")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = router.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-}
+#[path = "route/tests.rs"]
+mod route_smoke_tests;

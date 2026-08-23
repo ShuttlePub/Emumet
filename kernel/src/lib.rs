@@ -155,6 +155,20 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::read_model::DependOnAccountReportReadModel for $impl_type {
+            type AccountReportReadModel = <$db_type as $crate::interfaces::read_model::DependOnAccountReportReadModel>::AccountReportReadModel;
+            fn account_report_read_model(&self) -> &Self::AccountReportReadModel {
+                $crate::interfaces::read_model::DependOnAccountReportReadModel::account_report_read_model(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::event_store::DependOnAccountReportEventStore for $impl_type {
+            type AccountReportEventStore = <$db_type as $crate::interfaces::event_store::DependOnAccountReportEventStore>::AccountReportEventStore;
+            fn account_report_event_store(&self) -> &Self::AccountReportEventStore {
+                $crate::interfaces::event_store::DependOnAccountReportEventStore::account_report_event_store(&self.$field)
+            }
+        }
+
         impl $crate::interfaces::repository::DependOnAuthHostRepository for $impl_type {
             type AuthHostRepository = <$db_type as $crate::interfaces::repository::DependOnAuthHostRepository>::AuthHostRepository;
             fn auth_host_repository(&self) -> &Self::AuthHostRepository {
@@ -218,6 +232,13 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnAccountReportRepository for $impl_type {
+            type AccountReportRepository = <$db_type as $crate::interfaces::repository::DependOnAccountReportRepository>::AccountReportRepository;
+            fn account_report_repository(&self) -> &Self::AccountReportRepository {
+                $crate::interfaces::repository::DependOnAccountReportRepository::account_report_repository(&self.$field)
+            }
+        }
+
         impl $crate::interfaces::projection::DependOnProfileEventLog for $impl_type {
             type ProfileEventLog = <$db_type as $crate::interfaces::projection::DependOnProfileEventLog>::ProfileEventLog;
             fn profile_event_log(&self) -> &Self::ProfileEventLog {
@@ -243,6 +264,20 @@ macro_rules! impl_database_delegation {
             type MetadataProjectionWriter = <$db_type as $crate::interfaces::projection::DependOnMetadataProjectionWriter>::MetadataProjectionWriter;
             fn metadata_projection_writer(&self) -> &Self::MetadataProjectionWriter {
                 $crate::interfaces::projection::DependOnMetadataProjectionWriter::metadata_projection_writer(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::projection::DependOnAccountReportEventLog for $impl_type {
+            type AccountReportEventLog = <$db_type as $crate::interfaces::projection::DependOnAccountReportEventLog>::AccountReportEventLog;
+            fn account_report_event_log(&self) -> &Self::AccountReportEventLog {
+                $crate::interfaces::projection::DependOnAccountReportEventLog::account_report_event_log(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::projection::DependOnAccountReportProjectionWriter for $impl_type {
+            type AccountReportProjectionWriter = <$db_type as $crate::interfaces::projection::DependOnAccountReportProjectionWriter>::AccountReportProjectionWriter;
+            fn account_report_projection_writer(&self) -> &Self::AccountReportProjectionWriter {
+                $crate::interfaces::projection::DependOnAccountReportProjectionWriter::account_report_projection_writer(&self.$field)
             }
         }
 
