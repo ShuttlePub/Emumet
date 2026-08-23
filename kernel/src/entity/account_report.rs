@@ -162,6 +162,7 @@ impl AccountReport {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn reconstitute(
         id: AccountReportId,
         target: AccountId,
