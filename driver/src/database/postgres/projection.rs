@@ -465,3 +465,155 @@ impl DependOnMetadataProjectionWriter for PostgresDatabase {
         &PostgresMetadataProjectionWriter
     }
 }
+
+// --- Account report projection ---
+
+impl TryFrom<SeqEventRow>
+    for SeqEvent<
+        kernel::prelude::entity::AccountReportEvent,
+        kernel::prelude::entity::AccountReport,
+    >
+{
+    type Error = Report<KernelError>;
+
+    fn try_from(value: SeqEventRow) -> Result<Self, Self::Error> {
+        let event: kernel::prelude::entity::AccountReportEvent =
+            serde_json::from_value(value.data).convert_error()?;
+        Ok(SeqEvent {
+            seq: value.seq,
+            envelope: EventEnvelope::new(
+                EventId::new(value.id),
+                event,
+                EventVersion::new(value.version),
+            ),
+        })
+    }
+}
+
+pub struct PostgresAccountReportEventLog;
+
+impl kernel::interfaces::projection::AccountReportEventLog for PostgresAccountReportEventLog {
+    type Connection = PostgresConnection;
+
+    async fn find_by_seq_window(
+        &self,
+        executor: &mut Self::Connection,
+        from_seq_exclusive: i64,
+        limit: i64,
+    ) -> error_stack::Result<
+        Vec<
+            SeqEvent<
+                kernel::prelude::entity::AccountReportEvent,
+                kernel::prelude::entity::AccountReport,
+            >,
+        >,
+        KernelError,
+    > {
+        let con: &mut PgConnection = executor;
+        let rows = sqlx::query_as::<_, SeqEventRow>(
+            //language=postgresql
+            r#"
+            SELECT seq, version, id, event_name, data
+            FROM account_report_events
+            WHERE seq > $1
+            ORDER BY seq
+            LIMIT $2
+            "#,
+        )
+        .bind(from_seq_exclusive)
+        .bind(limit)
+        .fetch_all(con)
+        .await
+        .convert_error()?;
+        rows.into_iter()
+            .map(TryFrom::try_from)
+            .collect::<error_stack::Result<Vec<_>, KernelError>>()
+    }
+}
+
+pub struct PostgresAccountReportProjectionWriter;
+
+impl kernel::interfaces::projection::AccountReportProjectionWriter
+    for PostgresAccountReportProjectionWriter
+{
+    type Connection = PostgresConnection;
+
+    async fn upsert(
+        &self,
+        executor: &mut Self::Connection,
+        account_report: &kernel::prelude::entity::AccountReport,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        let category = match account_report.category() {
+            kernel::prelude::entity::ReportCategory::Spam => "spam",
+            kernel::prelude::entity::ReportCategory::Harassment => "harassment",
+            kernel::prelude::entity::ReportCategory::Other => "other",
+        };
+        let (status, resolution, close_reason) = match account_report.status() {
+            kernel::prelude::entity::ReportStatus::Open => ("open", None, None),
+            kernel::prelude::entity::ReportStatus::Closed {
+                resolution,
+                close_reason,
+            } => {
+                let resolution = match resolution {
+                    kernel::prelude::entity::ReportResolution::Resolved => "resolved",
+                    kernel::prelude::entity::ReportResolution::Dismissed => "dismissed",
+                };
+                (resolution, Some(resolution), Some(close_reason.as_ref()))
+            }
+        };
+        sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO account_reports
+                (id, target_account_id, reported_by_account_id, category, comment, status,
+                 resolution, close_reason, version, nanoid)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (id) DO UPDATE SET
+                category = EXCLUDED.category,
+                comment = EXCLUDED.comment,
+                status = EXCLUDED.status,
+                resolution = EXCLUDED.resolution,
+                close_reason = EXCLUDED.close_reason,
+                version = EXCLUDED.version,
+                nanoid = EXCLUDED.nanoid
+            WHERE account_reports.version < EXCLUDED.version
+            "#,
+        )
+        .bind(account_report.id().as_ref())
+        .bind(account_report.target().as_ref())
+        .bind(account_report.reported_by().as_ref())
+        .bind(category)
+        .bind(
+            account_report
+                .comment()
+                .as_ref()
+                .map(kernel::prelude::entity::ReportComment::as_ref),
+        )
+        .bind(status)
+        .bind(resolution)
+        .bind(close_reason)
+        .bind(account_report.version().as_ref())
+        .bind(account_report.nanoid().as_ref())
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
+}
+
+impl kernel::interfaces::projection::DependOnAccountReportEventLog for PostgresDatabase {
+    type AccountReportEventLog = PostgresAccountReportEventLog;
+
+    fn account_report_event_log(&self) -> &Self::AccountReportEventLog {
+        &PostgresAccountReportEventLog
+    }
+}
+
+impl kernel::interfaces::projection::DependOnAccountReportProjectionWriter for PostgresDatabase {
+    type AccountReportProjectionWriter = PostgresAccountReportProjectionWriter;
+
+    fn account_report_projection_writer(&self) -> &Self::AccountReportProjectionWriter {
+        &PostgresAccountReportProjectionWriter
+    }
+}
