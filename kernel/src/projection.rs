@@ -1,7 +1,7 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::{
-    Account, AccountEvent, EventEnvelope, Metadata, MetadataEvent, MetadataId, Profile,
-    ProfileEvent, ProfileId,
+    Account, AccountEvent, AccountReport, AccountReportEvent, EventEnvelope, Metadata,
+    MetadataEvent, MetadataId, Profile, ProfileEvent, ProfileId,
 };
 use crate::KernelError;
 use std::future::Future;
@@ -184,4 +184,43 @@ pub trait DependOnMetadataProjectionWriter: Sync + Send + DependOnDatabaseConnec
     >;
 
     fn metadata_projection_writer(&self) -> &Self::MetadataProjectionWriter;
+}
+
+pub trait AccountReportEventLog: Sync + Send + 'static {
+    type Connection: Connection;
+
+    fn find_by_seq_window(
+        &self,
+        executor: &mut Self::Connection,
+        from_seq_exclusive: i64,
+        limit: i64,
+    ) -> impl Future<
+        Output = error_stack::Result<Vec<SeqEvent<AccountReportEvent, AccountReport>>, KernelError>,
+    > + Send;
+}
+
+pub trait DependOnAccountReportEventLog: Sync + Send + DependOnDatabaseConnection {
+    type AccountReportEventLog: AccountReportEventLog<
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn account_report_event_log(&self) -> &Self::AccountReportEventLog;
+}
+
+pub trait AccountReportProjectionWriter: Sync + Send + 'static {
+    type Connection: Connection;
+
+    fn upsert(
+        &self,
+        executor: &mut Self::Connection,
+        account_report: &AccountReport,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+}
+
+pub trait DependOnAccountReportProjectionWriter: Sync + Send + DependOnDatabaseConnection {
+    type AccountReportProjectionWriter: AccountReportProjectionWriter<
+        Connection = <Self::DatabaseConnection as DatabaseConnection>::Connection,
+    >;
+
+    fn account_report_projection_writer(&self) -> &Self::AccountReportProjectionWriter;
 }
