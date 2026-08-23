@@ -9,6 +9,7 @@ pub(crate) mod admin_account;
 pub(crate) mod me;
 pub(crate) mod media;
 pub(crate) mod oauth2;
+pub(crate) mod report;
 pub(crate) mod signing;
 
 use crate::auth::OidcAuthInfo;
@@ -29,6 +30,7 @@ pub(crate) use admin_account::AdminAccountApi;
 pub(crate) use me::MeApi;
 pub(crate) use media::MediaApi;
 pub(crate) use oauth2::OAuth2Api;
+pub(crate) use report::{AdminReportApi, ReportApi};
 pub(crate) use signing::SigningApi;
 
 pub(crate) async fn resolve_auth_account_id(
