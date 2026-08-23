@@ -1,11 +1,13 @@
 use crate::handler::AppModule;
-use application::projection::{ProjectAccountBatch, ProjectMetadataBatch, ProjectProfileBatch};
+use application::projection::{
+    ProjectAccountBatch, ProjectAccountReportBatch, ProjectMetadataBatch, ProjectProfileBatch,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-/// Poll-driven tailing worker for account, profile, and metadata projections (ADR 0006).
+/// Poll-driven tailing worker for account, profile, metadata, and account-report projections.
 /// Runs `project_batch` for each projector once per interval and stops on shutdown trigger.
 pub struct ProjectionWorker {
     module: Arc<AppModule>,
@@ -56,6 +58,9 @@ impl ProjectionWorker {
                     }
                     if let Err(error) = self.module.project_metadata_batch().await {
                         tracing::error!(error = %error, "metadata projection tailing batch failed");
+                    }
+                    if let Err(error) = self.module.project_account_report_batch().await {
+                        tracing::error!(error = %error, "account report projection tailing batch failed");
                     }
                 }
                 _ = self.shutdown.changed() => {
