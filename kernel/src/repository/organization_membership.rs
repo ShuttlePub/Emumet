@@ -59,6 +59,12 @@ pub trait OrganizationMembershipRepository: Sync + Send + 'static {
         executor: &mut Self::Connection,
         org_account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<i64, KernelError>> + Send;
+
+    fn lock_active_owner_rows(
+        &self,
+        executor: &mut Self::Connection,
+        org_account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 
 pub trait DependOnOrganizationMembershipRepository:

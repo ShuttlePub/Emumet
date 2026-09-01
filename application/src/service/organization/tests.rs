@@ -4,13 +4,15 @@ use kernel::interfaces::database::{
     Connection, DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager,
     TransactionManager,
 };
-use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
+use kernel::interfaces::read_model::{AccountQuery, AccountReadModel, DependOnAccountReadModel};
 use kernel::interfaces::repository::{
-    DependOnOrganizationMembershipRepository, OrganizationMembershipRepository,
+    AggregateRepository, DependOnAccountRepository, DependOnOrganizationMembershipRepository,
+    OrganizationMembershipRepository, Rehydrated,
 };
 use kernel::prelude::entity::{
-    Account, AccountId, AccountKind, AccountName, AuthAccountId, CreatedAt, Nanoid, OrgRole,
-    OrganizationMembership, OrganizationMembershipStatus,
+    Account, AccountEvent, AccountId, AccountKind, AccountName, AuthAccountId, CommandEnvelope,
+    CreatedAt, EventEnvelope, EventVersion, Nanoid, OrgRole, OrganizationMembership,
+    OrganizationMembershipStatus,
 };
 use kernel::test_utils::AccountBuilder;
 use kernel::KernelError;
@@ -49,7 +51,10 @@ impl TransactionManager for MockDatabase {
 }
 
 #[derive(Clone)]
-struct MockAccounts(Vec<Account>);
+struct MockAccounts {
+    values: Arc<Mutex<Vec<Account>>>,
+    links: Arc<Mutex<Vec<(AccountId, AuthAccountId)>>>,
+}
 impl AccountQuery for MockAccounts {
     type Connection = MockConnection;
     async fn find_by_id(
@@ -58,7 +63,9 @@ impl AccountQuery for MockAccounts {
         id: &AccountId,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         Ok(self
-            .0
+            .values
+            .lock()
+            .unwrap()
             .iter()
             .find(|a| a.id() == id && a.deleted_at().is_none())
             .cloned())
@@ -69,7 +76,9 @@ impl AccountQuery for MockAccounts {
         _: &AuthAccountId,
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         Ok(self
-            .0
+            .values
+            .lock()
+            .unwrap()
             .iter()
             .filter(|a| a.kind() == &AccountKind::Personal)
             .cloned()
@@ -87,7 +96,13 @@ impl AccountQuery for MockAccounts {
         _: &mut MockConnection,
         name: &AccountName,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        Ok(self.0.iter().find(|a| a.name() == name).cloned())
+        Ok(self
+            .values
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|a| a.name() == name)
+            .cloned())
     }
     async fn find_by_nanoid(
         &self,
@@ -95,7 +110,9 @@ impl AccountQuery for MockAccounts {
         nanoid: &Nanoid<Account>,
     ) -> error_stack::Result<Option<Account>, KernelError> {
         Ok(self
-            .0
+            .values
+            .lock()
+            .unwrap()
             .iter()
             .find(|a| a.nanoid() == nanoid && a.deleted_at().is_none())
             .cloned())
@@ -106,7 +123,9 @@ impl AccountQuery for MockAccounts {
         nanoids: &[Nanoid<Account>],
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         Ok(self
-            .0
+            .values
+            .lock()
+            .unwrap()
             .iter()
             .filter(|a| nanoids.contains(a.nanoid()))
             .cloned()
@@ -117,28 +136,40 @@ impl AccountQuery for MockAccounts {
         _: &mut MockConnection,
         id: &AccountId,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        Ok(self.0.iter().find(|a| a.id() == id).cloned())
+        Ok(self
+            .values
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|a| a.id() == id)
+            .cloned())
     }
     async fn find_by_nanoid_unfiltered(
         &self,
         executor: &mut MockConnection,
         nanoid: &Nanoid<Account>,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        self.find_by_nanoid(executor, nanoid).await
+        AccountQuery::find_by_nanoid(self, executor, nanoid).await
     }
     async fn find_by_nanoids_unfiltered(
         &self,
         executor: &mut MockConnection,
         nanoids: &[Nanoid<Account>],
     ) -> error_stack::Result<Vec<Account>, KernelError> {
-        self.find_by_nanoids(executor, nanoids).await
+        AccountQuery::find_by_nanoids(self, executor, nanoids).await
     }
     async fn find_by_nanoid_including_deleted(
         &self,
         _: &mut MockConnection,
         nanoid: &Nanoid<Account>,
     ) -> error_stack::Result<Option<Account>, KernelError> {
-        Ok(self.0.iter().find(|a| a.nanoid() == nanoid).cloned())
+        Ok(self
+            .values
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|a| a.nanoid() == nanoid)
+            .cloned())
     }
     async fn is_linked_including_deleted(
         &self,
@@ -147,6 +178,208 @@ impl AccountQuery for MockAccounts {
         _: &AccountId,
     ) -> error_stack::Result<bool, KernelError> {
         Ok(false)
+    }
+}
+
+impl AccountReadModel for MockAccounts {
+    type Connection = MockConnection;
+
+    async fn find_by_id(
+        &self,
+        executor: &mut MockConnection,
+        id: &AccountId,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        AccountQuery::find_by_id(self, executor, id).await
+    }
+    async fn find_by_auth_id(
+        &self,
+        executor: &mut MockConnection,
+        auth_id: &AuthAccountId,
+    ) -> error_stack::Result<Vec<Account>, KernelError> {
+        AccountQuery::find_by_auth_id(self, executor, auth_id).await
+    }
+    async fn find_auth_account_id_by_account_id(
+        &self,
+        executor: &mut MockConnection,
+        account_id: &AccountId,
+    ) -> error_stack::Result<Option<AuthAccountId>, KernelError> {
+        AccountQuery::find_auth_account_id_by_account_id(self, executor, account_id).await
+    }
+    async fn find_by_name(
+        &self,
+        executor: &mut MockConnection,
+        name: &AccountName,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        AccountQuery::find_by_name(self, executor, name).await
+    }
+    async fn find_by_nanoid(
+        &self,
+        executor: &mut MockConnection,
+        nanoid: &Nanoid<Account>,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        AccountQuery::find_by_nanoid(self, executor, nanoid).await
+    }
+    async fn find_by_nanoids(
+        &self,
+        executor: &mut MockConnection,
+        nanoids: &[Nanoid<Account>],
+    ) -> error_stack::Result<Vec<Account>, KernelError> {
+        AccountQuery::find_by_nanoids(self, executor, nanoids).await
+    }
+    async fn create(
+        &self,
+        _: &mut MockConnection,
+        account: &Account,
+    ) -> error_stack::Result<(), KernelError> {
+        self.values.lock().unwrap().push(account.clone());
+        Ok(())
+    }
+    async fn update(
+        &self,
+        _: &mut MockConnection,
+        account: &Account,
+    ) -> error_stack::Result<(), KernelError> {
+        let mut values = self.values.lock().unwrap();
+        let value = values
+            .iter_mut()
+            .find(|value| value.id() == account.id())
+            .ok_or_else(|| Report::new(KernelError::NotFound))?;
+        *value = account.clone();
+        Ok(())
+    }
+    async fn deactivate(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
+    async fn unlink_all_auth_accounts(
+        &self,
+        _: &mut MockConnection,
+        account_id: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        self.links
+            .lock()
+            .unwrap()
+            .retain(|(linked, _)| linked != account_id);
+        Ok(())
+    }
+    async fn link_auth_account(
+        &self,
+        _: &mut MockConnection,
+        account_id: &AccountId,
+        auth_id: &AuthAccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        self.links
+            .lock()
+            .unwrap()
+            .push((account_id.clone(), auth_id.clone()));
+        Ok(())
+    }
+    async fn find_by_id_unfiltered(
+        &self,
+        executor: &mut MockConnection,
+        id: &AccountId,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        AccountQuery::find_by_id_unfiltered(self, executor, id).await
+    }
+    async fn find_by_nanoid_unfiltered(
+        &self,
+        executor: &mut MockConnection,
+        nanoid: &Nanoid<Account>,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        AccountQuery::find_by_nanoid_unfiltered(self, executor, nanoid).await
+    }
+    async fn find_by_nanoids_unfiltered(
+        &self,
+        executor: &mut MockConnection,
+        nanoids: &[Nanoid<Account>],
+    ) -> error_stack::Result<Vec<Account>, KernelError> {
+        AccountQuery::find_by_nanoids_unfiltered(self, executor, nanoids).await
+    }
+    async fn find_by_id_including_deleted(
+        &self,
+        executor: &mut MockConnection,
+        id: &AccountId,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        AccountQuery::find_by_id_unfiltered(self, executor, id).await
+    }
+    async fn find_by_nanoid_including_deleted(
+        &self,
+        executor: &mut MockConnection,
+        nanoid: &Nanoid<Account>,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        AccountQuery::find_by_nanoid_including_deleted(self, executor, nanoid).await
+    }
+    async fn is_linked_including_deleted(
+        &self,
+        _: &mut MockConnection,
+        auth_id: &AuthAccountId,
+        account_id: &AccountId,
+    ) -> error_stack::Result<bool, KernelError> {
+        Ok(self
+            .links
+            .lock()
+            .unwrap()
+            .contains(&(account_id.clone(), auth_id.clone())))
+    }
+    async fn suspend(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+        _: &str,
+        _: Option<time::OffsetDateTime>,
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
+    async fn unsuspend(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
+    async fn ban(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+        _: &str,
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Default)]
+struct MockAccountRepository {
+    saved_events: Arc<Mutex<Vec<AccountEvent>>>,
+}
+
+impl AggregateRepository<Account> for MockAccountRepository {
+    type Connection = MockConnection;
+    type Id = AccountId;
+
+    async fn load(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+    ) -> error_stack::Result<Rehydrated<Account>, KernelError> {
+        Err(Report::new(KernelError::NotFound))
+    }
+    async fn save(
+        &self,
+        _: &mut MockConnection,
+        command: CommandEnvelope<AccountEvent, Account>,
+    ) -> error_stack::Result<EventEnvelope<AccountEvent, Account>, KernelError> {
+        self.saved_events
+            .lock()
+            .unwrap()
+            .push(command.event().clone());
+        Ok(EventEnvelope::new(
+            command.id().clone(),
+            command.event().clone(),
+            EventVersion::default(),
+        ))
     }
 }
 
@@ -280,12 +513,20 @@ impl OrganizationMembershipRepository for MockMemberships {
             })
             .count() as i64)
     }
+    async fn lock_active_owner_rows(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
 struct Module {
     database: MockDatabase,
     accounts: MockAccounts,
+    account_repository: MockAccountRepository,
     memberships: MockMemberships,
 }
 impl DependOnDatabaseConnection for Module {
@@ -300,10 +541,16 @@ impl DependOnTransactionManager for Module {
         &self.database
     }
 }
-impl DependOnAccountQuery for Module {
-    type AccountQuery = MockAccounts;
-    fn account_query(&self) -> &MockAccounts {
+impl DependOnAccountReadModel for Module {
+    type AccountReadModel = MockAccounts;
+    fn account_read_model(&self) -> &MockAccounts {
         &self.accounts
+    }
+}
+impl DependOnAccountRepository for Module {
+    type AccountRepository = MockAccountRepository;
+    fn account_repository(&self) -> &MockAccountRepository {
+        &self.account_repository
     }
 }
 impl DependOnOrganizationMembershipRepository for Module {
@@ -347,12 +594,71 @@ fn fixture(owner_count: usize) -> Fixture {
     Fixture {
         module: Module {
             database: MockDatabase,
-            accounts: MockAccounts(vec![org.clone(), owner.clone(), member.clone()]),
+            accounts: MockAccounts {
+                values: Arc::new(Mutex::new(vec![org.clone(), owner.clone(), member.clone()])),
+                links: Arc::new(Mutex::new(Vec::new())),
+            },
+            account_repository: MockAccountRepository::default(),
             memberships: MockMemberships(Arc::new(Mutex::new(memberships))),
         },
         auth: AuthAccountId::default(),
         member,
     }
+}
+
+#[tokio::test]
+async fn create_organization_persists_organization_owner_and_auth_link() {
+    let f = fixture(1);
+    let creator = f
+        .module
+        .accounts
+        .values
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|account| account.nanoid().as_ref() == "owner")
+        .unwrap()
+        .clone();
+
+    let result = f
+        .module
+        .create_organization(
+            f.auth.clone(),
+            crate::dto::organization::CreateOrganizationDto {
+                name: "created-org".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let accounts = f.module.accounts.values.lock().unwrap();
+    let organization = accounts
+        .iter()
+        .find(|account| account.nanoid().as_ref() == &result.account_id)
+        .unwrap();
+    assert_eq!(organization.kind(), &AccountKind::Organization);
+    let memberships = f.module.memberships.0.lock().unwrap();
+    assert!(memberships.iter().any(|membership| {
+        membership.org_account_id() == organization.id()
+            && membership.member_account_id() == creator.id()
+            && membership.role() == &OrgRole::Owner
+            && membership.status() == &OrganizationMembershipStatus::Active
+    }));
+    assert!(f
+        .module
+        .accounts
+        .links
+        .lock()
+        .unwrap()
+        .contains(&(organization.id().clone(), f.auth.clone())));
+    assert!(f
+        .module
+        .account_repository
+        .saved_events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| matches!(event, AccountEvent::Created { kind: AccountKind::Organization, auth_account_id, .. } if auth_account_id == &f.auth)));
 }
 
 #[tokio::test]
@@ -456,6 +762,106 @@ async fn last_owner_cannot_be_demoted_or_leave() {
         .unwrap_err();
     assert_eq!(demote.current_context(), &KernelError::Rejected);
     assert_eq!(leave.current_context(), &KernelError::Rejected);
+}
+
+#[tokio::test]
+async fn owner_changes_active_member_role_to_admin() {
+    let f = fixture(1);
+    let owner = f
+        .module
+        .accounts
+        .values
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|account| account.nanoid().as_ref() == "owner")
+        .unwrap()
+        .clone();
+    f.module
+        .memberships
+        .0
+        .lock()
+        .unwrap()
+        .push(OrganizationMembership::new(
+            f.module
+                .accounts
+                .values
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|account| account.nanoid().as_ref() == "org")
+                .unwrap()
+                .id()
+                .clone(),
+            f.member.id().clone(),
+            OrgRole::Member,
+            OrganizationMembershipStatus::Active,
+            owner.id().clone(),
+            CreatedAt::now(),
+        ));
+
+    f.module
+        .change_role(f.auth, "org".into(), "member".into(), OrgRole::Admin)
+        .await
+        .unwrap();
+
+    assert!(f
+        .module
+        .memberships
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|membership| {
+            membership.member_account_id() == f.member.id() && membership.role() == &OrgRole::Admin
+        }));
+}
+
+#[tokio::test]
+async fn owner_removes_active_member() {
+    let f = fixture(1);
+    let accounts = f.module.accounts.values.lock().unwrap();
+    let org = accounts
+        .iter()
+        .find(|account| account.nanoid().as_ref() == "org")
+        .unwrap()
+        .clone();
+    let owner = accounts
+        .iter()
+        .find(|account| account.nanoid().as_ref() == "owner")
+        .unwrap()
+        .clone();
+    drop(accounts);
+    f.module
+        .memberships
+        .0
+        .lock()
+        .unwrap()
+        .push(OrganizationMembership::new(
+            org.id().clone(),
+            f.member.id().clone(),
+            OrgRole::Member,
+            OrganizationMembershipStatus::Active,
+            owner.id().clone(),
+            CreatedAt::now(),
+        ));
+
+    f.module
+        .remove_member(f.auth, "org".into(), "member".into())
+        .await
+        .unwrap();
+
+    assert!(!f
+        .module
+        .memberships
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|membership| {
+            membership.org_account_id() == org.id()
+                && membership.member_account_id() == f.member.id()
+        }));
 }
 
 #[tokio::test]

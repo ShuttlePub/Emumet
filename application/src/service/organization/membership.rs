@@ -264,22 +264,26 @@ pub trait ChangeRoleUseCase:
                 .await?
                 .filter(|m| m.status() == &OrganizationMembershipStatus::Active)
                 .ok_or_else(not_found)?;
-            if target.role() == &OrgRole::Owner
-                && new_role != OrgRole::Owner
-                && self
-                    .organization_membership_repository()
-                    .count_active_owners(&mut conn, org.id())
-                    .await?
-                    == 1
-            {
-                return Err(rejected("The last active owner cannot be demoted"));
-            }
+            let demotes_owner = target.role() == &OrgRole::Owner && new_role != OrgRole::Owner;
             let org_id = org.id().clone();
             let member_id = member.id().clone();
             let deps = self.clone();
             self.transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
+                        if demotes_owner {
+                            deps.organization_membership_repository()
+                                .lock_active_owner_rows(executor, &org_id)
+                                .await?;
+                            if deps
+                                .organization_membership_repository()
+                                .count_active_owners(executor, &org_id)
+                                .await?
+                                == 1
+                            {
+                                return Err(rejected("The last active owner cannot be demoted"));
+                            }
+                        }
                         deps.organization_membership_repository()
                             .update_role(executor, &org_id, &member_id, new_role)
                             .await
@@ -431,21 +435,26 @@ pub trait LeaveOrganizationUseCase:
                 .await?
                 .filter(|m| m.status() == &OrganizationMembershipStatus::Active)
                 .ok_or_else(not_found)?;
-            if membership.role() == &OrgRole::Owner
-                && self
-                    .organization_membership_repository()
-                    .count_active_owners(&mut conn, org.id())
-                    .await?
-                    == 1
-            {
-                return Err(rejected("The last active owner cannot leave"));
-            }
+            let leaves_as_owner = membership.role() == &OrgRole::Owner;
             let org_id = org.id().clone();
             let actor_id = actor.id().clone();
             let deps = self.clone();
             self.transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
+                        if leaves_as_owner {
+                            deps.organization_membership_repository()
+                                .lock_active_owner_rows(executor, &org_id)
+                                .await?;
+                            if deps
+                                .organization_membership_repository()
+                                .count_active_owners(executor, &org_id)
+                                .await?
+                                == 1
+                            {
+                                return Err(rejected("The last active owner cannot leave"));
+                            }
+                        }
                         deps.organization_membership_repository()
                             .delete(executor, &org_id, &actor_id)
                             .await

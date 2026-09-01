@@ -239,6 +239,24 @@ impl OrganizationMembershipRepository for PostgresOrganizationMembershipReposito
         .await
         .convert_error()
     }
+
+    async fn lock_active_owner_rows(
+        &self,
+        executor: &mut Self::Connection,
+        org_account_id: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_scalar::<_, i32>(
+            "SELECT 1 FROM organization_members
+             WHERE org_account_id = $1 AND role = 'owner' AND status = 'active'
+             FOR UPDATE",
+        )
+        .bind(org_account_id.as_ref())
+        .fetch_all(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
 }
 
 impl DependOnOrganizationMembershipRepository for PostgresDatabase {
