@@ -13,7 +13,7 @@ use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
 use crate::handler::AppModule;
 use crate::projection_worker::{projection_poll_interval_from_env, ProjectionWorker};
-use crate::route::account::{AccountRouter, AdminAccountRouter};
+use crate::route::account::{AccountRouter, AdminAccountRouter, OrgAccountRouter};
 use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
 use crate::route::me::MeRouter;
 use crate::route::media::MediaRouter;
@@ -95,6 +95,7 @@ async fn main() -> Result<(), StackTrace> {
     // Admin authorization (Keto instance_moderate) lives inside the use cases.
     let api_v1 = axum::Router::new()
         .route_account()
+        .route_org_account()
         .route_reports()
         .route_me()
         .route_media()
