@@ -758,6 +758,7 @@ delegate_database_dependence! {
     kernel::interfaces::repository::DependOnImageRepository { ImageRepository, image_repository },
     kernel::interfaces::repository::DependOnMetadataRepository { MetadataRepository, metadata_repository },
     kernel::interfaces::repository::DependOnMuteRepository { MuteRepository, mute_repository },
+    kernel::interfaces::repository::DependOnOrganizationMembershipRepository { OrganizationMembershipRepository, organization_membership_repository },
     kernel::interfaces::repository::DependOnOutboxActivityRepository { OutboxActivityRepository, outbox_activity_repository },
     kernel::interfaces::repository::DependOnProfileRepository { ProfileRepository, profile_repository },
     kernel::interfaces::repository::DependOnRemoteAccountRepository { RemoteAccountRepository, remote_account_repository },

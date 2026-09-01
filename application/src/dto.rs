@@ -3,5 +3,6 @@ pub mod activitypub;
 pub mod block_mute;
 pub mod media;
 pub mod metadata;
+pub mod organization;
 pub mod pagination;
 pub mod profile;
