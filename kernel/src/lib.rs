@@ -127,6 +127,13 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnOrganizationMembershipRepository for $impl_type {
+            type OrganizationMembershipRepository = <$db_type as $crate::interfaces::repository::DependOnOrganizationMembershipRepository>::OrganizationMembershipRepository;
+            fn organization_membership_repository(&self) -> &Self::OrganizationMembershipRepository {
+                $crate::interfaces::repository::DependOnOrganizationMembershipRepository::organization_membership_repository(&self.$field)
+            }
+        }
+
         impl $crate::interfaces::read_model::DependOnProfileReadModel for $impl_type {
             type ProfileReadModel = <$db_type as $crate::interfaces::read_model::DependOnProfileReadModel>::ProfileReadModel;
             fn profile_read_model(&self) -> &Self::ProfileReadModel {

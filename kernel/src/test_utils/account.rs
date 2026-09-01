@@ -1,6 +1,6 @@
 use crate::entity::{
-    Account, AccountId, AccountIsBot, AccountName, AccountStatus, CreatedAt, DeletedAt,
-    EventVersion, Nanoid,
+    Account, AccountId, AccountIsBot, AccountKind, AccountName, AccountStatus, CreatedAt,
+    DeletedAt, EventVersion, Nanoid,
 };
 
 use super::unique_account_name;
@@ -9,6 +9,7 @@ pub struct AccountBuilder {
     id: Option<AccountId>,
     name: Option<AccountName>,
     is_bot: Option<AccountIsBot>,
+    kind: Option<AccountKind>,
     status: Option<AccountStatus>,
     deleted_at: Option<Option<DeletedAt<Account>>>,
     version: Option<EventVersion<Account>>,
@@ -28,6 +29,7 @@ impl AccountBuilder {
             id: None,
             name: None,
             is_bot: None,
+            kind: None,
             status: None,
             deleted_at: None,
             version: None,
@@ -48,6 +50,11 @@ impl AccountBuilder {
 
     pub fn is_bot(mut self, is_bot: bool) -> Self {
         self.is_bot = Some(AccountIsBot::new(is_bot));
+        self
+    }
+
+    pub fn kind(mut self, kind: AccountKind) -> Self {
+        self.kind = Some(kind);
         self
     }
 
@@ -83,6 +90,7 @@ impl AccountBuilder {
             self.name
                 .unwrap_or_else(|| AccountName::new(unique_account_name())),
             self.is_bot.unwrap_or_else(|| AccountIsBot::new(false)),
+            self.kind.unwrap_or_default(),
             self.status.unwrap_or_default(),
             self.deleted_at.unwrap_or(None),
             self.version.unwrap_or_default(),

@@ -150,8 +150,8 @@ pub trait DependOnAccountReportRepository: Sync + Send + DependOnDatabaseConnect
 mod test {
     use super::Rehydrated;
     use crate::entity::{
-        Account, AccountEvent, AccountId, AccountIsBot, AccountName, AuthAccountId, EventEnvelope,
-        EventId, EventVersion, Nanoid,
+        Account, AccountEvent, AccountId, AccountIsBot, AccountKind, AccountName, AuthAccountId,
+        EventEnvelope, EventId, EventVersion, Nanoid,
     };
     use crate::KernelError;
 
@@ -167,6 +167,7 @@ mod test {
         AccountEvent::Created {
             name: AccountName::new("test"),
             is_bot: AccountIsBot::new(false),
+            kind: AccountKind::Personal,
             nanoid: Nanoid::default(),
             auth_account_id: AuthAccountId::default(),
         }
