@@ -14,7 +14,9 @@ use kernel::interfaces::read_model::{
     DependOnProfileReadModel, MetadataReadModel, ProfileReadModel,
 };
 use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
-use kernel::prelude::entity::{Account, AccountEvent, AccountId, EventEnvelope, FollowTargetId};
+use kernel::prelude::entity::{
+    Account, AccountEvent, AccountId, AccountKind, EventEnvelope, FollowTargetId,
+};
 use kernel::KernelError;
 use std::collections::HashMap;
 use std::future::Future;
@@ -192,22 +194,24 @@ pub trait ProjectAccountBatch:
                                     self.account_read_model()
                                         .link_auth_account(executor, account_id, &auth_id)
                                         .await?;
-                                    if let Err(e) = self
-                                        .permission_writer()
-                                        .create_relation(
-                                            &RelationTarget::Account {
-                                                account_id: account_id.clone(),
-                                                relation: AccountRelation::Owner,
-                                            },
-                                            &auth_id,
-                                        )
-                                        .await
-                                    {
-                                        tracing::warn!(
-                                            "Account projector: failed to create Owner relation for account {:?}: {:?}",
-                                            account_id,
-                                            e
-                                        );
+                                    if account.kind() == &AccountKind::Personal {
+                                        if let Err(e) = self
+                                            .permission_writer()
+                                            .create_relation(
+                                                &RelationTarget::Account {
+                                                    account_id: account_id.clone(),
+                                                    relation: AccountRelation::Owner,
+                                                },
+                                                &auth_id,
+                                            )
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                "Account projector: failed to create Owner relation for account {:?}: {:?}",
+                                                account_id,
+                                                e
+                                            );
+                                        }
                                     }
                                 }
                             }

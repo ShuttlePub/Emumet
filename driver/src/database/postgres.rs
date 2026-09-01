@@ -13,6 +13,7 @@ mod metadata;
 mod metadata_event_store;
 mod metadata_repository;
 mod mute;
+mod organization_membership;
 mod outbox_activity;
 mod profile;
 mod profile_event_store;

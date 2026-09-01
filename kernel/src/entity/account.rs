@@ -15,12 +15,14 @@ use crate::KernelError;
 
 pub use self::id::*;
 pub use self::is_bot::*;
+pub use self::kind::*;
 pub use self::moderation_reason::*;
 pub use self::name::*;
 pub use self::status::*;
 
 mod id;
 mod is_bot;
+mod kind;
 mod moderation_reason;
 mod name;
 mod status;
@@ -32,6 +34,7 @@ pub struct Account {
     id: AccountId,
     name: AccountName,
     is_bot: AccountIsBot,
+    kind: AccountKind,
     status: AccountStatus,
     deleted_at: Option<DeletedAt<Account>>,
     version: EventVersion<Account>,
@@ -46,6 +49,8 @@ pub enum AccountEvent {
     Created {
         name: AccountName,
         is_bot: AccountIsBot,
+        #[serde(default)]
+        kind: AccountKind,
         nanoid: Nanoid<Account>,
         auth_account_id: AuthAccountId,
     },
@@ -86,6 +91,29 @@ impl Account {
         let event = AccountEvent::Created {
             name,
             is_bot,
+            kind: AccountKind::Personal,
+            nanoid,
+            auth_account_id,
+        };
+        CommandEnvelope::new(
+            EventId::from(id),
+            event.name(),
+            event,
+            Some(ExpectedVersion::Nothing),
+        )
+    }
+
+    pub fn create_organization(
+        id: AccountId,
+        name: AccountName,
+        is_bot: AccountIsBot,
+        nanoid: Nanoid<Account>,
+        auth_account_id: AuthAccountId,
+    ) -> CommandEnvelope<AccountEvent, Account> {
+        let event = AccountEvent::Created {
+            name,
+            is_bot,
+            kind: AccountKind::Organization,
             nanoid,
             auth_account_id,
         };
@@ -224,6 +252,7 @@ impl EventApplier for Account {
             AccountEvent::Created {
                 name,
                 is_bot,
+                kind,
                 nanoid: nano_id,
                 auth_account_id: _,
             } => {
@@ -237,6 +266,7 @@ impl EventApplier for Account {
                     id: AccountId::new(*event.id.as_ref()),
                     name,
                     is_bot,
+                    kind,
                     status: AccountStatus::Active,
                     deleted_at: None,
                     version: event.version,
@@ -355,8 +385,8 @@ impl EventApplier for Account {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        Account, AccountEvent, AccountId, AccountIsBot, AccountName, AuthAccountId, EventEnvelope,
-        EventId, EventVersion, Nanoid,
+        Account, AccountEvent, AccountId, AccountIsBot, AccountKind, AccountName, AuthAccountId,
+        EventEnvelope, EventId, EventVersion, Nanoid,
     };
     use crate::event::EventApplier;
     use crate::test_utils::AccountBuilder;
@@ -372,6 +402,7 @@ mod test {
         let event = AccountEvent::Created {
             name: name.clone(),
             is_bot: is_bot.clone(),
+            kind: AccountKind::Personal,
             nanoid: nano_id.clone(),
             auth_account_id: AuthAccountId::default(),
         };
@@ -384,7 +415,31 @@ mod test {
         assert_eq!(account.id(), &id);
         assert_eq!(account.name(), &name);
         assert_eq!(account.is_bot(), &is_bot);
+        assert_eq!(account.kind(), &AccountKind::Personal);
         assert_eq!(account.nanoid(), &nano_id);
+    }
+
+    #[test]
+    fn create_organization_sets_organization_kind() {
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
+        let command = Account::create_organization(
+            id.clone(),
+            AccountName::new("organization"),
+            AccountIsBot::new(false),
+            Nanoid::default(),
+            AuthAccountId::default(),
+        );
+        let envelope = EventEnvelope::new(
+            EventId::from(id),
+            command.event().clone(),
+            EventVersion::default(),
+        );
+        let mut account = None;
+
+        Account::apply(&mut account, envelope).unwrap();
+
+        assert_eq!(account.unwrap().kind(), &AccountKind::Organization);
     }
 
     // Regression guard: pre-migration Created payloads carry key fields; replay must tolerate them.
@@ -426,6 +481,7 @@ mod test {
         let event = AccountEvent::Created {
             name: AccountName::new("test"),
             is_bot: AccountIsBot::new(false),
+            kind: AccountKind::Personal,
             nanoid: nano_id,
             auth_account_id: AuthAccountId::default(),
         };

@@ -51,6 +51,13 @@ impl Modify for SecurityAddon {
         crate::route::account::mute_account,
         crate::route::account::unmute_account,
         crate::route::account::get_mutes,
+        crate::route::account::create_organization,
+        crate::route::account::list_my_organizations,
+        crate::route::account::list_organization_members,
+        crate::route::account::invite_member,
+        crate::route::account::accept_invite,
+        crate::route::account::change_role,
+        crate::route::account::remove_member,
         crate::route::me::get_me,
         crate::route::media::upload_image,
         crate::route::oauth2::login,
@@ -101,6 +108,16 @@ impl Modify for SecurityAddon {
         crate::schema::report::CloseReportRequest,
         crate::schema::report::AccountReportResponse,
         crate::schema::report::AccountReportListResponse,
+        crate::schema::organization::CreateOrganizationRequest,
+        crate::schema::organization::InviteMemberRequest,
+        crate::schema::organization::ChangeRoleRequest,
+        crate::schema::organization::OrganizationRole,
+        crate::schema::organization::MembershipStatus,
+        crate::schema::organization::OrganizationResponse,
+        crate::schema::organization::MyOrganizationResponse,
+        crate::schema::organization::MyOrganizationsResponse,
+        crate::schema::organization::OrganizationMemberResponse,
+        crate::schema::organization::OrganizationMembersResponse,
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -111,6 +128,7 @@ impl Modify for SecurityAddon {
         (name = "Signing", description = "HTTP Signature signing"),
         (name = "ActivityPub", description = "ActivityPub discovery and actor endpoints"),
         (name = "Report", description = "Account moderation reports"),
+        (name = "Organization", description = "Organization account and membership management"),
     )
 )]
 #[allow(dead_code)] // utoipa OpenApiマクロ内部で使用される

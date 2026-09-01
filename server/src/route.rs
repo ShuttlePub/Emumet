@@ -74,7 +74,7 @@ pub(crate) fn build_test_router_with_auth(
     oidc_config: std::sync::Arc<crate::auth::OidcConfig>,
     jwks_cache: std::sync::Arc<crate::auth::JwksCache>,
 ) -> axum::Router {
-    use crate::route::account::{AccountRouter, AdminAccountRouter};
+    use crate::route::account::{AccountRouter, AdminAccountRouter, OrgAccountRouter};
     use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
     use crate::route::me::MeRouter;
     use crate::route::media::MediaRouter;
@@ -84,6 +84,7 @@ pub(crate) fn build_test_router_with_auth(
 
     let api_v1 = axum::Router::new()
         .route_account()
+        .route_org_account()
         .route_reports()
         .route_me()
         .route_media()

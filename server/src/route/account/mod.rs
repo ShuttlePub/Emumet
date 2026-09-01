@@ -3,6 +3,7 @@ mod block_mute;
 mod client;
 mod follow;
 mod follow_relations;
+mod organization;
 mod unfollow;
 pub(crate) use admin::{
     __path_assign_instance_role, __path_ban_account_by_id, __path_revoke_instance_role,
@@ -25,6 +26,12 @@ pub(crate) use follow::{__path_follow_account, follow_account};
 pub(crate) use follow_relations::{
     __path_get_followers, __path_get_following, get_followers, get_following,
 };
+pub(crate) use organization::{
+    __path_accept_invite, __path_change_role, __path_create_organization, __path_invite_member,
+    __path_list_my_organizations, __path_list_organization_members, __path_remove_member,
+    accept_invite, change_role, create_organization, invite_member, list_my_organizations,
+    list_organization_members, remove_member,
+};
 pub(crate) use unfollow::{__path_unfollow_account, unfollow_account};
 
 use crate::handler::AppModule;
@@ -37,6 +44,10 @@ pub trait AccountRouter {
 
 pub trait AdminAccountRouter {
     fn route_admin_account(self) -> Self;
+}
+
+pub trait OrgAccountRouter {
+    fn route_org_account(self) -> Self;
 }
 
 impl AccountRouter for Router<AppModule> {
@@ -60,6 +71,30 @@ impl AccountRouter for Router<AppModule> {
             .route("/accounts/{account_id}/mute", post(mute_account))
             .route("/accounts/{account_id}/unmute", post(unmute_account))
             .route("/accounts/{account_id}/mutes", get(get_mutes))
+    }
+}
+
+impl OrgAccountRouter for Router<AppModule> {
+    fn route_org_account(self) -> Self {
+        self.route("/organizations", post(create_organization))
+            .route("/me/organizations", get(list_my_organizations))
+            .route(
+                "/organizations/{org}/members",
+                get(list_organization_members),
+            )
+            .route("/organizations/{org}/invites", post(invite_member))
+            .route(
+                "/organizations/{org}/invites/{account_id}/accept",
+                post(accept_invite),
+            )
+            .route(
+                "/organizations/{org}/members/{account_id}/role",
+                put(change_role),
+            )
+            .route(
+                "/organizations/{org}/members/{account_id}",
+                delete(remove_member),
+            )
     }
 }
 
