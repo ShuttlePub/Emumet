@@ -114,12 +114,17 @@ pub trait ListOrganizationMembersUseCase:
                     .find_by_id_unfiltered(&mut conn, membership.member_account_id())
                     .await?
                     .ok_or_else(|| Report::new(KernelError::NotFound))?;
+                let inviter = self
+                    .account_query()
+                    .find_by_id_unfiltered(&mut conn, membership.invited_by())
+                    .await?
+                    .ok_or_else(|| Report::new(KernelError::NotFound))?;
                 result.push(OrganizationMemberDto {
                     account_id: member.nanoid().as_ref().to_string(),
                     name: member.name().as_ref().to_string(),
                     role: *membership.role(),
                     status: *membership.status(),
-                    invited_by: membership.invited_by().as_ref().to_string(),
+                    invited_by: inviter.nanoid().as_ref().to_string(),
                     created_at: *membership.created_at().as_ref(),
                 });
             }

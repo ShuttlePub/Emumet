@@ -2756,7 +2756,9 @@
             "format": "date-time"
           },
           "invited_by": {
-            "type": "string"
+            "type": "string",
+            "description": "Nanoid of the account that issued the invitation.",
+            "example": "V1StGXR8_Z5jdHi6B-myT"
           },
           "name": {
             "type": "string"

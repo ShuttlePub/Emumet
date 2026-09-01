@@ -113,6 +113,8 @@ pub struct OrganizationMemberResponse {
     pub name: String,
     pub role: OrganizationRole,
     pub status: MembershipStatus,
+    /// Nanoid of the account that issued the invitation.
+    #[schema(example = "V1StGXR8_Z5jdHi6B-myT")]
     pub invited_by: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
