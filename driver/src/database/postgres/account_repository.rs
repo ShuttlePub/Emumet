@@ -55,7 +55,7 @@ mod test {
     use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
     use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
     use kernel::prelude::entity::{
-        Account, AccountEvent, AccountId, AccountIsBot, AccountName, AuthAccountId,
+        Account, AccountEvent, AccountId, AccountIsBot, AccountKind, AccountName, AuthAccountId,
         CommandEnvelope, EventEnvelope, EventId, EventVersion, ExpectedVersion, Nanoid,
     };
     use kernel::KernelError;
@@ -67,6 +67,7 @@ mod test {
             AccountEvent::Created {
                 name: AccountName::new("equivalence"),
                 is_bot: AccountIsBot::new(false),
+                kind: AccountKind::Personal,
                 nanoid: nanoid.clone(),
                 auth_account_id: AuthAccountId::default(),
             },

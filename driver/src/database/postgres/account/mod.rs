@@ -26,7 +26,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE id = $1 AND deleted_at IS NULL
@@ -37,8 +37,9 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(id.as_ref())
         .fetch_optional(con)
         .await
-        .convert_error()
-        .map(|option| option.map(Account::from))
+        .convert_error()?
+        .map(TryFrom::try_from)
+        .transpose()
     }
 
     async fn find_by_auth_id(
@@ -52,7 +53,7 @@ impl AccountReadModel for PostgresAccountReadModel {
             r#"
             -- Intentionally does NOT filter suspended/banned: allows account owners
             -- to see their own accounts' moderation status via the listing endpoint.
-            SELECT accounts.id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT accounts.id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             INNER JOIN auth_emumet_accounts ON auth_emumet_accounts.emumet_id = accounts.id
@@ -62,12 +63,10 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(auth_id.as_ref())
         .fetch_all(con)
         .await
-        .convert_error()
-        .map(|rows| {
-            rows.into_iter()
-                .map(|row| account_from_row(row, true))
-                .collect()
-        })
+        .convert_error()?
+        .into_iter()
+        .map(|row| account_from_row(row, true))
+        .collect()
     }
 
     async fn find_auth_account_id_by_account_id(
@@ -98,7 +97,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE name = $1 AND deleted_at IS NULL
@@ -109,8 +108,9 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(name.as_ref())
         .fetch_optional(con)
         .await
-        .convert_error()
-        .map(|option| option.map(Account::from))
+        .convert_error()?
+        .map(TryFrom::try_from)
+        .transpose()
     }
 
     async fn find_by_nanoid(
@@ -122,7 +122,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE nanoid = $1 AND deleted_at IS NULL
@@ -133,8 +133,9 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(nanoid.as_ref())
         .fetch_optional(con)
         .await
-        .convert_error()
-        .map(|option| option.map(Account::from))
+        .convert_error()?
+        .map(TryFrom::try_from)
+        .transpose()
     }
 
     async fn find_by_nanoids(
@@ -147,7 +148,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE nanoid = ANY($1) AND deleted_at IS NULL
@@ -158,8 +159,10 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(&nanoid_strs)
         .fetch_all(con)
         .await
-        .convert_error()
-        .map(|rows| rows.into_iter().map(Account::from).collect())
+        .convert_error()?
+        .into_iter()
+        .map(TryFrom::try_from)
+        .collect()
     }
 
     async fn create(
@@ -171,13 +174,17 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO accounts (id, name, is_bot, version, nanoid, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO accounts (id, name, is_bot, kind, version, nanoid, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
         .bind(account.id().as_ref())
         .bind(account.name().as_ref())
         .bind(account.is_bot().as_ref())
+        .bind(match account.kind() {
+            kernel::prelude::entity::AccountKind::Personal => "personal",
+            kernel::prelude::entity::AccountKind::Organization => "organization",
+        })
         .bind(account.version().as_ref())
         .bind(account.nanoid().as_ref())
         .bind(account.created_at().as_ref())
@@ -316,7 +323,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE id = $1 AND deleted_at IS NULL
@@ -325,8 +332,9 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(id.as_ref())
         .fetch_optional(con)
         .await
-        .convert_error()
-        .map(|option| option.map(|row| account_from_row(row, true)))
+        .convert_error()?
+        .map(|row| account_from_row(row, true))
+        .transpose()
     }
 
     async fn find_by_nanoid_unfiltered(
@@ -338,7 +346,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE nanoid = $1 AND deleted_at IS NULL
@@ -347,8 +355,9 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(nanoid.as_ref())
         .fetch_optional(con)
         .await
-        .convert_error()
-        .map(|option| option.map(|row| account_from_row(row, true)))
+        .convert_error()?
+        .map(|row| account_from_row(row, true))
+        .transpose()
     }
 
     async fn find_by_nanoids_unfiltered(
@@ -361,7 +370,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE nanoid = ANY($1) AND deleted_at IS NULL
@@ -370,12 +379,10 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(&nanoid_strs)
         .fetch_all(con)
         .await
-        .convert_error()
-        .map(|rows| {
-            rows.into_iter()
-                .map(|row| account_from_row(row, true))
-                .collect()
-        })
+        .convert_error()?
+        .into_iter()
+        .map(|row| account_from_row(row, true))
+        .collect()
     }
 
     async fn find_by_id_including_deleted(
@@ -387,7 +394,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE id = $1
@@ -396,8 +403,9 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(id.as_ref())
         .fetch_optional(con)
         .await
-        .convert_error()
-        .map(|option| option.map(|row| account_from_row(row, true)))
+        .convert_error()?
+        .map(|row| account_from_row(row, true))
+        .transpose()
     }
 
     async fn find_by_nanoid_including_deleted(
@@ -409,7 +417,7 @@ impl AccountReadModel for PostgresAccountReadModel {
         sqlx::query_as::<_, AccountRow>(
             //language=postgresql
             r#"
-            SELECT id, name, is_bot, deleted_at, version, nanoid, created_at,
+            SELECT id, name, is_bot, kind, deleted_at, version, nanoid, created_at,
                    suspended_at, suspend_expires_at, suspend_reason, banned_at, ban_reason
             FROM accounts
             WHERE nanoid = $1
@@ -418,8 +426,9 @@ impl AccountReadModel for PostgresAccountReadModel {
         .bind(nanoid.as_ref())
         .fetch_optional(con)
         .await
-        .convert_error()
-        .map(|option| option.map(|row| account_from_row(row, true)))
+        .convert_error()?
+        .map(|row| account_from_row(row, true))
+        .transpose()
     }
 
     async fn is_linked_including_deleted(

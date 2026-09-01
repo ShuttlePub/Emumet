@@ -279,6 +279,7 @@ async fn older_version_upsert_is_a_noop() {
             AccountEvent::Created {
                 name: AccountName::new(kernel::test_utils::unique_account_name()),
                 is_bot: AccountIsBot::new(false),
+                kind: kernel::prelude::entity::AccountKind::Personal,
                 nanoid: Nanoid::default(),
                 auth_account_id: AuthAccountId::default(),
             },
@@ -297,6 +298,7 @@ async fn older_version_upsert_is_a_noop() {
         AccountEvent::Created {
             name: AccountName::new(kernel::test_utils::unique_account_name()),
             is_bot: AccountIsBot::new(false),
+            kind: kernel::prelude::entity::AccountKind::Personal,
             nanoid: Nanoid::default(),
             auth_account_id: AuthAccountId::default(),
         },

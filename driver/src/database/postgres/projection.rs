@@ -8,9 +8,9 @@ use kernel::interfaces::projection::{
     ProfileProjectionWriter, ProjectionCheckpointStore, SeqEvent,
 };
 use kernel::prelude::entity::{
-    Account, AccountEvent, AccountStatus, EventEnvelope, EventId, EventVersion, ImageId, Metadata,
-    MetadataEvent, MetadataId, Profile, ProfileDisplayName, ProfileEvent, ProfileId,
-    ProfileSummary,
+    Account, AccountEvent, AccountKind, AccountStatus, EventEnvelope, EventId, EventVersion,
+    ImageId, Metadata, MetadataEvent, MetadataId, Profile, ProfileDisplayName, ProfileEvent,
+    ProfileId, ProfileSummary,
 };
 use kernel::KernelError;
 use serde_json;
@@ -158,13 +158,14 @@ impl AccountProjectionWriter for PostgresAccountProjectionWriter {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO accounts (id, name, is_bot, version, nanoid, created_at,
+            INSERT INTO accounts (id, name, is_bot, kind, version, nanoid, created_at,
                                   suspended_at, suspend_expires_at, suspend_reason,
                                   banned_at, ban_reason, deleted_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 is_bot = EXCLUDED.is_bot,
+                kind = EXCLUDED.kind,
                 version = EXCLUDED.version,
                 nanoid = EXCLUDED.nanoid,
                 created_at = EXCLUDED.created_at,
@@ -180,6 +181,10 @@ impl AccountProjectionWriter for PostgresAccountProjectionWriter {
         .bind(account.id().as_ref())
         .bind(account.name().as_ref())
         .bind(account.is_bot().as_ref())
+        .bind(match account.kind() {
+            AccountKind::Personal => "personal",
+            AccountKind::Organization => "organization",
+        })
         .bind(account.version().as_ref())
         .bind(account.nanoid().as_ref())
         .bind(account.created_at().as_ref())
