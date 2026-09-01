@@ -284,13 +284,19 @@ mod tests {
         let org = create_account(&db, &mut conn, AccountKind::Organization).await;
         let member = create_account(&db, &mut conn, AccountKind::Personal).await;
         let inviter = create_account(&db, &mut conn, AccountKind::Personal).await;
+        // Postgres timestamptz stores microsecond precision; truncate to
+        // microseconds so the DB round-trip compares equal (CI coverage run
+        // 33505931615 failed on a sub-microsecond mismatch).
+        let now = OffsetDateTime::now_utc();
+        let created_at =
+            CreatedAt::new(now - time::Duration::nanoseconds(i64::from(now.nanosecond() % 1_000)));
         let membership = OrganizationMembership::new(
             org.id().clone(),
             member.id().clone(),
             OrgRole::Member,
             OrganizationMembershipStatus::Pending,
             inviter.id().clone(),
-            CreatedAt::now(),
+            created_at,
         );
 
         db.organization_membership_repository()
