@@ -417,7 +417,6 @@ mod test {
         assert_eq!(account.is_bot(), &is_bot);
         assert_eq!(account.kind(), &AccountKind::Personal);
         assert_eq!(account.nanoid(), &nano_id);
-        assert_eq!(account.kind(), &AccountKind::Personal);
     }
 
     #[test]
