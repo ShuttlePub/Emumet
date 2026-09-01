@@ -397,6 +397,46 @@ async fn duplicate_invite_is_rejected() {
 }
 
 #[tokio::test]
+async fn owner_invite_is_rejected() {
+    let f = fixture(1);
+
+    let error = f
+        .module
+        .invite_member(f.auth, "org".into(), "member".into(), OrgRole::Owner)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.current_context(), &KernelError::Rejected);
+}
+
+#[tokio::test]
+async fn non_member_management_is_permission_denied() {
+    let f = fixture(1);
+    f.module.memberships.0.lock().unwrap().clear();
+
+    let error = f
+        .module
+        .invite_member(f.auth, "org".into(), "member".into(), OrgRole::Member)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.current_context(), &KernelError::PermissionDenied);
+}
+
+#[tokio::test]
+async fn nonexistent_organization_is_not_found() {
+    let f = fixture(1);
+
+    let error = f
+        .module
+        .invite_member(f.auth, "missing".into(), "member".into(), OrgRole::Member)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.current_context(), &KernelError::NotFound);
+}
+
+#[tokio::test]
 async fn last_owner_cannot_be_demoted_or_leave() {
     let f = fixture(1);
     let demote = f
