@@ -110,6 +110,10 @@ async fn main() -> Result<(), StackTrace> {
         .nest("/api/v1", api_v1)
         .nest("/internal/v1", axum::Router::new().route_signing())
         .layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            api::organization_context::organization_context_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
             (oidc_config, jwks_cache),
             auth::auth_middleware,
         ));
@@ -158,7 +162,11 @@ fn build_cors_layer() -> CorsLayer {
             CorsLayer::new()
                 .allow_origin(origins)
                 .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
-                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+                .allow_headers([
+                    header::AUTHORIZATION,
+                    header::CONTENT_TYPE,
+                    header::HeaderName::from_static("x-organization-id"),
+                ])
         }
     }
 }

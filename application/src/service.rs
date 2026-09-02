@@ -6,6 +6,7 @@ pub mod block;
 pub mod media;
 pub mod mute;
 pub mod organization;
+pub mod profile;
 pub mod report;
 pub mod session_context;
 

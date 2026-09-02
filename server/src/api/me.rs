@@ -1,6 +1,7 @@
 use super::resolve_auth_account_id;
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
+use application::service::session_context::OrganizationContext;
 use application::service::session_context::{GetSessionContextUseCase, SessionContext};
 use axum::extract::FromRef;
 use kernel::prelude::entity::AuthAccountId;
@@ -27,8 +28,11 @@ impl MeApi {
     pub async fn get_session_context(
         &self,
         auth_account_id: &AuthAccountId,
+        org_context: Option<OrganizationContext>,
     ) -> error_stack::Result<SessionContext, KernelError> {
-        self.module.get_session_context(auth_account_id).await
+        self.module
+            .get_session_context(auth_account_id, org_context)
+            .await
     }
 }
 

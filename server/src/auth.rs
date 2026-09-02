@@ -1,3 +1,4 @@
+use application::service::session_context::OrganizationContext;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Request, StatusCode};
@@ -85,6 +86,11 @@ pub struct OidcAuthInfo {
     /// Kratos identity UUID → used as `AuthAccount.client_id`
     pub subject: String,
 }
+
+pub const ORGANIZATION_ID_HEADER: &str = "X-Organization-Id";
+
+#[derive(Debug, Clone, Default)]
+pub struct RequestOrganizationContext(pub Option<OrganizationContext>);
 
 impl From<AuthClaims> for OidcAuthInfo {
     fn from(claims: AuthClaims) -> Self {

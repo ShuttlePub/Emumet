@@ -16,6 +16,8 @@ use application::service::activitypub::{
 };
 use application::service::block::{BlockAccountUseCase, GetBlocksUseCase, UnblockAccountUseCase};
 use application::service::mute::{GetMutesUseCase, MuteAccountUseCase, UnmuteAccountUseCase};
+use application::service::profile::CreateOrganizationProfileUseCase;
+use application::service::session_context::OrganizationContext;
 use axum::extract::FromRef;
 use kernel::prelude::entity::AuthAccountId;
 use kernel::KernelError;
@@ -76,13 +78,24 @@ impl AccountApi {
         self.module.create_account(auth_account_id, dto).await
     }
 
-    pub async fn update_account_detail(
+    pub async fn update_account_detail_in_context(
         &self,
         auth_account_id: &AuthAccountId,
+        org_context: Option<&OrganizationContext>,
         dto: UpdateAccountDto,
     ) -> error_stack::Result<AccountDetailDto, KernelError> {
         self.module
-            .update_account_detail(auth_account_id, dto)
+            .update_account_detail_in_context(auth_account_id, org_context, dto)
+            .await
+    }
+
+    pub async fn create_organization_profile(
+        &self,
+        org_context: OrganizationContext,
+        dto: application::dto::profile::CreateProfileDto,
+    ) -> error_stack::Result<application::dto::profile::ProfileDto, KernelError> {
+        self.module
+            .create_organization_profile(org_context, dto)
             .await
     }
 

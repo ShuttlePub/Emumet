@@ -99,6 +99,10 @@ pub(crate) fn build_test_router_with_auth(
         .nest("/api/v1", api_v1)
         .nest("/internal/v1", axum::Router::new().route_signing())
         .layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            crate::api::organization_context::organization_context_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
             (oidc_config, jwks_cache),
             crate::auth::auth_middleware,
         ));

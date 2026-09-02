@@ -1,18 +1,26 @@
 use kernel::interfaces::permission::{DependOnPermissionChecker, InstanceRole, PermissionChecker};
-use kernel::prelude::entity::AuthAccountId;
+use kernel::prelude::entity::{AccountId, AuthAccountId, OrgRole};
 use kernel::KernelError;
 use std::future::Future;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrganizationContext {
+    pub org_account_id: AccountId,
+    pub role: OrgRole,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionContext {
     pub auth_account_id: AuthAccountId,
     pub instance_roles: Vec<InstanceRole>,
+    pub org_context: Option<OrganizationContext>,
 }
 
 pub trait GetSessionContextUseCase: 'static + DependOnPermissionChecker {
     fn get_session_context(
         &self,
         auth_account_id: &AuthAccountId,
+        org_context: Option<OrganizationContext>,
     ) -> impl Future<Output = error_stack::Result<SessionContext, KernelError>> {
         async move {
             let roles = self
@@ -22,6 +30,7 @@ pub trait GetSessionContextUseCase: 'static + DependOnPermissionChecker {
             Ok(SessionContext {
                 auth_account_id: auth_account_id.clone(),
                 instance_roles: roles,
+                org_context,
             })
         }
     }
@@ -96,7 +105,8 @@ mod tests {
         };
         let auth_account_id = AuthAccountId::default();
         let result =
-            super::GetSessionContextUseCase::get_session_context(&deps, &auth_account_id).await;
+            super::GetSessionContextUseCase::get_session_context(&deps, &auth_account_id, None)
+                .await;
         assert!(result.is_ok());
         let ctx = result.unwrap();
         assert_eq!(ctx.auth_account_id, auth_account_id);
@@ -104,6 +114,7 @@ mod tests {
             ctx.instance_roles,
             vec![InstanceRole::Admin, InstanceRole::Moderator]
         );
+        assert_eq!(ctx.org_context, None);
     }
 
     /// 2. double が [Admin] のみ返す場合、結果も [Admin] のみ (暗黙包含なし)
@@ -117,7 +128,8 @@ mod tests {
         };
         let auth_account_id = AuthAccountId::default();
         let result =
-            super::GetSessionContextUseCase::get_session_context(&deps, &auth_account_id).await;
+            super::GetSessionContextUseCase::get_session_context(&deps, &auth_account_id, None)
+                .await;
         assert!(result.is_ok());
         let ctx = result.unwrap();
         assert_eq!(ctx.instance_roles, vec![InstanceRole::Admin]);
@@ -135,7 +147,8 @@ mod tests {
         };
         let auth_account_id = AuthAccountId::default();
         let result =
-            super::GetSessionContextUseCase::get_session_context(&deps, &auth_account_id).await;
+            super::GetSessionContextUseCase::get_session_context(&deps, &auth_account_id, None)
+                .await;
         assert!(result.is_err());
     }
 
@@ -152,9 +165,35 @@ mod tests {
         };
         let auth_account_id = AuthAccountId::default();
         let result =
-            super::GetSessionContextUseCase::get_session_context(&deps, &auth_account_id).await;
+            super::GetSessionContextUseCase::get_session_context(&deps, &auth_account_id, None)
+                .await;
         assert!(result.is_ok());
         let ctx = result.unwrap();
         assert!(ctx.instance_roles.is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_specified_organization_context() {
+        kernel::ensure_generator_initialized();
+        let deps = TestDeps {
+            permission_checker: MockPermissionChecker {
+                behavior: MockBehavior::Roles(vec![]),
+            },
+        };
+        let auth_account_id = AuthAccountId::default();
+        let org_context = super::OrganizationContext {
+            org_account_id: kernel::prelude::entity::AccountId::default(),
+            role: kernel::prelude::entity::OrgRole::Member,
+        };
+
+        let ctx = super::GetSessionContextUseCase::get_session_context(
+            &deps,
+            &auth_account_id,
+            Some(org_context.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(ctx.org_context, Some(org_context));
     }
 }

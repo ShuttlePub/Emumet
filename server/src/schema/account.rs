@@ -1,6 +1,7 @@
 use application::dto::account::{
     AccountDetailDto, AccountFieldDto, CreateAccountDto, ModerationDto, UpdateAccountDto,
 };
+use application::dto::profile::CreateProfileDto;
 use kernel::prelude::entity::FieldAction;
 use serde::{Deserialize, Deserializer, Serialize};
 use time::OffsetDateTime;
@@ -18,6 +19,44 @@ pub struct GetAllAccountQuery {
 pub struct CreateAccountRequest {
     pub name: String,
     pub is_bot: bool,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateProfileRequest {
+    pub display_name: Option<String>,
+    pub summary: Option<String>,
+}
+
+impl CreateProfileRequest {
+    pub fn into_dto(self) -> CreateProfileDto {
+        CreateProfileDto {
+            display_name: self.display_name,
+            summary: self.summary,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProfileResponse {
+    pub account_id: String,
+    pub id: String,
+    pub display_name: Option<String>,
+    pub summary: Option<String>,
+    pub icon_url: Option<String>,
+    pub banner_url: Option<String>,
+}
+
+impl From<application::dto::profile::ProfileDto> for ProfileResponse {
+    fn from(value: application::dto::profile::ProfileDto) -> Self {
+        Self {
+            account_id: value.account_nanoid,
+            id: value.nanoid,
+            display_name: value.display_name,
+            summary: value.summary,
+            icon_url: value.icon_url,
+            banner_url: value.banner_url,
+        }
+    }
 }
 
 impl CreateAccountRequest {

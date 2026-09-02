@@ -10,6 +10,7 @@ pub(crate) mod me;
 pub(crate) mod media;
 pub(crate) mod oauth2;
 pub(crate) mod organization;
+pub(crate) mod organization_context;
 pub(crate) mod report;
 pub(crate) mod signing;
 
@@ -18,10 +19,11 @@ use crate::handler::AppModule;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::repository::{
     AuthAccountRepository, AuthHostRepository, DependOnAuthAccountRepository,
-    DependOnAuthHostRepository,
+    DependOnAuthHostRepository, OrganizationMembershipRepository,
 };
 use kernel::prelude::entity::{
-    AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
+    Account, AccountKind, AuthAccountClientId, AuthAccountId, AuthHost, AuthHostId, AuthHostUrl,
+    Nanoid, OrganizationMembershipStatus,
 };
 use kernel::KernelError;
 
@@ -61,4 +63,44 @@ pub(crate) async fn resolve_auth_account_id(
         .find_or_create(&mut executor, &host_id, &client_id)
         .await?;
     Ok(auth_account.id().clone())
+}
+
+pub(crate) async fn resolve_organization_context(
+    app: &AppModule,
+    auth_account_id: &AuthAccountId,
+    organization_nanoid: &str,
+) -> error_stack::Result<application::service::session_context::OrganizationContext, KernelError> {
+    use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
+    use kernel::interfaces::repository::DependOnOrganizationMembershipRepository;
+
+    let mut executor = app.database_connection().connection().await?;
+    let organization = app
+        .account_query()
+        .find_by_nanoid(
+            &mut executor,
+            &Nanoid::<Account>::new(organization_nanoid.to_string()),
+        )
+        .await?
+        .filter(|account| account.kind() == &AccountKind::Organization)
+        .ok_or_else(|| error_stack::Report::new(KernelError::NotFound))?;
+    let personal_accounts = app
+        .account_query()
+        .find_by_auth_id(&mut executor, auth_account_id)
+        .await?;
+    for account in personal_accounts.into_iter().filter(|account| {
+        account.kind() == &AccountKind::Personal && account.deleted_at().is_none()
+    }) {
+        if let Some(membership) = app
+            .organization_membership_repository()
+            .find(&mut executor, organization.id(), account.id())
+            .await?
+            .filter(|membership| membership.status() == &OrganizationMembershipStatus::Active)
+        {
+            return Ok(application::service::session_context::OrganizationContext {
+                org_account_id: organization.id().clone(),
+                role: *membership.role(),
+            });
+        }
+    }
+    Err(error_stack::Report::new(KernelError::PermissionDenied))
 }

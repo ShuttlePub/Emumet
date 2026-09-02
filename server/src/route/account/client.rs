@@ -1,10 +1,10 @@
 use crate::api::AccountApi;
-use crate::auth::{AuthClaims, OidcAuthInfo};
+use crate::auth::{AuthClaims, OidcAuthInfo, RequestOrganizationContext, ORGANIZATION_ID_HEADER};
 use crate::error::ErrorStatus;
 use crate::route::{parse_comma_ids, DirectionConverter};
 use crate::schema::account::{
     account_dto_to_response, AccountResponse, AccountsResponse, CreateAccountRequest,
-    GetAllAccountQuery, UpdateAccountRequest,
+    CreateProfileRequest, GetAllAccountQuery, ProfileResponse, UpdateAccountRequest,
 };
 use application::dto::pagination::Pagination;
 use axum::extract::{Path, Query, State};
@@ -164,6 +164,7 @@ pub(crate) async fn create_account(
 )]
 pub(crate) async fn update_account_by_id(
     Extension(claims): Extension<AuthClaims>,
+    Extension(RequestOrganizationContext(org_context)): Extension<RequestOrganizationContext>,
     State(api): State<AccountApi>,
     Path(account_id): Path<String>,
     Json(request): Json<UpdateAccountRequest>,
@@ -186,10 +187,43 @@ pub(crate) async fn update_account_by_id(
         .into_dto(account_id)
         .map_err(|message| ErrorStatus::from((StatusCode::BAD_REQUEST, message.to_string())))?;
     let account = api
-        .update_account_detail(&auth_account_id, dto)
+        .update_account_detail_in_context(&auth_account_id, org_context.as_ref(), dto)
         .await
         .map_err(ErrorStatus::from)?;
     Ok(Json(account_dto_to_response(account)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/profiles",
+    params(("X-Organization-Id" = String, Header, description = "Organization account nanoid that owns the profile")),
+    request_body = CreateProfileRequest,
+    responses(
+        (status = 201, body = ProfileResponse),
+        (status = 403, description = "Authenticated person is not an active organization member"),
+        (status = 404, description = "Organization not found"),
+        (status = 422, description = "Organization profile already exists"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn create_profile(
+    Extension(_claims): Extension<AuthClaims>,
+    Extension(RequestOrganizationContext(org_context)): Extension<RequestOrganizationContext>,
+    State(api): State<AccountApi>,
+    Json(request): Json<CreateProfileRequest>,
+) -> Result<(StatusCode, Json<ProfileResponse>), ErrorStatus> {
+    let org_context = org_context.ok_or_else(|| {
+        ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            format!("{ORGANIZATION_ID_HEADER} header is required"),
+        ))
+    })?;
+    let profile = api
+        .create_organization_profile(org_context, request.into_dto())
+        .await
+        .map_err(ErrorStatus::from)?;
+    Ok((StatusCode::CREATED, Json(profile.into())))
 }
 
 #[utoipa::path(
@@ -269,3 +303,7 @@ pub(crate) async fn reactivate_account_by_id(
 
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;

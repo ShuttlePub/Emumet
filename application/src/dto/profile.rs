@@ -2,6 +2,12 @@ use kernel::interfaces::read_model::ProfileProjection;
 use kernel::prelude::entity::FieldAction;
 
 #[derive(Debug)]
+pub struct CreateProfileDto {
+    pub display_name: Option<String>,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug)]
 pub struct UpdateProfileDto {
     pub account_nanoid: String,
     pub display_name: FieldAction<String>,
