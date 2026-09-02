@@ -233,8 +233,8 @@ async fn get_session_context_with_member_header_returns_organization_context() {
     let json = response_json(response).await;
     assert_eq!(json["org_context"]["role"], "member");
     assert_eq!(
-        json["org_context"]["org_account_id"],
-        AsRef::<i64>::as_ref(fixture.organization.id()).to_string()
+        json["org_context"]["org_account_id"].as_str(),
+        Some(fixture.organization.nanoid().as_ref().as_str())
     );
 }
 
@@ -296,6 +296,11 @@ async fn create_profile_with_organization_context_uses_organization_account_id()
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::CREATED);
+    let json = response_json(response).await;
+    assert_eq!(
+        json["account_id"].as_str(),
+        Some(fixture.organization.nanoid().as_ref().as_str())
+    );
     let mut executor = fixture
         .module
         .database_connection()

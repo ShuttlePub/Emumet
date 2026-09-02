@@ -98,6 +98,7 @@ pub(crate) async fn resolve_organization_context(
         {
             return Ok(application::service::session_context::OrganizationContext {
                 org_account_id: organization.id().clone(),
+                org_account_nanoid: organization.nanoid().as_ref().to_string(),
                 role: *membership.role(),
             });
         }

@@ -96,7 +96,7 @@ pub(crate) async fn get_session_context(
     let org_context = context
         .org_context
         .map(|context| OrganizationContextResponse {
-            org_account_id: AsRef::<i64>::as_ref(&context.org_account_id).to_string(),
+            org_account_id: context.org_account_nanoid,
             role: match context.role {
                 kernel::prelude::entity::OrgRole::Owner => "owner".to_string(),
                 kernel::prelude::entity::OrgRole::Admin => "admin".to_string(),

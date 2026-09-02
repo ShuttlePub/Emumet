@@ -6,6 +6,7 @@ use std::future::Future;
 #[derive(Debug, Clone, PartialEq)]
 pub struct OrganizationContext {
     pub org_account_id: AccountId,
+    pub org_account_nanoid: String,
     pub role: OrgRole,
 }
 
@@ -183,6 +184,7 @@ mod tests {
         let auth_account_id = AuthAccountId::default();
         let org_context = super::OrganizationContext {
             org_account_id: kernel::prelude::entity::AccountId::default(),
+            org_account_nanoid: "organization-nanoid".to_string(),
             role: kernel::prelude::entity::OrgRole::Member,
         };
 

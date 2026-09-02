@@ -48,6 +48,7 @@ pub trait CreateOrganizationProfileUseCase:
             }
 
             let account_id = org_context.org_account_id;
+            let account_nanoid = org_context.org_account_nanoid;
             let deps = self.clone();
             let profile = self
                 .transaction_manager()
@@ -74,8 +75,6 @@ pub trait CreateOrganizationProfileUseCase:
                     })
                 })
                 .await?;
-            let account_nanoid = AsRef::<i64>::as_ref(profile.account_id()).to_string();
-
             Ok(ProfileDto::new(profile.into(), account_nanoid, None, None))
         }
     }
