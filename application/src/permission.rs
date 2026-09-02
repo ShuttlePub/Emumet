@@ -9,6 +9,17 @@ pub fn account_view(account_id: &AccountId) -> Permission {
     Permission::new(PermissionReq::account(account_id.clone(), "view"))
 }
 
+pub fn check_organization_account_edit(
+    organization_account_id: &AccountId,
+    target_account_id: &AccountId,
+) -> error_stack::Result<(), KernelError> {
+    if organization_account_id != target_account_id {
+        return Err(Report::new(KernelError::PermissionDenied)
+            .attach_printable("Organization context does not own the target account"));
+    }
+    Ok(())
+}
+
 pub fn account_edit(account_id: &AccountId) -> Permission {
     Permission::new(PermissionReq::account(account_id.clone(), "edit"))
 }

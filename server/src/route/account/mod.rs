@@ -17,10 +17,10 @@ pub(crate) use block_mute::{
     mute_account, unblock_account, unmute_account,
 };
 pub(crate) use client::{
-    __path_create_account, __path_deactivate_account_by_id, __path_get_account_by_id,
-    __path_get_accounts, __path_reactivate_account_by_id, __path_update_account_by_id,
-    create_account, deactivate_account_by_id, get_account_by_id, get_accounts,
-    reactivate_account_by_id, update_account_by_id,
+    __path_create_account, __path_create_profile, __path_deactivate_account_by_id,
+    __path_get_account_by_id, __path_get_accounts, __path_reactivate_account_by_id,
+    __path_update_account_by_id, create_account, create_profile, deactivate_account_by_id,
+    get_account_by_id, get_accounts, reactivate_account_by_id, update_account_by_id,
 };
 pub(crate) use follow::{__path_follow_account, follow_account};
 pub(crate) use follow_relations::{
@@ -54,6 +54,7 @@ impl AccountRouter for Router<AppModule> {
     fn route_account(self) -> Self {
         self.route("/accounts", get(get_accounts))
             .route("/accounts", post(create_account))
+            .route("/profiles", post(create_profile))
             .route("/accounts/{account_id}", get(get_account_by_id))
             .route("/accounts/{account_id}", patch(update_account_by_id))
             .route("/accounts/{account_id}", delete(deactivate_account_by_id))

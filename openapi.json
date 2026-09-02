@@ -1551,6 +1551,51 @@
         ]
       }
     },
+    "/api/v1/me/session-context": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "operationId": "get_session_context",
+        "parameters": [
+          {
+            "name": "X-Organization-Id",
+            "in": "header",
+            "description": "Organization account nanoid used for this request",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionContextResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated person is not an active organization member"
+          },
+          "404": {
+            "description": "Organization not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/organizations": {
       "post": {
         "tags": [
@@ -1813,6 +1858,61 @@
           },
           "422": {
             "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "create_profile",
+        "parameters": [
+          {
+            "name": "X-Organization-Id",
+            "in": "header",
+            "description": "Organization account nanoid that owns the profile",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated person is not an active organization member"
+          },
+          "404": {
+            "description": "Organization not found"
+          },
+          "422": {
+            "description": "Organization profile already exists"
           }
         },
         "security": [
@@ -2416,6 +2516,23 @@
           }
         }
       },
+      "CreateProfileRequest": {
+        "type": "object",
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "CreateReportRequest": {
         "type": "object",
         "required": [
@@ -2737,6 +2854,21 @@
           }
         }
       },
+      "OrganizationContextResponse": {
+        "type": "object",
+        "required": [
+          "org_account_id",
+          "role"
+        ],
+        "properties": {
+          "org_account_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
       "OrganizationMemberResponse": {
         "type": "object",
         "required": [
@@ -2808,6 +2940,45 @@
           "member"
         ]
       },
+      "ProfileResponse": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "id"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "banner_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "icon_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "PublicKey": {
         "type": "object",
         "description": "An ActivityPub public key object attached to an Actor.",
@@ -2877,6 +3048,34 @@
           },
           "targetType": {
             "type": "string"
+          }
+        }
+      },
+      "SessionContextResponse": {
+        "type": "object",
+        "required": [
+          "auth_account_id",
+          "instance_roles"
+        ],
+        "properties": {
+          "auth_account_id": {
+            "type": "string"
+          },
+          "instance_roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "org_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OrganizationContextResponse"
+              }
+            ]
           }
         }
       },

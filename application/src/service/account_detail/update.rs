@@ -1,8 +1,9 @@
 use super::fields::apply_field_updates;
 use super::validate::validate_update_account_dto;
 use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto, UpdateAccountDto};
-use crate::permission::{account_edit, check_permission};
+use crate::permission::{account_edit, check_organization_account_edit, check_permission};
 use crate::service::activitypub::DeliverUpdatePersonUseCase;
+use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{DependOnKeyEncryptor, DependOnPasswordProvider};
@@ -64,6 +65,15 @@ pub trait UpdateAccountDetailUseCase:
         auth_account_id: &'a AuthAccountId,
         dto: UpdateAccountDto,
     ) -> impl Future<Output = error_stack::Result<AccountDetailDto, KernelError>> + Send + 'a {
+        self.update_account_detail_in_context(auth_account_id, None, dto)
+    }
+
+    fn update_account_detail_in_context<'a>(
+        &'a self,
+        auth_account_id: &'a AuthAccountId,
+        org_context: Option<&'a OrganizationContext>,
+        dto: UpdateAccountDto,
+    ) -> impl Future<Output = error_stack::Result<AccountDetailDto, KernelError>> + Send + 'a {
         async move {
             validate_update_account_dto(&dto)?;
             let mut connection = self.database_connection().connection().await?;
@@ -75,7 +85,24 @@ pub trait UpdateAccountDetailUseCase:
                 )
                 .await?
                 .ok_or_else(|| Report::new(KernelError::NotFound))?;
-            check_permission(self, auth_account_id, &account_edit(projection.id())).await?;
+            match org_context {
+                Some(context) => {
+                    check_organization_account_edit(&context.org_account_id, projection.id())?
+                }
+                None => {
+                    check_permission(self, auth_account_id, &account_edit(projection.id())).await?
+                }
+            }
+            self.update_account_detail_authorized(dto, projection).await
+        }
+    }
+
+    fn update_account_detail_authorized(
+        &self,
+        dto: UpdateAccountDto,
+        projection: Account,
+    ) -> impl Future<Output = error_stack::Result<AccountDetailDto, KernelError>> + Send + '_ {
+        async move {
             if !projection.status().is_active() {
                 return Err(Report::new(KernelError::Rejected)
                     .attach_printable("Cannot modify a suspended or banned account"));
