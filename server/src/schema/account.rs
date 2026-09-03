@@ -171,6 +171,18 @@ pub struct BanAccountRequest {
     pub reason: String,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct WarnAccountRequest {
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AccountWarningResponse {
+    pub reason: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub warned_at: OffsetDateTime,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AccountResponse {
     pub id: String,

@@ -6,10 +6,11 @@ mod follow_relations;
 mod organization;
 mod unfollow;
 pub(crate) use admin::{
-    __path_assign_instance_role, __path_ban_account_by_id, __path_revoke_instance_role,
-    __path_suspend_account_by_id, __path_unban_account_by_id, __path_unsuspend_account_by_id,
-    assign_instance_role, ban_account_by_id, revoke_instance_role, suspend_account_by_id,
-    unban_account_by_id, unsuspend_account_by_id,
+    __path_assign_instance_role, __path_ban_account_by_id, __path_list_account_warnings,
+    __path_revoke_instance_role, __path_suspend_account_by_id, __path_unban_account_by_id,
+    __path_unsuspend_account_by_id, __path_warn_account_by_id, assign_instance_role,
+    ban_account_by_id, list_account_warnings, revoke_instance_role, suspend_account_by_id,
+    unban_account_by_id, unsuspend_account_by_id, warn_account_by_id,
 };
 pub(crate) use block_mute::{
     __path_block_account, __path_get_blocks, __path_get_mutes, __path_mute_account,
@@ -102,6 +103,10 @@ impl OrgAccountRouter for Router<AppModule> {
 impl AdminAccountRouter for Router<AppModule> {
     fn route_admin_account(self) -> Self {
         self.route(
+            "/accounts/{account_id}/warnings",
+            get(list_account_warnings).post(warn_account_by_id),
+        )
+        .route(
             "/accounts/{account_id}/suspend",
             post(suspend_account_by_id),
         )

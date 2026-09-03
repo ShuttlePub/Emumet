@@ -13,6 +13,8 @@ pub struct CreateReportRequest {
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct CloseReportRequest {
     pub close_reason: String,
+    #[serde(default)]
+    pub resolution: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -78,5 +80,6 @@ fn report_resolution_value(resolution: &ReportResolution) -> &'static str {
     match resolution {
         ReportResolution::Resolved => "resolved",
         ReportResolution::Dismissed => "dismissed",
+        ReportResolution::Warned => "warned",
     }
 }

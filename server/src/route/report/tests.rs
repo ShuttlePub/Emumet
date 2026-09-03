@@ -158,6 +158,80 @@ async fn resolve_report_rejects_already_closed_report() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
+async fn resolve_report_accepts_warned_resolution() {
+    let _guard = REPORT_TEST_LOCK.lock().await;
+    let keto = MockServer::start().await;
+    let app = ReportTestApp::new(&keto).await;
+    app.mock_moderator(&keto, true, 1).await;
+    let create = app.json_request(
+        Method::POST,
+        "/api/v1/reports",
+        serde_json::json!({"target": app.target_nanoid, "category": "spam"}),
+    );
+    let created = app.router.clone().oneshot(create).await.unwrap();
+    let report_id = response_json(created).await["id"]
+        .as_i64()
+        .expect("report id");
+    let resolve = app.json_request(
+        Method::POST,
+        &format!("/api/v1/admin/reports/{report_id}/resolve"),
+        serde_json::json!({"resolution": "warned", "close_reason": "warning issued"}),
+    );
+
+    let response = app.router.oneshot(resolve).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    keto.verify().await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn warning_endpoint_issues_and_lists_warning_history() {
+    let _guard = REPORT_TEST_LOCK.lock().await;
+    let keto = MockServer::start().await;
+    let app = ReportTestApp::new(&keto).await;
+    app.mock_moderator(&keto, true, 2).await;
+    let uri = format!("/api/v1/admin/accounts/{}/warnings", app.target_nanoid);
+    let warn = app.json_request(
+        Method::POST,
+        &uri,
+        serde_json::json!({"reason": "be respectful"}),
+    );
+    let warned = app.router.clone().oneshot(warn).await.unwrap();
+    assert_eq!(warned.status(), StatusCode::NO_CONTENT);
+    let list = app.json_request(Method::GET, &uri, serde_json::json!({}));
+
+    let response = app.router.oneshot(list).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let warnings = response_json(response).await;
+    assert_eq!(warnings.as_array().expect("warnings").len(), 1);
+    assert_eq!(warnings[0]["reason"], "be respectful");
+    assert!(warnings[0]["warned_at"].is_string());
+    keto.verify().await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn warning_endpoint_rejects_non_moderator() {
+    let _guard = REPORT_TEST_LOCK.lock().await;
+    let keto = MockServer::start().await;
+    let app = ReportTestApp::new(&keto).await;
+    app.mock_moderator(&keto, false, 1).await;
+    let request = app.json_request(
+        Method::POST,
+        &format!("/api/v1/admin/accounts/{}/warnings", app.target_nanoid),
+        serde_json::json!({"reason": "be respectful"}),
+    );
+
+    let response = app.router.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    keto.verify().await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
 async fn resolve_report_rejects_missing_or_blank_close_reason() {
     let _guard = REPORT_TEST_LOCK.lock().await;
     let keto = MockServer::start().await;

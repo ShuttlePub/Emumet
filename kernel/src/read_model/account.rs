@@ -4,6 +4,26 @@ use crate::KernelError;
 use std::future::Future;
 use time::OffsetDateTime;
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct AccountWarning {
+    reason: String,
+    warned_at: OffsetDateTime,
+}
+
+impl AccountWarning {
+    pub fn new(reason: String, warned_at: OffsetDateTime) -> Self {
+        Self { reason, warned_at }
+    }
+
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    pub fn warned_at(&self) -> OffsetDateTime {
+        self.warned_at
+    }
+}
+
 pub trait AccountReadModel: Sync + Send + 'static {
     type Connection: Connection;
 
@@ -43,6 +63,12 @@ pub trait AccountReadModel: Sync + Send + 'static {
         executor: &mut Self::Connection,
         nanoids: &[Nanoid<Account>],
     ) -> impl Future<Output = error_stack::Result<Vec<Account>, KernelError>> + Send;
+
+    fn find_warnings(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<Vec<AccountWarning>, KernelError>> + Send;
 
     // Projection update operations (called by EventApplier pipeline)
     fn create(

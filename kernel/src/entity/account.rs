@@ -70,6 +70,11 @@ pub enum AccountEvent {
         )]
         expires_at: Option<OffsetDateTime>,
     },
+    Warned {
+        reason: String,
+        #[serde(with = "time::serde::rfc3339")]
+        warned_at: OffsetDateTime,
+    },
     Unsuspended,
     Banned {
         reason: String,
@@ -179,6 +184,23 @@ impl Account {
         CommandEnvelope::new(
             EventId::from(id),
             event.name(),
+            event,
+            Some(ExpectedVersion::At(current_version)),
+        )
+    }
+
+    pub fn warn(
+        id: AccountId,
+        reason: String,
+        current_version: EventVersion<Account>,
+    ) -> CommandEnvelope<AccountEvent, Account> {
+        let event = AccountEvent::Warned {
+            reason,
+            warned_at: OffsetDateTime::now_utc(),
+        };
+        CommandEnvelope::new(
+            EventId::from(id),
+            "warned".to_string(),
             event,
             Some(ExpectedVersion::At(current_version)),
         )
@@ -315,6 +337,17 @@ impl EventApplier for Account {
                         suspended_at,
                         expires_at,
                     };
+                    account.version = event.version;
+                } else {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable(Self::not_exists(event.id.as_ref())));
+                }
+            }
+            AccountEvent::Warned {
+                reason: _,
+                warned_at: _,
+            } => {
+                if let Some(account) = entity {
                     account.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
@@ -610,6 +643,47 @@ mod test {
         Account::apply(&mut account, envelope).unwrap();
         let account = account.unwrap();
         assert!(account.status().is_suspended());
+    }
+
+    #[test]
+    fn warn_account_preserves_active_status() {
+        crate::ensure_generator_initialized();
+        let id = AccountId::default();
+        let account = AccountBuilder::new().id(id.clone()).build();
+        let event = Account::warn(id, "be respectful".into(), account.version().clone());
+        let envelope = EventEnvelope::new(
+            event.id().clone(),
+            event.event().clone(),
+            EventVersion::default(),
+        );
+        let mut account = Some(account);
+
+        Account::apply(&mut account, envelope.clone()).unwrap();
+
+        let account = account.unwrap();
+        assert!(account.status().is_active());
+        assert_eq!(account.version(), &envelope.version);
+    }
+
+    #[test]
+    fn warned_event_round_trips_with_warned_name() {
+        let warned_at = time::macros::datetime!(2026-09-03 12:00 UTC);
+        let event = AccountEvent::Warned {
+            reason: "be respectful".to_string(),
+            warned_at,
+        };
+
+        let json = serde_json::to_value(&event).unwrap();
+        let decoded: AccountEvent = serde_json::from_value(json).unwrap();
+
+        assert_eq!(decoded, event);
+
+        let command = Account::warn(
+            AccountId::default(),
+            "be respectful".to_string(),
+            EventVersion::default(),
+        );
+        assert_eq!(command.event_name(), "warned");
     }
 
     #[test]

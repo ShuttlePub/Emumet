@@ -1,7 +1,9 @@
 use crate::api::AdminAccountApi;
 use crate::auth::{AuthClaims, OidcAuthInfo};
 use crate::error::ErrorStatus;
-use crate::schema::account::{BanAccountRequest, SuspendAccountRequest};
+use crate::schema::account::{
+    AccountWarningResponse, BanAccountRequest, SuspendAccountRequest, WarnAccountRequest,
+};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -16,6 +18,87 @@ fn parse_instance_role(role: &str) -> Result<InstanceRole, ErrorStatus> {
             format!("invalid instance role: expected \"admin\" or \"moderator\": {role}"),
         ))),
     }
+}
+
+fn validate_account_id(account_id: &str) -> Result<(), ErrorStatus> {
+    if account_id.trim().is_empty() {
+        return Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            "Account ID cannot be empty".to_string(),
+        )));
+    }
+    Ok(())
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/accounts/{account_id}/warnings",
+    description = "Issue a warning to an account.",
+    params(("account_id" = String, Path, description = "Account nanoid")),
+    request_body = WarnAccountRequest,
+    responses(
+        (status = 204, description = "Warning issued"),
+        (status = 400, description = "Invalid request"),
+        (status = 403, description = "Permission denied"),
+        (status = 404, description = "Account not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn warn_account_by_id(
+    Extension(claims): Extension<AuthClaims>,
+    State(api): State<AdminAccountApi>,
+    Path(account_id): Path<String>,
+    Json(request): Json<WarnAccountRequest>,
+) -> Result<StatusCode, ErrorStatus> {
+    validate_account_id(&account_id)?;
+    let auth_account_id = api
+        .resolve_auth_account_id(OidcAuthInfo::from(claims))
+        .await
+        .map_err(ErrorStatus::from)?;
+    api.warn_account(&auth_account_id, account_id, request.reason)
+        .await
+        .map_err(ErrorStatus::from)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/accounts/{account_id}/warnings",
+    description = "List warnings issued to an account.",
+    params(("account_id" = String, Path, description = "Account nanoid")),
+    responses(
+        (status = 200, description = "Warning history", body = [AccountWarningResponse]),
+        (status = 400, description = "Invalid request"),
+        (status = 403, description = "Permission denied"),
+        (status = 404, description = "Account not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Account",
+)]
+pub(crate) async fn list_account_warnings(
+    Extension(claims): Extension<AuthClaims>,
+    State(api): State<AdminAccountApi>,
+    Path(account_id): Path<String>,
+) -> Result<Json<Vec<AccountWarningResponse>>, ErrorStatus> {
+    validate_account_id(&account_id)?;
+    let auth_account_id = api
+        .resolve_auth_account_id(OidcAuthInfo::from(claims))
+        .await
+        .map_err(ErrorStatus::from)?;
+    let warnings = api
+        .list_account_warnings(&auth_account_id, account_id)
+        .await
+        .map_err(ErrorStatus::from)?;
+    Ok(Json(
+        warnings
+            .into_iter()
+            .map(|warning| AccountWarningResponse {
+                reason: warning.reason().to_string(),
+                warned_at: warning.warned_at(),
+            })
+            .collect(),
+    ))
 }
 
 #[utoipa::path(

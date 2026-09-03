@@ -50,6 +50,9 @@ impl TryFrom<AccountReportRow> for AccountReportProjection {
             ("dismissed", Some("dismissed"), Some(reason)) => {
                 Some((ReportResolution::Dismissed, CloseReason::new(reason)))
             }
+            ("warned", Some("warned"), Some(reason)) => {
+                Some((ReportResolution::Warned, CloseReason::new(reason)))
+            }
             (status, resolution, close_reason) => {
                 return Err(Report::new(KernelError::Internal).attach_printable(format!(
                     "Invalid account report status fields: status={status}, resolution={resolution:?}, close_reason={close_reason:?}"
@@ -259,6 +262,7 @@ fn report_resolution_value(resolution: &ReportResolution) -> &'static str {
     match resolution {
         ReportResolution::Resolved => "resolved",
         ReportResolution::Dismissed => "dismissed",
+        ReportResolution::Warned => "warned",
     }
 }
 

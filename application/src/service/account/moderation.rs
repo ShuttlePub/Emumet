@@ -4,11 +4,116 @@ use kernel::interfaces::database::{
     DatabaseConnection, DependOnTransactionManager, TransactionManager,
 };
 use kernel::interfaces::permission::DependOnPermissionChecker;
-use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
+use kernel::interfaces::read_model::{
+    AccountQuery, AccountReadModel, AccountWarning, DependOnAccountQuery, DependOnAccountReadModel,
+};
 use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{Account, AuthAccountId, ModerationReason, Nanoid};
 use kernel::KernelError;
 use std::future::Future;
+
+pub trait WarnAccountUseCase:
+    'static
+    + Sync
+    + Send
+    + Clone
+    + DependOnAccountQuery
+    + DependOnAccountRepository
+    + DependOnTransactionManager
+    + DependOnPermissionChecker
+{
+    fn warn_account<'a>(
+        &'a self,
+        auth_account_id: &'a AuthAccountId,
+        account_id: String,
+        reason: String,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
+        async move {
+            ModerationReason::new(reason.as_str()).validate()?;
+            let mut conn = self.database_connection().connection().await?;
+            let nanoid = Nanoid::<Account>::new(account_id);
+            let projection = self
+                .account_query()
+                .find_by_nanoid_unfiltered(&mut conn, &nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Account not found with nanoid: {}",
+                        nanoid.as_ref()
+                    ))
+                })?;
+
+            check_permission(self, auth_account_id, &instance_moderate()).await?;
+
+            let account_id = projection.id().clone();
+            let deps = self.clone();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let (account, current_version) = deps
+                            .account_repository()
+                            .load(executor, &account_id)
+                            .await?
+                            .into_parts();
+                        if account.deleted_at().is_some() {
+                            return Err(Report::new(KernelError::Rejected)
+                                .attach_printable("Account is deactivated"));
+                        }
+                        deps.account_repository()
+                            .save(executor, Account::warn(account_id, reason, current_version))
+                            .await?;
+                        Ok(())
+                    })
+                })
+                .await
+        }
+    }
+}
+
+impl<T> WarnAccountUseCase for T where
+    T: 'static
+        + Clone
+        + DependOnAccountQuery
+        + DependOnAccountRepository
+        + DependOnTransactionManager
+        + DependOnPermissionChecker
+{
+}
+
+pub trait ListAccountWarningsUseCase:
+    'static + Sync + Send + DependOnAccountQuery + DependOnAccountReadModel + DependOnPermissionChecker
+{
+    fn list_account_warnings<'a>(
+        &'a self,
+        auth_account_id: &'a AuthAccountId,
+        account_id: String,
+    ) -> impl Future<Output = error_stack::Result<Vec<AccountWarning>, KernelError>> + Send + 'a
+    {
+        async move {
+            let mut conn = self.database_connection().connection().await?;
+            let nanoid = Nanoid::<Account>::new(account_id);
+            let account = self
+                .account_query()
+                .find_by_nanoid_unfiltered(&mut conn, &nanoid)
+                .await?
+                .ok_or_else(|| {
+                    Report::new(KernelError::NotFound).attach_printable(format!(
+                        "Account not found with nanoid: {}",
+                        nanoid.as_ref()
+                    ))
+                })?;
+            check_permission(self, auth_account_id, &instance_moderate()).await?;
+            self.account_read_model()
+                .find_warnings(&mut conn, account.id())
+                .await
+        }
+    }
+}
+
+impl<T> ListAccountWarningsUseCase for T where
+    T: 'static + DependOnAccountQuery + DependOnAccountReadModel + DependOnPermissionChecker
+{
+}
 
 pub trait SuspendAccountUseCase:
     'static
@@ -662,6 +767,46 @@ mod tests {
             .unwrap();
 
         assert_eq!(saved_events(&fixture.module), vec![AccountEvent::Unbanned]);
+    }
+
+    #[tokio::test]
+    async fn warn_saves_warned_event_for_active_account() {
+        let fixture = fixture(Some(account(AccountStatus::Active, None)), true);
+
+        fixture
+            .module
+            .warn_account(
+                &fixture.operator_id,
+                fixture.nanoid,
+                "be respectful".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            saved_events(&fixture.module).as_slice(),
+            [AccountEvent::Warned { reason, .. }] if reason == "be respectful"
+        ));
+    }
+
+    #[tokio::test]
+    async fn warn_rejects_operator_without_permission_without_saving_event() {
+        let fixture = fixture(Some(account(AccountStatus::Active, None)), false);
+
+        let result = fixture
+            .module
+            .warn_account(
+                &fixture.operator_id,
+                fixture.nanoid,
+                "be respectful".to_string(),
+            )
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().current_context(),
+            &KernelError::PermissionDenied
+        );
+        assert!(saved_events(&fixture.module).is_empty());
     }
 
     #[tokio::test]
