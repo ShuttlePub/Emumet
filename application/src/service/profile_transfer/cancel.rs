@@ -16,6 +16,9 @@ use kernel::prelude::entity::{AuthAccountId, Nanoid, ProfileTransferRequest};
 use kernel::KernelError;
 use std::future::Future;
 
+#[cfg(test)]
+mod tests;
+
 pub trait CancelProfileTransferRequestUseCase: 'static + Sync + Send + Clone {
     fn cancel_profile_transfer_request<'a>(
         &'a self,

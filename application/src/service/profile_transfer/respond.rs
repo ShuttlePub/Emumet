@@ -1,4 +1,4 @@
-use super::{require_active_owner_or_admin_membership, resolve_personal_actor_account_among};
+use super::resolve_actor_with_active_membership;
 use error_stack::Report;
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, TransactionManager,
@@ -16,9 +16,12 @@ use kernel::interfaces::repository::{
 use kernel::interfaces::storage::{
     DependOnProfileMediaCopyGateway, ProfileMediaCopyGateway, ProfileMediaCopyRequest,
 };
-use kernel::prelude::entity::{AuthAccountId, Nanoid, Profile, ProfileTransferRequest};
+use kernel::prelude::entity::{AuthAccountId, Nanoid, OrgRole, Profile, ProfileTransferRequest};
 use kernel::KernelError;
 use std::future::Future;
+
+#[cfg(test)]
+mod tests;
 
 pub trait AcceptProfileTransferRequestUseCase: 'static + Sync + Send + Clone {
     fn accept_profile_transfer_request<'a>(
@@ -70,10 +73,13 @@ where
             let from_account_id = projection.from_account_id().clone();
             let to_org_account_id = projection.to_org_account_id().clone();
 
-            let actor_account =
-                resolve_personal_actor_account_among(self, auth_id, &to_org_account_id).await?;
-            require_active_owner_or_admin_membership(self, &to_org_account_id, actor_account.id())
-                .await?;
+            resolve_actor_with_active_membership(
+                self,
+                auth_id,
+                &to_org_account_id,
+                &[OrgRole::Owner, OrgRole::Admin],
+            )
+            .await?;
 
             let deps = self.clone();
             let copy_from_account_id = from_account_id.clone();
@@ -213,10 +219,13 @@ where
             let request_id = projection.id().clone();
             let to_org_account_id = projection.to_org_account_id().clone();
 
-            let actor_account =
-                resolve_personal_actor_account_among(self, auth_id, &to_org_account_id).await?;
-            require_active_owner_or_admin_membership(self, &to_org_account_id, actor_account.id())
-                .await?;
+            resolve_actor_with_active_membership(
+                self,
+                auth_id,
+                &to_org_account_id,
+                &[OrgRole::Owner, OrgRole::Admin],
+            )
+            .await?;
 
             let deps = self.clone();
             self.transaction_manager()

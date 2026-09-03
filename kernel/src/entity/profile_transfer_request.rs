@@ -195,6 +195,161 @@ impl EventApplier for ProfileTransferRequest {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_id() -> ProfileTransferRequestId {
+        ProfileTransferRequestId::new(1)
+    }
+
+    fn profile_id() -> ProfileId {
+        ProfileId::new(10)
+    }
+
+    fn from_account_id() -> AccountId {
+        AccountId::new(100)
+    }
+
+    fn to_org_account_id() -> AccountId {
+        AccountId::new(200)
+    }
+
+    fn nanoid() -> Nanoid<ProfileTransferRequest> {
+        Nanoid::new("ptr-test")
+    }
+
+    fn apply_requested() -> ProfileTransferRequest {
+        let id = request_id();
+        let command = ProfileTransferRequest::request(
+            id.clone(),
+            profile_id(),
+            from_account_id(),
+            to_org_account_id(),
+            nanoid(),
+        );
+        let envelope = EventEnvelope::new(
+            command.id().clone(),
+            command.event().clone(),
+            EventVersion::default(),
+        );
+        let mut request = None;
+        ProfileTransferRequest::apply(&mut request, envelope).unwrap();
+        request.unwrap()
+    }
+
+    #[test]
+    fn request_creates_pending_transfer() {
+        crate::ensure_generator_initialized();
+        let request = apply_requested();
+        assert_eq!(request.id(), &request_id());
+        assert_eq!(request.profile_id(), &profile_id());
+        assert_eq!(request.from_account_id(), &from_account_id());
+        assert_eq!(request.to_org_account_id(), &to_org_account_id());
+        assert_eq!(request.status(), &ProfileTransferStatus::Pending);
+        assert_eq!(request.nanoid(), &nanoid());
+    }
+
+    #[test]
+    fn accept_transitions_pending_to_accepted() {
+        crate::ensure_generator_initialized();
+        let request = apply_requested();
+        let command =
+            ProfileTransferRequest::accept(request.id().clone(), request.version().clone());
+        let envelope = EventEnvelope::new(
+            command.id().clone(),
+            command.event().clone(),
+            EventVersion::new(request.id().as_ref() + 1),
+        );
+        let mut request = Some(request);
+        ProfileTransferRequest::apply(&mut request, envelope).unwrap();
+        let request = request.unwrap();
+        assert_eq!(request.status(), &ProfileTransferStatus::Accepted);
+    }
+
+    #[test]
+    fn reject_transitions_pending_to_rejected() {
+        crate::ensure_generator_initialized();
+        let request = apply_requested();
+        let command =
+            ProfileTransferRequest::reject(request.id().clone(), request.version().clone());
+        let envelope = EventEnvelope::new(
+            command.id().clone(),
+            command.event().clone(),
+            EventVersion::new(request.id().as_ref() + 1),
+        );
+        let mut request = Some(request);
+        ProfileTransferRequest::apply(&mut request, envelope).unwrap();
+        let request = request.unwrap();
+        assert_eq!(request.status(), &ProfileTransferStatus::Rejected);
+    }
+
+    #[test]
+    fn cancel_transitions_pending_to_cancelled() {
+        crate::ensure_generator_initialized();
+        let request = apply_requested();
+        let command =
+            ProfileTransferRequest::cancel(request.id().clone(), request.version().clone());
+        let envelope = EventEnvelope::new(
+            command.id().clone(),
+            command.event().clone(),
+            EventVersion::new(request.id().as_ref() + 1),
+        );
+        let mut request = Some(request);
+        ProfileTransferRequest::apply(&mut request, envelope).unwrap();
+        let request = request.unwrap();
+        assert_eq!(request.status(), &ProfileTransferStatus::Cancelled);
+    }
+
+    #[test]
+    fn accept_on_already_decided_request_fails() {
+        crate::ensure_generator_initialized();
+        let request = apply_requested();
+        let command =
+            ProfileTransferRequest::accept(request.id().clone(), request.version().clone());
+        let envelope = EventEnvelope::new(
+            command.id().clone(),
+            command.event().clone(),
+            EventVersion::new(request.id().as_ref() + 1),
+        );
+        let mut request = Some(request);
+        ProfileTransferRequest::apply(&mut request, envelope).unwrap();
+
+        let next_command = ProfileTransferRequest::reject(
+            request.as_ref().unwrap().id().clone(),
+            request.as_ref().unwrap().version().clone(),
+        );
+        let next_envelope = EventEnvelope::new(
+            next_command.id().clone(),
+            next_command.event().clone(),
+            EventVersion::new(request.as_ref().unwrap().id().as_ref() + 2),
+        );
+        let err = ProfileTransferRequest::apply(&mut request, next_envelope).unwrap_err();
+        assert_eq!(err.current_context(), &KernelError::Rejected);
+    }
+
+    #[test]
+    fn requested_event_on_existing_request_fails() {
+        crate::ensure_generator_initialized();
+        let request = apply_requested();
+        let command = ProfileTransferRequest::request(
+            request.id().clone(),
+            request.profile_id().clone(),
+            request.from_account_id().clone(),
+            request.to_org_account_id().clone(),
+            request.nanoid().clone(),
+        );
+        let envelope = EventEnvelope::new(
+            command.id().clone(),
+            command.event().clone(),
+            EventVersion::new(request.id().as_ref() + 1),
+        );
+        let mut request = Some(request);
+        let err = ProfileTransferRequest::apply(&mut request, envelope).unwrap_err();
+        assert_eq!(err.current_context(), &KernelError::Internal);
+    }
+}
+
 fn status_name(status: &ProfileTransferStatus) -> &'static str {
     match status {
         ProfileTransferStatus::Pending => "pending",

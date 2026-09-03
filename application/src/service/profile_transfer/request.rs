@@ -1,4 +1,4 @@
-use super::{require_active_membership, resolve_personal_actor_account};
+use super::{personal_accounts_of, require_active_membership};
 use crate::dto::profile_transfer::ProfileTransferRequestDto;
 use error_stack::Report;
 use kernel::interfaces::database::{
@@ -20,6 +20,9 @@ use kernel::prelude::entity::{
 };
 use kernel::KernelError;
 use std::future::Future;
+
+#[cfg(test)]
+mod tests;
 
 pub trait RequestProfileTransferUseCase: 'static + Sync + Send + Clone {
     fn request_profile_transfer<'a>(
@@ -77,11 +80,14 @@ where
                     })?
             };
 
-            let actor_account = resolve_personal_actor_account(self, auth_id).await?;
-            if actor_account.id() != profile.account_id() {
-                return Err(Report::new(KernelError::PermissionDenied)
-                    .attach_printable("Authenticated user does not own the profile"));
-            }
+            let actor_account = personal_accounts_of(self, auth_id)
+                .await?
+                .into_iter()
+                .find(|account| account.id() == profile.account_id())
+                .ok_or_else(|| {
+                    Report::new(KernelError::PermissionDenied)
+                        .attach_printable("Authenticated user does not own the profile")
+                })?;
             require_active_membership(self, org_account.id(), actor_account.id()).await?;
 
             if self
