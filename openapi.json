@@ -1311,6 +1311,102 @@
         ]
       }
     },
+    "/api/v1/admin/accounts/{account_id}/warnings": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "description": "List warnings issued to an account.",
+        "operationId": "list_account_warnings",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Warning history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccountWarningResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Issue a warning to an account.",
+        "operationId": "warn_account_by_id",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "description": "Account nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WarnAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Warning issued"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/reports": {
       "get": {
         "tags": [
@@ -2314,6 +2410,22 @@
           }
         }
       },
+      "AccountWarningResponse": {
+        "type": "object",
+        "required": [
+          "reason",
+          "warned_at"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "warned_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "AccountsResponse": {
         "type": "object",
         "required": [
@@ -2463,6 +2575,12 @@
         "properties": {
           "close_reason": {
             "type": "string"
+          },
+          "resolution": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -3219,6 +3337,17 @@
             "type": "string"
           },
           "url": {
+            "type": "string"
+          }
+        }
+      },
+      "WarnAccountRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
             "type": "string"
           }
         }

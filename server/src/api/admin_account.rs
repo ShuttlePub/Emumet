@@ -2,11 +2,13 @@ use super::resolve_auth_account_id;
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
 use application::service::account::{
-    AssignInstanceRoleUseCase, BanAccountUseCase, RevokeInstanceRoleUseCase, SuspendAccountUseCase,
-    UnbanAccountUseCase, UnsuspendAccountUseCase,
+    AssignInstanceRoleUseCase, BanAccountUseCase, ListAccountWarningsUseCase,
+    RevokeInstanceRoleUseCase, SuspendAccountUseCase, UnbanAccountUseCase, UnsuspendAccountUseCase,
+    WarnAccountUseCase,
 };
 use axum::extract::FromRef;
 use kernel::interfaces::permission::InstanceRole;
+use kernel::interfaces::read_model::AccountWarning;
 use kernel::prelude::entity::AuthAccountId;
 use kernel::KernelError;
 use std::sync::Arc;
@@ -37,6 +39,27 @@ impl AdminAccountApi {
     ) -> error_stack::Result<(), KernelError> {
         self.module
             .suspend_account(auth_account_id, account_id, reason, expires_at)
+            .await
+    }
+
+    pub async fn warn_account(
+        &self,
+        auth_account_id: &AuthAccountId,
+        account_id: String,
+        reason: String,
+    ) -> error_stack::Result<(), KernelError> {
+        self.module
+            .warn_account(auth_account_id, account_id, reason)
+            .await
+    }
+
+    pub async fn list_account_warnings(
+        &self,
+        auth_account_id: &AuthAccountId,
+        account_id: String,
+    ) -> error_stack::Result<Vec<AccountWarning>, KernelError> {
+        self.module
+            .list_account_warnings(auth_account_id, account_id)
             .await
     }
 

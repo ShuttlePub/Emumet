@@ -226,6 +226,13 @@ impl AccountReadModel for MockAccounts {
     ) -> error_stack::Result<Vec<Account>, KernelError> {
         AccountQuery::find_by_nanoids(self, executor, nanoids).await
     }
+    async fn find_warnings(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+    ) -> error_stack::Result<Vec<kernel::interfaces::read_model::AccountWarning>, KernelError> {
+        Ok(Vec::new())
+    }
     async fn create(
         &self,
         _: &mut MockConnection,

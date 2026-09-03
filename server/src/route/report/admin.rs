@@ -25,6 +25,17 @@ fn parse_close_request(
         .map_err(|rejection| ErrorStatus::from((StatusCode::BAD_REQUEST, rejection.body_text())))
 }
 
+fn is_warned_resolution(resolution: Option<&str>) -> Result<bool, ErrorStatus> {
+    match resolution {
+        None | Some("resolved") => Ok(false),
+        Some("warned") => Ok(true),
+        Some(value) => Err(ErrorStatus::from((
+            StatusCode::BAD_REQUEST,
+            format!("invalid resolution: expected resolved or warned: {value}"),
+        ))),
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/admin/reports",
@@ -85,9 +96,15 @@ pub(crate) async fn resolve_report(
         .resolve_auth_account_id(OidcAuthInfo::from(claims))
         .await
         .map_err(ErrorStatus::from)?;
-    api.resolve_report(&auth_account_id, report_id, request.close_reason)
-        .await
-        .map_err(ErrorStatus::from)?;
+    if is_warned_resolution(request.resolution.as_deref())? {
+        api.warn_report(&auth_account_id, report_id, request.close_reason)
+            .await
+            .map_err(ErrorStatus::from)?;
+    } else {
+        api.resolve_report(&auth_account_id, report_id, request.close_reason)
+            .await
+            .map_err(ErrorStatus::from)?;
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -33,6 +33,23 @@ pub trait ResolveReportUseCase:
             },
         )
     }
+
+    fn warn_report<'a>(
+        &'a self,
+        auth_account_id: &'a AuthAccountId,
+        report_id: AccountReportId,
+        reason: String,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
+        close_report(
+            self,
+            CloseReportCommand {
+                auth_account_id,
+                report_id,
+                resolution: ReportResolution::Warned,
+                reason,
+            },
+        )
+    }
 }
 
 impl<T> ResolveReportUseCase for T where
@@ -73,6 +90,29 @@ mod tests {
             vec![AccountReportEvent::Closed {
                 resolution: ReportResolution::Resolved,
                 close_reason: CloseReason::new("moderated target"),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn warn_report_saves_warned_event_for_open_report() {
+        let fixture = fixture(false, false, true, Some(open_report(1)), Vec::new());
+
+        fixture
+            .module
+            .warn_report(
+                &fixture.operator_id,
+                AccountReportId::new(1),
+                "warning issued".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            saved_events(&fixture),
+            vec![AccountReportEvent::Closed {
+                resolution: ReportResolution::Warned,
+                close_reason: CloseReason::new("warning issued"),
             }]
         );
     }

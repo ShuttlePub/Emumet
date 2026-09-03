@@ -563,6 +563,7 @@ impl kernel::interfaces::projection::AccountReportProjectionWriter
                 let resolution = match resolution {
                     kernel::prelude::entity::ReportResolution::Resolved => "resolved",
                     kernel::prelude::entity::ReportResolution::Dismissed => "dismissed",
+                    kernel::prelude::entity::ReportResolution::Warned => "warned",
                 };
                 (resolution, Some(resolution), Some(close_reason.as_ref()))
             }

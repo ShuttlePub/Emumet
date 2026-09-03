@@ -6,13 +6,19 @@ use row::{account_from_row, AccountRow};
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
 use error_stack::Report;
-use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
+use kernel::interfaces::read_model::{AccountReadModel, AccountWarning, DependOnAccountReadModel};
 use kernel::prelude::entity::{
     Account, AccountId, AccountName, AccountStatus, AuthAccountId, Nanoid,
 };
 use kernel::KernelError;
 use sqlx::types::time::OffsetDateTime;
 use sqlx::PgConnection;
+
+#[derive(sqlx::FromRow)]
+struct AccountWarningRow {
+    reason: String,
+    warned_at: OffsetDateTime,
+}
 
 impl AccountReadModel for PostgresAccountReadModel {
     type Connection = PostgresConnection;
@@ -162,7 +168,33 @@ impl AccountReadModel for PostgresAccountReadModel {
         .convert_error()?
         .into_iter()
         .map(TryFrom::try_from)
-        .collect()
+            .collect()
+    }
+
+    async fn find_warnings(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> error_stack::Result<Vec<AccountWarning>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, AccountWarningRow>(
+            r#"
+            SELECT data->>'reason' AS reason,
+                   (data->>'warned_at')::timestamptz AS warned_at
+            FROM account_events
+            WHERE id = $1 AND event_name = 'warned'
+            ORDER BY version
+            "#,
+        )
+        .bind(account_id.as_ref())
+        .fetch_all(con)
+        .await
+        .convert_error()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| AccountWarning::new(row.reason, row.warned_at))
+                .collect()
+        })
     }
 
     async fn create(

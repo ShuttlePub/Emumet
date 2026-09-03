@@ -5,12 +5,15 @@ use axum::body::Body;
 use axum::http::{Method, Request};
 use http_body_util::BodyExt;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::event_store::{AccountEventStore, DependOnAccountEventStore};
 use kernel::interfaces::read_model::{AccountReadModel, DependOnAccountReadModel};
 use kernel::interfaces::repository::{
     AuthAccountRepository, AuthHostRepository, DependOnAuthAccountRepository,
     DependOnAuthHostRepository,
 };
-use kernel::prelude::entity::{AuthAccountId, AuthHostId};
+use kernel::prelude::entity::{
+    Account, AccountEvent, AuthAccountId, AuthHostId, CommandEnvelope, EventId, ExpectedVersion,
+};
 use kernel::test_utils::{AccountBuilder, AuthAccountBuilder, AuthHostBuilder};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -90,6 +93,26 @@ impl ReportTestApp {
             .create(&mut executor, &target)
             .await
             .expect("seed target account");
+        let target_event = AccountEvent::Created {
+            name: target.name().clone(),
+            is_bot: target.is_bot().clone(),
+            kind: target.kind().clone(),
+            nanoid: target.nanoid().clone(),
+            auth_account_id: auth_account_id.clone(),
+        };
+        module
+            .account_event_store()
+            .persist(
+                &mut executor,
+                &CommandEnvelope::<AccountEvent, Account>::new(
+                    EventId::from(target.id().clone()),
+                    target_event.name(),
+                    target_event,
+                    Some(ExpectedVersion::Nothing),
+                ),
+            )
+            .await
+            .expect("seed target account event");
 
         let keys = generate_test_keys();
         let token = encode_test_jwt(&claims(&issuer, &subject), &keys.encoding_key, &keys.kid);

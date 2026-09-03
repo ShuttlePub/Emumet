@@ -55,6 +55,7 @@ impl ReportStatus {
 pub enum ReportResolution {
     Resolved,
     Dismissed,
+    Warned,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Fromln, AsRefln, Newln, Serialize, Deserialize)]

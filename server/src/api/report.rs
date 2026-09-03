@@ -81,6 +81,17 @@ impl AdminReportApi {
             .await
     }
 
+    pub async fn warn_report(
+        &self,
+        auth_account_id: &AuthAccountId,
+        report_id: AccountReportId,
+        reason: String,
+    ) -> error_stack::Result<(), KernelError> {
+        self.module
+            .warn_report(auth_account_id, report_id, reason)
+            .await
+    }
+
     pub async fn dismiss_report(
         &self,
         auth_account_id: &AuthAccountId,
