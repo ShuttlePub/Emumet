@@ -667,7 +667,7 @@ mod test {
 
     #[test]
     fn warned_event_round_trips_with_warned_name() {
-        let warned_at = time::macros::datetime!(2026-09-03 12:00 UTC);
+        let warned_at = time::OffsetDateTime::from_unix_timestamp(1_786_953_600).unwrap();
         let event = AccountEvent::Warned {
             reason: "be respectful".to_string(),
             warned_at,
