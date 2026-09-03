@@ -1963,6 +1963,129 @@
         ]
       }
     },
+    "/api/v1/profile-transfer-requests/{request_nanoid}/accept": {
+      "post": {
+        "tags": [
+          "ProfileTransfer"
+        ],
+        "description": "Accept a profile transfer request as an organization owner or admin.",
+        "operationId": "accept_profile_transfer_request",
+        "parameters": [
+          {
+            "name": "request_nanoid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Transfer accepted"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Transfer request not found"
+          },
+          "422": {
+            "description": "Request not pending"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profile-transfer-requests/{request_nanoid}/cancel": {
+      "post": {
+        "tags": [
+          "ProfileTransfer"
+        ],
+        "description": "Cancel a pending profile transfer request as the requester.",
+        "operationId": "cancel_profile_transfer_request",
+        "parameters": [
+          {
+            "name": "request_nanoid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Transfer request cancelled"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Transfer request not found"
+          },
+          "422": {
+            "description": "Request not pending"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profile-transfer-requests/{request_nanoid}/reject": {
+      "post": {
+        "tags": [
+          "ProfileTransfer"
+        ],
+        "description": "Reject a profile transfer request as an organization owner or admin.",
+        "operationId": "reject_profile_transfer_request",
+        "parameters": [
+          {
+            "name": "request_nanoid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Transfer rejected"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Transfer request not found"
+          },
+          "422": {
+            "description": "Request not pending"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/profiles": {
       "post": {
         "tags": [
@@ -2009,6 +2132,67 @@
           },
           "422": {
             "description": "Organization profile already exists"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/transfer-requests": {
+      "post": {
+        "tags": [
+          "ProfileTransfer"
+        ],
+        "description": "Request transfer of a personal profile to an organization.",
+        "operationId": "create_profile_transfer_request",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProfileTransferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Transfer request created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileTransferRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Profile or organization not found"
+          },
+          "422": {
+            "description": "Duplicate pending request"
           }
         },
         "security": [
@@ -2651,6 +2835,17 @@
           }
         }
       },
+      "CreateProfileTransferRequest": {
+        "type": "object",
+        "required": [
+          "org_account_nanoid"
+        ],
+        "properties": {
+          "org_account_nanoid": {
+            "type": "string"
+          }
+        }
+      },
       "CreateReportRequest": {
         "type": "object",
         "required": [
@@ -3097,6 +3292,29 @@
           }
         }
       },
+      "ProfileTransferRequestResponse": {
+        "type": "object",
+        "required": [
+          "nanoid",
+          "profile_nanoid",
+          "org_account_nanoid",
+          "status"
+        ],
+        "properties": {
+          "nanoid": {
+            "type": "string"
+          },
+          "org_account_nanoid": {
+            "type": "string"
+          },
+          "profile_nanoid": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "PublicKey": {
         "type": "object",
         "description": "An ActivityPub public key object attached to an Actor.",
@@ -3439,6 +3657,10 @@
     {
       "name": "Report",
       "description": "Account moderation reports"
+    },
+    {
+      "name": "ProfileTransfer",
+      "description": "Profile ownership transfer requests"
     },
     {
       "name": "Organization",

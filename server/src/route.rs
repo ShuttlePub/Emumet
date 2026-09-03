@@ -7,6 +7,7 @@ pub mod activitypub;
 pub mod me;
 pub mod media;
 pub mod oauth2;
+pub mod profile_transfer;
 pub mod report;
 pub mod signing;
 
@@ -79,12 +80,14 @@ pub(crate) fn build_test_router_with_auth(
     use crate::route::me::MeRouter;
     use crate::route::media::MediaRouter;
     use crate::route::oauth2::OAuth2Router;
+    use crate::route::profile_transfer::ProfileTransferRouter;
     use crate::route::report::{AdminReportRouter, ReportRouter};
     use crate::route::signing::SigningRouter;
 
     let api_v1 = axum::Router::new()
         .route_account()
         .route_org_account()
+        .route_profile_transfers()
         .route_reports()
         .route_me()
         .route_media()

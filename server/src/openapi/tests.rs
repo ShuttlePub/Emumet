@@ -149,3 +149,44 @@ fn account_report_contract_is_registered() {
         );
     }
 }
+
+#[test]
+fn profile_transfer_contract_is_registered() {
+    let spec: serde_json::Value = serde_json::from_str(&generate_openapi_json())
+        .expect("generated OpenAPI spec is valid JSON");
+    for (path, method) in [
+        (
+            "/api/v1/profiles/{profile_nanoid}/transfer-requests",
+            "post",
+        ),
+        (
+            "/api/v1/profile-transfer-requests/{request_nanoid}/accept",
+            "post",
+        ),
+        (
+            "/api/v1/profile-transfer-requests/{request_nanoid}/reject",
+            "post",
+        ),
+        (
+            "/api/v1/profile-transfer-requests/{request_nanoid}/cancel",
+            "post",
+        ),
+    ] {
+        let operation = &spec["paths"][path][method];
+        assert!(operation.is_object(), "{method} {path} must be registered");
+        assert_eq!(
+            operation["security"],
+            serde_json::json!([{"bearer_auth": []}]),
+            "{method} {path} must require bearer authentication"
+        );
+    }
+    for schema in [
+        "CreateProfileTransferRequest",
+        "ProfileTransferRequestResponse",
+    ] {
+        assert!(
+            spec["components"]["schemas"].get(schema).is_some(),
+            "{schema} must be registered"
+        );
+    }
+}
