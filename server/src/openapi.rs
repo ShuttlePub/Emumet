@@ -79,6 +79,10 @@ impl Modify for SecurityAddon {
         crate::route::report::list_reports,
         crate::route::report::resolve_report,
         crate::route::report::dismiss_report,
+        crate::route::profile_transfer::create_profile_transfer_request,
+        crate::route::profile_transfer::accept_profile_transfer_request,
+        crate::route::profile_transfer::reject_profile_transfer_request,
+        crate::route::profile_transfer::cancel_profile_transfer_request,
     ),
     components(schemas(
         crate::schema::account::CreateAccountRequest,
@@ -118,6 +122,8 @@ impl Modify for SecurityAddon {
         crate::schema::report::CloseReportRequest,
         crate::schema::report::AccountReportResponse,
         crate::schema::report::AccountReportListResponse,
+        crate::schema::profile_transfer::CreateProfileTransferRequest,
+        crate::schema::profile_transfer::ProfileTransferRequestResponse,
         crate::schema::organization::CreateOrganizationRequest,
         crate::schema::organization::InviteMemberRequest,
         crate::schema::organization::ChangeRoleRequest,
@@ -138,6 +144,7 @@ impl Modify for SecurityAddon {
         (name = "Signing", description = "HTTP Signature signing"),
         (name = "ActivityPub", description = "ActivityPub discovery and actor endpoints"),
         (name = "Report", description = "Account moderation reports"),
+        (name = "ProfileTransfer", description = "Profile ownership transfer requests"),
         (name = "Organization", description = "Organization account and membership management"),
     )
 )]

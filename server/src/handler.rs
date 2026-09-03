@@ -6,7 +6,7 @@ use driver::crypto::{
 use driver::database::PostgresDatabase;
 use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
 use driver::keto::KetoClient;
-use driver::storage::S3ImageStorage;
+use driver::storage::{NoopProfileMediaCopyGateway, S3ImageStorage};
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
@@ -36,6 +36,7 @@ pub struct AppModule {
     kratos_client: KratosClient,
     keto_client: KetoClient,
     image_storage: S3ImageStorage,
+    profile_media_copy_gateway: NoopProfileMediaCopyGateway,
 }
 
 impl AppModule {
@@ -68,6 +69,7 @@ impl AppModule {
             kratos_client: KratosClient::new(kratos_public_url),
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
             image_storage,
+            profile_media_copy_gateway: NoopProfileMediaCopyGateway,
         })
     }
 
@@ -96,6 +98,7 @@ impl AppModule {
             kratos_client: KratosClient::new(kratos_public_url),
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
             image_storage,
+            profile_media_copy_gateway: NoopProfileMediaCopyGateway,
         })
     }
 
@@ -202,5 +205,13 @@ impl kernel::interfaces::storage::DependOnImageStorage for AppModule {
 
     fn image_storage(&self) -> &Self::ImageStorage {
         &self.image_storage
+    }
+}
+
+impl kernel::interfaces::storage::DependOnProfileMediaCopyGateway for AppModule {
+    type ProfileMediaCopyGateway = NoopProfileMediaCopyGateway;
+
+    fn profile_media_copy_gateway(&self) -> &Self::ProfileMediaCopyGateway {
+        &self.profile_media_copy_gateway
     }
 }

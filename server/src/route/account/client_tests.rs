@@ -317,9 +317,11 @@ async fn create_profile_with_organization_context_uses_organization_account_id()
     assert_eq!(profile.account_id(), fixture.organization.id());
 }
 
+/// profile-transfer (issue #61): orgs may hold multiple profiles after the
+/// partial-unique migration; the old 1:1 application guard was removed.
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn create_second_profile_for_same_organization_returns_unprocessable_entity() {
+async fn create_second_profile_for_same_organization_succeeds() {
     let keto = empty_keto().await;
     let fixture = fixture(&keto.uri(), Some(OrgRole::Member)).await;
     let organization_nanoid = fixture.organization.nanoid().as_ref().to_string();
@@ -340,10 +342,18 @@ async fn create_second_profile_for_same_organization_returns_unprocessable_entit
     let router = fixture.router;
     let first_response = router.clone().oneshot(first).await.unwrap();
     assert_eq!(first_response.status(), StatusCode::CREATED);
+    let first_json = response_json(first_response).await;
 
     let second_response = router.oneshot(second).await.unwrap();
 
-    assert_eq!(second_response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(second_response.status(), StatusCode::CREATED);
+    let second_json = response_json(second_response).await;
+    assert_ne!(first_json["id"].as_str(), second_json["id"].as_str());
+    assert_eq!(
+        second_json["account_id"].as_str(),
+        Some(organization_nanoid.as_str())
+    );
+    assert_eq!(second_json["display_name"].as_str(), Some("Second"));
 }
 
 #[test_with::env(DATABASE_URL)]
