@@ -134,6 +134,12 @@ pub trait ProfileReadModel: Sync + Send + 'static {
         account_ids: &[AccountId],
     ) -> impl Future<Output = error_stack::Result<Vec<ProfileProjection>, KernelError>> + Send;
 
+    fn find_by_nanoid(
+        &self,
+        executor: &mut Self::Connection,
+        nanoid: &Nanoid<Profile>,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
+
     fn create(
         &self,
         executor: &mut Self::Connection,
@@ -185,6 +191,12 @@ pub trait ProfileQuery: Send + Sync + 'static {
         executor: &mut Self::Connection,
         account_ids: &[AccountId],
     ) -> impl Future<Output = error_stack::Result<Vec<ProfileProjection>, KernelError>> + Send;
+
+    fn find_by_nanoid(
+        &self,
+        executor: &mut Self::Connection,
+        nanoid: &Nanoid<Profile>,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
 }
 
 impl<T> ProfileQuery for T
@@ -219,6 +231,16 @@ where
     ) -> error_stack::Result<Vec<ProfileProjection>, KernelError> {
         self.profile_read_model()
             .find_by_account_ids(executor, account_ids)
+            .await
+    }
+
+    async fn find_by_nanoid(
+        &self,
+        executor: &mut Self::Connection,
+        nanoid: &Nanoid<Profile>,
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
+        self.profile_read_model()
+            .find_by_nanoid(executor, nanoid)
             .await
     }
 }

@@ -176,6 +176,20 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::read_model::DependOnProfileTransferRequestReadModel for $impl_type {
+            type ProfileTransferRequestReadModel = <$db_type as $crate::interfaces::read_model::DependOnProfileTransferRequestReadModel>::ProfileTransferRequestReadModel;
+            fn profile_transfer_request_read_model(&self) -> &Self::ProfileTransferRequestReadModel {
+                $crate::interfaces::read_model::DependOnProfileTransferRequestReadModel::profile_transfer_request_read_model(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::event_store::DependOnProfileTransferRequestEventStore for $impl_type {
+            type ProfileTransferRequestEventStore = <$db_type as $crate::interfaces::event_store::DependOnProfileTransferRequestEventStore>::ProfileTransferRequestEventStore;
+            fn profile_transfer_request_event_store(&self) -> &Self::ProfileTransferRequestEventStore {
+                $crate::interfaces::event_store::DependOnProfileTransferRequestEventStore::profile_transfer_request_event_store(&self.$field)
+            }
+        }
+
         impl $crate::interfaces::repository::DependOnAuthHostRepository for $impl_type {
             type AuthHostRepository = <$db_type as $crate::interfaces::repository::DependOnAuthHostRepository>::AuthHostRepository;
             fn auth_host_repository(&self) -> &Self::AuthHostRepository {
@@ -243,6 +257,13 @@ macro_rules! impl_database_delegation {
             type AccountReportRepository = <$db_type as $crate::interfaces::repository::DependOnAccountReportRepository>::AccountReportRepository;
             fn account_report_repository(&self) -> &Self::AccountReportRepository {
                 $crate::interfaces::repository::DependOnAccountReportRepository::account_report_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnProfileTransferRequestRepository for $impl_type {
+            type ProfileTransferRequestRepository = <$db_type as $crate::interfaces::repository::DependOnProfileTransferRequestRepository>::ProfileTransferRequestRepository;
+            fn profile_transfer_request_repository(&self) -> &Self::ProfileTransferRequestRepository {
+                $crate::interfaces::repository::DependOnProfileTransferRequestRepository::profile_transfer_request_repository(&self.$field)
             }
         }
 

@@ -54,6 +54,10 @@ pub enum ProfileEvent {
         #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
         banner: FieldAction<ImageId>,
     },
+    AccountTransferred {
+        from_account_id: AccountId,
+        to_account_id: AccountId,
+    },
 }
 
 impl Profile {
@@ -121,6 +125,18 @@ impl Profile {
         };
         CommandEnvelope::new(EventId::from(id), event.name(), event, None)
     }
+
+    pub fn transfer_account(
+        id: ProfileId,
+        from: AccountId,
+        to: AccountId,
+    ) -> CommandEnvelope<ProfileEvent, Profile> {
+        let event = ProfileEvent::AccountTransferred {
+            from_account_id: from,
+            to_account_id: to,
+        };
+        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
+    }
 }
 
 impl EventApplier for Profile {
@@ -182,6 +198,25 @@ impl EventApplier for Profile {
                         FieldAction::Clear => profile.banner = None,
                         FieldAction::Set(v) => profile.banner = Some(v),
                     }
+                    profile.version = event.version;
+                } else {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable(Self::not_exists(event.id.as_ref())));
+                }
+            }
+            ProfileEvent::AccountTransferred {
+                from_account_id,
+                to_account_id,
+            } => {
+                if let Some(profile) = entity {
+                    if profile.account_id != from_account_id {
+                        return Err(Report::new(KernelError::Rejected).attach_printable(format!(
+                            "Profile {} is not owned by account {}",
+                            event.id.as_ref(),
+                            from_account_id.as_ref()
+                        )));
+                    }
+                    profile.account_id = to_account_id;
                     profile.version = event.version;
                 } else {
                     return Err(Report::new(KernelError::Internal)
