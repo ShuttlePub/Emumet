@@ -1,25 +1,16 @@
 use crate::dto::profile::{CreateProfileDto, ProfileDto};
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
-use kernel::interfaces::database::{
-    DatabaseConnection, DependOnTransactionManager, TransactionManager,
-};
+use kernel::interfaces::database::{DependOnTransactionManager, TransactionManager};
 use kernel::interfaces::event::EventApplier;
-use kernel::interfaces::read_model::{
-    DependOnProfileQuery, DependOnProfileReadModel, ProfileQuery, ProfileReadModel,
-};
+use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::interfaces::repository::{AggregateRepository, DependOnProfileRepository};
 use kernel::prelude::entity::{Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary};
 use kernel::KernelError;
 use std::future::Future;
 
 pub trait CreateOrganizationProfileUseCase:
-    'static
-    + Clone
-    + DependOnProfileQuery
-    + DependOnProfileRepository
-    + DependOnProfileReadModel
-    + DependOnTransactionManager
+    'static + Clone + DependOnProfileRepository + DependOnProfileReadModel + DependOnTransactionManager
 {
     fn create_organization_profile(
         &self,
@@ -34,17 +25,6 @@ pub trait CreateOrganizationProfileUseCase:
             let summary = dto.summary.map(ProfileSummary::new);
             if let Some(summary) = &summary {
                 summary.validate()?;
-            }
-
-            let mut connection = self.database_connection().connection().await?;
-            if self
-                .profile_query()
-                .find_by_account_id(&mut connection, &org_context.org_account_id)
-                .await?
-                .is_some()
-            {
-                return Err(Report::new(KernelError::Rejected)
-                    .attach_printable("Organization profile already exists"));
             }
 
             let account_id = org_context.org_account_id;
@@ -83,7 +63,6 @@ pub trait CreateOrganizationProfileUseCase:
 impl<T> CreateOrganizationProfileUseCase for T where
     T: 'static
         + Clone
-        + DependOnProfileQuery
         + DependOnProfileRepository
         + DependOnProfileReadModel
         + DependOnTransactionManager

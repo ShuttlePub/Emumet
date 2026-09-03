@@ -114,6 +114,26 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .map(|rows| rows.into_iter().map(ProfileProjection::from).collect())
     }
 
+    async fn find_by_nanoid(
+        &self,
+        executor: &mut Self::Connection,
+        nanoid: &Nanoid<Profile>,
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, ProfileRow>(
+            //language=postgresql
+            r#"
+            SELECT id, account_id, display, summary, icon_id, banner_id, version, nanoid
+            FROM profiles WHERE nanoid = $1
+            "#,
+        )
+        .bind(nanoid.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(ProfileProjection::from))
+    }
+
     async fn create(
         &self,
         executor: &mut Self::Connection,
@@ -123,8 +143,8 @@ impl ProfileReadModel for PostgresProfileReadModel {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO profiles (id, account_id, display, summary, icon_id, banner_id, version, nanoid)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO profiles (id, account_id, owner_kind, display, summary, icon_id, banner_id, version, nanoid)
+            VALUES ($1, $2, (SELECT kind FROM accounts WHERE id = $2), $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(profile.id().as_ref())
@@ -155,11 +175,19 @@ impl ProfileReadModel for PostgresProfileReadModel {
         let result = sqlx::query(
             //language=postgresql
             r#"
-            UPDATE profiles SET display = $2, summary = $3, icon_id = $4, banner_id = $5, version = $6
+            UPDATE profiles
+            SET account_id = $2,
+                owner_kind = (SELECT kind FROM accounts WHERE id = $2),
+                display = $3,
+                summary = $4,
+                icon_id = $5,
+                banner_id = $6,
+                version = $7
             WHERE id = $1
             "#,
         )
         .bind(profile.id().as_ref())
+        .bind(profile.account_id().as_ref())
         .bind(
             profile
                 .display_name()

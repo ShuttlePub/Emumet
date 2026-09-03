@@ -3,7 +3,9 @@ use aws_sdk_s3::config::Credentials;
 use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::primitives::ByteStream;
 use error_stack::Report;
-use kernel::interfaces::storage::{ImageStorage, StoredObject};
+use kernel::interfaces::storage::{
+    ImageStorage, ProfileMediaCopyGateway, ProfileMediaCopyRequest, StoredObject,
+};
 use kernel::KernelError;
 
 #[derive(Clone)]
@@ -113,4 +115,20 @@ impl ImageStorage for S3ImageStorage {
 
 fn env_or(name: &str, default: &str) -> String {
     dotenvy::var(name).unwrap_or_else(|_| default.to_string())
+}
+
+#[derive(Clone)]
+pub struct NoopProfileMediaCopyGateway;
+
+impl ProfileMediaCopyGateway for NoopProfileMediaCopyGateway {
+    async fn request_copy(
+        &self,
+        request: ProfileMediaCopyRequest,
+    ) -> error_stack::Result<(), KernelError> {
+        tracing::trace!(
+            ?request,
+            "No-op profile media copy gateway skipping request"
+        );
+        Ok(())
+    }
 }

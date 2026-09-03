@@ -289,10 +289,11 @@ impl ProfileProjectionWriter for PostgresProfileProjectionWriter {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO profiles (id, account_id, display, summary, icon_id, banner_id, version, nanoid)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO profiles (id, account_id, owner_kind, display, summary, icon_id, banner_id, version, nanoid)
+            VALUES ($1, $2, (SELECT kind FROM accounts WHERE id = $2), $3, $4, $5, $6, $7, $8)
             ON CONFLICT (id) DO UPDATE SET
                 account_id = EXCLUDED.account_id,
+                owner_kind = EXCLUDED.owner_kind,
                 display = EXCLUDED.display,
                 summary = EXCLUDED.summary,
                 icon_id = EXCLUDED.icon_id,

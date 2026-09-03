@@ -7,6 +7,7 @@ pub mod media;
 pub mod mute;
 pub mod organization;
 pub mod profile;
+pub mod profile_transfer;
 pub mod report;
 pub mod session_context;
 
