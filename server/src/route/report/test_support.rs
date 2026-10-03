@@ -96,7 +96,7 @@ impl ReportTestApp {
         let target_event = AccountEvent::Created {
             name: target.name().clone(),
             is_bot: target.is_bot().clone(),
-            kind: target.kind().clone(),
+            kind: *target.kind(),
             nanoid: target.nanoid().clone(),
             auth_account_id: auth_account_id.clone(),
         };

@@ -194,7 +194,7 @@ mod test {
         ProfileTransferRequestReadModel,
     };
     use kernel::prelude::entity::{
-        AccountId, AccountKind, EventVersion, Nanoid, ProfileId, ProfileTransferRequest,
+        AccountKind, EventVersion, Nanoid, ProfileId, ProfileTransferRequest,
         ProfileTransferRequestId,
     };
     use kernel::test_utils::{AccountBuilder, ProfileBuilder};
