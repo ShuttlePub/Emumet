@@ -127,7 +127,7 @@ async fn request_returns_permission_denied_when_actor_does_not_own_profile() {
 
 #[tokio::test]
 async fn request_returns_permission_denied_when_owner_not_active_member() {
-    let mut f = fixture();
+    let f = fixture();
     f.module.memberships.lock().unwrap().clear();
     let err = f
         .module

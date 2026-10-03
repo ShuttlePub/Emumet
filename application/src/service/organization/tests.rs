@@ -827,18 +827,20 @@ async fn owner_changes_active_member_role_to_admin() {
 #[tokio::test]
 async fn owner_removes_active_member() {
     let f = fixture(1);
-    let accounts = f.module.accounts.values.lock().unwrap();
-    let org = accounts
-        .iter()
-        .find(|account| account.nanoid().as_ref() == "org")
-        .unwrap()
-        .clone();
-    let owner = accounts
-        .iter()
-        .find(|account| account.nanoid().as_ref() == "owner")
-        .unwrap()
-        .clone();
-    drop(accounts);
+    let (org, owner) = {
+        let accounts = f.module.accounts.values.lock().unwrap();
+        let org = accounts
+            .iter()
+            .find(|account| account.nanoid().as_ref() == "org")
+            .unwrap()
+            .clone();
+        let owner = accounts
+            .iter()
+            .find(|account| account.nanoid().as_ref() == "owner")
+            .unwrap()
+            .clone();
+        (org, owner)
+    };
     f.module
         .memberships
         .0

@@ -195,6 +195,15 @@ impl EventApplier for ProfileTransferRequest {
     }
 }
 
+fn status_name(status: &ProfileTransferStatus) -> &'static str {
+    match status {
+        ProfileTransferStatus::Pending => "pending",
+        ProfileTransferStatus::Accepted => "accepted",
+        ProfileTransferStatus::Rejected => "rejected",
+        ProfileTransferStatus::Cancelled => "cancelled",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,14 +356,5 @@ mod tests {
         let mut request = Some(request);
         let err = ProfileTransferRequest::apply(&mut request, envelope).unwrap_err();
         assert_eq!(err.current_context(), &KernelError::Internal);
-    }
-}
-
-fn status_name(status: &ProfileTransferStatus) -> &'static str {
-    match status {
-        ProfileTransferStatus::Pending => "pending",
-        ProfileTransferStatus::Accepted => "accepted",
-        ProfileTransferStatus::Rejected => "rejected",
-        ProfileTransferStatus::Cancelled => "cancelled",
     }
 }

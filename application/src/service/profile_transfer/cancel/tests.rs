@@ -1,5 +1,5 @@
 use super::*;
-use crate::service::profile_transfer::test_support::{fixture, Fixture};
+use crate::service::profile_transfer::test_support::fixture;
 use kernel::prelude::entity::{
     AccountId, AccountKind, EventVersion, Nanoid, ProfileTransferRequest, ProfileTransferStatus,
 };
@@ -8,7 +8,7 @@ use kernel::KernelError;
 
 #[tokio::test]
 async fn cancel_succeeds_when_actor_owns_from_account() {
-    let mut f = fixture();
+    let f = fixture();
     f.module
         .cancel_profile_transfer_request(&f.auth, f.request_nanoid.clone())
         .await
@@ -89,7 +89,7 @@ async fn cancel_returns_not_found_for_unknown_request() {
 
 #[tokio::test]
 async fn cancel_updates_read_model() {
-    let mut f = fixture();
+    let f = fixture();
     f.module
         .cancel_profile_transfer_request(&f.auth, f.request_nanoid.clone())
         .await
