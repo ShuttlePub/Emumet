@@ -13,7 +13,8 @@ use crate::service::profile_username::SetProfileUsernameUseCase;
 use crate::service::session_context::OrganizationContext;
 use kernel::interfaces::crypto::SigningAlgorithm;
 use kernel::interfaces::database::{
-    DatabaseConnection, DependOnTransactionManager, TransactionManager,
+    DatabaseConnection, DependOnTransactionManager, Transaction, TransactionManager,
+    TransactionalDatabaseConnection,
 };
 use kernel::interfaces::http_signing::HttpSigningRequest;
 use kernel::interfaces::read_model::{
@@ -704,4 +705,272 @@ async fn rehydrating_the_event_stream_restores_the_username() {
             .map(|u| u.as_ref().as_str()),
         Some(username.as_str())
     );
+}
+
+async fn create_organization(env: &Env) -> AccountId {
+    let org_id = AccountId::default();
+    let mut conn = env.module.database.connection().await.unwrap();
+    let event = env
+        .module
+        .account_repository()
+        .save(
+            &mut conn,
+            Account::create_organization(
+                org_id.clone(),
+                AccountName::new(format!("org-{}", org_id.as_ref())),
+                AccountIsBot::new(false),
+                Nanoid::default(),
+                env.auth_account_id.clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    let mut org = None;
+    kernel::interfaces::event::EventApplier::apply(&mut org, event).unwrap();
+    env.module
+        .account_read_model()
+        .create(&mut conn, &org.unwrap())
+        .await
+        .unwrap();
+    org_id
+}
+
+/// Waits until some backend is blocked by the backend `blocker_pid`.
+async fn wait_until_blocked_by(env: &Env, blocker_pid: i32) {
+    for _ in 0..200 {
+        let blocked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(blocker_pid)
+        .fetch_one(&mut *env.module.database.connection().await.unwrap())
+        .await
+        .unwrap();
+        if blocked > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the username request never blocked on the Profile row lock");
+}
+
+/// R1: a username request that was authorized for the previous owner must not set the immutable
+/// username on a Profile that moved to somebody else in the meantime. The transfer's row lock is
+/// held (uncommitted) while the request is started, so the request has passed its pre-check
+/// against the old owner and then waits for the lock; it resumes only after the transfer committed.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn username_request_authorized_for_the_old_owner_is_refused_after_a_concurrent_transfer() {
+    let env = env().await;
+    let created = create_account(&env, None).await.unwrap();
+    let org_id = create_organization(&env).await;
+    let from_account: i64 = sqlx::query_scalar("SELECT account_id FROM profiles WHERE id = $1")
+        .bind(created.profile_id.as_ref())
+        .fetch_one(&mut *env.module.database.connection().await.unwrap())
+        .await
+        .unwrap();
+
+    // The transfer: same aggregate commands as the accept use case, left uncommitted.
+    let mut transfer = env.module.database.get_transaction().await.unwrap();
+    let transfer_pid: i32 = {
+        let con: &mut sqlx::PgConnection = transfer.connection();
+        sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(con)
+            .await
+            .unwrap()
+    };
+    {
+        let executor = transfer.connection();
+        env.module
+            .profile_repository()
+            .save(
+                executor,
+                Profile::transfer_account(
+                    created.profile_id.clone(),
+                    AccountId::new(from_account),
+                    org_id.clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        let rehydrated = env
+            .module
+            .profile_repository()
+            .load(executor, &created.profile_id)
+            .await
+            .unwrap();
+        env.module
+            .profile_read_model()
+            .update(executor, rehydrated.aggregate())
+            .await
+            .unwrap();
+    }
+
+    let module = env.module.clone();
+    let auth = env.auth_account_id.clone();
+    let nanoid = created.profile_nanoid.as_ref().to_string();
+    let username = unique_username();
+    let request = {
+        let username = username.clone();
+        tokio::spawn(async move {
+            module
+                .set_profile_username(&auth, None, nanoid, username)
+                .await
+                .map(|_| ())
+        })
+    };
+    wait_until_blocked_by(&env, transfer_pid).await;
+    assert!(!request.is_finished(), "the request waits for the transfer");
+    transfer.commit().await.unwrap();
+
+    let error = request.await.unwrap().unwrap_err();
+    assert_eq!(context(&error), &KernelError::Concurrency);
+    assert_eq!(stored_username(&env, &created.profile_id).await, None);
+    assert_eq!(
+        count(
+            &env,
+            "SELECT count(*) FROM profile_events WHERE id = $1 AND data ->> 'username' IS NOT NULL",
+            *created.profile_id.as_ref(),
+        )
+        .await,
+        0,
+        "no username event may exist for the transferred Profile"
+    );
+    let owner: i64 = sqlx::query_scalar("SELECT account_id FROM profiles WHERE id = $1")
+        .bind(created.profile_id.as_ref())
+        .fetch_one(&mut *env.module.database.connection().await.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(owner, *org_id.as_ref());
+
+    // The new owner (the organization context) can set it.
+    let context_of_new_owner = OrganizationContext {
+        org_account_id: org_id,
+        org_account_nanoid: "new-owner".to_string(),
+        role: OrgRole::Admin,
+    };
+    let dto = env
+        .module
+        .set_profile_username(
+            &env.auth_account_id,
+            Some(&context_of_new_owner),
+            created.profile_nanoid.as_ref().to_string(),
+            username.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(dto.username.as_deref(), Some(username.as_str()));
+}
+
+/// The other order: the username request holds the Profile lock, the transfer waits and then
+/// moves the Profile with its freshly set username intact.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn transfer_waiting_behind_a_username_write_keeps_the_username() {
+    let env = env().await;
+    let created = create_account(&env, None).await.unwrap();
+    let org_id = create_organization(&env).await;
+    let username = unique_username();
+    let from_account: i64 = sqlx::query_scalar("SELECT account_id FROM profiles WHERE id = $1")
+        .bind(created.profile_id.as_ref())
+        .fetch_one(&mut *env.module.database.connection().await.unwrap())
+        .await
+        .unwrap();
+
+    // The setter's write transaction, left open after the locked re-read + event + projection.
+    let mut setter = env.module.database.get_transaction().await.unwrap();
+    let setter_pid: i32 = {
+        let con: &mut sqlx::PgConnection = setter.connection();
+        sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(con)
+            .await
+            .unwrap()
+    };
+    let username_value = kernel::prelude::entity::ProfileUsername::new(username.clone());
+    {
+        let executor = setter.connection();
+        env.module
+            .profile_read_model()
+            .lock_by_id_for_update(executor, &created.profile_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let event = env
+            .module
+            .profile_repository()
+            .save(
+                executor,
+                Profile::set_username(created.profile_id.clone(), username_value.clone()),
+            )
+            .await
+            .unwrap();
+        env.module
+            .profile_read_model()
+            .set_username(
+                executor,
+                &created.profile_id,
+                &username_value,
+                &event.version,
+            )
+            .await
+            .unwrap();
+    }
+
+    let module = env.module.clone();
+    let profile_id = created.profile_id.clone();
+    let transfer = tokio::spawn(async move {
+        let mut conn = module.database.connection().await.unwrap();
+        module
+            .profile_repository()
+            .save(
+                &mut conn,
+                Profile::transfer_account(profile_id.clone(), AccountId::new(from_account), org_id),
+            )
+            .await
+            .unwrap();
+        let rehydrated = module
+            .profile_repository()
+            .load(&mut conn, &profile_id)
+            .await
+            .unwrap();
+        module
+            .profile_read_model()
+            .update(&mut conn, rehydrated.aggregate())
+            .await
+            .unwrap();
+    });
+    wait_until_blocked_by(&env, setter_pid).await;
+    setter.commit().await.unwrap();
+    transfer.await.unwrap();
+
+    assert_eq!(
+        stored_username(&env, &created.profile_id).await.as_deref(),
+        Some(username.as_str())
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn suspended_owner_gets_a_state_error_not_a_missing_account() {
+    let env = env().await;
+    let created = create_account(&env, None).await.unwrap();
+    // What the Account projector writes for an `AccountEvent::Suspended`.
+    sqlx::query(
+        "UPDATE accounts SET suspended_at = NOW(), suspend_reason = 'test suspension' WHERE nanoid = $1",
+    )
+    .bind(&created.account_nanoid)
+    .execute(&mut *env.module.database.connection().await.unwrap())
+    .await
+    .unwrap();
+    let error = env
+        .module
+        .set_profile_username(
+            &env.auth_account_id,
+            None,
+            created.profile_nanoid.as_ref().to_string(),
+            unique_username(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(context(&error), &KernelError::Rejected);
+    assert_eq!(stored_username(&env, &created.profile_id).await, None);
 }

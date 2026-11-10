@@ -155,6 +155,26 @@ pub trait ProfileReadModel: Sync + Send + 'static {
         username: &ProfileUsername,
     ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
 
+    /// Row-locks the Profile (`FOR NO KEY UPDATE`, the lock any projection `UPDATE` takes, which
+    /// also conflicts with `FOR SHARE`) and returns its latest committed state. Used to make
+    /// "current owner check -> write" atomic against a concurrent Profile transfer.
+    fn lock_by_id_for_update(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
+
+    /// Monotonic projection write for the one-time username: only `NULL -> value`, and the row
+    /// version never moves backwards. Fails with `Concurrency` when the row already has a
+    /// username (or no longer exists).
+    fn set_username(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+        username: &ProfileUsername,
+        version: &EventVersion<Profile>,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
     fn create(
         &self,
         executor: &mut Self::Connection,

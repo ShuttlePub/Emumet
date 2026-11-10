@@ -156,6 +156,55 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .map(|option| option.map(ProfileProjection::from))
     }
 
+    async fn lock_by_id_for_update(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, ProfileRow>(
+            //language=postgresql
+            r#"
+            SELECT id, account_id, display, summary, icon_id, banner_id, version, nanoid, username
+            FROM profiles WHERE id = $1 FOR NO KEY UPDATE
+            "#,
+        )
+        .bind(id.as_ref())
+        .fetch_optional(con)
+        .await
+        .convert_error()
+        .map(|option| option.map(ProfileProjection::from))
+    }
+
+    async fn set_username(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+        username: &ProfileUsername,
+        version: &EventVersion<Profile>,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            UPDATE profiles
+            SET username = $2, version = GREATEST(version, $3)
+            WHERE id = $1 AND username IS NULL
+            "#,
+        )
+        .bind(id.as_ref())
+        .bind(username.as_ref())
+        .bind(version.as_ref())
+        .execute(con)
+        .await
+        .convert_error()?;
+        if result.rows_affected() == 0 {
+            return Err(Report::new(KernelError::Concurrency)
+                .attach_printable("Profile row is missing or already has a username"));
+        }
+        Ok(())
+    }
+
     async fn create(
         &self,
         executor: &mut Self::Connection,
@@ -206,7 +255,9 @@ impl ProfileReadModel for PostgresProfileReadModel {
                 icon_id = $5,
                 banner_id = $6,
                 version = $7,
-                username = $8
+                -- NULL -> value only: a Profile edit that did not observe a concurrently stored
+                -- one-time username (its event stream was read before that commit) must not erase it.
+                username = COALESCE(username, $8)
             WHERE id = $1
             "#,
         )

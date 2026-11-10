@@ -109,6 +109,30 @@ impl ProfileReadModel for MockProfileReadModel {
             .collect())
     }
 
+    async fn lock_by_id_for_update(
+        &self,
+        _executor: &mut Self::Connection,
+        id: &ProfileId,
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
+        Ok(self
+            .profiles
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|profile| profile.id() == id)
+            .cloned())
+    }
+
+    async fn set_username(
+        &self,
+        _executor: &mut Self::Connection,
+        _id: &ProfileId,
+        _username: &ProfileUsername,
+        _version: &EventVersion<Profile>,
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
+
     async fn find_by_username(
         &self,
         _executor: &mut Self::Connection,

@@ -300,7 +300,8 @@ impl ProfileProjectionWriter for PostgresProfileProjectionWriter {
                 banner_id = EXCLUDED.banner_id,
                 version = EXCLUDED.version,
                 nanoid = EXCLUDED.nanoid,
-                username = EXCLUDED.username
+                -- NULL -> value only; a stale fold must not erase a stored one-time username.
+                username = COALESCE(profiles.username, EXCLUDED.username)
             WHERE profiles.version < EXCLUDED.version
             "#,
         )

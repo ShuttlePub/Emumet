@@ -1,7 +1,9 @@
 -- P1 profile-actor-identity-foundation (Emumet#71).
 -- Profile username storage and Profile-owned actor signing keys.
--- NOTE: the final production migration number is assigned by P4 (profile-federation-in-place-cutover);
--- this file only adds nullable/new objects and does not touch any Account-based federation data.
+-- This migration is non-destructive (a nullable column, new indexes and a new table) and does not
+-- touch any Account-based federation data, so it is applied to production like any other migration.
+-- P4 (profile-federation-in-place-cutover) owns only the destructive cutover migrations; it does
+-- not renumber this one.
 
 -- Read-model column. NULL = no username yet (legacy Profiles).
 ALTER TABLE "profiles" ADD COLUMN "username" TEXT;
