@@ -1665,3 +1665,109 @@ async fn a_canary_delivery_failure_makes_an_operational_email_unhealthy_while_pu
     );
     assert!(!fx.gate().await.observation.email.configured);
 }
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_delivery_failure_survives_connection_probes_until_a_canary_delivery_succeeds() {
+    use driver::registration_protection::smtp::{classify_smtp_failure, SmtpFailure, SmtpStage};
+    let fx = Fixture::new().await;
+    fx.bootstrap_bot().await;
+    fx.bootstrap_email().await;
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::Operational
+    );
+    let canary_failure = |stage, code| {
+        classify_smtp_failure(
+            SmtpFailure {
+                stage,
+                code: Some(code),
+                ..SmtpFailure::default()
+            },
+            SendPurpose::Canary,
+        )
+    };
+    let verify_start = || async {
+        fx.module
+            .verify_registration_protection(
+                &fx.admin(),
+                Protection::Email,
+                AdminVerifyInput::default(),
+            )
+            .await
+            .unwrap()
+    };
+
+    for (failure, expected, observation) in [
+        (
+            canary_failure(SmtpStage::Data, 452),
+            ReadinessStatus::TemporarilyUnavailable,
+            ProtectionObservation::new(true, ProbeStatus::Unhealthy),
+        ),
+        (
+            canary_failure(SmtpStage::Rcpt, 550),
+            ReadinessStatus::ConfigurationInvalid,
+            ProtectionObservation::UNCONFIGURED,
+        ),
+    ] {
+        // operational (または前回の失敗) から、canary の配送失敗で非健全になる。
+        *fx.module.email.canary_send.lock().unwrap() = failure;
+        let report = verify_start().await;
+        assert_eq!(report.readiness.effective.status, expected);
+        assert_eq!(fx.gate().await.observation.email, observation);
+
+        // 障害が続いている間は、接続・認証だけの probe が何度成功しても operational へ戻らない
+        // (BOT のみへの縮退が解除されない)。
+        for _ in 0..3 {
+            let probe = fx
+                .module
+                .run_registration_protection_probe(Protection::Email)
+                .await
+                .unwrap();
+            assert_eq!(probe.outcome, ProviderOutcome::Accepted);
+            let view = fx.email_view().await;
+            assert_eq!(view.effective.status, expected);
+            assert_eq!(view.effective.reason, failure.reason);
+            assert_eq!(fx.gate().await.observation.email, observation);
+        }
+
+        // 配送範囲の再検証 (canary の配送受理) に成功して初めて解除され、鮮度内の成功で operational に戻る。
+        *fx.module.email.canary_send.lock().unwrap() = accepted();
+        let recovered = verify_start().await;
+        assert_eq!(
+            recovered.readiness.effective.status,
+            ReadinessStatus::Operational
+        );
+        assert!(fx.gate().await.observation.email.is_effective());
+    }
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_connection_level_failure_is_still_recovered_by_a_connection_probe() {
+    let fx = Fixture::new().await;
+    fx.bootstrap_bot().await;
+    fx.bootstrap_email().await;
+    *fx.module.email.probe.lock().unwrap() = ProviderResult::temporarily_unavailable(
+        ReasonCode::ConnectFailed,
+        TransportClass::ConnectFailed,
+    );
+    fx.module
+        .run_registration_protection_probe(Protection::Email)
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::TemporarilyUnavailable
+    );
+    *fx.module.email.probe.lock().unwrap() = accepted();
+    fx.module
+        .run_registration_protection_probe(Protection::Email)
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::Operational
+    );
+    assert!(fx.gate().await.observation.email.is_effective());
+}

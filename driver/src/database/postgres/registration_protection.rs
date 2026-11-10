@@ -6,7 +6,8 @@ use kernel::interfaces::repository::{
     RegistrationEmailChallengeRepository, RegistrationProtectionRepository,
 };
 use kernel::prelude::entity::{
-    ConfigGeneration, EmailChallenge, Protection, ReadinessRecord, SendCounts, RATE_WINDOW,
+    ConfigGeneration, DeliveryBlock, EmailChallenge, Protection, ReadinessRecord, SendCounts,
+    RATE_WINDOW,
 };
 use kernel::KernelError;
 use sqlx::types::time::OffsetDateTime;
@@ -16,7 +17,8 @@ use super::registration_gate::{from_column, to_column};
 
 const READINESS_COLUMNS: &str = "protection, provider, enabled, generation, fingerprint, \
     checked_at, check_outcome, check_reason, check_transport, last_success_at, \
-    success_valid_until, status, reason, valid_until";
+    success_valid_until, status, reason, valid_until, delivery_block_outcome, \
+    delivery_block_reason, delivery_block_transport, delivery_block_at";
 
 #[derive(sqlx::FromRow)]
 struct ReadinessRow {
@@ -34,6 +36,10 @@ struct ReadinessRow {
     status: String,
     reason: String,
     valid_until: Option<OffsetDateTime>,
+    delivery_block_outcome: Option<String>,
+    delivery_block_reason: Option<String>,
+    delivery_block_transport: Option<String>,
+    delivery_block_at: Option<OffsetDateTime>,
 }
 
 impl TryFrom<ReadinessRow> for ReadinessRecord {
@@ -52,6 +58,24 @@ impl TryFrom<ReadinessRow> for ReadinessRecord {
             check_transport: from_column(&row.check_transport)?,
             last_success_at: row.last_success_at,
             success_valid_until: row.success_valid_until,
+            delivery_block: match (
+                row.delivery_block_outcome,
+                row.delivery_block_reason,
+                row.delivery_block_transport,
+                row.delivery_block_at,
+            ) {
+                (Some(outcome), Some(reason), Some(transport), Some(at)) => Some(DeliveryBlock {
+                    outcome: from_column(&outcome)?,
+                    reason: from_column(&reason)?,
+                    transport: from_column(&transport)?,
+                    at,
+                }),
+                (None, None, None, None) => None,
+                _ => {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable("Inconsistent readiness delivery block columns"))
+                }
+            },
             status: from_column(&row.status)?,
             reason: from_column(&row.reason)?,
             valid_until: row.valid_until,
@@ -119,8 +143,10 @@ impl RegistrationProtectionRepository for PostgresRegistrationProtectionReposito
             //language=postgresql
             "INSERT INTO registration_protection_readiness (protection, provider, enabled, \
              generation, fingerprint, checked_at, check_outcome, check_reason, check_transport, \
-             last_success_at, success_valid_until, status, reason, valid_until) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+             last_success_at, success_valid_until, status, reason, valid_until, \
+             delivery_block_outcome, delivery_block_reason, delivery_block_transport, \
+             delivery_block_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) \
              ON CONFLICT (protection) DO UPDATE SET provider = EXCLUDED.provider, \
              enabled = EXCLUDED.enabled, generation = EXCLUDED.generation, \
              fingerprint = EXCLUDED.fingerprint, checked_at = EXCLUDED.checked_at, \
@@ -128,7 +154,11 @@ impl RegistrationProtectionRepository for PostgresRegistrationProtectionReposito
              check_transport = EXCLUDED.check_transport, \
              last_success_at = EXCLUDED.last_success_at, \
              success_valid_until = EXCLUDED.success_valid_until, status = EXCLUDED.status, \
-             reason = EXCLUDED.reason, valid_until = EXCLUDED.valid_until",
+             reason = EXCLUDED.reason, valid_until = EXCLUDED.valid_until, \
+             delivery_block_outcome = EXCLUDED.delivery_block_outcome, \
+             delivery_block_reason = EXCLUDED.delivery_block_reason, \
+             delivery_block_transport = EXCLUDED.delivery_block_transport, \
+             delivery_block_at = EXCLUDED.delivery_block_at",
         )
         .bind(to_column(&record.protection)?)
         .bind(to_column(&record.provider)?)
@@ -144,6 +174,25 @@ impl RegistrationProtectionRepository for PostgresRegistrationProtectionReposito
         .bind(to_column(&record.status)?)
         .bind(to_column(&record.reason)?)
         .bind(record.valid_until)
+        .bind(
+            record
+                .delivery_block
+                .map(|block| to_column(&block.outcome))
+                .transpose()?,
+        )
+        .bind(
+            record
+                .delivery_block
+                .map(|block| to_column(&block.reason))
+                .transpose()?,
+        )
+        .bind(
+            record
+                .delivery_block
+                .map(|block| to_column(&block.transport))
+                .transpose()?,
+        )
+        .bind(record.delivery_block.map(|block| block.at))
         .execute(con)
         .await
         .convert_error()?;

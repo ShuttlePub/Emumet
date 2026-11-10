@@ -21,7 +21,17 @@ CREATE TABLE registration_protection_readiness (
     )),
     reason TEXT NOT NULL,
     valid_until TIMESTAMPTZ,
-    CHECK ((last_success_at IS NULL) = (success_valid_until IS NULL))
+    -- 配送範囲 (canary) の未復旧の障害。同一 generation の間、配送範囲の成功まで接続 probe では解除されない。
+    delivery_block_outcome TEXT CHECK (delivery_block_outcome IN ('configuration_invalid', 'temporarily_unavailable')),
+    delivery_block_reason TEXT,
+    delivery_block_transport TEXT,
+    delivery_block_at TIMESTAMPTZ,
+    CHECK ((last_success_at IS NULL) = (success_valid_until IS NULL)),
+    CHECK (
+        (delivery_block_outcome IS NULL) = (delivery_block_reason IS NULL)
+        AND (delivery_block_outcome IS NULL) = (delivery_block_transport IS NULL)
+        AND (delivery_block_outcome IS NULL) = (delivery_block_at IS NULL)
+    )
 );
 
 CREATE TABLE registration_email_challenges (

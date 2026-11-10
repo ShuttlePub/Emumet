@@ -1,10 +1,10 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::{
-    apply_provider_result, decide_confirmation, decide_proof_use, evaluate_send_limits,
-    ChallengePurpose, ChallengeRejection, ChallengeStatus, ConfigGeneration, ConfirmDecision,
-    EmailChallenge, EmailChallengePolicy, ProofBinding, ProofDecision, ProofRejection, Protection,
-    ProtectionConfigSnapshot, ProviderResult, ReadinessPolicy, ReadinessRecord, SendCounts,
-    SendLimitDecision, SendLimitScope,
+    apply_scoped_provider_result, decide_confirmation, decide_proof_use, evaluate_send_limits,
+    ChallengePurpose, ChallengeRejection, ChallengeStatus, CheckScope, ConfigGeneration,
+    ConfirmDecision, EmailChallenge, EmailChallengePolicy, ProofBinding, ProofDecision,
+    ProofRejection, Protection, ProtectionConfigSnapshot, ProviderResult, ReadinessPolicy,
+    ReadinessRecord, SendCounts, SendLimitDecision, SendLimitScope,
 };
 use crate::KernelError;
 use std::future::Future;
@@ -164,8 +164,14 @@ pub trait EmailTransport: Sync + Send + 'static {
     fn canary_address(&self) -> Option<String>;
 
     /// code を含むメールを送る。成功は `Accepted` (SMTP 受理) までで所有確認ではない。
-    /// 宛先拒否 (550 等) は `AttemptRejected`、認証・設定不正は `ConfigurationInvalid`、
-    /// 接続失敗・timeout・4xx は `TemporarilyUnavailable`。code・本文・secret はログに出さない。
+    /// 失敗の分類は送信の目的 (`SendPurpose`) で分かれる:
+    /// - `Registration` (公開要求): 宛先提示前 (接続・STARTTLS・認証・MAIL FROM) の失敗は provider の障害
+    ///   (`TemporarilyUnavailable` / `ConfigurationInvalid`)、**宛先提示後 (RCPT 以降) の失敗はコードや timeout を
+    ///   問わずすべて `AttemptRejected`** (観測から除外し、公開応答から宛先の状態を判別させない)
+    /// - `Canary` (管理者・固定宛先): RCPT/DATA/timeout/切断を含む全段階の失敗を provider の障害として分類する
+    ///   (4xx・timeout・切断は `TemporarilyUnavailable`、認証失敗・5xx は `ConfigurationInvalid`)
+    ///
+    /// code・本文・secret はログに出さない。
     fn send_code(
         &self,
         to: &str,
@@ -222,13 +228,14 @@ pub async fn record_provider_result<R: RegistrationProtectionRepository>(
     executor: &mut R::Connection,
     config: &ProtectionConfigSnapshot,
     result: &ProviderResult,
+    scope: CheckScope,
     at: OffsetDateTime,
     policy: &ReadinessPolicy,
 ) -> error_stack::Result<Option<ReadinessRecord>, KernelError> {
     let existing = repository
         .find_for_update(executor, config.protection)
         .await?;
-    let record = apply_provider_result(existing.as_ref(), config, result, at, policy);
+    let record = apply_scoped_provider_result(existing.as_ref(), config, result, scope, at, policy);
     if let Some(record) = &record {
         repository.upsert(executor, record).await?;
     }

@@ -30,7 +30,7 @@ use kernel::interfaces::repository::{
 };
 use kernel::prelude::entity::{
     evaluate, evaluate_readiness, observation_from_readiness, AuthAccountId, ChallengePurpose,
-    ConfigGeneration, EffectiveReadiness, NormalizedEmail, ProofBinding, Protection,
+    CheckScope, ConfigGeneration, EffectiveReadiness, NormalizedEmail, ProofBinding, Protection,
     ProtectionConfigSnapshot, ProtectionProvider, ProviderOutcome, ProviderResult, ReadinessRecord,
     ReadinessStatus, ReasonCode, RegistrationDecision, RegistrationObservation, TransportClass,
 };
@@ -228,6 +228,7 @@ async fn record_result<T: RegistrationProtectionDeps>(
     deps: &T,
     protection: Protection,
     result: ProviderResult,
+    scope: CheckScope,
     at: OffsetDateTime,
 ) -> error_stack::Result<bool, KernelError> {
     let snapshot = deps.protection_snapshot(protection);
@@ -242,6 +243,7 @@ async fn record_result<T: RegistrationProtectionDeps>(
                     executor,
                     &snapshot,
                     &result,
+                    scope,
                     at,
                     &policy,
                 )
@@ -315,7 +317,7 @@ pub trait RegistrationProtectionReadinessUseCase: RegistrationProtectionDeps {
                 Protection::Bot => self.turnstile_verifier().probe_secret().await,
                 Protection::Email => self.email_transport().probe_connection().await,
             };
-            if record_result(self, protection, result, at).await? {
+            if record_result(self, protection, result, CheckScope::Connection, at).await? {
                 sync_observation(self, at).await?;
             }
             Ok(result)
@@ -351,7 +353,7 @@ pub trait RegistrationProtectionReadinessUseCase: RegistrationProtectionDeps {
                 })
                 .await;
             let at = now();
-            if record_result(self, Protection::Bot, result, at).await? {
+            if record_result(self, Protection::Bot, result, CheckScope::Connection, at).await? {
                 sync_observation(self, at).await?;
             }
             Ok(BotTokenVerdict::from_result(&result))
@@ -532,7 +534,9 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
                         reason = result.reason.as_str(),
                         "registration email challenge could not be sent"
                     );
-                    if record_result(self, Protection::Email, result, at).await? {
+                    if record_result(self, Protection::Email, result, CheckScope::Connection, at)
+                        .await?
+                    {
                         sync_observation(self, at).await?;
                     }
                 }
@@ -628,7 +632,9 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
                     ..
                 } => {
                     let success = ProviderResult::business_success(TransportClass::SmtpAccepted);
-                    if record_result(self, Protection::Email, success, at).await? {
+                    if record_result(self, Protection::Email, success, CheckScope::Delivery, at)
+                        .await?
+                    {
                         sync_observation(self, at).await?;
                     }
                     Ok(ConfirmOutcome::Confirmed { proof, expires_at })
@@ -770,7 +776,7 @@ pub trait AdminRegistrationProtectionUseCase:
         async move {
             check_permission(self, admin, &instance_administrate()).await?;
             let at = now();
-            let (result, disposition) = match protection {
+            let (result, disposition, scope) = match protection {
                 Protection::Bot => {
                     if input.challenge_id.is_some() || input.code.is_some() {
                         return Err(Report::new(KernelError::Validation)
@@ -791,7 +797,7 @@ pub trait AdminRegistrationProtectionUseCase:
                         }
                         None => self.turnstile_verifier().probe_secret().await,
                     };
-                    (result, VerifyDisposition::Completed)
+                    (result, VerifyDisposition::Completed, CheckScope::Connection)
                 }
                 Protection::Email => {
                     if input.token.is_some() {
@@ -802,6 +808,7 @@ pub trait AdminRegistrationProtectionUseCase:
                         (Some(id), Some(code)) => (
                             self.confirm_canary(id, code, at).await?,
                             VerifyDisposition::Completed,
+                            CheckScope::Delivery,
                         ),
                         (None, None) => self.start_canary(at).await?,
                         _ => {
@@ -811,7 +818,7 @@ pub trait AdminRegistrationProtectionUseCase:
                     }
                 }
             };
-            let recorded = record_result(self, protection, result, at).await?;
+            let recorded = record_result(self, protection, result, scope, at).await?;
             if recorded {
                 sync_observation(self, at).await?;
             }
@@ -833,17 +840,22 @@ pub trait AdminRegistrationProtectionUseCase:
     fn start_canary<'a>(
         &'a self,
         at: OffsetDateTime,
-    ) -> impl Future<Output = error_stack::Result<(ProviderResult, VerifyDisposition), KernelError>>
-           + Send
+    ) -> impl Future<
+        Output = error_stack::Result<(ProviderResult, VerifyDisposition, CheckScope), KernelError>,
+    > + Send
            + 'a {
         async move {
             let transport = self.email_transport();
             let probe = transport.probe_connection().await;
             if probe.outcome != ProviderOutcome::Accepted {
-                return Ok((probe, VerifyDisposition::Completed));
+                return Ok((probe, VerifyDisposition::Completed, CheckScope::Connection));
             }
             let Some(canary) = transport.canary_address() else {
-                return Ok((probe, VerifyDisposition::CanaryNotConfigured));
+                return Ok((
+                    probe,
+                    VerifyDisposition::CanaryNotConfigured,
+                    CheckScope::Connection,
+                ));
             };
             let Ok(email) = NormalizedEmail::parse(&canary) else {
                 return Ok((
@@ -852,6 +864,7 @@ pub trait AdminRegistrationProtectionUseCase:
                         TransportClass::None,
                     ),
                     VerifyDisposition::Completed,
+                    CheckScope::Connection,
                 ));
             };
             let snapshot = self.protection_snapshot(Protection::Email);
@@ -894,10 +907,11 @@ pub trait AdminRegistrationProtectionUseCase:
                         challenge_id: id,
                         expires_at,
                     },
+                    CheckScope::Delivery,
                 ));
             }
             self.invalidate_registration_challenge(&id).await?;
-            Ok((sent, VerifyDisposition::Completed))
+            Ok((sent, VerifyDisposition::Completed, CheckScope::Delivery))
         }
     }
 

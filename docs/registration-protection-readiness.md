@@ -96,6 +96,7 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
   `challenge_id` を返す。管理者が canary mailbox に届いた code を `{"challenge_id": "...", "code": "..."}` で確認すると、**実 code の確認 roundtrip が business success** として当該 generation に記録され `operational` になる。
   SMTP の接続・250 では operational にならない。`REGISTRATION_EMAIL_CANARY_ADDRESS` が無ければ `canary_not_configured` を返し、メールは `unverified` のまま。
 - **継続検証**: 接続・認証 probe (`run_registration_protection_probe`)。実際の登録者の code 確認の成功 (配送と確認の end-to-end の business success) も鮮度を更新する。
+- **検証の範囲 (接続範囲と配送範囲)**: 接続・認証 probe は **接続範囲** だけを確認する。管理者 canary の配送失敗 (RCPT/DATA/timeout/切断を含む) は **配送範囲の障害** として generation ごとに保持され (`delivery_block`)、**接続 probe の成功 (`accepted`) では解除されない**。operational へ戻る (BOT のみへの縮退が解除される) のは、配送範囲の再検証 (canary の配送受理、または canary/登録者の code 確認の成功) に成功したときだけ。canary 由来の `temporarily_unavailable` / `configuration_invalid` は配送範囲の障害として保持される。接続段階の障害 (接続 probe 自体の失敗) は従来どおり次の接続 probe の成功で回復する。設定変更 (generation 変更) で block は破棄される。canary の配送受理は周期的に実行できる (周期実行は E15d。code の確認は不要で、配送経路 (RCPT/DATA) の再検証になる)。
 - canary の確認は **proof を発行せず**、登録者向けの公開確認では使えない。provider の健全性と登録者ごとの所有証明は分離されている。一回の配送成功から全宛先への到達は保証しない。
 
 ### 周期実行は E15d

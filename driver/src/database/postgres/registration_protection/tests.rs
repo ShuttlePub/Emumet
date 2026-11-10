@@ -17,9 +17,9 @@ use kernel::interfaces::repository::{
 };
 use kernel::prelude::entity::{
     evaluate_readiness, observation_from_readiness, ChallengePurpose, ChallengeRejection,
-    ChallengeStatus, ConfigGeneration, EmailChallengePolicy, ProofBinding, ProofRejection,
-    Protection, ProtectionConfigSnapshot, ProtectionProvider, ProviderResult, ReadinessPolicy,
-    ReadinessStatus, ReasonCode, SendLimitScope, TransportClass,
+    ChallengeStatus, CheckScope, ConfigGeneration, EmailChallengePolicy, ProofBinding,
+    ProofRejection, Protection, ProtectionConfigSnapshot, ProtectionProvider, ProviderResult,
+    ReadinessPolicy, ReadinessStatus, ReasonCode, SendLimitScope, TransportClass,
 };
 use kernel::KernelError;
 use sqlx::PgConnection;
@@ -95,6 +95,7 @@ impl Fixture {
                         conn,
                         &config,
                         &result,
+                        CheckScope::Connection,
                         at,
                         &readiness_policy(),
                     )
@@ -318,6 +319,7 @@ async fn concurrent_readiness_writes_never_lose_the_business_success() {
                         conn,
                         &config,
                         &result,
+                        CheckScope::Connection,
                         at,
                         &readiness_policy(),
                     )
@@ -1272,4 +1274,98 @@ async fn rate_limits_do_not_depend_on_the_order_in_which_requests_reserve() {
             ..
         }
     ));
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_delivery_block_is_persisted_carried_by_connection_probes_and_cleared_by_a_delivery_success(
+) {
+    let fx = Fixture::new().await;
+    let email = snapshot(Protection::Email, "e1");
+    let scoped = |result: ProviderResult, scope: CheckScope, at: OffsetDateTime| {
+        let db = fx.db.clone();
+        let email = email.clone();
+        async move {
+            db.transaction(move |conn| {
+                Box::pin(async move {
+                    record_provider_result(
+                        &PostgresRegistrationProtectionRepository,
+                        conn,
+                        &email,
+                        &result,
+                        scope,
+                        at,
+                        &readiness_policy(),
+                    )
+                    .await
+                    .map(|record| record.is_some())
+                })
+            })
+            .await
+            .unwrap()
+        }
+    };
+    assert!(scoped(success(), CheckScope::Delivery, t0()).await);
+    assert!(fx
+        .readiness(Protection::Email)
+        .await
+        .unwrap()
+        .delivery_block
+        .is_none());
+
+    let failure = ProviderResult::temporarily_unavailable(
+        ReasonCode::SmtpTransientFailure,
+        TransportClass::SmtpTransient,
+    );
+    assert!(scoped(failure, CheckScope::Delivery, t0() + Duration::minutes(1)).await);
+    let blocked = fx.readiness(Protection::Email).await.unwrap();
+    let block = blocked
+        .delivery_block
+        .expect("the delivery failure is stored");
+    assert_eq!(block.reason, ReasonCode::SmtpTransientFailure);
+    assert_eq!(block.at, t0() + Duration::minutes(1));
+
+    // 接続範囲の受理 (接続 probe) は block を保持したまま、評価も非健全のまま。
+    assert!(
+        scoped(
+            accepted(),
+            CheckScope::Connection,
+            t0() + Duration::minutes(2)
+        )
+        .await
+    );
+    let after_probe = fx.readiness(Protection::Email).await.unwrap();
+    assert_eq!(after_probe.delivery_block, Some(block));
+    assert_eq!(
+        evaluate_readiness(
+            &email,
+            Some(&after_probe),
+            t0() + Duration::minutes(2),
+            &readiness_policy()
+        )
+        .status,
+        ReadinessStatus::TemporarilyUnavailable
+    );
+
+    // 配送範囲の成功で解除され、DB からも消える。
+    assert!(
+        scoped(
+            accepted(),
+            CheckScope::Delivery,
+            t0() + Duration::minutes(3)
+        )
+        .await
+    );
+    let cleared = fx.readiness(Protection::Email).await.unwrap();
+    assert!(cleared.delivery_block.is_none());
+    assert_eq!(
+        evaluate_readiness(
+            &email,
+            Some(&cleared),
+            t0() + Duration::minutes(3),
+            &readiness_policy()
+        )
+        .status,
+        ReadinessStatus::Operational
+    );
 }
