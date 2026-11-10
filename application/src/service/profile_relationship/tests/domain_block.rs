@@ -1076,11 +1076,13 @@ async fn hold_job_row(env: &Env, job_id: i64) -> sqlx::Transaction<'static, sqlx
 async fn assert_cleanup_counts_from_after_the_cancel(
     env: &Arc<Env>,
     original_job_id: i64,
-    mut operation: tokio::task::JoinHandle<()>,
+    start_operation: impl FnOnce() -> tokio::task::JoinHandle<()>,
     cleanup: DeliveryActivityType,
     sender: &kernel::prelude::entity::ProfileId,
 ) {
+    // The row lock is taken before the operation starts, so it cannot slip past the lock.
     let tx = hold_job_row(env, original_job_id).await;
+    let mut operation = start_operation();
     assert!(
         tokio::time::timeout(StdDuration::from_millis(1500), &mut operation)
             .await
@@ -1112,24 +1114,26 @@ async fn an_undo_after_a_slow_block_is_counted_from_after_the_cancel_not_from_th
     claim_one(&env, "slow-worker").await;
     let job_id = *env.jobs_of(&alice.profile_id).await[0].id.as_ref();
 
-    let operation = tokio::spawn({
-        let env = env.clone();
-        let auth = alice.auth.clone();
-        let nanoid = alice.nanoid.clone();
-        async move {
-            env.module
-                .put_domain_control(
-                    &auth,
-                    None,
-                    &nanoid,
-                    BLOCKED_HOST,
-                    DomainControlMode::Block,
-                    None,
-                )
-                .await
-                .unwrap();
-        }
-    });
+    let operation = || {
+        tokio::spawn({
+            let env = env.clone();
+            let auth = alice.auth.clone();
+            let nanoid = alice.nanoid.clone();
+            async move {
+                env.module
+                    .put_domain_control(
+                        &auth,
+                        None,
+                        &nanoid,
+                        BLOCKED_HOST,
+                        DomainControlMode::Block,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+        })
+    };
     assert_cleanup_counts_from_after_the_cancel(
         &env,
         job_id,
@@ -1150,24 +1154,26 @@ async fn a_reject_after_a_slow_block_is_counted_from_after_the_cancel_not_from_t
     claim_one(&env, "slow-worker").await;
     let job_id = *env.jobs_of(&alice.profile_id).await[0].id.as_ref();
 
-    let operation = tokio::spawn({
-        let env = env.clone();
-        let auth = alice.auth.clone();
-        let nanoid = alice.nanoid.clone();
-        async move {
-            env.module
-                .put_domain_control(
-                    &auth,
-                    None,
-                    &nanoid,
-                    BLOCKED_HOST,
-                    DomainControlMode::Block,
-                    None,
-                )
-                .await
-                .unwrap();
-        }
-    });
+    let operation = || {
+        tokio::spawn({
+            let env = env.clone();
+            let auth = alice.auth.clone();
+            let nanoid = alice.nanoid.clone();
+            async move {
+                env.module
+                    .put_domain_control(
+                        &auth,
+                        None,
+                        &nanoid,
+                        BLOCKED_HOST,
+                        DomainControlMode::Block,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+        })
+    };
     assert_cleanup_counts_from_after_the_cancel(
         &env,
         job_id,
@@ -1188,17 +1194,19 @@ async fn an_undo_after_a_slow_unfollow_is_counted_from_after_the_cancel_not_from
     claim_one(&env, "slow-worker").await;
     let job_id = *env.jobs_of(&alice.profile_id).await[0].id.as_ref();
 
-    let operation = tokio::spawn({
-        let env = env.clone();
-        let auth = alice.auth.clone();
-        let nanoid = alice.nanoid.clone();
-        async move {
-            env.module
-                .unfollow_profile(&auth, None, &nanoid, &follow_nanoid)
-                .await
-                .unwrap();
-        }
-    });
+    let operation = || {
+        tokio::spawn({
+            let env = env.clone();
+            let auth = alice.auth.clone();
+            let nanoid = alice.nanoid.clone();
+            async move {
+                env.module
+                    .unfollow_profile(&auth, None, &nanoid, &follow_nanoid)
+                    .await
+                    .unwrap();
+            }
+        })
+    };
     assert_cleanup_counts_from_after_the_cancel(
         &env,
         job_id,
