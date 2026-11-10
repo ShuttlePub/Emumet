@@ -408,7 +408,7 @@
         "tags": [
           "Account"
         ],
-        "description": "Create a new account with a generated signing key pair. `profile_username` is optional; a well-formed value is rejected with 501 before any side effect because username storage is not implemented yet.",
+        "description": "Create a new account with a generated signing key pair. `profile_username` is optional; a well-formed value is rejected with 501 before any Account/Profile/event is created because username storage is not implemented yet.",
         "operationId": "create_account",
         "requestBody": {
           "content": {
@@ -3192,7 +3192,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Profiles/actors following the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "description": "Actors following the Profile; each follower is a local Profile or a remote actor identified by its canonical actor URL (`follower.kind`, `follower.actor_url`; `follower.profile_id` only for local). NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
         "operationId": "list_profile_followers",
         "parameters": [
           {
@@ -3231,7 +3231,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProfileFollowListResponse"
+                  "$ref": "#/components/schemas/ProfileFollowerListResponse"
                 }
               }
             }
@@ -4316,7 +4316,7 @@
       },
       "CreateProfileFollowRequest": {
         "type": "object",
-        "description": "Request to follow a target from a Profile.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nRequest to follow a target from a Profile.",
         "required": [
           "target"
         ],
@@ -4329,7 +4329,7 @@
       },
       "CreateProfileRelationRequest": {
         "type": "object",
-        "description": "Request to block or mute one target (individual actor) from a Profile.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nRequest to block or mute one target (individual actor) from a Profile.",
         "required": [
           "target"
         ],
@@ -4401,6 +4401,7 @@
       },
       "DomainControlListResponse": {
         "type": "object",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.",
         "required": [
           "items"
         ],
@@ -4415,7 +4416,7 @@
       },
       "DomainControlMode": {
         "type": "string",
-        "description": "Treatment applied to every actor whose canonical actor-ID host equals the domain.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nTreatment applied to every actor whose canonical actor-ID host equals the domain.",
         "enum": [
           "mute",
           "block"
@@ -4423,7 +4424,7 @@
       },
       "DomainControlResponse": {
         "type": "object",
-        "description": "A Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nA Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
         "required": [
           "profile_id",
           "domain",
@@ -4903,9 +4904,41 @@
           }
         }
       },
+      "ProfileActorKind": {
+        "type": "string",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nWhether an actor lives on this server or on a remote server.",
+        "enum": [
+          "local",
+          "remote"
+        ]
+      },
+      "ProfileActorRef": {
+        "type": "object",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nReference to a follower or target actor, local or remote.",
+        "required": [
+          "kind",
+          "actor_url"
+        ],
+        "properties": {
+          "actor_url": {
+            "type": "string",
+            "description": "Canonical ActivityPub actor ID (URL). Always present, for local and remote actors alike."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProfileActorKind"
+          },
+          "profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Profile nanoid; present only when kind is `local`, absent for remote actors."
+          }
+        }
+      },
       "ProfileFollowListResponse": {
         "type": "object",
-        "description": "Profile-scoped follow list (following or followers of a Profile).",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nProfiles/actors followed by a Profile (the \"following\" list).",
         "required": [
           "items"
         ],
@@ -4927,7 +4960,7 @@
       },
       "ProfileFollowResponse": {
         "type": "object",
-        "description": "A Profile-scoped follow relationship (the Profile is the follower).",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nA Profile-scoped follow relationship (the Profile is the follower).",
         "required": [
           "id",
           "profile_id",
@@ -4959,15 +4992,69 @@
       },
       "ProfileFollowState": {
         "type": "string",
-        "description": "Lifecycle state of a Profile follow.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nLifecycle state of a Profile follow.",
         "enum": [
           "pending",
           "accepted"
         ]
       },
+      "ProfileFollowerListResponse": {
+        "type": "object",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nActors following a Profile (the \"followers\" list).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileFollowerResponse"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor for the next page; absent on the last page."
+          }
+        }
+      },
+      "ProfileFollowerResponse": {
+        "type": "object",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nA follow relationship in which the Profile is the followed party (the follower is the actor).",
+        "required": [
+          "id",
+          "profile_id",
+          "follower",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "follower": {
+            "$ref": "#/components/schemas/ProfileActorRef",
+            "description": "The follower: a local Profile or a remote actor."
+          },
+          "id": {
+            "type": "string",
+            "description": "Follow relation nanoid."
+          },
+          "profile_id": {
+            "type": "string",
+            "description": "Followed Profile nanoid (the owner of the list)."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProfileFollowState"
+          }
+        }
+      },
       "ProfileRelationKind": {
         "type": "string",
-        "description": "Kind of individual (non-domain) relation setting.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nKind of individual (non-domain) relation setting.",
         "enum": [
           "mute",
           "block"
@@ -4975,6 +5062,7 @@
       },
       "ProfileRelationListResponse": {
         "type": "object",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.",
         "required": [
           "items"
         ],
@@ -4996,7 +5084,7 @@
       },
       "ProfileRelationResponse": {
         "type": "object",
-        "description": "An individual block or mute setting owned by one Profile.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nAn individual block or mute setting owned by one Profile.",
         "required": [
           "id",
           "profile_id",
@@ -5152,7 +5240,7 @@
       },
       "PutDomainControlRequest": {
         "type": "object",
-        "description": "Create or replace the control for one domain.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nCreate or replace the control for one domain.",
         "required": [
           "mode"
         ],
