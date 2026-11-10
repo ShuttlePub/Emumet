@@ -21,16 +21,25 @@ CREATE TABLE registration_protection_readiness (
     )),
     reason TEXT NOT NULL,
     valid_until TIMESTAMPTZ,
-    -- 配送範囲 (canary) の未復旧の障害。同一 generation の間、配送範囲の成功まで接続 probe では解除されない。
-    delivery_block_outcome TEXT CHECK (delivery_block_outcome IN ('configuration_invalid', 'temporarily_unavailable')),
-    delivery_block_reason TEXT,
-    delivery_block_transport TEXT,
-    delivery_block_at TIMESTAMPTZ,
+    -- 範囲ごとの未復旧の既知の障害。同一 generation の間、同じ範囲の成功 (配送の成功は接続範囲も) まで解消されない (単調性)。
+    connection_failure_outcome TEXT CHECK (connection_failure_outcome IN ('configuration_invalid', 'temporarily_unavailable')),
+    connection_failure_reason TEXT,
+    connection_failure_transport TEXT,
+    connection_failure_at TIMESTAMPTZ,
+    delivery_failure_outcome TEXT CHECK (delivery_failure_outcome IN ('configuration_invalid', 'temporarily_unavailable')),
+    delivery_failure_reason TEXT,
+    delivery_failure_transport TEXT,
+    delivery_failure_at TIMESTAMPTZ,
     CHECK ((last_success_at IS NULL) = (success_valid_until IS NULL)),
     CHECK (
-        (delivery_block_outcome IS NULL) = (delivery_block_reason IS NULL)
-        AND (delivery_block_outcome IS NULL) = (delivery_block_transport IS NULL)
-        AND (delivery_block_outcome IS NULL) = (delivery_block_at IS NULL)
+        (delivery_failure_outcome IS NULL) = (delivery_failure_reason IS NULL)
+        AND (delivery_failure_outcome IS NULL) = (delivery_failure_transport IS NULL)
+        AND (delivery_failure_outcome IS NULL) = (delivery_failure_at IS NULL)
+    ),
+    CHECK (
+        (connection_failure_outcome IS NULL) = (connection_failure_reason IS NULL)
+        AND (connection_failure_outcome IS NULL) = (connection_failure_transport IS NULL)
+        AND (connection_failure_outcome IS NULL) = (connection_failure_at IS NULL)
     )
 );
 

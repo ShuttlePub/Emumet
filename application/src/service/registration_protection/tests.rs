@@ -3,6 +3,9 @@
 //! `test_with::env` により DATABASE_URL 未設定時は skip される (CI では driver / coverage が実行する)。
 
 use super::*;
+use crate::service::registration_gate::{
+    ChangeRegistrationGateUseCase, GetRegistrationGateUseCase,
+};
 use driver::database::PostgresDatabase;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::{
@@ -1770,4 +1773,119 @@ async fn a_connection_level_failure_is_still_recovered_by_a_connection_probe() {
         ReadinessStatus::Operational
     );
     assert!(fx.gate().await.observation.email.is_effective());
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_known_configuration_loss_survives_a_later_timeout_and_the_latch_needs_a_manual_resume() {
+    use driver::registration_protection::smtp::{classify_smtp_failure, SmtpFailure, SmtpStage};
+    let fx = Fixture::new().await;
+    fx.bootstrap_bot().await;
+    fx.bootstrap_email().await;
+    fx.set_gate_admin_state(AdminState::Open).await;
+    fx.module.sync_registration_observation().await.unwrap();
+    assert!(fx.gate().await.observation.email.is_effective());
+
+    // canary の宛先拒否 (RCPT 550) で配送範囲の configuration_invalid を記録する。
+    *fx.module.email.canary_send.lock().unwrap() = classify_smtp_failure(
+        SmtpFailure {
+            stage: SmtpStage::Rcpt,
+            code: Some(550),
+            ..SmtpFailure::default()
+        },
+        SendPurpose::Canary,
+    );
+    let report = fx
+        .module
+        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.readiness.effective.status,
+        ReadinessStatus::ConfigurationInvalid
+    );
+    assert_eq!(
+        fx.gate().await.observation.email,
+        ProtectionObservation::UNCONFIGURED
+    );
+
+    // その後の接続 probe の timeout (一時障害) では、既知の configuration_invalid は一時障害へ軽くならない。
+    *fx.module.email.probe.lock().unwrap() =
+        ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout);
+    fx.module
+        .run_registration_protection_probe(Protection::Email)
+        .await
+        .unwrap();
+    let view = fx.email_view().await;
+    assert_eq!(view.effective.status, ReadinessStatus::ConfigurationInvalid);
+    assert_eq!(view.effective.reason, ReasonCode::SmtpPermanentFailure);
+    assert_eq!(
+        fx.gate().await.observation.email,
+        ProtectionObservation::UNCONFIGURED
+    );
+    assert!(!fx.gate().await.config_lost_latch, "BOT is still healthy");
+
+    // BOT も設定喪失 (無効な secret) になると、両方 configured=false で停止ラッチが成立する。
+    *fx.module.turnstile.verify.lock().unwrap() =
+        ProviderResult::configuration_invalid(ReasonCode::InvalidSecret, TransportClass::Http4xx);
+    fx.module
+        .verify_registration_protection(
+            &fx.admin(),
+            Protection::Bot,
+            AdminVerifyInput {
+                token: Some("widget-token".to_string()),
+                ..AdminVerifyInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    let latched = fx.gate().await;
+    assert!(latched.config_lost_latch);
+    assert_eq!(latched.observation, RegistrationObservation::UNCONFIGURED);
+    let view = fx.module.get_registration_gate(&fx.admin()).await.unwrap();
+    assert_eq!(view.decision, RegistrationDecision::Stopped);
+
+    // 復旧 (BOT の成功・接続 probe の成功・canary の配送成功) だけでは再開しない。
+    *fx.module.turnstile.verify.lock().unwrap() = http_success();
+    fx.module
+        .verify_registration_protection(
+            &fx.admin(),
+            Protection::Bot,
+            AdminVerifyInput {
+                token: Some("widget-token".to_string()),
+                ..AdminVerifyInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    *fx.module.email.probe.lock().unwrap() = accepted();
+    fx.module
+        .run_registration_protection_probe(Protection::Email)
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::ConfigurationInvalid,
+        "a connection success does not clear the delivery failure"
+    );
+    *fx.module.email.canary_send.lock().unwrap() = accepted();
+    fx.bootstrap_email().await;
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::Operational
+    );
+    let recovered = fx.gate().await;
+    assert!(recovered.observation.email.is_effective());
+    assert!(recovered.config_lost_latch, "recovery alone never resumes");
+    let view = fx.module.get_registration_gate(&fx.admin()).await.unwrap();
+    assert_eq!(view.decision, RegistrationDecision::Stopped);
+
+    // 管理者の手動再開でだけ受付に戻る。
+    let resumed = fx
+        .module
+        .open_registration_gate(&fx.admin(), recovered.revision)
+        .await
+        .unwrap();
+    assert!(resumed.decision.accepts());
+    assert!(!resumed.state.config_lost_latch);
 }

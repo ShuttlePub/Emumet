@@ -632,7 +632,7 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
                     ..
                 } => {
                     let success = ProviderResult::business_success(TransportClass::SmtpAccepted);
-                    if record_result(self, Protection::Email, success, CheckScope::Delivery, at)
+                    if record_result(self, Protection::Email, success, CheckScope::Connection, at)
                         .await?
                     {
                         sync_observation(self, at).await?;

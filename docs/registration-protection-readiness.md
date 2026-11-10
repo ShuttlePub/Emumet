@@ -49,17 +49,42 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
 | status | 意味 |
 |---|---|
 | `operational` | 当該 generation に束縛された business success が鮮度内。**E15a では configured=true・Healthy** |
-| `temporarily_unavailable` | 設定は失っていない一時障害 (429/5xx/timeout/接続失敗/不正応答/SMTP 4xx)。configured=true・Unhealthy。復旧で自動的に戻る |
-| `unverified` | 未検証・設定変更後 (`generation_changed`)・成功期限切れ (`success_expired`)・probe 停止 (`probe_stale`)・business success なし (`no_business_success`)。configured=true・Unknown |
+| `temporarily_unavailable` | 設定は失っていない一時障害 (429/5xx/timeout/接続失敗/不正応答/SMTP 4xx)。configured=true・Unhealthy。同じ範囲の成功で戻る (時間経過だけでは戻らない) |
+| `unverified` | 未検証・設定変更後 (`generation_changed`)・成功期限切れ (`success_expired`)・probe 停止 (`probe_stale`、**既知の障害が無いときだけ**)・business success なし (`no_business_success`)。configured=true・Unknown |
 | `configuration_invalid` | 未設定・空設定・明示無効・無効な secret・SMTP 認証/設定/TLS 不正。**configured=false**。旧成功は使わない。両保護がこの状態なら E15a が設定喪失として停止 latch |
 
 評価 (`kernel::evaluate_readiness`, 時刻は引数):
 
 1. 設定が使えない → `configuration_invalid`
 2. 記録なし / generation 不一致 → `unverified`
-3. 最後の検証が `probe_max_age` 以上前 → `unverified` (probe 停止。**期限ちょうどは期限切れ**)
-4. 最後の検証が `configuration_invalid` / `temporarily_unavailable` → その分類
-5. 最後の検証が受理 (`business_success` / `accepted`) → 当該 generation の business success が `success_ttl` 内なら `operational` (`valid_until` = min(成功期限, 最後の検証 + probe_max_age))、そうでなければ `unverified`
+3. **保持している既知の障害** (範囲ごと: 接続範囲・配送範囲) があれば、鮮度に関係なく最も悪いものを返す (`configuration_invalid` > `temporarily_unavailable`、同格なら新しい方の理由)
+4. 最後の検証が `probe_max_age` 以上前 → `unverified` (probe 停止。**期限ちょうどは期限切れ**)
+5. 当該 generation の business success が `success_ttl` 内なら `operational` (`valid_until` = min(成功期限, 最後の検証 + probe_max_age))、そうでなければ `unverified`
+
+### 単調性の原則と網羅表
+
+**より悪い既知状態は、それを解消する証拠 (同じ範囲の成功) か generation の変更でしか改善しない。** 後続のより軽い失敗 (`configuration_invalid` の後の timeout)、時間の経過 (鮮度切れ)、別の範囲の成功では、解除も軽減もされない。
+成功が解消する範囲: 接続範囲の成功 (接続 probe・BOT の business success・登録者の code 確認の成功) は **接続範囲の障害だけ**、canary の配送成功は **接続・配送の両方**。失敗は同じ範囲の既存の障害へ「より軽ければ据え置き、同格以上なら最新で置き換え」で畳む。
+`attempt_rejected` は何も変えず、記録もしない。
+
+配送範囲の障害 × 最新の接続結果 × 時間・generation の全組合せ (`kernel` の `readiness_is_monotonic_over_every_combination` が期待値を手書きで網羅する。E15a への観測 = (configured, healthy)):
+
+| 保持する配送障害 | 最新の接続結果 | 通常 (鮮度内) | 鮮度切れ | generation 変更 |
+|---|---|---|---|---|
+| なし | accepted | operational (true, Healthy) | unverified `probe_stale` (true, Unknown) | unverified `generation_changed` (true, Unknown) |
+| なし | temporary (timeout 等) | temporarily_unavailable (true, Unhealthy) | 同左 (据え置き) | 同上 |
+| なし | invalid (無効 secret 等) | configuration_invalid (**false**) | 同左 (据え置き) | 同上 |
+| なし | 未観測 | operational | unverified `probe_stale` | 同上 |
+| temporary | accepted | temporarily_unavailable (配送障害の理由) | 同左 (据え置き) | 同上 |
+| temporary | temporary | temporarily_unavailable (新しい方の理由) | 同左 | 同上 |
+| temporary | invalid | configuration_invalid (**false**) | 同左 | 同上 |
+| temporary | 未観測 | temporarily_unavailable | 同左 | 同上 |
+| invalid | accepted | configuration_invalid (**false**, 配送障害の理由) | 同左 | 同上 |
+| invalid | **temporary** | **configuration_invalid (false)**。timeout で一時障害へ軽くならない | 同左 | 同上 |
+| invalid | invalid | configuration_invalid (新しい方の理由) | 同左 | 同上 |
+| invalid | 未観測 | configuration_invalid | 同左 | 同上 |
+
+両保護が `configuration_invalid` (configured=false) になると E15a の設定喪失の停止 latch が成立し、復旧しても自動では再開しない (管理者の手動再開)。この性質を、既知の設定喪失が後続の timeout で観測上消えないこと、で守る (application の実 DB テスト `a_known_configuration_loss_survives_a_later_timeout_and_the_latch_needs_a_manual_resume`)。
 
 `accepted` は「資格情報・接続が受理された」(SMTP 250・負の probe で secret が受理された等) で、**operational の根拠にならない**。
 
@@ -96,7 +121,7 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
   `challenge_id` を返す。管理者が canary mailbox に届いた code を `{"challenge_id": "...", "code": "..."}` で確認すると、**実 code の確認 roundtrip が business success** として当該 generation に記録され `operational` になる。
   SMTP の接続・250 では operational にならない。`REGISTRATION_EMAIL_CANARY_ADDRESS` が無ければ `canary_not_configured` を返し、メールは `unverified` のまま。
 - **継続検証**: 接続・認証 probe (`run_registration_protection_probe`)。実際の登録者の code 確認の成功 (配送と確認の end-to-end の business success) も鮮度を更新する。
-- **検証の範囲 (接続範囲と配送範囲)**: 接続・認証 probe は **接続範囲** だけを確認する。管理者 canary の配送失敗 (RCPT/DATA/timeout/切断を含む) は **配送範囲の障害** として generation ごとに保持され (`delivery_block`)、**接続 probe の成功 (`accepted`) では解除されない**。operational へ戻る (BOT のみへの縮退が解除される) のは、配送範囲の再検証 (canary の配送受理、または canary/登録者の code 確認の成功) に成功したときだけ。canary 由来の `temporarily_unavailable` / `configuration_invalid` は配送範囲の障害として保持される。接続段階の障害 (接続 probe 自体の失敗) は従来どおり次の接続 probe の成功で回復する。設定変更 (generation 変更) で block は破棄される。canary の配送受理は周期的に実行できる (周期実行は E15d。code の確認は不要で、配送経路 (RCPT/DATA) の再検証になる)。
+- **検証の範囲 (接続範囲と配送範囲)**: 接続・認証 probe は **接続範囲** だけを確認する。管理者 canary の配送失敗 (RCPT/DATA/timeout/切断を含む) は **配送範囲の障害** として generation ごとに保持され (`delivery_failure`)、**接続 probe の成功 (`accepted`) や登録者の code 確認の成功では解除されない**。operational へ戻る (BOT のみへの縮退が解除される) のは、canary の配送成功だけ。接続範囲の障害 (接続 probe・公開発行の宛先提示前の失敗 = `connection_failure`) は、接続範囲の成功 (または canary の配送成功) まで保持され、後続のより軽い失敗や時間経過では改善しない (上の単調性の原則)。設定変更 (generation 変更) で保持された障害は破棄される。canary の配送受理は周期的に実行できる (周期実行は E15d)。
 - canary の確認は **proof を発行せず**、登録者向けの公開確認では使えない。provider の健全性と登録者ごとの所有証明は分離されている。一回の配送成功から全宛先への到達は保証しない。
 
 ### 周期実行は E15d

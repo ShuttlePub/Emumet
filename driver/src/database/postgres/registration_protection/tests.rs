@@ -1278,7 +1278,7 @@ async fn rate_limits_do_not_depend_on_the_order_in_which_requests_reserve() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn a_delivery_block_is_persisted_carried_by_connection_probes_and_cleared_by_a_delivery_success(
+async fn a_delivery_failure_is_persisted_carried_by_connection_probes_and_cleared_by_a_delivery_success(
 ) {
     let fx = Fixture::new().await;
     let email = snapshot(Protection::Email, "e1");
@@ -1310,7 +1310,7 @@ async fn a_delivery_block_is_persisted_carried_by_connection_probes_and_cleared_
         .readiness(Protection::Email)
         .await
         .unwrap()
-        .delivery_block
+        .delivery_failure
         .is_none());
 
     let failure = ProviderResult::temporarily_unavailable(
@@ -1320,7 +1320,7 @@ async fn a_delivery_block_is_persisted_carried_by_connection_probes_and_cleared_
     assert!(scoped(failure, CheckScope::Delivery, t0() + Duration::minutes(1)).await);
     let blocked = fx.readiness(Protection::Email).await.unwrap();
     let block = blocked
-        .delivery_block
+        .delivery_failure
         .expect("the delivery failure is stored");
     assert_eq!(block.reason, ReasonCode::SmtpTransientFailure);
     assert_eq!(block.at, t0() + Duration::minutes(1));
@@ -1335,7 +1335,7 @@ async fn a_delivery_block_is_persisted_carried_by_connection_probes_and_cleared_
         .await
     );
     let after_probe = fx.readiness(Protection::Email).await.unwrap();
-    assert_eq!(after_probe.delivery_block, Some(block));
+    assert_eq!(after_probe.delivery_failure, Some(block));
     assert_eq!(
         evaluate_readiness(
             &email,
@@ -1357,7 +1357,7 @@ async fn a_delivery_block_is_persisted_carried_by_connection_probes_and_cleared_
         .await
     );
     let cleared = fx.readiness(Protection::Email).await.unwrap();
-    assert!(cleared.delivery_block.is_none());
+    assert!(cleared.delivery_failure.is_none());
     assert_eq!(
         evaluate_readiness(
             &email,
@@ -1368,4 +1368,83 @@ async fn a_delivery_block_is_persisted_carried_by_connection_probes_and_cleared_
         .status,
         ReadinessStatus::Operational
     );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_connection_failure_is_persisted_and_survives_a_lighter_failure_until_a_connection_success(
+) {
+    let fx = Fixture::new().await;
+    let email = snapshot(Protection::Email, "e1");
+    let scoped = |result: ProviderResult, at: OffsetDateTime| {
+        let db = fx.db.clone();
+        let email = email.clone();
+        async move {
+            db.transaction(move |conn| {
+                Box::pin(async move {
+                    record_provider_result(
+                        &PostgresRegistrationProtectionRepository,
+                        conn,
+                        &email,
+                        &result,
+                        CheckScope::Connection,
+                        at,
+                        &readiness_policy(),
+                    )
+                    .await
+                    .map(|record| record.is_some())
+                })
+            })
+            .await
+            .unwrap()
+        }
+    };
+    assert!(scoped(success(), t0()).await);
+    let invalid = ProviderResult::configuration_invalid(
+        ReasonCode::SmtpAuthFailed,
+        TransportClass::SmtpPermanent,
+    );
+    assert!(scoped(invalid, t0() + Duration::minutes(1)).await);
+    let stored = fx.readiness(Protection::Email).await.unwrap();
+    assert_eq!(
+        stored.connection_failure.map(|failure| failure.reason),
+        Some(ReasonCode::SmtpAuthFailed)
+    );
+    assert!(stored.delivery_failure.is_none());
+
+    let timeout =
+        ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout);
+    assert!(scoped(timeout, t0() + Duration::minutes(2)).await);
+    let after_timeout = fx.readiness(Protection::Email).await.unwrap();
+    assert_eq!(
+        after_timeout
+            .connection_failure
+            .map(|failure| failure.outcome),
+        Some(kernel::prelude::entity::ProviderOutcome::ConfigurationInvalid)
+    );
+    assert_eq!(
+        after_timeout.check_outcome,
+        kernel::prelude::entity::ProviderOutcome::TemporarilyUnavailable
+    );
+    let at = t0() + Duration::minutes(2);
+    assert_eq!(
+        evaluate_readiness(&email, Some(&after_timeout), at, &readiness_policy()).status,
+        ReadinessStatus::ConfigurationInvalid
+    );
+    // 鮮度切れの後でも改善しない。
+    let much_later = t0() + Duration::hours(3);
+    assert_eq!(
+        evaluate_readiness(
+            &email,
+            Some(&after_timeout),
+            much_later,
+            &readiness_policy()
+        )
+        .status,
+        ReadinessStatus::ConfigurationInvalid
+    );
+
+    assert!(scoped(success(), t0() + Duration::minutes(3)).await);
+    let healed = fx.readiness(Protection::Email).await.unwrap();
+    assert!(healed.connection_failure.is_none());
 }
