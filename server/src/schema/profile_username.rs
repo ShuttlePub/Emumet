@@ -64,7 +64,8 @@ pub fn validate_profile_username(username: &str) -> Result<(), UsernameError> {
 ///
 /// Absent: `Ok(())` (legacy payloads keep working). Present and malformed or reserved: 400.
 /// Present and valid: 501, because silently dropping the value is not allowed. Callers MUST
-/// invoke this before any creation side effect (including auth-account resolution).
+/// invoke this before the creation API's own side effects (Account/Profile/event creation, and
+/// the handler's auth-account resolution).
 pub fn reject_unstored_username(username: Option<&str>) -> Result<(), ErrorStatus> {
     let Some(username) = username else {
         return Ok(());

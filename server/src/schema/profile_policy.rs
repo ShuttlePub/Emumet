@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
 /// Request to follow a target from a Profile.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateProfileFollowRequest {
@@ -21,6 +23,8 @@ pub struct CreateProfileFollowRequest {
     pub target: String,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
 /// Lifecycle state of a Profile follow.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -31,6 +35,8 @@ pub enum ProfileFollowState {
     Accepted,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
 /// A Profile-scoped follow relationship (the Profile is the follower).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileFollowResponse {
@@ -45,7 +51,9 @@ pub struct ProfileFollowResponse {
     pub created_at: OffsetDateTime,
 }
 
-/// Profile-scoped follow list (following or followers of a Profile).
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
+/// Profiles/actors followed by a Profile (the "following" list).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileFollowListResponse {
     pub items: Vec<ProfileFollowResponse>,
@@ -53,6 +61,58 @@ pub struct ProfileFollowListResponse {
     pub next_cursor: Option<String>,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
+/// Reference to a follower or target actor, local or remote.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProfileActorRef {
+    pub kind: ProfileActorKind,
+    /// Canonical ActivityPub actor ID (URL). Always present, for local and remote actors alike.
+    pub actor_url: String,
+    /// Profile nanoid; present only when kind is `local`, absent for remote actors.
+    pub profile_id: Option<String>,
+}
+
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
+/// Whether an actor lives on this server or on a remote server.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileActorKind {
+    /// A Profile hosted by this server.
+    Local,
+    /// A remote ActivityPub actor identified only by its canonical actor URL.
+    Remote,
+}
+
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
+/// A follow relationship in which the Profile is the followed party (the follower is the actor).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProfileFollowerResponse {
+    /// Follow relation nanoid.
+    pub id: String,
+    /// Followed Profile nanoid (the owner of the list).
+    pub profile_id: String,
+    /// The follower: a local Profile or a remote actor.
+    pub follower: ProfileActorRef,
+    pub state: ProfileFollowState,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
+/// Actors following a Profile (the "followers" list).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProfileFollowerListResponse {
+    pub items: Vec<ProfileFollowerResponse>,
+    /// Cursor for the next page; absent on the last page.
+    pub next_cursor: Option<String>,
+}
+
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
 /// Request to block or mute one target (individual actor) from a Profile.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateProfileRelationRequest {
@@ -60,6 +120,8 @@ pub struct CreateProfileRelationRequest {
     pub target: String,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
 /// Kind of individual (non-domain) relation setting.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -71,6 +133,8 @@ pub enum ProfileRelationKind {
     Block,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
 /// An individual block or mute setting owned by one Profile.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileRelationResponse {
@@ -85,6 +149,7 @@ pub struct ProfileRelationResponse {
     pub created_at: OffsetDateTime,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileRelationListResponse {
     pub items: Vec<ProfileRelationResponse>,
@@ -92,6 +157,8 @@ pub struct ProfileRelationListResponse {
     pub next_cursor: Option<String>,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
 /// Treatment applied to every actor whose canonical actor-ID host equals the domain.
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -103,6 +170,8 @@ pub enum DomainControlMode {
     Block,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
 /// A Profile x exact-match domain control.
 ///
 /// Matching is exact: `example.com` does not cover `sub.example.com`.
@@ -123,11 +192,14 @@ pub struct DomainControlResponse {
     pub updated_at: OffsetDateTime,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DomainControlListResponse {
     pub items: Vec<DomainControlResponse>,
 }
 
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+///
 /// Create or replace the control for one domain.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PutDomainControlRequest {
@@ -138,4 +210,105 @@ pub struct PutDomainControlRequest {
     /// (including when the control was deleted meanwhile).
     #[serde(default)]
     pub expected_revision: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn created_at() -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap()
+    }
+
+    #[test]
+    fn follower_fixture_represents_a_remote_actor_by_canonical_url() {
+        let follower = ProfileFollowerResponse {
+            id: "follow-1".to_string(),
+            profile_id: "profile-1".to_string(),
+            follower: ProfileActorRef {
+                kind: ProfileActorKind::Remote,
+                actor_url: "https://remote.example/users/bob".to_string(),
+                profile_id: None,
+            },
+            state: ProfileFollowState::Accepted,
+            created_at: created_at(),
+        };
+        assert_eq!(
+            serde_json::to_value(&follower).unwrap(),
+            serde_json::json!({
+                "id": "follow-1",
+                "profile_id": "profile-1",
+                "follower": {
+                    "kind": "remote",
+                    "actor_url": "https://remote.example/users/bob",
+                    "profile_id": null,
+                },
+                "state": "accepted",
+                "created_at": "2023-11-14T22:13:20Z",
+            })
+        );
+    }
+
+    #[test]
+    fn follower_fixture_represents_a_local_profile_with_its_nanoid() {
+        let follower = ProfileFollowerResponse {
+            id: "follow-2".to_string(),
+            profile_id: "profile-1".to_string(),
+            follower: ProfileActorRef {
+                kind: ProfileActorKind::Local,
+                actor_url: "https://emumet.example/ap/profiles/profile-2".to_string(),
+                profile_id: Some("profile-2".to_string()),
+            },
+            state: ProfileFollowState::Pending,
+            created_at: created_at(),
+        };
+        let json = serde_json::to_value(&follower).unwrap();
+        assert_eq!(json["follower"]["kind"], "local");
+        assert_eq!(
+            json["follower"]["actor_url"],
+            "https://emumet.example/ap/profiles/profile-2"
+        );
+        assert_eq!(json["follower"]["profile_id"], "profile-2");
+        assert_eq!(json["state"], "pending");
+    }
+
+    #[test]
+    fn follower_list_mixes_local_and_remote_followers() {
+        let list = ProfileFollowerListResponse {
+            items: vec![
+                ProfileFollowerResponse {
+                    id: "f1".to_string(),
+                    profile_id: "p".to_string(),
+                    follower: ProfileActorRef {
+                        kind: ProfileActorKind::Remote,
+                        actor_url: "https://remote.example/users/bob".to_string(),
+                        profile_id: None,
+                    },
+                    state: ProfileFollowState::Accepted,
+                    created_at: created_at(),
+                },
+                ProfileFollowerResponse {
+                    id: "f2".to_string(),
+                    profile_id: "p".to_string(),
+                    follower: ProfileActorRef {
+                        kind: ProfileActorKind::Local,
+                        actor_url: "https://emumet.example/ap/profiles/q".to_string(),
+                        profile_id: Some("q".to_string()),
+                    },
+                    state: ProfileFollowState::Accepted,
+                    created_at: created_at(),
+                },
+            ],
+            next_cursor: None,
+        };
+        let json = serde_json::to_value(&list).unwrap();
+        let kinds: Vec<_> = json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["follower"]["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["remote", "local"]);
+        assert!(json["next_cursor"].is_null());
+    }
 }

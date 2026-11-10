@@ -456,3 +456,83 @@ fn contract_only_tag_states_it_is_not_mounted() {
     assert!(description.contains("CONTRACT ONLY"));
     assert!(description.contains("not mounted"));
 }
+
+#[test]
+fn followers_contract_identifies_local_and_remote_followers() {
+    let spec = generated_spec();
+    let operation = &spec["paths"]["/api/v1/profiles/{profile_nanoid}/followers"]["get"];
+    assert_eq!(
+        operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ProfileFollowerListResponse",
+        "followers must not reuse the following response type"
+    );
+    let schemas = &spec["components"]["schemas"];
+    assert_eq!(
+        schemas["ProfileFollowerListResponse"]["properties"]["items"]["items"]["$ref"],
+        "#/components/schemas/ProfileFollowerResponse"
+    );
+    assert_eq!(
+        schemas["ProfileFollowerResponse"]["properties"]["follower"]["$ref"],
+        "#/components/schemas/ProfileActorRef"
+    );
+    let actor = &schemas["ProfileActorRef"];
+    let required = actor["required"].as_array().unwrap();
+    assert!(required.iter().any(|f| f == "kind"));
+    assert!(required.iter().any(|f| f == "actor_url"));
+    assert!(
+        !required.iter().any(|f| f == "profile_id"),
+        "profile_id is only present for local followers"
+    );
+    assert_eq!(
+        schemas["ProfileActorKind"]["enum"],
+        serde_json::json!(["local", "remote"])
+    );
+}
+
+#[test]
+fn contract_only_component_schemas_state_they_are_not_mounted() {
+    let spec = generated_spec();
+    let schemas = spec["components"]["schemas"].as_object().unwrap();
+    let contract_schemas = [
+        "CreateProfileFollowRequest",
+        "ProfileFollowState",
+        "ProfileFollowResponse",
+        "ProfileFollowListResponse",
+        "ProfileActorRef",
+        "ProfileActorKind",
+        "ProfileFollowerResponse",
+        "ProfileFollowerListResponse",
+        "CreateProfileRelationRequest",
+        "ProfileRelationKind",
+        "ProfileRelationResponse",
+        "ProfileRelationListResponse",
+        "DomainControlMode",
+        "DomainControlResponse",
+        "DomainControlListResponse",
+        "PutDomainControlRequest",
+    ];
+    for name in contract_schemas {
+        let description = schemas
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} must be registered"))["description"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            description.contains("CONTRACT ONLY") && description.contains("not mounted"),
+            "{name} description must state the not-mounted boundary, got {description:?}"
+        );
+    }
+    let registered_contract_types = schemas
+        .keys()
+        .filter(|name| {
+            schemas[name.as_str()]["description"]
+                .as_str()
+                .is_some_and(|d| d.contains("CONTRACT ONLY"))
+        })
+        .count();
+    assert_eq!(
+        registered_contract_types,
+        contract_schemas.len(),
+        "every contract-only schema must be listed in this test"
+    );
+}

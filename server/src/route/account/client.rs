@@ -104,7 +104,7 @@ pub(crate) async fn get_account_by_id(
 #[utoipa::path(
     post,
     path = "/api/v1/accounts",
-    description = "Create a new account with a generated signing key pair. `profile_username` is optional; a well-formed value is rejected with 501 before any side effect because username storage is not implemented yet.",
+    description = "Create a new account with a generated signing key pair. `profile_username` is optional; a well-formed value is rejected with 501 before any Account/Profile/event is created because username storage is not implemented yet.",
     request_body = CreateAccountRequest,
     responses(
         (status = 201, description = "Account created", body = AccountResponse),

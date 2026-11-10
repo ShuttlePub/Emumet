@@ -474,7 +474,6 @@ async fn assert_no_account_side_effects(fixture: &Fixture, account_name: &str, c
 /// workflow do. The hard link makes creation atomic so parallel tests never read a partial file.
 fn ensure_master_key_password_file() {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
 
     let target = std::path::Path::new("./master-key-password");
     if target.exists() {
@@ -484,10 +483,14 @@ fn ensure_master_key_password_file() {
         "./master-key-password.{}.tmp",
         uuid::Uuid::new_v4()
     ));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
         .open(&temporary)
         .expect("create temporary master key password file");
     file.write_all(b"develop\n")

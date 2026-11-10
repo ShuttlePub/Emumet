@@ -11,7 +11,8 @@ use crate::schema::account::ProfileResponse;
 use crate::schema::profile_policy::{
     CreateProfileFollowRequest, CreateProfileRelationRequest, DomainControlListResponse,
     DomainControlResponse, ProfileFollowListResponse, ProfileFollowResponse,
-    ProfileRelationListResponse, ProfileRelationResponse, PutDomainControlRequest,
+    ProfileFollowerListResponse, ProfileRelationListResponse, ProfileRelationResponse,
+    PutDomainControlRequest,
 };
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
@@ -134,14 +135,14 @@ pub(crate) async fn list_profile_following() -> ErrorStatus {
 #[utoipa::path(
     get,
     path = "/api/v1/profiles/{profile_nanoid}/followers",
-    description = "Profiles/actors following the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+    description = "Actors following the Profile; each follower is a local Profile or a remote actor identified by its canonical actor URL (`follower.kind`, `follower.actor_url`; `follower.profile_id` only for local). NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
     params(
         ("profile_nanoid" = String, Path, description = "Profile nanoid"),
         ("limit" = Option<u32>, Query, description = "Pagination limit"),
         ("cursor" = Option<String>, Query, description = "Pagination cursor"),
     ),
     responses(
-        (status = 200, description = "Followers list", body = ProfileFollowListResponse),
+        (status = 200, description = "Followers list", body = ProfileFollowerListResponse),
         (status = 401, description = "Missing or invalid bearer token"),
         (status = 403, description = "Caller is not the current owner of the Profile"),
         (status = 404, description = "Profile not found"),
