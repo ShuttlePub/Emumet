@@ -4,6 +4,7 @@ pub mod activitypub;
 pub mod auth_account;
 pub mod block;
 pub mod domain_control;
+pub mod domain_follow_guard;
 pub mod media;
 pub mod mute;
 pub mod organization;

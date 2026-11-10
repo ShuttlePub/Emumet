@@ -20,17 +20,22 @@
 //! 本番の root から起動しない (P4 が所有)。
 
 use crate::profile_signing_key::SignProfileRequestUseCase;
+use crate::service::domain_follow_guard::domain_blocks_actor;
 use base64::{engine::general_purpose, Engine as _};
-use kernel::interfaces::database::DatabaseConnection;
+use kernel::interfaces::database::{
+    DatabaseConnection, DependOnTransactionManager, TransactionManager,
+};
 use kernel::interfaces::http_signing::HttpSigningRequest;
 use kernel::interfaces::repository::{
-    DependOnProfileDeliveryJobRepository, DependOnProfileDeliverySender,
-    ProfileDeliveryJobRepository, ProfileDeliveryRequest, ProfileDeliverySender,
+    DependOnDomainControlRepository, DependOnProfileDeliveryJobRepository,
+    DependOnProfileDeliverySender, DependOnProfileFollowRepository,
+    DependOnProfileRelationshipLock, ProfileDeliveryJobRepository, ProfileDeliveryRequest,
+    ProfileDeliverySender, ProfileFollowRepository, ProfileRelationshipLock,
 };
 use kernel::prelude::entity::{
-    decide_profile_delivery, ClaimedProfileDeliveryJob, DeliveryAttemptOutcome,
-    DeliveryClaimPolicy, ProfileDeliveryJobState, ProfileDeliveryPolicy, ProfileSendObservation,
-    RecordAttemptOutcome,
+    decide_profile_delivery, ClaimedProfileDeliveryJob, DeliveryActivityType,
+    DeliveryAttemptOutcome, DeliveryClaimPolicy, ProfileDeliveryJobState, ProfileDeliveryPolicy,
+    ProfileFollowEndReason, ProfileGraphActor, ProfileSendObservation, RecordAttemptOutcome,
 };
 use kernel::KernelError;
 use sha2::Digest;
@@ -50,6 +55,9 @@ pub enum ProfileDeliveryStep {
     Observed(ProfileSendObservation),
     /// 送信の直前に job が取り消されていた。送信していない。
     Cancelled,
+    /// 送信の直前の再判定で、送信元 Profile が宛先 actor の domain を block していた (D8G)。job は取り消され、
+    /// 送信していない。
+    DomainBlocked,
     /// 送信の直前に lease を失っていた (期限切れ・他 worker による回収)。送信していない。
     LeaseLost,
 }
@@ -72,6 +80,8 @@ pub struct ProfileDeliveryCycleReport {
     pub failed: u32,
     /// 送信中に job が取り消された。
     pub cancelled: u32,
+    /// 送信の直前の再判定で domain block に該当し、送信せず取り消した (D8G)。
+    pub domain_blocked: u32,
     /// 送信中に lease を失い結果を記録しなかった。
     pub lease_lost: u32,
 }
@@ -85,8 +95,89 @@ fn host_header(url: &reqwest::Url) -> Option<String> {
 }
 
 pub trait DeliverProfileActivitiesUseCase:
-    SignProfileRequestUseCase + DependOnProfileDeliveryJobRepository + DependOnProfileDeliverySender
+    SignProfileRequestUseCase
+    + Clone
+    + DependOnProfileDeliveryJobRepository
+    + DependOnProfileDeliverySender
+    + DependOnProfileFollowRepository
+    + DependOnDomainControlRepository
+    + DependOnProfileRelationshipLock
+    + DependOnTransactionManager
 {
+    /// 送信前の domain block 再判定 (D8G)。`Follow` (送信元 = follower) と `Accept` (送信元 = followee) だけが
+    /// 対象で、相手 (リモート actor、job の `follow_id` の世代から引く) の canonical actor URL の host を
+    /// 送信元 Profile が block していれば、同じ transaction で (送信元 Profile の関係ロック下)
+    /// 未送信の当該種別の job を取り消し、その job が属する世代を `blocked` で終了する (送れなかった
+    /// Follow / Accept を前提に関係を残さない)。`Undo` / `Reject` は後始末なので常に送る。
+    /// 取り消したら true。
+    fn cancel_if_recipient_domain_blocked<'a>(
+        &'a self,
+        claim: &'a ClaimedProfileDeliveryJob,
+        now: OffsetDateTime,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send + 'a {
+        async move {
+            if !matches!(
+                claim.activity_type,
+                DeliveryActivityType::Follow | DeliveryActivityType::Accept
+            ) || claim.follow_id.is_none()
+            {
+                return Ok(false);
+            }
+            let deps = self.clone();
+            let claim = claim.clone();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        deps.profile_relationship_lock()
+                            .lock_profiles(executor, std::slice::from_ref(&claim.sender))
+                            .await?;
+                        let Some(follow_id) = claim.follow_id.as_ref() else {
+                            return Ok(false);
+                        };
+                        let follows = deps.profile_follow_repository();
+                        let Some(follow) = follows.find_by_id(executor, follow_id).await? else {
+                            return Ok(false);
+                        };
+                        let (sender_side, recipient) = match claim.activity_type {
+                            DeliveryActivityType::Follow => (follow.follower(), follow.followee()),
+                            _ => (follow.followee(), follow.follower()),
+                        };
+                        let ProfileGraphActor::Local(sender_profile) = sender_side else {
+                            return Ok(false);
+                        };
+                        let ProfileGraphActor::Remote(recipient_url) = recipient else {
+                            return Ok(false);
+                        };
+                        if sender_profile != &claim.sender
+                            || !domain_blocks_actor(
+                                &deps,
+                                executor,
+                                &claim.sender,
+                                recipient_url.as_str(),
+                            )
+                            .await?
+                        {
+                            return Ok(false);
+                        }
+                        deps.profile_delivery_job_repository()
+                            .cancel_undelivered_for_follow(
+                                executor,
+                                follow_id,
+                                claim.activity_type,
+                                "domain_blocked",
+                                now,
+                            )
+                            .await?;
+                        follows
+                            .end(executor, follow_id, ProfileFollowEndReason::Blocked, now)
+                            .await?;
+                        Ok(true)
+                    })
+                })
+                .await
+        }
+    }
+
     /// 取得した job を 1 件署名・送信する。結果は分類済みの観測として返す (再試行の判断は呼び出し側)。
     fn send_claimed_profile_delivery<'a>(
         &'a self,
@@ -148,6 +239,16 @@ pub trait DeliverProfileActivitiesUseCase:
                     continue;
                 }
                 headers.push((lower, value.clone()));
+            }
+            // 署名の直後・送信の直前に、domain block (D8G) を関係ロック下で再判定する (ロック規約は
+            // `domain_follow_guard`)。該当すれば送信せずに取り消す。この判定の後に block が
+            // commit されても、直後の `renew_lease` が block 適用側 (D8R) の取消を検出して送信しない。
+            // 送信済みの activity は取り戻せない。
+            if self
+                .cancel_if_recipient_domain_blocked(claim, clock())
+                .await?
+            {
+                return Ok(ProfileDeliveryStep::DomainBlocked);
             }
             // 署名までに時間が経っていても、送信の直前に lease を再確認して延長する。取消・期限切れ・
             // 他 worker による回収があれば送信しない。
@@ -238,6 +339,11 @@ pub trait DeliverProfileActivitiesUseCase:
                         report.cancelled += 1;
                         continue;
                     }
+                    ProfileDeliveryStep::DomainBlocked => {
+                        report.attempted += 1;
+                        report.domain_blocked += 1;
+                        continue;
+                    }
                     ProfileDeliveryStep::LeaseLost => {
                         report.attempted += 1;
                         report.lease_lost += 1;
@@ -276,7 +382,12 @@ pub trait DeliverProfileActivitiesUseCase:
 
 impl<T> DeliverProfileActivitiesUseCase for T where
     T: SignProfileRequestUseCase
+        + Clone
         + DependOnProfileDeliveryJobRepository
         + DependOnProfileDeliverySender
+        + DependOnProfileFollowRepository
+        + DependOnDomainControlRepository
+        + DependOnProfileRelationshipLock
+        + DependOnTransactionManager
 {
 }

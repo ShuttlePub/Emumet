@@ -3,12 +3,14 @@
 //! 1 Profile = 1 actor. The Profile inbox applies exactly these activities (the "received activity
 //! table"); every other activity (post activities such as Create / Like / EmojiReact / Announce,
 //! Block / Undo(Block), Undo of anything but a Follow, ...) is ignored without touching any
-//! relation state — post authorization belongs to ShuttlePub, domain policy to D8G.
+//! relation state — post authorization belongs to ShuttlePub. Domain policy (D8G) is applied to
+//! **Follow only**: a domain `block` refuses new Follows and stale Accepts, `mute` never does, and
+//! Undo / Reject (clean-up that ends a relation) are processed even while a block is active.
 //!
 //! | activity | effect |
 //! |---|---|
-//! | `Follow` (object = this Profile) | stores an accepted generation and reserves an `Accept` job, in one transaction. If this Profile blocks the signer: stores an ended(blocked) generation and reserves a `Reject(Follow)` instead |
-//! | `Accept` (object = Follow sent by this Profile) | pending generation -> accepted |
+//! | `Follow` (object = this Profile) | stores an accepted generation and reserves an `Accept` job, in one transaction. If this Profile blocks the signer individually, or blocks the **domain** of the signer's canonical actor ID (D8G): stores an ended(blocked) generation and reserves a `Reject(Follow)` instead |
+//! | `Accept` (object = Follow sent by this Profile) | pending generation -> accepted. **Not applied while the signer's domain is blocked** (D8G): the generation stays as it is and the Accept is only recorded, so replaying it after an unblock changes nothing |
 //! | `Reject` (object = Follow sent by this Profile) | active generation -> ended(rejected) |
 //! | `Undo` (object = Follow of the signer) | active generation -> ended(undone); when the Follow never arrived: an embedded Follow aimed at this Profile is stored as an ended generation, a bare Follow ID only as an inbound record scoped to this receiver |
 //!
@@ -35,6 +37,7 @@ mod parse;
 use super::remote_actor::resolve_remote_actor;
 use super::ACTIVITYSTREAMS_CONTEXT;
 use crate::dto::profile_inbound::{ProfileInboxDto, ProfileInboxIgnored, ProfileInboxOutcome};
+use crate::service::domain_follow_guard::domain_blocks_actor;
 use error_stack::Report;
 use kernel::activitypub::{Activity, ActorUrlBuilder};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
@@ -43,11 +46,11 @@ use kernel::interfaces::database::{
 };
 use kernel::interfaces::read_model::{DependOnProfileQuery, ProfileQuery};
 use kernel::interfaces::repository::{
-    BeginFollowOutcome, DependOnInboundActivityRepository, DependOnProfileBlockRepository,
-    DependOnProfileDeliveryEnqueuer, DependOnProfileFollowRepository,
-    DependOnProfileRelationshipLock, DependOnProfileSigningKeyRepository,
-    InboundActivityRepository, ProfileBlockRepository, ProfileDeliveryEnqueuer,
-    ProfileFollowRepository, ProfileRelationshipLock,
+    BeginFollowOutcome, DependOnDomainControlRepository, DependOnInboundActivityRepository,
+    DependOnProfileBlockRepository, DependOnProfileDeliveryEnqueuer,
+    DependOnProfileFollowRepository, DependOnProfileRelationshipLock,
+    DependOnProfileSigningKeyRepository, InboundActivityRepository, ProfileBlockRepository,
+    ProfileDeliveryEnqueuer, ProfileFollowRepository, ProfileRelationshipLock,
 };
 use kernel::prelude::entity::{
     DeliveryActivityType, GraphActivityId, GraphActorUrl, GraphInboxUrl, Nanoid,
@@ -71,6 +74,7 @@ pub trait ProfileInboxUseCase:
     + DependOnInboundActivityRepository
     + DependOnProfileDeliveryEnqueuer
     + DependOnProfileBlockRepository
+    + DependOnDomainControlRepository
     + DependOnProfileRelationshipLock
     + DependOnTransactionManager
     + DependOnPublicBaseUrl
@@ -94,8 +98,7 @@ impl<T> ProfileInboxUseCase for T where
         + DependOnInboundActivityRepository
         + DependOnProfileDeliveryEnqueuer
         + DependOnProfileBlockRepository
-        + DependOnProfileRelationshipLock
-        + DependOnProfileBlockRepository
+        + DependOnDomainControlRepository
         + DependOnProfileRelationshipLock
         + DependOnTransactionManager
         + DependOnPublicBaseUrl
@@ -303,9 +306,6 @@ where
         return Err(rejected("Follow does not target the inbox Profile"));
     }
 
-    // Domain policy (D8G) plugs in here: a Follow refused by a block must be decided before the
-    // generation is stored. P3i accepts every well-formed Follow.
-
     let mut executor = module.database_connection().connection().await?;
     let already_received = module
         .inbound_activity_repository()
@@ -350,22 +350,38 @@ where
                     Report::new(KernelError::Internal)
                         .attach_printable("first Follow reception without a resolved inbox")
                 })?;
-                // An individual block of the signer by this Profile refuses the Follow. The
-                // check runs under the Profile lock, so a concurrent block write either
-                // commits first (the Follow is refused here) or waits for this transaction
-                // and then ends the relation created below.
+                // Block decisions (D8G). Two kinds of block refuse a new Follow, both decided under the
+                // Profile lock taken above, so a concurrent block write either commits first (the
+                // Follow is refused here) or waits for this transaction and then ends the relation
+                // created below:
+                //  * an individual block of the signer by this Profile (P3i);
+                //  * a domain `block` of this Profile whose domain equals the host of the signer's
+                //    verified canonical actor ID (exact match; the inbox / sharedInbox / CDN host is
+                //    never consulted). A domain `mute` does not refuse a Follow (display
+                //    suppression only).
+                // The refusal is the same for both: an ended(blocked) generation (no active
+                // relation, replays never revive it) and a `Reject(Follow)` job, never an AP Block.
                 let signer_actor = ProfileGraphActor::Remote(context.signer.clone());
-                if deps
+                let blocked_individually = deps
                     .profile_block_repository()
                     .is_blocked(executor, &context.receiver, &signer_actor)
-                    .await?
-                {
+                    .await?;
+                let blocked_by_domain = !blocked_individually
+                    && domain_blocks_actor(
+                        &deps,
+                        executor,
+                        &context.receiver,
+                        context.signer.as_str(),
+                    )
+                    .await?;
+                if blocked_individually || blocked_by_domain {
                     return refuse_blocked_follow(
                         &deps,
                         executor,
                         &context,
                         &activity_id,
                         inbox,
+                        blocked_by_domain,
                         now,
                     )
                     .await;
@@ -518,6 +534,20 @@ where
                         Ok(ignored(ProfileInboxIgnored::AlreadyApplied))
                     }
                     (Response::Accept, ProfileFollowState::Pending) => {
+                        // D8G: an Accept from a blocked domain never turns a Follow into a
+                        // relation (it may have been sent before the block and arrive late). The
+                        // reception stays recorded above, so replaying it after an unblock is a
+                        // duplicate and cannot accept the Follow either.
+                        if domain_blocks_actor(
+                            &deps,
+                            executor,
+                            &context.receiver,
+                            context.signer.as_str(),
+                        )
+                        .await?
+                        {
+                            return Ok(ignored(ProfileInboxIgnored::DomainBlocked));
+                        }
                         if follows.accept(executor, generation.id(), now).await? {
                             Ok(ProfileInboxOutcome::FollowAcceptedByRemote)
                         } else {
@@ -558,6 +588,7 @@ async fn refuse_blocked_follow<T>(
     context: &Context,
     activity_id: &GraphActivityId,
     inbox: GraphInboxUrl,
+    by_domain: bool,
     now: OffsetDateTime,
 ) -> error_stack::Result<ProfileInboxOutcome, KernelError>
 where
@@ -619,7 +650,11 @@ where
     deps.profile_delivery_enqueuer()
         .enqueue(executor, &job)
         .await?;
-    Ok(ProfileInboxOutcome::FollowRefusedByBlock)
+    Ok(if by_domain {
+        ProfileInboxOutcome::FollowRefusedByDomainBlock
+    } else {
+        ProfileInboxOutcome::FollowRefusedByBlock
+    })
 }
 
 /// Ends `generation` for an Undo of the signer, after re-checking both parties.

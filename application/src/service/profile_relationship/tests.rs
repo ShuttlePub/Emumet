@@ -4,5 +4,6 @@
 //! `DATABASE_URL` を設定した実 DB が必要 (`test_with::env`)。
 
 mod delivery;
+mod domain_guard;
 mod relationship;
 mod support;

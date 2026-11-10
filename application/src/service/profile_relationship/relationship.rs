@@ -8,7 +8,10 @@
 //! - **関係状態と配送状態は別物**: 関係 (ローカルの真実) は配送 job の成否に依存しない。外部配送が失敗・
 //!   遅延しても unfollow / block は巻き戻らず、配送は worker (`delivery`) が再試行する。
 //! - 個別 actor block は従来意味 (双方向 Follow 解除 + 以後の Follow 拒否) を Profile 単位で踏襲する。
-//!   **domain 単位の方針 (D8P/D8G/D8R) は読まず、domain の完全一致判定も持たない。** AP `Block` は送らず
+//!   **domain 単位の方針は Follow の拒否にだけ使う (D8G)**: `follow_profile` が `domain_follow_guard` の
+//!   判定 (検証済み canonical actor URL の host の完全一致・mode=block のみ) を関係ロック下で行い、
+//!   mute は無視する。配送前の再判定は `delivery`。個別 block の適用 (双方向解除) は domain 方針と混ぜない。
+//!   AP `Block` は送らず
 //!   (D08)、解除された Follow を相手に伝える `Undo(Follow)` / `Reject(Follow)` だけを配送する。
 //!   block を解除しても解除済みの関係は復元せず、何も配送しない。
 //! - mute は表示抑制の設定だけで、既存の関係も配送も変えない。
@@ -19,6 +22,7 @@ use super::activity::{
 };
 use crate::dto::profile_relationship::{ProfileFollowDto, ProfileRelationDto};
 use crate::service::domain_control::require_profile_owner;
+use crate::service::domain_follow_guard::domain_blocks_actor;
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
@@ -480,6 +484,30 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                         if blocked {
                             return Err(Report::new(KernelError::Rejected)
                                 .attach_printable("follow refused by an individual block"));
+                        }
+                        // Domain `block` (D8G), decided under the same lock: the follower's own
+                        // block of the target's host, and for a local target also the target's
+                        // block of the follower's host. Both sides use the verified canonical actor
+                        // URL (a local actor URL carries this instance's host). `mute` is ignored.
+                        let my_actor_url =
+                            profile_actor_url(deps.public_base_url(), &profile_nanoid);
+                        let domain_blocked =
+                            domain_blocks_actor(&deps, executor, &profile_id, &target.url).await?
+                                || match &target.actor {
+                                    ProfileGraphActor::Local(target_id) => {
+                                        domain_blocks_actor(
+                                            &deps,
+                                            executor,
+                                            target_id,
+                                            &my_actor_url,
+                                        )
+                                        .await?
+                                    }
+                                    ProfileGraphActor::Remote(_) => false,
+                                };
+                        if domain_blocked {
+                            return Err(Report::new(KernelError::Rejected)
+                                .attach_printable("follow refused by a domain block"));
                         }
                         let follow_id = ProfileFollowId::new(kernel::generate_id());
                         let activity_id = follow_activity_id(

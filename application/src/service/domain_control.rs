@@ -6,8 +6,13 @@
 //! Profile transfer updates the same row, so it is serialized with these operations: it either
 //! commits before the owner check (the previous owner is then rejected) or waits until the
 //! operation has finished.
+//!
+//! Writes (create / replace / delete) additionally take the Profile relationship lock
+//! (`domain_follow_guard::lock_profile_for_domain_control_write`) right after the owner check, so a
+//! domain control update is serialized with every Follow transaction of that Profile (D8G).
 
 use crate::dto::domain_control::DomainControlDto;
+use crate::service::domain_follow_guard::lock_profile_for_domain_control_write;
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
 use kernel::interfaces::database::{
@@ -15,7 +20,8 @@ use kernel::interfaces::database::{
 };
 use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{
-    DependOnDomainControlRepository, DomainControlDeleteOutcome, DomainControlRepository,
+    DependOnDomainControlRepository, DependOnProfileRelationshipLock, DomainControlDeleteOutcome,
+    DomainControlRepository,
 };
 use kernel::prelude::entity::{
     AccountKind, AuthAccountId, ControlDomain, DomainControl, DomainControlMode, InvalidDomain,
@@ -86,6 +92,7 @@ pub trait DomainControlUseCase:
     + Clone
     + DependOnAccountQuery
     + DependOnDomainControlRepository
+    + DependOnProfileRelationshipLock
     + DependOnTransactionManager
 {
     fn list_domain_controls<'a>(
@@ -193,6 +200,7 @@ pub trait DomainControlUseCase:
                             &profile_nanoid,
                         )
                         .await?;
+                        lock_profile_for_domain_control_write(&deps, executor, &profile_id).await?;
                         let domain = ControlDomain::parse(&domain).map_err(invalid_domain)?;
                         let control = match expected_revision {
                             None => deps
@@ -246,6 +254,7 @@ pub trait DomainControlUseCase:
                             &profile_nanoid,
                         )
                         .await?;
+                        lock_profile_for_domain_control_write(&deps, executor, &profile_id).await?;
                         let domain = ControlDomain::parse(&domain).map_err(invalid_domain)?;
                         match deps
                             .domain_control_repository()
@@ -275,6 +284,7 @@ impl<T> DomainControlUseCase for T where
         + Clone
         + DependOnAccountQuery
         + DependOnDomainControlRepository
+        + DependOnProfileRelationshipLock
         + DependOnTransactionManager
 {
 }

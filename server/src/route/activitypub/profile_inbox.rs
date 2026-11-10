@@ -146,3 +146,7 @@ impl ProfileInboxRouter for Router<AppModule> {
 #[cfg(test)]
 #[path = "profile_inbox_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "profile_domain_guard_tests.rs"]
+mod domain_guard_tests;
