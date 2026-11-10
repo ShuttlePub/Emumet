@@ -54,6 +54,17 @@ fn has_not_found_response(operation: &serde_json::Value) -> bool {
         .is_some_and(|responses| responses.contains_key("404"))
 }
 
+/// `ProfilePolicy` operations are OpenAPI contract only and are intentionally not mounted on the
+/// router under test (see `route::profile_policy`); their reachability is covered separately.
+fn is_contract_only_operation(operation: &serde_json::Value) -> bool {
+    operation
+        .get("tags")
+        .and_then(|tags| tags.as_array())
+        .into_iter()
+        .flatten()
+        .any(|tag| tag.as_str() == Some("ProfilePolicy"))
+}
+
 fn is_activitypub_operation(operation: &serde_json::Value) -> bool {
     operation
         .get("tags")
@@ -74,6 +85,9 @@ fn load_routes_from_openapi() -> Vec<RouteCase> {
         let path_item = path_item.as_object().expect("path item must be an object");
         for (key, operation) in path_item {
             if !HTTP_METHODS.contains(&key.as_str()) {
+                continue;
+            }
+            if is_contract_only_operation(operation) {
                 continue;
             }
             let requires_auth = is_authed(operation.get("security"));

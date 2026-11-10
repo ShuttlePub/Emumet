@@ -6,6 +6,7 @@ use crate::schema::account::{
     account_dto_to_response, AccountResponse, AccountsResponse, CreateAccountRequest,
     CreateProfileRequest, GetAllAccountQuery, ProfileResponse, UpdateAccountRequest,
 };
+use crate::schema::profile_username::reject_unstored_username;
 use application::dto::pagination::Pagination;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -103,11 +104,12 @@ pub(crate) async fn get_account_by_id(
 #[utoipa::path(
     post,
     path = "/api/v1/accounts",
-    description = "Create a new account with a generated signing key pair.",
+    description = "Create a new account with a generated signing key pair. `profile_username` is optional; a well-formed value is rejected with 501 before any side effect because username storage is not implemented yet.",
     request_body = CreateAccountRequest,
     responses(
         (status = 201, description = "Account created", body = AccountResponse),
-        (status = 400, description = "Invalid request"),
+        (status = 400, description = "Invalid request (including a malformed or reserved profile_username)"),
+        (status = 501, description = "profile_username was supplied but username storage is not implemented yet; nothing was created"),
     ),
     security(("bearer_auth" = [])),
     tag = "Account",
@@ -118,6 +120,8 @@ pub(crate) async fn create_account(
     Json(request): Json<CreateAccountRequest>,
 ) -> Result<(StatusCode, Json<crate::schema::account::AccountResponse>), ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
+
+    reject_unstored_username(request.profile_username.as_deref())?;
 
     if request.name.trim().is_empty() {
         return Err(ErrorStatus::from((
@@ -196,13 +200,16 @@ pub(crate) async fn update_account_by_id(
 #[utoipa::path(
     post,
     path = "/api/v1/profiles",
+    description = "Create an organization-owned Profile. `username` is optional; a well-formed value is rejected with 501 before the Profile is created because username storage is not implemented yet.",
     params(("X-Organization-Id" = String, Header, description = "Organization account nanoid that owns the profile")),
     request_body = CreateProfileRequest,
     responses(
         (status = 201, body = ProfileResponse),
+        (status = 400, description = "Missing organization header or malformed/reserved username"),
         (status = 403, description = "Authenticated person is not an active organization member"),
         (status = 404, description = "Organization not found"),
         (status = 422, description = "Organization profile already exists"),
+        (status = 501, description = "username was supplied but username storage is not implemented yet; nothing was created"),
     ),
     security(("bearer_auth" = [])),
     tag = "Account",
@@ -219,6 +226,7 @@ pub(crate) async fn create_profile(
             format!("{ORGANIZATION_ID_HEADER} header is required"),
         ))
     })?;
+    reject_unstored_username(request.username.as_deref())?;
     let profile = api
         .create_organization_profile(org_context, request.into_dto())
         .await

@@ -19,12 +19,35 @@ pub struct GetAllAccountQuery {
 pub struct CreateAccountRequest {
     pub name: String,
     pub is_bot: bool,
+    /// Optional Profile username (staged migration: optional until P4, then required).
+    /// Never derived from `name`. Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word
+    /// list without trimming or case folding (400 on violation). Username storage is not implemented yet,
+    /// so a well-formed value is rejected with 501 before any Account/Profile/event is created.
+    /// Omit the field to keep the legacy behaviour.
+    #[serde(default)]
+    #[schema(
+        pattern = "^[a-z0-9][a-z0-9._-]{0,63}$",
+        min_length = 1,
+        max_length = 64
+    )]
+    pub profile_username: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateProfileRequest {
     pub display_name: Option<String>,
     pub summary: Option<String>,
+    /// Optional Profile username (staged migration: optional until P4, then required).
+    /// Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without trimming or
+    /// case folding (400 on violation). Username storage is not implemented yet, so a well-formed value
+    /// is rejected with 501 before the Profile is created. Usernames cannot be changed through an update API.
+    #[serde(default)]
+    #[schema(
+        pattern = "^[a-z0-9][a-z0-9._-]{0,63}$",
+        min_length = 1,
+        max_length = 64
+    )]
+    pub username: Option<String>,
 }
 
 impl CreateProfileRequest {
@@ -40,6 +63,8 @@ impl CreateProfileRequest {
 pub struct ProfileResponse {
     pub account_id: String,
     pub id: String,
+    /// Profile username; null while unset (every Profile until username storage lands in P1).
+    pub username: Option<String>,
     pub display_name: Option<String>,
     pub summary: Option<String>,
     pub icon_url: Option<String>,
@@ -51,6 +76,7 @@ impl From<application::dto::profile::ProfileDto> for ProfileResponse {
         Self {
             account_id: value.account_nanoid,
             id: value.nanoid,
+            username: None,
             display_name: value.display_name,
             summary: value.summary,
             icon_url: value.icon_url,

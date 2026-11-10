@@ -7,6 +7,7 @@ pub mod activitypub;
 pub mod me;
 pub mod media;
 pub mod oauth2;
+pub mod profile_policy;
 pub mod profile_transfer;
 pub mod registration_gate;
 pub mod registration_gate_webhook;
