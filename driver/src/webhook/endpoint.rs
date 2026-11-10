@@ -110,7 +110,7 @@ fn is_forbidden_ipv6(ip: Ipv6Addr) -> bool {
     !global_unicast || crate::http_signing::ssrf::is_blocked_ipv6(ip)
 }
 
-fn is_forbidden_domain(domain: &str) -> bool {
+pub(crate) fn is_forbidden_domain(domain: &str) -> bool {
     domain == "localhost"
         || domain.ends_with(".localhost")
         || domain == "metadata.google.internal"

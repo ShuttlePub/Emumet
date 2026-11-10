@@ -10,6 +10,8 @@ mod block;
 mod domain_control;
 mod follow;
 mod image;
+#[cfg(any(test, feature = "test-mode"))]
+pub mod isolated_db;
 mod metadata;
 mod metadata_event_store;
 mod metadata_repository;

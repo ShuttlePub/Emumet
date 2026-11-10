@@ -232,7 +232,7 @@ impl HttpWebhookSender {
     }
 }
 
-fn parse_retry_after(value: &str, now: SystemTime) -> Option<time::Duration> {
+pub(crate) fn parse_retry_after(value: &str, now: SystemTime) -> Option<time::Duration> {
     let value = value.trim();
     if let Ok(seconds) = value.parse::<u64>() {
         return Some(time::Duration::seconds(
