@@ -53,7 +53,7 @@ impl AdminRegistrationGateRouter for Router<AppModule> {
 }
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

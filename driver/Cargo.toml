@@ -31,7 +31,7 @@ hmac = "0.12"
 url = "2.5"
 sha2 = "0.10"
 httpdate = "1"
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["net", "time"] }
 aws-config = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
 aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
 
@@ -44,10 +44,11 @@ ed25519-dalek = { workspace = true }
 tracing = { workspace = true }
 
 kernel = { path = "../kernel" }
+lettre = { version = "0.11.23", default-features = false, features = ["tokio1", "tokio1-native-tls", "smtp-transport", "builder", "hostname"] }
 
 [dev-dependencies]
 kernel = { path = "../kernel", features = ["test-utils"] }
-tokio = { workspace = true, features = ["macros", "test-util"] }
+tokio = { workspace = true, features = ["macros", "test-util", "io-util", "net", "time", "sync", "rt", "rt-multi-thread"] }
 test-with.workspace = true
 tempfile = "3"
 nanoid = { workspace = true }

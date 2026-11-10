@@ -1900,6 +1900,97 @@
         ]
       }
     },
+    "/api/v1/admin/registration-gate/protections": {
+      "get": {
+        "tags": [
+          "RegistrationProtection"
+        ],
+        "description": "Readiness of each registration protection (email via SMTP, bot via Turnstile), evaluated at the current time against the current configuration. `status` is `operational` only while a real verification business success bound to the current configuration `generation` is fresh (`valid_until`); health, HTTP 200 or an SMTP 250 alone never make a protection operational. `unverified` covers never verified, configuration changed, success expired and probe stopped. `configuration_invalid` covers unset/empty/disabled configuration, invalid secrets and SMTP auth/configuration failures; `temporarily_unavailable` covers 429/5xx/timeouts/connection failures/SMTP 4xx. Secrets, tokens, proofs and registrant emails never appear; `fingerprint` is a short non-reversible digest of the secret.",
+        "operationId": "list_registration_protections",
+        "responses": {
+          "200": {
+            "description": "Protection readiness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtectionListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/protections/{protection}/verify": {
+      "post": {
+        "tags": [
+          "RegistrationProtection"
+        ],
+        "description": "Run one real verification now (bootstrap or re-verification) and record both the business result and the transport classification. bot: with `token` (a valid token issued by the widget for the configured site key) the real Siteverify business result decides (success must match the expected hostname/action and be fresh); without it only a negative probe runs (confirms the secret is accepted, never makes the protection operational). email: without `challenge_id`/`code` an SMTP connection/auth probe runs and a code is sent to the approved canary mailbox (REGISTRATION_EMAIL_CANARY_ADDRESS; `canary_not_configured` leaves the protection unverified); with `challenge_id` and `code` the canary roundtrip is confirmed, which is the business success. A canary confirmation never issues a registration proof. A user-attributable rejection (`attempt_rejected`, for example a wrong code or an invalid token) is reported but not recorded and does not change the gate observation. Recorded results update the registration gate observation through the E15a use case.",
+        "operationId": "verify_registration_protection",
+        "parameters": [
+          {
+            "name": "protection",
+            "in": "path",
+            "description": "`email` or `bot`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyProtectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Verification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyProtectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Unknown protection"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/registration-gate/webhook": {
       "get": {
         "tags": [
@@ -3808,6 +3899,91 @@
         ]
       }
     },
+    "/api/v1/registration/email-challenges": {
+      "post": {
+        "tags": [
+          "RegistrationProtection"
+        ],
+        "description": "Unauthenticated. Start a pre-registration email ownership challenge: a one-time code is sent to the address and bound to the normalized email, the real registration flow (flow_id) and the current configuration generation. Sending the mail is NOT proof of ownership; a proof is issued only after the code is confirmed (see `/confirm`). Abuse controls: the code is sent only while the registration gate accepts registrations and the email protection is operational (otherwise 503 and nothing is sent), per-email (1 per 60 s, 5 per hour), per-flow (3 per hour) and per-source (connection address, default 20 per hour) rate limits answer 429 with Retry-After. The response does not depend on whether the address exists, is registered or was rejected by the mail server (no user enumeration). The challenge expires after 10 minutes (never later than the flow) and allows 5 confirmation attempts. The flow is checked against Kratos (existence and its real expiry). A browser flow can only be checked with its Kratos CSRF cookie (`csrf_token_*`), so send this request with the browser credentials (cookies) for the Kratos domain; only those cookies are forwarded to Kratos. A flow whose expiry cannot be confirmed is rejected (400), never guessed.",
+        "operationId": "create_email_challenge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEmailChallengeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Challenge created (a code is sent to the address)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailChallengeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid email or flow"
+          },
+          "429": {
+            "description": "Rate limited (see Retry-After)"
+          },
+          "503": {
+            "description": "Email verification is unavailable; nothing was sent"
+          }
+        }
+      }
+    },
+    "/api/v1/registration/email-challenges/{challenge_id}/confirm": {
+      "post": {
+        "tags": [
+          "RegistrationProtection"
+        ],
+        "description": "Unauthenticated. Confirm the emailed code. Only a correct code issues an opaque `proof` (shown once), bound to the challenge's flow, email and configuration generation, valid for 15 minutes (never later than the flow). The proof is passed to registration as `transient_payload.email_proof` and verified and consumed atomically by the registration hook (E15d); it is never a permission on its own. A wrong code consumes one of 5 attempts (the challenge is invalidated afterwards). Unknown challenge, wrong code, expired, exhausted and old-generation challenges are indistinguishable (400).",
+        "operationId": "confirm_email_challenge",
+        "parameters": [
+          {
+            "name": "challenge_id",
+            "in": "path",
+            "description": "Challenge ID returned by the create endpoint",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmEmailChallengeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Code confirmed; proof issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailProofResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, or the code is invalid or expired"
+          }
+        }
+      }
+    },
     "/api/v1/reports": {
       "post": {
         "tags": [
@@ -4374,6 +4550,18 @@
           }
         }
       },
+      "ConfirmEmailChallengeRequest": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "メールで届いた code。"
+          }
+        }
+      },
       "ConsentDecision": {
         "type": "object",
         "required": [
@@ -4420,6 +4608,23 @@
             "maxLength": 64,
             "minLength": 1,
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          }
+        }
+      },
+      "CreateEmailChallengeRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "flow_id"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "所有を確認したいメールアドレス (ASCII。trim・小文字化して扱う)。"
+          },
+          "flow_id": {
+            "type": "string",
+            "description": "進行中の registration flow の ID (Kratos の flow.id)。challenge はこの flow に束縛される。"
           }
         }
       },
@@ -4581,6 +4786,40 @@
           }
         }
       },
+      "EmailChallengeResponse": {
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "expires_at"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "description": "code 確認 (`/confirm`) に使う opaque な challenge ID。"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EmailProofResponse": {
+        "type": "object",
+        "required": [
+          "proof",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "proof": {
+            "type": "string",
+            "description": "登録時に `transient_payload.email_proof` として渡す opaque proof (一度だけ表示される)。"
+          }
+        }
+      },
       "EnableOverrideRequest": {
         "type": "object",
         "required": [
@@ -4669,6 +4908,52 @@
           },
           "role": {
             "$ref": "#/components/schemas/OrganizationRole"
+          }
+        }
+      },
+      "LastCheckResponse": {
+        "type": "object",
+        "required": [
+          "checked_at",
+          "outcome",
+          "reason",
+          "transport",
+          "generation_matches"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "generation_matches": {
+            "type": "boolean",
+            "description": "記録が現在の設定世代のものか。false なら設定変更後で、旧世代の成功は使われない。"
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "最後の検証の business 結果: `business_success` / `accepted` (資格情報・接続は受理されたが\nbusiness success ではない) / `configuration_invalid` / `temporarily_unavailable`。"
+          },
+          "reason": {
+            "type": "string",
+            "description": "secret を含まない固定語彙の理由。"
+          },
+          "success_valid_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "transport": {
+            "type": "string",
+            "description": "transport の分類 (HTTP status の種別・timeout・SMTP 応答の種別など)。HTTP 200 は business 結果と別。"
           }
         }
       },
@@ -5024,6 +5309,22 @@
           }
         }
       },
+      "PendingChallengeResponse": {
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "expires_at"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ProfileActorKind": {
         "type": "string",
         "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nWhether an actor lives on this server or on a remote server.",
@@ -5303,6 +5604,20 @@
           }
         }
       },
+      "ProtectionListResponse": {
+        "type": "object",
+        "required": [
+          "protections"
+        ],
+        "properties": {
+          "protections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProtectionReadinessResponse"
+            }
+          }
+        }
+      },
       "ProtectionObservationResponse": {
         "type": "object",
         "required": [
@@ -5316,6 +5631,93 @@
           "probe": {
             "type": "string",
             "description": "`healthy` / `unhealthy` / `unknown`"
+          }
+        }
+      },
+      "ProtectionReadinessResponse": {
+        "type": "object",
+        "required": [
+          "protection",
+          "provider",
+          "enabled",
+          "generation",
+          "fingerprint",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "設定が有効か (未設定・明示無効は false)。"
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "secret の逆算できない短い fingerprint (secret 自体は出ない)。"
+          },
+          "generation": {
+            "type": "string",
+            "description": "設定世代。設定 (provider・非 secret 設定値・secret の fingerprint) が変わると変わる。"
+          },
+          "last_check": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LastCheckResponse"
+              }
+            ]
+          },
+          "protection": {
+            "type": "string",
+            "description": "`email` / `bot`"
+          },
+          "provider": {
+            "type": "string",
+            "description": "`smtp` / `turnstile`"
+          },
+          "reason": {
+            "type": "string",
+            "description": "評価の理由 (secret を含まない固定語彙)。"
+          },
+          "status": {
+            "type": "string",
+            "description": "現在時刻での評価: `configuration_invalid` / `operational` / `temporarily_unavailable` / `unverified`。"
+          },
+          "valid_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "operational が続く期限 (operational のときだけ)。超過すると unverified になる。"
+          }
+        }
+      },
+      "ProviderResultResponse": {
+        "type": "object",
+        "required": [
+          "outcome",
+          "reason",
+          "transport"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "business 結果: `business_success` / `accepted` / `configuration_invalid` /\n`attempt_rejected` / `temporarily_unavailable`。"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string"
           }
         }
       },
@@ -5789,6 +6191,67 @@
           }
         }
       },
+      "VerifyProtectionRequest": {
+        "type": "object",
+        "properties": {
+          "challenge_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "email: 先に送った canary challenge の ID。`code` と一緒に指定すると roundtrip を確認する。"
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "email: 承認済み canary mailbox に届いた code。"
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "bot: widget が発行した有効な token (business 検証)。省略すると secret の負の probe だけを行い、\noperational にはならない。"
+          }
+        }
+      },
+      "VerifyProtectionResponse": {
+        "type": "object",
+        "required": [
+          "result",
+          "recorded",
+          "disposition",
+          "readiness"
+        ],
+        "properties": {
+          "disposition": {
+            "type": "string",
+            "description": "`completed` / `pending_confirmation` (canary mailbox に code を送った) /\n`canary_not_configured` (承認済み canary mailbox が未設定で、メールは unverified のまま)。"
+          },
+          "pending_challenge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PendingChallengeResponse"
+              }
+            ]
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/ProtectionReadinessResponse"
+          },
+          "recorded": {
+            "type": "boolean",
+            "description": "readiness へ記録したか。当該試行だけの拒否 (`attempt_rejected`) は記録しない。"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ProviderResultResponse"
+          }
+        }
+      },
       "WarnAccountRequest": {
         "type": "object",
         "required": [
@@ -6133,6 +6596,10 @@
     {
       "name": "RegistrationGateWebhook",
       "description": "External Webhook delivery of registration gate notification events (admin only; E15w). The endpoint URL and the HMAC-SHA256 signing secret are server configuration only (REGISTRATION_WEBHOOK_URL, REGISTRATION_WEBHOOK_SECRET or REGISTRATION_WEBHOOK_SECRET_FILE). When they are unset the Webhook is disabled: nothing is delivered, the status endpoint reports `not_configured`, and the gate is unaffected (this is not an error). Delivery guarantees: at-least-once, so the same event can be delivered more than once (retries, crash recovery, admin retry) and receivers must de-duplicate by the stable event ID (`X-Emumet-Event-Id`); ordering is not guaranteed (order by `occurred_at` if needed). Retries: 408/429/5xx/timeouts/connection failures are retried with exponential backoff and jitter (Retry-After is honored up to a cap) until the attempt or age limit, then the delivery is `failed`; redirects, other 4xx responses and destination-check (SSRF) rejections fail immediately. Failed deliveries are resent only when an admin requests a retry. Webhook trouble never changes the gate state and never creates a new notification event. HTTPS only, no redirects, destinations are checked at connect time and pinned. Receiver documentation: docs/registration-gate-webhook.md."
+    },
+    {
+      "name": "RegistrationProtection",
+      "description": "Registration protection readiness and pre-registration email proof (E15c). Unauthenticated: POST /api/v1/registration/email-challenges and /confirm (email ownership challenge: code by SMTP, proof only after the code is confirmed; rate limited; bound to flow, email and configuration generation). Admin only: GET /api/v1/admin/registration-gate/protections and POST /api/v1/admin/registration-gate/protections/{protection}/verify (readiness and real verification). Configuration is server-side only (REGISTRATION_TURNSTILE_*, REGISTRATION_SMTP_*, REGISTRATION_EMAIL_*). A protection is operational only while a real verification business success bound to the current configuration generation is fresh; health, HTTP 200 and SMTP 250 alone never make it operational. The production registration hook that consumes proofs and tokens is E15d and is not connected yet. Operations guide: docs/registration-protection-readiness.md."
     }
   ]
 }

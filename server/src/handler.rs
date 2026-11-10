@@ -1,11 +1,14 @@
 use crate::hydra::HydraAdminClient;
-use crate::kratos::KratosClient;
+use crate::kratos::{KratosClient, KratosRegistrationFlowDirectory};
 use driver::crypto::{
     Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
 };
 use driver::database::PostgresDatabase;
 use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
 use driver::keto::KetoClient;
+#[cfg(test)]
+use driver::registration_protection::SmtpSettings;
+use driver::registration_protection::{HttpTurnstileVerifier, SmtpEmailTransport};
 use driver::storage::{NoopProfileMediaCopyGateway, S3ImageStorage};
 use driver::webhook::HttpWebhookSender;
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
@@ -15,7 +18,11 @@ use kernel::interfaces::crypto::{
 };
 use kernel::interfaces::http_signing::{DependOnHttpSignatureVerifier, DependOnHttpSigner};
 use kernel::interfaces::permission::{DependOnPermissionChecker, DependOnPermissionWriter};
-use kernel::interfaces::repository::DependOnWebhookSender;
+use kernel::interfaces::repository::{
+    DependOnEmailTransport, DependOnRegistrationFlowDirectory,
+    DependOnRegistrationProtectionPolicy, DependOnTurnstileVerifier, DependOnWebhookSender,
+};
+use kernel::prelude::entity::{EmailChallengePolicy, ReadinessPolicy};
 use kernel::KernelError;
 
 /// Single wiring root for the HTTP server (ADR 0006 decision 7).
@@ -40,6 +47,38 @@ pub struct AppModule {
     image_storage: S3ImageStorage,
     profile_media_copy_gateway: NoopProfileMediaCopyGateway,
     webhook_sender: HttpWebhookSender,
+    turnstile_verifier: HttpTurnstileVerifier,
+    email_transport: SmtpEmailTransport,
+    registration_flow_directory: KratosRegistrationFlowDirectory,
+    readiness_policy: ReadinessPolicy,
+    email_challenge_policy: EmailChallengePolicy,
+}
+
+fn positive_secs_from_env(key: &str) -> Option<i64> {
+    dotenvy::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .filter(|value| *value > 0)
+}
+
+/// 鮮度・TTL・rate limit のうち運用で調整する値だけ環境変数で上書きできる (既定値と根拠は
+/// docs/registration-protection-readiness.md)。
+fn registration_protection_policies_from_env() -> (ReadinessPolicy, EmailChallengePolicy) {
+    let mut readiness = ReadinessPolicy::default();
+    if let Some(secs) = positive_secs_from_env("REGISTRATION_PROTECTION_SUCCESS_TTL_SECS") {
+        readiness.success_ttl = time::Duration::seconds(secs);
+    }
+    if let Some(secs) = positive_secs_from_env("REGISTRATION_PROTECTION_PROBE_MAX_AGE_SECS") {
+        readiness.probe_max_age = time::Duration::seconds(secs);
+    }
+    let mut email = EmailChallengePolicy::default();
+    if let Some(secs) = positive_secs_from_env("REGISTRATION_PROOF_REUSE_WINDOW_SECS") {
+        email.proof_reuse_window = time::Duration::seconds(secs);
+    }
+    if let Some(limit) = positive_secs_from_env("REGISTRATION_EMAIL_MAX_PER_SOURCE_HOUR") {
+        email.limits.source_per_hour = limit;
+    }
+    (readiness, email)
 }
 
 impl AppModule {
@@ -57,6 +96,9 @@ impl AppModule {
 
         let pgpool = PostgresDatabase::new().await?;
         let image_storage = S3ImageStorage::from_env().await?;
+        let (readiness_policy, email_challenge_policy) =
+            registration_protection_policies_from_env();
+        let registration_flow_directory = KratosRegistrationFlowDirectory::new(&kratos_public_url);
 
         Ok(Self {
             pgpool,
@@ -74,6 +116,11 @@ impl AppModule {
             image_storage,
             profile_media_copy_gateway: NoopProfileMediaCopyGateway,
             webhook_sender: HttpWebhookSender::from_env(),
+            turnstile_verifier: HttpTurnstileVerifier::from_env(),
+            email_transport: SmtpEmailTransport::from_env(),
+            registration_flow_directory,
+            readiness_policy,
+            email_challenge_policy,
         })
     }
 
@@ -108,6 +155,7 @@ impl AppModule {
         let image_storage = S3ImageStorage::from_env().await?;
         let public_base_url =
             dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+        let registration_flow_directory = KratosRegistrationFlowDirectory::new(&kratos_public_url);
         Ok(Self {
             pgpool,
             password_provider: FilePasswordProvider::new(),
@@ -124,6 +172,17 @@ impl AppModule {
             image_storage,
             profile_media_copy_gateway: NoopProfileMediaCopyGateway,
             webhook_sender: HttpWebhookSender::disabled(),
+            turnstile_verifier: HttpTurnstileVerifier::new(
+                driver::registration_protection::turnstile::TurnstileSettings::from_source(
+                    &driver::registration_protection::EnvSource::new(),
+                ),
+            ),
+            email_transport: SmtpEmailTransport::new(SmtpSettings::from_source(
+                &driver::registration_protection::EnvSource::new(),
+            )),
+            registration_flow_directory,
+            readiness_policy: ReadinessPolicy::default(),
+            email_challenge_policy: EmailChallengePolicy::default(),
         })
     }
 
@@ -252,5 +311,39 @@ impl DependOnWebhookSender for AppModule {
 
     fn webhook_sender(&self) -> &Self::WebhookSender {
         &self.webhook_sender
+    }
+}
+
+impl DependOnTurnstileVerifier for AppModule {
+    type TurnstileVerifier = HttpTurnstileVerifier;
+
+    fn turnstile_verifier(&self) -> &Self::TurnstileVerifier {
+        &self.turnstile_verifier
+    }
+}
+
+impl DependOnEmailTransport for AppModule {
+    type EmailTransport = SmtpEmailTransport;
+
+    fn email_transport(&self) -> &Self::EmailTransport {
+        &self.email_transport
+    }
+}
+
+impl DependOnRegistrationFlowDirectory for AppModule {
+    type RegistrationFlowDirectory = KratosRegistrationFlowDirectory;
+
+    fn registration_flow_directory(&self) -> &Self::RegistrationFlowDirectory {
+        &self.registration_flow_directory
+    }
+}
+
+impl DependOnRegistrationProtectionPolicy for AppModule {
+    fn readiness_policy(&self) -> ReadinessPolicy {
+        self.readiness_policy
+    }
+
+    fn email_challenge_policy(&self) -> EmailChallengePolicy {
+        self.email_challenge_policy
     }
 }

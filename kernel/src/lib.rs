@@ -369,6 +369,20 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnRegistrationProtectionRepository for $impl_type {
+            type RegistrationProtectionRepository = <$db_type as $crate::interfaces::repository::DependOnRegistrationProtectionRepository>::RegistrationProtectionRepository;
+            fn registration_protection_repository(&self) -> &Self::RegistrationProtectionRepository {
+                $crate::interfaces::repository::DependOnRegistrationProtectionRepository::registration_protection_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnRegistrationEmailChallengeRepository for $impl_type {
+            type RegistrationEmailChallengeRepository = <$db_type as $crate::interfaces::repository::DependOnRegistrationEmailChallengeRepository>::RegistrationEmailChallengeRepository;
+            fn registration_email_challenge_repository(&self) -> &Self::RegistrationEmailChallengeRepository {
+                $crate::interfaces::repository::DependOnRegistrationEmailChallengeRepository::registration_email_challenge_repository(&self.$field)
+            }
+        }
+
         impl $crate::interfaces::repository::DependOnWebhookDeliveryRepository for $impl_type {
             type WebhookDeliveryRepository = <$db_type as $crate::interfaces::repository::DependOnWebhookDeliveryRepository>::WebhookDeliveryRepository;
             fn webhook_delivery_repository(&self) -> &Self::WebhookDeliveryRepository {

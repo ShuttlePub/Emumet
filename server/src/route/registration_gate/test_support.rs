@@ -21,31 +21,31 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const AUDIENCE: &str = "emumet";
 
-pub(super) static GATE_ROUTE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static GATE_ROUTE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-pub(super) const HEALTHY: ProtectionObservation = ProtectionObservation {
+pub(crate) const HEALTHY: ProtectionObservation = ProtectionObservation {
     configured: true,
     probe: ProbeStatus::Healthy,
 };
-pub(super) const DOWN: ProtectionObservation = ProtectionObservation {
+pub(crate) const DOWN: ProtectionObservation = ProtectionObservation {
     configured: true,
     probe: ProbeStatus::Unhealthy,
 };
-pub(super) const OFF: ProtectionObservation = ProtectionObservation::UNCONFIGURED;
+pub(crate) const OFF: ProtectionObservation = ProtectionObservation::UNCONFIGURED;
 
-pub(super) fn observation(
+pub(crate) fn observation(
     email: ProtectionObservation,
     bot: ProtectionObservation,
 ) -> RegistrationObservation {
     RegistrationObservation::new(email, bot)
 }
 
-pub(super) struct TestUser {
+pub(crate) struct TestUser {
     pub token: String,
     pub auth_account_id: AuthAccountId,
 }
 
-pub(super) struct GateTestApp {
+pub(crate) struct GateTestApp {
     pub router: axum::Router,
     pub module: AppModule,
     pub admin_a: TestUser,
@@ -171,7 +171,7 @@ impl GateTestApp {
     }
 }
 
-pub(super) fn request(
+pub(crate) fn request(
     user: Option<&TestUser>,
     method: Method,
     uri: &str,
@@ -189,7 +189,7 @@ pub(super) fn request(
         .expect("valid request")
 }
 
-pub(super) async fn response_json(response: axum::response::Response) -> serde_json::Value {
+pub(crate) async fn response_json(response: axum::response::Response) -> serde_json::Value {
     let body = response
         .into_body()
         .collect()
