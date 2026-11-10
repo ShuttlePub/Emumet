@@ -6,6 +6,7 @@ use driver::crypto::{
 use driver::database::PostgresDatabase;
 use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
 use driver::keto::KetoClient;
+use driver::profile_delivery::{HttpProfileDeliverySender, HttpRemoteActorResolver};
 #[cfg(test)]
 use driver::registration_protection::SmtpSettings;
 use driver::registration_protection::{HttpTurnstileVerifier, SmtpEmailTransport};
@@ -19,8 +20,9 @@ use kernel::interfaces::crypto::{
 use kernel::interfaces::http_signing::{DependOnHttpSignatureVerifier, DependOnHttpSigner};
 use kernel::interfaces::permission::{DependOnPermissionChecker, DependOnPermissionWriter};
 use kernel::interfaces::repository::{
-    DependOnEmailTransport, DependOnRegistrationFlowDirectory,
-    DependOnRegistrationProtectionPolicy, DependOnTurnstileVerifier, DependOnWebhookSender,
+    DependOnEmailTransport, DependOnProfileDeliverySender, DependOnRegistrationFlowDirectory,
+    DependOnRegistrationProtectionPolicy, DependOnRemoteActorResolver, DependOnTurnstileVerifier,
+    DependOnWebhookSender,
 };
 use kernel::prelude::entity::{EmailChallengePolicy, ReadinessPolicy};
 use kernel::KernelError;
@@ -52,6 +54,8 @@ pub struct AppModule {
     registration_flow_directory: KratosRegistrationFlowDirectory,
     readiness_policy: ReadinessPolicy,
     email_challenge_policy: EmailChallengePolicy,
+    profile_delivery_sender: HttpProfileDeliverySender,
+    remote_actor_resolver: HttpRemoteActorResolver,
 }
 
 fn positive_secs_from_env(key: &str) -> Option<i64> {
@@ -121,6 +125,8 @@ impl AppModule {
             registration_flow_directory,
             readiness_policy,
             email_challenge_policy,
+            profile_delivery_sender: HttpProfileDeliverySender::new(),
+            remote_actor_resolver: HttpRemoteActorResolver::new(),
         })
     }
 
@@ -183,12 +189,38 @@ impl AppModule {
             registration_flow_directory,
             readiness_policy: ReadinessPolicy::default(),
             email_challenge_policy: EmailChallengePolicy::default(),
+            profile_delivery_sender: HttpProfileDeliverySender::new(),
+            remote_actor_resolver: HttpRemoteActorResolver::new(),
         })
     }
 
     #[cfg(test)]
     pub(crate) fn with_webhook_sender(mut self, webhook_sender: HttpWebhookSender) -> Self {
         self.webhook_sender = webhook_sender;
+        self
+    }
+
+    /// Test wiring: point the module at another (isolated) database, e.g. one with the P2 schema fixture.
+    #[cfg(test)]
+    pub(crate) fn with_database(mut self, database: PostgresDatabase) -> Self {
+        self.pgpool = database;
+        self
+    }
+
+    /// Test wiring: outbound Profile delivery / actor resolution that may reach loopback fake peers.
+    #[cfg(test)]
+    pub(crate) fn with_loopback_profile_delivery(mut self) -> Self {
+        self.profile_delivery_sender = HttpProfileDeliverySender::allowing_insecure_loopback();
+        self.remote_actor_resolver = HttpRemoteActorResolver::allowing_insecure_loopback();
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_password_provider(
+        mut self,
+        password_provider: FilePasswordProvider,
+    ) -> Self {
+        self.password_provider = password_provider;
         self
     }
 
@@ -345,5 +377,21 @@ impl DependOnRegistrationProtectionPolicy for AppModule {
 
     fn email_challenge_policy(&self) -> EmailChallengePolicy {
         self.email_challenge_policy
+    }
+}
+
+impl DependOnProfileDeliverySender for AppModule {
+    type ProfileDeliverySender = HttpProfileDeliverySender;
+
+    fn profile_delivery_sender(&self) -> &Self::ProfileDeliverySender {
+        &self.profile_delivery_sender
+    }
+}
+
+impl DependOnRemoteActorResolver for AppModule {
+    type RemoteActorResolver = HttpRemoteActorResolver;
+
+    fn remote_actor_resolver(&self) -> &Self::RemoteActorResolver {
+        &self.remote_actor_resolver
     }
 }

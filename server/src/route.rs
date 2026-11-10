@@ -10,6 +10,7 @@ pub mod oauth2;
 pub mod profile_domain_control;
 pub mod profile_follow_list;
 pub mod profile_policy;
+pub mod profile_relationship;
 pub mod profile_transfer;
 pub mod registration_gate;
 pub mod registration_gate_webhook;

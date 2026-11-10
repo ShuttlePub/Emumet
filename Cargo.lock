@@ -120,6 +120,7 @@ dependencies = [
  "tokio",
  "tracing",
  "vodca",
+ "wiremock",
  "zeroize",
 ]
 
@@ -3674,6 +3675,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
+ "tempfile",
  "test-with",
  "time",
  "tokio",

@@ -120,6 +120,11 @@ fn classify_target(
     public_base_url: &PublicBaseUrl,
     raw: &str,
 ) -> error_stack::Result<TargetKind, KernelError> {
+    // A value that is not a URL is a local Profile nanoid (the contract also names `acct:` handles,
+    // which would need WebFinger and are not accepted here).
+    if !raw.contains("://") && !raw.starts_with("acct:") && !raw.is_empty() {
+        return Ok(TargetKind::Local(raw.to_string()));
+    }
     let url = GraphActorUrl::new(raw)?;
     Ok(match local_profile_nanoid(public_base_url, url.as_str()) {
         Some(nanoid) => TargetKind::Local(nanoid.to_string()),
@@ -192,6 +197,12 @@ fn follow_dto(follow: &ProfileFollow, profile_nanoid: &str, target: String) -> P
     }
 }
 
+/// 送信元のローカル Profile (内部 ID と、actor URL の元になる nanoid)。
+struct LocalSender<'a> {
+    profile_id: &'a ProfileId,
+    nanoid: &'a str,
+}
+
 /// 自分が送った Follow が終了したとき、相手に `Undo(Follow)` を送る job を予約する (同じ transaction)。
 ///
 /// 宛先 inbox は元の Follow job から取る。まだ一度も送信を試みていない Follow は取り消すだけで
@@ -200,9 +211,8 @@ fn follow_dto(follow: &ProfileFollow, profile_nanoid: &str, target: String) -> P
 async fn retract_outgoing_follow<T: RelationshipDeps>(
     deps: &T,
     executor: &mut Conn<T>,
-    sender_nanoid: &str,
+    sender: &LocalSender<'_>,
     follow: &ProfileFollow,
-    sender: &ProfileId,
     target_url: &str,
     reason: &str,
     now: OffsetDateTime,
@@ -236,12 +246,12 @@ async fn retract_outgoing_follow<T: RelationshipDeps>(
     let undo_id = undo_activity_id(follow.activity_id())?;
     let body = undo_follow_body(
         &undo_id,
-        &profile_actor_url(deps.public_base_url(), sender_nanoid),
+        &profile_actor_url(deps.public_base_url(), sender.nanoid),
         target_url,
         &before.payload,
     )?;
     let mut undo = NewProfileDeliveryJob::new(
-        sender.clone(),
+        sender.profile_id.clone(),
         DeliveryActivityType::Undo,
         undo_id,
         before.target_inbox.clone(),
@@ -264,9 +274,8 @@ async fn retract_outgoing_follow<T: RelationshipDeps>(
 async fn reject_incoming_follow<T: RelationshipDeps>(
     deps: &T,
     executor: &mut Conn<T>,
-    sender_nanoid: &str,
+    sender: &LocalSender<'_>,
     follow: &ProfileFollow,
-    sender: &ProfileId,
     reason: &str,
     now: OffsetDateTime,
 ) -> error_stack::Result<(), KernelError> {
@@ -288,15 +297,15 @@ async fn reject_incoming_follow<T: RelationshipDeps>(
     )
     .await?;
     let follower_url = actor_url(deps, executor, follow.follower()).await?;
-    let reject_id = reject_activity_id(deps.public_base_url(), sender_nanoid, follow.id())?;
+    let reject_id = reject_activity_id(deps.public_base_url(), sender.nanoid, follow.id())?;
     let body = reject_follow_body(
         &reject_id,
-        &profile_actor_url(deps.public_base_url(), sender_nanoid),
+        &profile_actor_url(deps.public_base_url(), sender.nanoid),
         &follower_url,
         follow.activity_id(),
     )?;
     let reject = NewProfileDeliveryJob::new(
-        sender.clone(),
+        sender.profile_id.clone(),
         DeliveryActivityType::Reject,
         reject_id,
         accept.target_inbox.clone(),
@@ -507,9 +516,11 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                         retract_outgoing_follow(
                             &deps,
                             executor,
-                            &profile_nanoid,
+                            &LocalSender {
+                                profile_id: &profile_id,
+                                nanoid: &profile_nanoid,
+                            },
                             &follow,
-                            &profile_id,
                             &target_url,
                             "unfollowed",
                             now,
@@ -634,14 +645,17 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                                 now,
                             )
                             .await?;
+                        let sender = LocalSender {
+                            profile_id: &profile_id,
+                            nanoid: &profile_nanoid,
+                        };
                         for follow in &ended {
                             if follow.follower() == &me {
                                 retract_outgoing_follow(
                                     &deps,
                                     executor,
-                                    &profile_nanoid,
+                                    &sender,
                                     follow,
-                                    &profile_id,
                                     &target.url,
                                     "blocked",
                                     now,
@@ -649,13 +663,7 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                                 .await?;
                             } else {
                                 reject_incoming_follow(
-                                    &deps,
-                                    executor,
-                                    &profile_nanoid,
-                                    follow,
-                                    &profile_id,
-                                    "blocked",
-                                    now,
+                                    &deps, executor, &sender, follow, "blocked", now,
                                 )
                                 .await?;
                             }
