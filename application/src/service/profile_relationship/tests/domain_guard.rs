@@ -822,3 +822,145 @@ async fn unfollow_racing_the_real_pre_send_guard_never_deadlocks() {
         clear_controls(&env).await;
     }
 }
+
+async fn claim_follow_job(env: &Env) -> kernel::prelude::entity::ClaimedProfileDeliveryJob {
+    use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+    let mut executor = env.module.database_connection().connection().await.unwrap();
+    env.module
+        .profile_delivery_job_repository()
+        .claim_due(
+            &mut executor,
+            "worker-1",
+            env.now(),
+            &DeliveryClaimPolicy {
+                lease_duration: Duration::seconds(120),
+                limit: 1,
+                max_attempts: 12,
+            },
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the Follow job is claimable")
+}
+
+/// What the account projection does when an Account is deactivated: delete the Profile row, which
+/// cascades to its Follow and delivery job rows.
+async fn delete_profile_row(
+    env: &Env,
+    profile_id: &ProfileId,
+) -> error_stack::Result<(), KernelError> {
+    use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
+    let deps = env.module.clone();
+    let profile_id = profile_id.clone();
+    env.module
+        .transaction_manager()
+        .transaction(move |executor| {
+            Box::pin(async move {
+                deps.profile_read_model()
+                    .delete(executor, &profile_id)
+                    .await
+            })
+        })
+        .await
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn profile_deletion_cascade_and_the_pre_send_guard_do_not_deadlock() {
+    let env = std::sync::Arc::new(Env::new().await);
+    let (alice, _target, _follow) = pending_follow(&env).await;
+    set_control(
+        &env,
+        &alice.profile_id,
+        "localhost",
+        DomainControlMode::Block,
+    )
+    .await;
+    let claim = claim_follow_job(&env).await;
+    // The guard's job UPDATE keeps the row locked for a while: the window in which a Profile
+    // deletion that cascades Profile -> Follow -> job would close a lock cycle with it.
+    env.execute(
+        "CREATE FUNCTION d8g_slow_cancel() RETURNS trigger AS $$ BEGIN
+           IF NEW.state = 'cancelled' AND OLD.state <> 'cancelled' THEN
+             PERFORM pg_sleep(2);
+           END IF;
+           RETURN NEW;
+         END $$ LANGUAGE plpgsql;
+         CREATE TRIGGER d8g_slow_cancel BEFORE UPDATE ON profile_delivery_jobs
+           FOR EACH ROW EXECUTE FUNCTION d8g_slow_cancel();",
+    )
+    .await;
+
+    let guard = tokio::spawn({
+        let env = env.clone();
+        let claim = claim.clone();
+        async move {
+            env.module
+                .cancel_if_recipient_domain_blocked(&claim, OffsetDateTime::now_utc())
+                .await
+        }
+    });
+    tokio::time::sleep(StdDuration::from_millis(800)).await;
+    let deletion = tokio::spawn({
+        let env = env.clone();
+        let profile_id = alice.profile_id.clone();
+        async move { delete_profile_row(&env, &profile_id).await }
+    });
+
+    let guard = tokio::time::timeout(StdDuration::from_secs(30), guard)
+        .await
+        .expect("guard finishes")
+        .unwrap();
+    let deletion = tokio::time::timeout(StdDuration::from_secs(30), deletion)
+        .await
+        .expect("deletion finishes")
+        .unwrap();
+    assert!(
+        matches!(guard, Ok(true)),
+        "the guard is not a deadlock victim: {guard:?}"
+    );
+    deletion.expect("the deletion is not a deadlock victim");
+    assert_eq!(
+        env.count(&format!(
+            "SELECT count(*) FROM profiles WHERE id = {}",
+            alice.profile_id.as_ref()
+        ))
+        .await,
+        0
+    );
+    assert_eq!(env.count("SELECT count(*) FROM profile_follows").await, 0);
+    assert_eq!(
+        env.count("SELECT count(*) FROM profile_delivery_jobs")
+            .await,
+        0
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn the_pre_send_guard_after_a_profile_deletion_does_nothing_and_does_not_fail() {
+    let env = Env::new().await;
+    let (alice, _target, _follow) = pending_follow(&env).await;
+    set_control(
+        &env,
+        &alice.profile_id,
+        "localhost",
+        DomainControlMode::Block,
+    )
+    .await;
+    let claim = claim_follow_job(&env).await;
+
+    delete_profile_row(&env, &alice.profile_id).await.unwrap();
+
+    let cancelled = env
+        .module
+        .cancel_if_recipient_domain_blocked(&claim, OffsetDateTime::now_utc())
+        .await
+        .expect("a deleted sender is not an error");
+    assert!(
+        !cancelled,
+        "nothing is left to cancel; the send is stopped by the lease check"
+    );
+}

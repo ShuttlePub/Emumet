@@ -128,6 +128,15 @@ pub trait DeliverProfileActivitiesUseCase:
             self.transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
+                        // Profile row (shared) first, then the advisory lock: Profile deletion cascades
+                        // Profile -> Follow -> job, this transaction updates job -> Follow.
+                        if !deps
+                            .profile_relationship_lock()
+                            .lock_profile_row_shared(executor, &claim.sender)
+                            .await?
+                        {
+                            return Ok(false);
+                        }
                         deps.profile_relationship_lock()
                             .lock_profiles(executor, std::slice::from_ref(&claim.sender))
                             .await?;

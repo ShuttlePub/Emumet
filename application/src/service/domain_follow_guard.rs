@@ -26,7 +26,7 @@
 //!   A -> B and B -> A at the same time cannot deadlock). `unfollow` takes the sender's lock because it
 //!   updates the Follow row and then its delivery job, the reverse of the pre-send guard (job, then
 //!   Follow): without the shared lock those row locks form a cycle and PostgreSQL aborts one side;
-//! * delivery pre-send decision: the sending Profile;
+//! * delivery pre-send decision: the sending Profile (Profile row `FOR SHARE` first, then the lock);
 //! * **domain control writes** (`put_domain_control` / `delete_domain_control`, and D8R's block
 //!   application): the owning Profile, taken right after the owner check ([`lock_profile_for_domain_control_write`]).
 //!
@@ -36,11 +36,16 @@
 //! is therefore either refused by the block or ended by the block writer's relation removal
 //! (D8R); the two never interleave into "block + active Follow".
 //!
-//! Lock order across resources: Profile row (`FOR SHARE` owner check) -> relationship advisory
-//! lock(s) -> Follow / job rows. `unblock`, `mute` and `unmute` touch neither Follow nor delivery job
-//! rows (one block / mute row each; Follow decisions only read them under the lock), so they do not
-//! take the lock. Inbound and delivery transactions take only the advisory lock(s), so there is no
-//! cycle with the owner check.
+//! Lock order across resources: Profile row (`FOR SHARE`) -> relationship advisory lock(s) ->
+//! Follow / job rows. Deleting a Profile (account projection, `DELETE FROM profiles`) takes the Profile
+//! row first and cascades to Follow and job rows, so every transaction that updates those rows must
+//! reach them through a Profile row lock: owner-checked paths (`follow`, `unfollow`, `block`, domain
+//! control writes) hold `FOR SHARE` from the owner check, inbound transactions hold `FOR KEY SHARE`
+//! from the first foreign-key insert (the inbound activity record), and the delivery pre-send guard
+//! takes `ProfileRelationshipLock::lock_profile_row_shared` explicitly (it updates job -> Follow and
+//! has no owner check; without it the cascade and the guard deadlock). `unblock`, `mute` and `unmute`
+//! touch neither Follow nor delivery job rows (one block / mute row each; Follow decisions only read
+//! them under the lock), so they do not take the advisory lock.
 //!
 //! D8R note: a domain block only needs the owning Profile's lock because every Follow transaction
 //! involving that Profile (local or remote counterpart) takes it. When D8R also ends relations with
