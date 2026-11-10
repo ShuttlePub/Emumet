@@ -87,7 +87,7 @@ pub(crate) async fn post_inbox(
     Ok(StatusCode::ACCEPTED.into_response())
 }
 
-fn headers_to_map(headers: &HeaderMap) -> HashMap<String, String> {
+pub(super) fn headers_to_map(headers: &HeaderMap) -> HashMap<String, String> {
     headers
         .iter()
         .filter_map(|(name, value)| {
@@ -123,7 +123,7 @@ async fn ensure_signature_owner_matches_actor(
     }
 }
 
-fn ensure_host_matches_public_base_url(
+pub(super) fn ensure_host_matches_public_base_url(
     expected: &str,
     headers: &HeaderMap,
 ) -> Result<(), ErrorStatus> {
@@ -157,11 +157,11 @@ fn ensure_host_matches_public_base_url(
     Err(ErrorStatus::from(StatusCode::UNAUTHORIZED))
 }
 
-fn same_activitypub_id(left: &str, right: &str) -> bool {
+pub(super) fn same_activitypub_id(left: &str, right: &str) -> bool {
     left.trim_end_matches('/') == right.trim_end_matches('/')
 }
 
-fn signature_key_document_matches_actor(key_id: &str, actor: &str) -> bool {
+pub(super) fn signature_key_document_matches_actor(key_id: &str, actor: &str) -> bool {
     let Ok(mut key_url) = url::Url::parse(key_id) else {
         return false;
     };

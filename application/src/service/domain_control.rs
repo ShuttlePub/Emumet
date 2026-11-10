@@ -41,7 +41,7 @@ fn revision_conflict(message: &'static str) -> Report<KernelError> {
 ///
 /// Ownership is read from the locked Profile row, so after a Profile transfer only the new owner
 /// passes and the previous owner is rejected.
-async fn require_profile_owner<T>(
+pub(crate) async fn require_profile_owner<T>(
     deps: &T,
     executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     auth_account_id: &AuthAccountId,

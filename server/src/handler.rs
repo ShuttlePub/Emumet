@@ -85,6 +85,26 @@ impl AppModule {
         keto_write_url: String,
     ) -> error_stack::Result<Self, KernelError> {
         let pgpool = PostgresDatabase::new().await?;
+        Self::new_for_test_database(
+            pgpool,
+            hydra_admin_url,
+            kratos_public_url,
+            keto_read_url,
+            keto_write_url,
+        )
+        .await
+    }
+
+    /// Same test wiring on an explicit database (the P2 social graph tables are not part of the
+    /// production migrations, so their tests run on an isolated database that has the fixture).
+    #[cfg(test)]
+    pub(crate) async fn new_for_test_database(
+        pgpool: PostgresDatabase,
+        hydra_admin_url: String,
+        kratos_public_url: String,
+        keto_read_url: String,
+        keto_write_url: String,
+    ) -> error_stack::Result<Self, KernelError> {
         let image_storage = S3ImageStorage::from_env().await?;
         let public_base_url =
             dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());

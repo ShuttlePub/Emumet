@@ -70,8 +70,12 @@ fn contract_operations() -> Vec<ContractOperation> {
             let is_contract = operation["tags"]
                 .as_array()
                 .is_some_and(|tags| tags.iter().any(|t| t == "ProfilePolicy"));
-            // domain-controls are implemented by D8P (see route::profile_domain_control_tests).
-            if !is_contract || template.contains("/domain-controls") {
+            // domain-controls (D8P, route::profile_domain_control_tests) and followers / following
+            // (P3i, route::profile_follow_list_tests) are implemented.
+            let implemented = template.contains("/domain-controls")
+                || template.ends_with("/followers")
+                || template.ends_with("/following");
+            if !is_contract || implemented {
                 continue;
             }
             let mut uri = String::new();
@@ -123,7 +127,7 @@ async fn every_contract_operation_answers_explicit_501_when_authenticated() {
     let operations = contract_operations();
     assert_eq!(
         operations.len(),
-        11,
+        9,
         "expected the full ProfilePolicy contract, found {} operations",
         operations.len()
     );
@@ -172,29 +176,5 @@ async fn authenticated_contract_operations_reject_missing_token() {
             operation.method,
             operation.uri
         );
-    }
-}
-
-#[test]
-fn production_entrypoint_does_not_mount_contract_routes() {
-    for (file, source) in [
-        ("main.rs", include_str!("../main.rs")),
-        ("root_router.rs", include_str!("../root_router.rs")),
-    ] {
-        for needle in [
-            "profile_policy",
-            "ProfilePolicyContractRouter",
-            "route_profile_policy_contract",
-            "ProfileActorRouter",
-            "route_profile_actor",
-            "route_profile_webfinger",
-            "profile_actor",
-            "profile_domain_control",
-        ] {
-            assert!(
-                !source.contains(needle),
-                "{file} must not reference {needle}: Profile routes are mounted in P4 at the earliest"
-            );
-        }
     }
 }

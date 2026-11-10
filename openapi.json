@@ -337,6 +337,54 @@
         }
       }
     },
+    "/ap/profiles/{profile_nanoid}/inbox": {
+      "post": {
+        "tags": [
+          "ProfileActor"
+        ],
+        "description": "ActivityPub inbox of one Profile actor. NOT MOUNTED on the production router (the production mount is owned by the P4 cutover). Requires a valid HTTP Signature whose key owner is `activity.actor`. Received activity table: Follow (object = this Profile; stored as an accepted generation and an Accept delivery job is reserved in the same transaction), Accept / Reject (object = a Follow this Profile sent, matched by the original Follow activity ID and by both parties), Undo (object = a Follow of the signer; an Undo that overtakes its Follow is remembered so the late Follow creates nothing). Every other activity (post activities such as Create / Like / EmojiReact / Announce, Block, Undo of a non-Follow, ...) is acknowledged with 202 and changes nothing: post authorization belongs to ShuttlePub and domain policy to D8G. Stale (ended generation), foreign (other Profile / other actor), unknown-Follow and duplicate activities are acknowledged with 202 without changing any relation.",
+        "operationId": "post_profile_inbox",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/activity+json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Activity applied, duplicate, or ignored without effect"
+          },
+          "400": {
+            "description": "Malformed ActivityPub activity"
+          },
+          "401": {
+            "description": "Missing or invalid HTTP Signature, or the signing actor is not activity.actor"
+          },
+          "404": {
+            "description": "Profile not found or not an actor"
+          },
+          "408": {
+            "description": "The follower actor could not be resolved (retryable)"
+          },
+          "422": {
+            "description": "Activity violates the Profile inbox rules (wrong target Profile, malformed reference)"
+          }
+        }
+      }
+    },
     "/api/v1/accounts": {
       "get": {
         "tags": [
@@ -3187,7 +3235,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Actors following the Profile; each follower is a local Profile or a remote actor identified by its canonical actor URL (`follower.kind`, `follower.actor_url`; `follower.profile_id` only for local). NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "description": "Actors following the Profile (pending and accepted follows); each follower is a local Profile or a remote actor identified by its canonical actor URL (`follower.kind`, `follower.actor_url`; `follower.profile_id` only for local). NOT MOUNTED in production (implemented by P3i; the route is mounted only in tests until P4). Oldest first; `cursor` is the opaque `next_cursor` of the previous page, `limit` defaults to 20 (1..=100). Authorization: only the Profile's current owner; other Profiles' and Accounts' relations are never returned.",
         "operationId": "list_profile_followers",
         "parameters": [
           {
@@ -3231,6 +3279,9 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid cursor"
+          },
           "401": {
             "description": "Missing or invalid bearer token"
           },
@@ -3239,9 +3290,6 @@
           },
           "404": {
             "description": "Profile not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -3256,7 +3304,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Profiles/actors followed by the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "description": "Actors followed by the Profile (pending and accepted follows; ended generations are not listed). `target` is the canonical actor URL (the Profile actor URL for a local target). NOT MOUNTED in production (implemented by P3i; the route is mounted only in tests until P4). Oldest first; `cursor` is the opaque `next_cursor` of the previous page, `limit` defaults to 20 (1..=100). Authorization: only the Profile's current owner; other Profiles' and Accounts' relations are never returned.",
         "operationId": "list_profile_following",
         "parameters": [
           {
@@ -3300,6 +3348,9 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid cursor"
+          },
           "401": {
             "description": "Missing or invalid bearer token"
           },
@@ -3308,9 +3359,6 @@
           },
           "404": {
             "description": "Profile not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -6064,11 +6112,11 @@
     },
     {
       "name": "ProfileActor",
-      "description": "Profile ActivityPub actor document (1 Profile = 1 actor). The generation logic exists (P1) but the route is NOT MOUNTED on the production router before the P4 cutover."
+      "description": "Profile ActivityPub actor document and inbox (1 Profile = 1 actor). The actor generation logic (P1) and the inbox (P3i: Follow / Accept / Reject / Undo(Follow)) exist but the routes are NOT MOUNTED on the production router before the P4 cutover."
     },
     {
       "name": "ProfilePolicy",
-      "description": "CONTRACT ONLY, not mounted on the production router (mounted in P4 at the earliest): Profile identity, Profile-scoped follow, individual block/mute and domain-controls. Handlers answer 501 until P1/P2/P3o/P3i/D8G/D8R implement them, except domain-controls, which D8P implemented (stored, revision-controlled, owner-only) but which stay unmounted on the production router until P4/D8R. Owner-only authorization, revision conflicts (409) and errors are the contract."
+      "description": "CONTRACT ONLY, not mounted on the production router (mounted in P4 at the earliest): Profile identity, Profile-scoped follow, individual block/mute and domain-controls. Handlers answer 501 until P3o/D8G/D8R implement them, except domain-controls (D8P: stored, revision-controlled, owner-only) and followers/following (P3i: read from the P2 follow graph, owner-only), which are implemented but stay unmounted on the production router until P4/D8R. Owner-only authorization, revision conflicts (409) and errors are the contract."
     },
     {
       "name": "ProfileTransfer",

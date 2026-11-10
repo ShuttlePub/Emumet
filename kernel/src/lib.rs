@@ -376,5 +376,26 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnProfileFollowRepository for $impl_type {
+            type ProfileFollowRepository = <$db_type as $crate::interfaces::repository::DependOnProfileFollowRepository>::ProfileFollowRepository;
+            fn profile_follow_repository(&self) -> &Self::ProfileFollowRepository {
+                $crate::interfaces::repository::DependOnProfileFollowRepository::profile_follow_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnInboundActivityRepository for $impl_type {
+            type InboundActivityRepository = <$db_type as $crate::interfaces::repository::DependOnInboundActivityRepository>::InboundActivityRepository;
+            fn inbound_activity_repository(&self) -> &Self::InboundActivityRepository {
+                $crate::interfaces::repository::DependOnInboundActivityRepository::inbound_activity_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnProfileDeliveryEnqueuer for $impl_type {
+            type ProfileDeliveryEnqueuer = <$db_type as $crate::interfaces::repository::DependOnProfileDeliveryEnqueuer>::ProfileDeliveryEnqueuer;
+            fn profile_delivery_enqueuer(&self) -> &Self::ProfileDeliveryEnqueuer {
+                $crate::interfaces::repository::DependOnProfileDeliveryEnqueuer::profile_delivery_enqueuer(&self.$field)
+            }
+        }
+
     };
 }

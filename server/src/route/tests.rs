@@ -253,6 +253,42 @@ async fn profile_actor_and_contract_routes_are_absent_from_the_root_router() {
             }
         }
     }
+    // Every operation of every unit that implements a Profile route without mounting it
+    // (E8 contract, D8P domain-controls, P1 actor, P3i inbox / followers / following) must be
+    // among the probes, so dropping an OpenAPI tag cannot silently shrink this check. A unit
+    // that mounts a route (P3o / P4) removes it here and adds a presence test instead.
+    for (method, template) in [
+        ("GET", "/api/v1/profiles/{profile_nanoid}"),
+        ("POST", "/api/v1/profiles/{profile_nanoid}/follows"),
+        (
+            "DELETE",
+            "/api/v1/profiles/{profile_nanoid}/follows/{follow_id}",
+        ),
+        ("GET", "/api/v1/profiles/{profile_nanoid}/following"),
+        ("GET", "/api/v1/profiles/{profile_nanoid}/followers"),
+        ("GET", "/api/v1/profiles/{profile_nanoid}/blocks"),
+        ("POST", "/api/v1/profiles/{profile_nanoid}/mutes"),
+        ("GET", "/api/v1/profiles/{profile_nanoid}/domain-controls"),
+        (
+            "GET",
+            "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
+        ),
+        (
+            "PUT",
+            "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
+        ),
+        (
+            "DELETE",
+            "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
+        ),
+        ("GET", "/ap/profiles/{profile_nanoid}"),
+        ("POST", "/ap/profiles/{profile_nanoid}/inbox"),
+    ] {
+        assert!(
+            probes.contains(&(method.to_string(), replace_path_params(template))),
+            "{method} {template} must be probed for absence"
+        );
+    }
     assert!(
         probes.len() >= 16,
         "expected the ProfilePolicy contract and the Profile actor, found {} operations",
@@ -334,6 +370,20 @@ async fn profile_actor_and_contract_routes_are_absent_from_the_root_router() {
         StatusCode::UNAUTHORIZED,
         "the one-time username setter is mounted (and authenticated)"
     );
+}
+
+/// Production serves exactly what `build_root_router` builds (the router the absence test above
+/// probes): `main` must not add routes of its own on top of it.
+#[test]
+fn main_serves_only_the_root_router() {
+    let main_rs = include_str!("../main.rs");
+    assert!(main_rs.contains("root_router::build_root_router("));
+    for forbidden in [".route(", ".nest(", ".merge(", "Router::new"] {
+        assert!(
+            !main_rs.contains(forbidden),
+            "main.rs must not build routes itself ({forbidden})"
+        );
+    }
 }
 
 /// The production entrypoint starts exactly the projection worker and the Registration Gate

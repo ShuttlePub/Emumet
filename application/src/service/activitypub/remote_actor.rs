@@ -17,6 +17,13 @@ pub(crate) struct ResolvedRemoteActor {
     public_key_pem: Option<String>,
 }
 
+impl ResolvedRemoteActor {
+    /// The actor's own inbox (not a shared inbox), if the actor document exposes one.
+    pub(crate) fn inbox_url(&self) -> Option<&str> {
+        self.inbox_url.as_deref()
+    }
+}
+
 /// Test-only: global cache of resolved remote actor data.
 ///
 /// `resolve_remote_actor` checks this before making an HTTP request.

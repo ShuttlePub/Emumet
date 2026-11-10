@@ -1483,19 +1483,3 @@ async fn domain_control_routes_are_absent_from_the_production_shaped_router() {
     }
     assert_eq!(checked, 4, "list, get, put and delete");
 }
-
-#[test]
-fn production_entrypoint_does_not_reference_domain_control_routes() {
-    let main_rs = include_str!("../main.rs");
-    for needle in [
-        "profile_domain_control",
-        "DomainControlRouter",
-        "route_domain_controls",
-        "DomainControlApi",
-    ] {
-        assert!(
-            !main_rs.contains(needle),
-            "main.rs must not reference {needle}: domain-controls are mounted in P4/D8R at the earliest"
-        );
-    }
-}

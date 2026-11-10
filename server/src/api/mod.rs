@@ -12,6 +12,7 @@ pub(crate) mod media;
 pub(crate) mod oauth2;
 pub(crate) mod organization;
 pub(crate) mod organization_context;
+pub(crate) mod profile_follow_list;
 pub(crate) mod profile_transfer;
 pub(crate) mod registration_gate;
 pub(crate) mod registration_gate_webhook;

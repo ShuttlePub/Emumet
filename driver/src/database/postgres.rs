@@ -96,8 +96,7 @@ impl PostgresDatabase {
         Ok(Self { pool })
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_pool(pool: Pool<Postgres>) -> Self {
+    pub fn from_pool(pool: Pool<Postgres>) -> Self {
         Self { pool }
     }
 }
