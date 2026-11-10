@@ -911,6 +911,10 @@ fn smtp_failures_are_classified_by_stage_without_conflating_all_5xx() {
         ReasonCode::SmtpTransientFailure,
         TransportClass::SmtpTransient,
     );
+    let deferred = ProviderResult::attempt_rejected(
+        ReasonCode::RecipientDeferred,
+        TransportClass::SmtpTransient,
+    );
     let auth = ProviderResult::configuration_invalid(
         ReasonCode::SmtpAuthFailed,
         TransportClass::SmtpAuthRejected,
@@ -932,11 +936,17 @@ fn smtp_failures_are_classified_by_stage_without_conflating_all_5xx() {
     ];
 
     for stage in stages {
-        // 4xx は段階によらず一時障害。認証・設定不正は configuration_invalid。
+        // 宛先依存の RCPT 段階の 4xx (421 を除く) は provider の障害ではなく当該 attempt の失敗。
+        // それ以外の段階の 4xx と 421 は宛先に依存しない一時障害。
         for status in [421, 450, 451, 452] {
+            let expected = if stage == SmtpStage::Rcpt && status != 421 {
+                deferred
+            } else {
+                transient
+            };
             assert_eq!(
                 classify_smtp_failure(at(stage, status)),
-                transient,
+                expected,
                 "{stage:?} {status}"
             );
         }
@@ -1093,7 +1103,7 @@ async fn smtp_transient_and_permanent_failures_are_distinguished() {
                 rcpt_reply: "451 4.3.0 try again later".to_string(),
                 ..script_with_auth()
             },
-            ProviderOutcome::TemporarilyUnavailable,
+            ProviderOutcome::AttemptRejected,
         ),
         (
             SmtpScript {
@@ -1134,6 +1144,13 @@ async fn smtp_transient_and_permanent_failures_are_distinguished() {
         (
             SmtpScript {
                 rcpt_reply: "450 4.2.1 mailbox busy".to_string(),
+                ..script_with_auth()
+            },
+            ProviderOutcome::AttemptRejected,
+        ),
+        (
+            SmtpScript {
+                mail_reply: "450 4.2.1 sender temporarily rejected".to_string(),
                 ..script_with_auth()
             },
             ProviderOutcome::TemporarilyUnavailable,
@@ -1277,5 +1294,32 @@ async fn malformed_recipients_are_rejected_before_any_connection() {
     assert_eq!(
         server.connections.load(std::sync::atomic::Ordering::SeqCst),
         0
+    );
+}
+
+#[tokio::test]
+async fn a_silent_quit_does_not_override_a_delivery_the_server_already_accepted() {
+    let server = MockSmtp::start(SmtpScript {
+        silent_quit: true,
+        ..script_with_auth()
+    })
+    .await;
+    let transport =
+        SmtpEmailTransport::new(SmtpSettings::from_source_allowing_plaintext_with_timeout(
+            &smtp_env(server.port()),
+            Duration::from_millis(400),
+        ));
+    let started = std::time::Instant::now();
+    // DATA が受理された後に QUIT へ応答がなくても、送信は成功のまま (全体 timeout に覆されない)。
+    assert_eq!(
+        transport.send_code("alice@example.com", "12345678").await,
+        ProviderResult::accepted(TransportClass::SmtpAccepted)
+    );
+    assert_eq!(server.mails().len(), 1);
+    assert!(started.elapsed() < Duration::from_secs(6));
+    // probe も同様 (NOOP 成功の後の QUIT 無応答で結果が変わらない)。
+    assert_eq!(
+        transport.probe_connection().await,
+        ProviderResult::accepted(TransportClass::SmtpAccepted)
     );
 }

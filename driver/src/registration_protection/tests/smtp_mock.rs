@@ -19,6 +19,8 @@ pub struct SmtpScript {
     pub data_reply: String,
     /// true なら接続後に何も応答しない (timeout の試験)。
     pub silent: bool,
+    /// true なら QUIT に応答しない (確定済みの結果を QUIT が覆さないことの試験)。
+    pub silent_quit: bool,
 }
 
 impl Default for SmtpScript {
@@ -31,6 +33,7 @@ impl Default for SmtpScript {
             rcpt_reply: "250 recipient ok".to_string(),
             data_reply: "250 queued".to_string(),
             silent: false,
+            silent_quit: false,
         }
     }
 }
@@ -177,6 +180,10 @@ async fn handle(
             }
             format!("{}\r\n", script.data_reply)
         } else if upper == "QUIT" {
+            if script.silent_quit {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                return Ok(());
+            }
             writer.write_all(b"221 bye\r\n").await?;
             return Ok(());
         } else {

@@ -139,6 +139,8 @@ pub enum ReasonCode {
     HostnameMismatch,
     ActionMismatch,
     RecipientRejected,
+    /// 宛先を伴う RCPT 段階の一時拒否 (greylisting・mailbox busy など宛先依存)。provider の障害ではない。
+    RecipientDeferred,
     // --- 肯定的な結果 ---
     BusinessSuccess,
     /// 資格情報・接続が受理された (business success ではない)。
@@ -175,6 +177,7 @@ impl ReasonCode {
             Self::HostnameMismatch => "hostname_mismatch",
             Self::ActionMismatch => "action_mismatch",
             Self::RecipientRejected => "recipient_rejected",
+            Self::RecipientDeferred => "recipient_deferred",
             Self::BusinessSuccess => "business_success",
             Self::Accepted => "accepted",
             Self::NeverVerified => "never_verified",

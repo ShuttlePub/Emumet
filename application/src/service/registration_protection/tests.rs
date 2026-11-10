@@ -1462,17 +1462,19 @@ async fn bot_token_verification_records_provider_outcomes_but_not_user_rejection
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn the_public_response_is_identical_for_accepted_rcpt_550_and_rcpt_450() {
+async fn the_public_response_sequence_is_identical_for_accepted_rcpt_550_and_rcpt_450() {
     // 受理・宛先拒否 (RCPT 550)・宛先依存の一時拒否 (RCPT 450) を、公開応答 (発行結果) から区別できない。
     let mut shapes = Vec::new();
+    let mut followups = Vec::new();
     for (index, result) in [
         accepted(),
         ProviderResult::attempt_rejected(
             ReasonCode::RecipientRejected,
             TransportClass::SmtpPermanent,
         ),
-        ProviderResult::temporarily_unavailable(
-            ReasonCode::SmtpTransientFailure,
+        // RCPT 450 (宛先依存の一時拒否) は provider の障害ではなく当該 attempt の失敗。
+        ProviderResult::attempt_rejected(
+            ReasonCode::RecipientDeferred,
             TransportClass::SmtpTransient,
         ),
     ]
@@ -1500,8 +1502,29 @@ async fn the_public_response_is_identical_for_accepted_rcpt_550_and_rcpt_450() {
         };
         assert_eq!(challenge_id.len(), 32, "case {index}");
         shapes.push(expires_at - at);
+
+        // 後続の別宛先への発行の応答も、先行宛先 A の結果によらず同じ (先行宛先の状態の判別器にならない)。
+        *fx.module.email.send.lock().unwrap() = accepted();
+        let followup = fx
+            .module
+            .issue_registration_email_challenge_at(
+                &fx.issue_request("other@example.com", "flow-1", "s2"),
+                at + Duration::seconds(1),
+            )
+            .await
+            .unwrap();
+        let IssueOutcome::Issued { expires_at, .. } = followup else {
+            panic!("case {index}: the follow-up issuance must not reveal the earlier recipient: {followup:?}");
+        };
+        followups.push(expires_at - at);
+        assert_eq!(
+            fx.email_view().await.effective.status,
+            ReadinessStatus::Operational,
+            "case {index}: a recipient-dependent result never changes the readiness"
+        );
     }
     assert!(shapes.windows(2).all(|pair| pair[0] == pair[1]));
+    assert!(followups.windows(2).all(|pair| pair[0] == pair[1]));
 }
 
 #[test_with::env(DATABASE_URL)]

@@ -38,6 +38,8 @@ pub const ENV_FROM: &str = "REGISTRATION_EMAIL_FROM";
 pub const ENV_CANARY: &str = "REGISTRATION_EMAIL_CANARY_ADDRESS";
 
 const SMTP_TIMEOUT: Duration = Duration::from_secs(10);
+/// QUIT の応答待ち。確定済みの結果 (DATA 受理など) を QUIT の無応答で覆さないため、全体期限とは別に短く掛ける。
+const QUIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SmtpTlsMode {
@@ -319,9 +321,9 @@ pub struct SmtpFailure {
 
 /// SMTP 失敗を段階つきで分類する純粋関数。
 ///
-/// - timeout・接続失敗・4xx は一時障害
+/// - timeout・接続失敗・RCPT 以外の 4xx・421 は一時障害
 /// - TLS 不正・認証失敗 (530/534/535/538)・STARTTLS 非対応などの設定不正は `configuration_invalid`
-/// - 宛先拒否 (**RCPT 段階の 550-554**) だけが `attempt_rejected`。MAIL FROM (送信者不許可) や
+/// - 宛先依存の失敗 (**RCPT 段階の 550-554 と、421 以外の 4xx**) だけが `attempt_rejected`。MAIL FROM (送信者不許可) や
 ///   DATA の 5xx、その他の 5xx は宛先拒否ではなく `configuration_invalid`
 pub fn classify_smtp_failure(failure: SmtpFailure) -> ProviderResult {
     if failure.timeout {
@@ -337,6 +339,15 @@ pub fn classify_smtp_failure(failure: SmtpFailure) -> ProviderResult {
         );
     }
     match failure.code {
+        // RCPT 段階の 4xx (421 を除く) は宛先依存 (greylisting・mailbox busy など)。provider の障害として
+        // readiness を変えると、先行する宛先の状態が後続要求の応答から観測できてしまうので、当該 attempt の
+        // 失敗にとどめる。接続・STARTTLS・認証・MAIL FROM・DATA の失敗や 421 は宛先に依存しない障害。
+        Some(400..=499) if failure.stage == SmtpStage::Rcpt && failure.code != Some(421) => {
+            ProviderResult::attempt_rejected(
+                ReasonCode::RecipientDeferred,
+                TransportClass::SmtpTransient,
+            )
+        }
         Some(400..=499) => ProviderResult::temporarily_unavailable(
             ReasonCode::SmtpTransientFailure,
             TransportClass::SmtpTransient,
@@ -386,6 +397,10 @@ fn failure_of(error: &lettre::transport::smtp::Error, stage: SmtpStage) -> SmtpF
 
 type StageResult<T> = Result<T, ProviderResult>;
 
+fn timeout_result() -> ProviderResult {
+    ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
+}
+
 fn at_stage<T>(
     result: Result<T, lettre::transport::smtp::Error>,
     stage: SmtpStage,
@@ -433,12 +448,22 @@ impl SmtpSession {
         Ok(connection)
     }
 
-    async fn send(&self, envelope: &Envelope, body: &[u8]) -> StageResult<()> {
-        let mut connection = self.open().await?;
-        let result = Self::deliver(&mut connection, envelope, body).await;
-        // 切断は best effort (結果は送信の成否に影響しない)。
-        let _ = connection.quit().await;
-        result
+    /// 全体の期限 (`deadline`) は接続から DATA 受理までに掛け、QUIT は含めない。
+    async fn send(&self, envelope: &Envelope, body: &[u8], deadline: Duration) -> StageResult<()> {
+        let work = async {
+            let mut connection = self.open().await?;
+            let result = Self::deliver(&mut connection, envelope, body).await;
+            Ok::<_, ProviderResult>((result, connection))
+        };
+        match tokio::time::timeout(deadline, work).await {
+            Err(_) => Err(timeout_result()),
+            Ok(Err(result)) => Err(result),
+            Ok(Ok((result, mut connection))) => {
+                // 切断は best effort。確定済みの結果は QUIT の成否・遅延に影響されない。
+                let _ = tokio::time::timeout(QUIT_TIMEOUT, connection.quit()).await;
+                result
+            }
+        }
     }
 
     async fn deliver(
@@ -465,10 +490,18 @@ impl SmtpSession {
         Ok(())
     }
 
-    async fn probe(&self) -> StageResult<()> {
-        let mut connection = self.open().await?;
-        let alive = connection.test_connected().await;
-        let _ = connection.quit().await;
+    async fn probe(&self, deadline: Duration) -> StageResult<()> {
+        let work = async {
+            let mut connection = self.open().await?;
+            let alive = connection.test_connected().await;
+            Ok::<_, ProviderResult>((alive, connection))
+        };
+        let (alive, mut connection) = match tokio::time::timeout(deadline, work).await {
+            Err(_) => return Err(timeout_result()),
+            Ok(Err(result)) => return Err(result),
+            Ok(Ok(done)) => done,
+        };
+        let _ = tokio::time::timeout(QUIT_TIMEOUT, connection.quit()).await;
         if alive {
             Ok(())
         } else {
@@ -566,18 +599,12 @@ impl EmailTransport for SmtpEmailTransport {
             );
         };
         let body = message.formatted();
-        let sent = tokio::time::timeout(
-            self.settings.deadline,
-            session.send(message.envelope(), &body),
-        )
-        .await;
-        match sent {
-            Err(_) => ProviderResult::temporarily_unavailable(
-                ReasonCode::Timeout,
-                TransportClass::Timeout,
-            ),
-            Ok(Ok(())) => ProviderResult::accepted(TransportClass::SmtpAccepted),
-            Ok(Err(result)) => result,
+        match session
+            .send(message.envelope(), &body, self.settings.deadline)
+            .await
+        {
+            Ok(()) => ProviderResult::accepted(TransportClass::SmtpAccepted),
+            Err(result) => result,
         }
     }
 
@@ -591,13 +618,9 @@ impl EmailTransport for SmtpEmailTransport {
                 TransportClass::None,
             );
         };
-        match tokio::time::timeout(self.settings.deadline, session.probe()).await {
-            Err(_) => ProviderResult::temporarily_unavailable(
-                ReasonCode::Timeout,
-                TransportClass::Timeout,
-            ),
-            Ok(Ok(())) => ProviderResult::accepted(TransportClass::SmtpAccepted),
-            Ok(Err(result)) => result,
+        match session.probe(self.settings.deadline).await {
+            Ok(()) => ProviderResult::accepted(TransportClass::SmtpAccepted),
+            Err(result) => result,
         }
     }
 }

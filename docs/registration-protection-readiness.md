@@ -68,12 +68,12 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
 | 条件 | 分類 | E15a の観測入力 |
 |---|---|---|
 | 未設定/空/明示無効、invalid/missing secret、SMTP 認証 (530/534/535/538)・認証以外の 5xx・TLS 不正 | `configuration_invalid` | configured=false |
-| token 不正・duplicate・hostname/action 不一致・期限切れ token、宛先拒否 (**SMTP の RCPT 段階の 550-554 だけ**) | `attempt_rejected` | **観測を変えない (記録もしない)** |
-| HTTP 429/5xx、timeout/DNS/connect/TLS、不正な provider 応答、SMTP 接続失敗/timeout/4xx | `temporarily_unavailable` | configured=true・Unhealthy |
+| token 不正・duplicate・hostname/action 不一致・期限切れ token、宛先依存の失敗 (**SMTP の RCPT 段階の 550-554 と、421 以外の 4xx (greylisting など)**) | `attempt_rejected` | **観測を変えない (記録もしない)** |
+| HTTP 429/5xx、timeout/DNS/connect/TLS、不正な provider 応答、SMTP の接続失敗/timeout、RCPT 以外の段階の 4xx・421 | `temporarily_unavailable` | configured=true・Unhealthy |
 | business success + generation/鮮度一致 | `operational` | configured=true・Healthy |
 | 設定変更後/成功期限切れ/probe 停止 | `unverified` | configured=true・Unknown |
 
-- HTTP provider の 429/5xx と SMTP の全 5xx は同一視しない。SMTP は失敗した**段階** (接続・認証・MAIL FROM・RCPT・DATA) を保持して分類し、宛先拒否になるのは RCPT の 550-554 だけ。MAIL FROM の 550 (送信者不許可)・DATA の 5xx・接続/認証段階の 55x は宛先拒否ではなく `configuration_invalid` (readiness を健全のままにしない)。
+- HTTP provider の 429/5xx と SMTP の全 5xx は同一視しない。SMTP は失敗した**段階** (接続・認証・MAIL FROM・RCPT・DATA) を保持して分類し、宛先依存の失敗 (attempt_rejected) になるのは RCPT 段階の 550-554 と 421 以外の 4xx だけ。MAIL FROM の 550 (送信者不許可)・DATA の 5xx・接続/認証段階の 55x は宛先拒否ではなく `configuration_invalid` (readiness を健全のままにしない)。
 - 一方の保護が故障しても他方は独立に評価される (`observation_from_readiness` は保護ごとに導く)。
 
 ## 3. bootstrap と継続検証の設計
@@ -138,7 +138,7 @@ protocol と分類の検証であり、**本番 credential の ready 証明で�
 - **rate limit の判定と記録は advisory lock で直列化**する (並行発行でも上限を超えない)。集計は要求時刻より後の既存予約も数えるので、要求時刻と予約順が前後しても上限を超えない。送信元は**接続元アドレス**だけを根拠にし (`X-Forwarded-For` 等の信頼できないヘッダーは使わない)、IPv6 は /64 に丸める。
   **リバースプロキシの背後では接続元がプロキシになる**ため、送信元単位の上限はサイト全体の backstop として働く (email/flow 単位の上限が主)。proxy 配下では `REGISTRATION_EMAIL_MAX_PER_SOURCE_HOUR` を調整するか、信頼できる proxy 設定を E15d/deployment で用意すること。
 - **公開 API の濫用対策 (gate の参照方針)**: 発行は、**E15a の gate が受付中 (`Accept`) で、かつメール保護が現在 `operational` のときだけ**送る。閉鎖・停止・一時拒否・未検証・設定不正・古い成功のときは 503 で、**任意の宛先へ送信しない**
-  (未検証の SMTP を不特定多数の宛先に使わないため)。送信を試みた発行は、受理・宛先拒否 (RCPT 550)・宛先依存の一時拒否 (RCPT 450 等)・provider 障害のいずれでも **同じ 202 応答** で、宛先の状態を区別させない (user enumeration の防止。届かなかった challenge は内部で失効させ、provider 障害は内部の readiness に記録して以降の発行を宛先に依存せず 503 にする。応答時間の差は対象外)、email の正規化後の hash 以外を保持しない。
+  (未検証の SMTP を不特定多数の宛先に使わないため)。送信を試みた発行は、受理・宛先拒否 (RCPT 550)・宛先依存の一時拒否 (RCPT 450 等)・provider 障害のいずれでも **同じ 202 応答** で、宛先の状態を区別させない (user enumeration の防止。届かなかった challenge は内部で失効させ、宛先に依存しない provider 障害だけを内部の readiness に記録し、以降の発行を 503 にする。応答時間の差は対象外)、email の正規化後の hash 以外を保持しない。
 - **flow の実在確認 (fail-closed)**: Kratos public API の `GET /self-service/registration/flows?id=` で flow の実在と **実際の期限** を確認し、challenge の期限を flow 以内にする。404/410 は不正な flow。
   browser flow は CSRF cookie なしだと 403 になる (Kratos v1.3.1 の実装を確認) ため、発行リクエストに付いてきた Kratos の CSRF cookie (`csrf_token_*` だけ。セッション等の cookie は転送しない) を転送して照会する。
   **cookie がなく期限を確認できない flow は使えないものとして拒否 (400) し、期限を推測・合成しない**。Kratos に到達できなければ 503。フロントエンドは Kratos の cookie が届く構成 (credentials を含めて呼ぶ) で呼ぶこと。
@@ -158,7 +158,7 @@ protocol と分類の検証であり、**本番 credential の ready 証明で�
 
 ## 6. SMTP adapter
 
-lettre の `AsyncSmtpConnection` (tokio + native-tls) で、接続 → STARTTLS → 認証 → MAIL FROM → RCPT → DATA の各段階を自前で順に実行する (失敗段階を分類に使うため)。STARTTLS 必須の既定で、サーバーが STARTTLS を提供しなければ平文へ降格せず `configuration_invalid`。1 回の送信・probe には全体の期限 (10 秒) を掛ける
+lettre の `AsyncSmtpConnection` (tokio + native-tls) で、接続 → STARTTLS → 認証 → MAIL FROM → RCPT → DATA の各段階を自前で順に実行する (失敗段階を分類に使うため)。STARTTLS 必須の既定で、サーバーが STARTTLS を提供しなければ平文へ降格せず `configuration_invalid`。1 回の送信・probe には全体の期限 (10 秒。接続から DATA 受理/NOOP まで) を掛ける。QUIT は期限とは別に短く (2 秒) 待ち、DATA 受理後に QUIT が無応答でも確定済みの結果 (送信成功) を覆さない
 (lettre の timeout は無応答のサーバーに効かない場面があるため)。宛先は `NormalizedEmail` で検証してから SMTP に渡す (SMTP コマンド注入・複数宛先を許さない)。
 
 ## 7. 管理者 API
@@ -194,4 +194,5 @@ lettre の `AsyncSmtpConnection` (tokio + native-tls) で、接続 → STARTTLS 
 - 実 SMTP サーバーとの TLS handshake・実メール配送・canary mailbox での受信、本番 Turnstile 資格情報と widget 発行の token は未検証 (資格情報を取得していない)。
 - Kratos の registration flow 実在確認 (`GET /self-service/registration/flows`) は、Kratos v1.3.1 のソースで挙動 (browser flow は CSRF cookie なしで 403) を確認し、wiremock の契約テスト (200/403/404/410/5xx/timeout) で固定しただけで、実 Kratos との結合は E15d。
 - 送信元単位の rate limit は接続元アドレスに基づく (proxy 配下の扱いは §4)。**proxy 配下では上限 (既定 20 通/時間) が全利用者の共有枠になる**ため、信頼済み proxy/edge 側での利用者別の制限は E15d/deployment で用意し試験すること (引き継ぎ事項)。
-- RCPT 段階の 4xx (greylisting など宛先依存の一時拒否) も ADR どおり `temporarily_unavailable` として provider を degrade させる。公開応答では区別されないが、宛先を選べる攻撃者が degrade を誘発し得る (発行が 503 になるだけで、登録を許可する方向の影響はない)。
+- **公開応答を観測の判別器にしない設計**: 宛先依存の失敗 (RCPT の 550 系・421 以外の 4xx) は readiness を変えず challenge の内部失効だけにする。readiness を変える一時障害/設定不正は宛先に依存しない信号 (接続・STARTTLS・認証・MAIL FROM・DATA の失敗、421、canary/接続 probe) に限る。これにより、宛先 A への発行の後に別宛先 B へ発行しても、B の応答 (202/503) から A の受理/RCPT 550/RCPT 450 を区別できない (応答列テストで固定)。なお DATA 段階の 4xx は宛先に依存しない障害として扱う。
+- 運用影響: provider が `temporarily_unavailable`/`configuration_invalid` になると、BOT が健全ならメール保護は一時的に必須から外れ (E15a の「健全な対策のみ必須」)、メール proof なしで BOT のみで登録が受け付けられる。メール障害の通知 (`protection_degraded` 等) を運用で確認すること。
