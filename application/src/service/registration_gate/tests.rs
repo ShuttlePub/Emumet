@@ -547,3 +547,39 @@ async fn notification_read_state_is_per_admin_and_ids_are_validated() {
         1
     );
 }
+
+#[tokio::test]
+async fn next_cursor_is_present_only_when_older_notifications_remain() {
+    kernel::ensure_generator_initialized();
+    let fx = fixture();
+    let m = &fx.module;
+    m.record_registration_observation(obs(H, H)).await.unwrap();
+    m.open_registration_gate(&fx.admin, 0).await.unwrap();
+    m.record_registration_observation(obs(DOWN, DOWN))
+        .await
+        .unwrap();
+    m.record_registration_observation(obs(H, H)).await.unwrap();
+
+    let exact = m
+        .list_registration_gate_notifications(&fx.admin, None, Some(2))
+        .await
+        .unwrap();
+    assert_eq!(exact.notifications.len(), 2);
+    assert!(
+        exact.next_cursor.is_none(),
+        "exactly one full page is the last page"
+    );
+
+    let first = m
+        .list_registration_gate_notifications(&fx.admin, None, Some(1))
+        .await
+        .unwrap();
+    assert_eq!(first.notifications.len(), 1);
+    let cursor = first.next_cursor.expect("older event remains");
+    let second = m
+        .list_registration_gate_notifications(&fx.admin, Some(cursor), Some(1))
+        .await
+        .unwrap();
+    assert_eq!(second.notifications.len(), 1);
+    assert!(second.next_cursor.is_none());
+}

@@ -419,6 +419,7 @@ async fn notifications_support_paging_and_reject_invalid_ids() {
     )
     .await;
     assert_eq!(second["notifications"][0]["kind"], "outage_started");
+    assert!(second["next_cursor"].is_null(), "last page has no cursor");
 
     let (status, _) = json_of(
         &app,
@@ -492,5 +493,42 @@ fn openapi_documents_admin_only_registration_gate_contract() {
     assert!(
         spec["components"]["schemas"]["RegistrationGateResponse"]["properties"]["override"]
             .is_object()
+    );
+}
+
+#[test]
+fn openapi_states_that_real_registration_is_not_yet_protected() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&crate::openapi::generate_openapi_json()).expect("valid OpenAPI");
+    let tag = spec["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "RegistrationGate")
+        .expect("RegistrationGate tag");
+    assert!(tag["description"]
+        .as_str()
+        .unwrap()
+        .contains("control plane only"));
+    for (method, path) in [
+        ("get", ""),
+        ("post", "/open"),
+        ("post", "/close"),
+        ("post", "/override"),
+        ("post", "/override/revoke"),
+    ] {
+        let description = spec["paths"][format!("{BASE}{path}")][method]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            description.contains("does NOT block or allow real Kratos registrations"),
+            "{method} {BASE}{path} must say real registration is not protected yet"
+        );
+    }
+    assert!(
+        spec["components"]["schemas"]["RegistrationGateResponse"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("実登録はまだ守られない")
     );
 }

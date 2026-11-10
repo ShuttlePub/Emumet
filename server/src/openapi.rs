@@ -165,7 +165,7 @@ impl Modify for SecurityAddon {
         (name = "Report", description = "Account moderation reports"),
         (name = "ProfileTransfer", description = "Profile ownership transfer requests"),
         (name = "Organization", description = "Organization account and membership management"),
-        (name = "RegistrationGate", description = "Registration readiness gate control plane (admin only)"),
+        (name = "RegistrationGate", description = "Registration readiness gate control plane (admin only). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet."),
     )
 )]
 #[allow(dead_code)] // utoipa OpenApiマクロ内部で使用される

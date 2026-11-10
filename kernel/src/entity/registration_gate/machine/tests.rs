@@ -913,6 +913,27 @@ fn observation_only_changes_do_not_bump_revision_but_are_reported_as_changed() {
 }
 
 #[test]
+fn observation_only_change_refreshes_updated_at_so_returned_state_matches_storage() {
+    let s = state(
+        AdminState::Open,
+        false,
+        false,
+        HealthEpisode::Degraded,
+        obs(H, UNHEALTHY),
+    );
+    let later = OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(60);
+    let changed = apply_observation(&s, obs(H, UNKNOWN), later);
+    assert!(changed.transition.is_none());
+    assert_eq!(changed.state.updated_at, later);
+
+    let repeated = apply_observation(&s, obs(H, UNHEALTHY), later);
+    assert_eq!(
+        repeated.state.updated_at, s.updated_at,
+        "no change, no write"
+    );
+}
+
+#[test]
 fn observation_transition_is_audited_as_a_system_action() {
     crate::ensure_generator_initialized();
     let healthy = open_state(obs(H, OFF));

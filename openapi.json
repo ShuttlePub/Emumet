@@ -1412,7 +1412,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Get the registration gate state. `override.active` is true while the override is in effect so the admin UI can keep showing the warning on every page.",
+        "description": "Get the registration gate state. `override.active` is true while the override is in effect so the admin UI can keep showing the warning on every page. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
         "operationId": "get_registration_gate",
         "responses": {
           "200": {
@@ -1444,7 +1444,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Manually close the registration gate. The closure is never lifted automatically.",
+        "description": "Manually close the registration gate. The closure is never lifted automatically. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
         "operationId": "close_registration_gate",
         "requestBody": {
           "content": {
@@ -1666,7 +1666,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Open (or manually resume after a config-loss stop) the registration gate. Succeeds only when at least one protection (email or bot) is verified; clears the stop latch.",
+        "description": "Open (or manually resume after a config-loss stop) the registration gate. Succeeds only when at least one protection (email or bot) is verified; clears the stop latch. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
         "operationId": "open_registration_gate",
         "requestBody": {
           "content": {
@@ -1717,7 +1717,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Open the registration gate with override: allowed even without a verified protection, but only after the warning is explicitly acknowledged. Stays in effect until explicitly revoked; automatic stop and outage rejection are not applied while it is active (verified protections are still enforced).",
+        "description": "Open the registration gate with override: allowed even without a verified protection, but only after the warning is explicitly acknowledged. Stays in effect until explicitly revoked; automatic stop and outage rejection are not applied while it is active (verified protections are still enforced). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
         "operationId": "enable_registration_gate_override",
         "requestBody": {
           "content": {
@@ -1768,7 +1768,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Revoke the override and return to normal judgement, re-evaluated against the current observation. Never closes the gate by itself.",
+        "description": "Revoke the override and return to normal judgement, re-evaluated against the current observation. Never closes the gate by itself. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
         "operationId": "revoke_registration_gate_override",
         "requestBody": {
           "content": {
@@ -3914,6 +3914,7 @@
       },
       "RegistrationGateResponse": {
         "type": "object",
+        "description": "E15a は control plane のみ。Kratos 遮断 (E15d) が接続されるまで、この状態は実際の登録を\n遮断も許可もしない (実登録はまだ守られない)。",
         "required": [
           "revision",
           "admin_state",
@@ -4336,7 +4337,7 @@
     },
     {
       "name": "RegistrationGate",
-      "description": "Registration readiness gate control plane (admin only)"
+      "description": "Registration readiness gate control plane (admin only). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet."
     }
   ]
 }

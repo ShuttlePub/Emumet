@@ -334,6 +334,9 @@ pub fn apply_observation(
     }
 
     if same_control(state, &next) {
+        if observation_changed {
+            next.updated_at = now;
+        }
         return ObservationOutcome {
             state: next,
             transition: None,

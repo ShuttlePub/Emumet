@@ -201,11 +201,13 @@ pub trait RegistrationGateNotificationUseCase:
                 .clamp(1, MAX_NOTIFICATION_LIMIT);
             let mut connection = self.database_connection().connection().await?;
             let repository = self.registration_gate_repository();
-            let notifications = repository
-                .list_notifications(&mut connection, admin, before.as_ref(), limit)
+            let mut notifications = repository
+                .list_notifications(&mut connection, admin, before.as_ref(), limit + 1)
                 .await?;
             let unread_count = repository.count_unread(&mut connection, admin).await?;
-            let next_cursor = (notifications.len() as i64 >= limit)
+            let has_more = notifications.len() as i64 > limit;
+            notifications.truncate(limit as usize);
+            let next_cursor = has_more
                 .then(|| notifications.last().map(|n| n.event.id.clone()))
                 .flatten();
             Ok(RegistrationGateNotifications {

@@ -60,6 +60,8 @@ pub struct OverrideResponse {
     pub activated_at: Option<OffsetDateTime>,
 }
 
+/// E15a は control plane のみ。Kratos 遮断 (E15d) が接続されるまで、この状態は実際の登録を
+/// 遮断も許可もしない (実登録はまだ守られない)。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RegistrationGateResponse {
     pub revision: i64,
