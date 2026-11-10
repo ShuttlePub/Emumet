@@ -3,9 +3,10 @@ use crate::handler::AppModule;
 use application::dto::activitypub::{
     GetActorDto, GetProfileActorDto, GetProfileWebFingerDto, GetWebFingerDto, InboxActivityDto,
 };
+use application::dto::profile_inbound::{ProfileInboxDto, ProfileInboxOutcome};
 use application::service::activitypub::{
     GetActorUseCase, GetFollowersCollectionUseCase, GetOutboxUseCase, GetProfileActorUseCase,
-    GetProfileWebFingerUseCase, GetWebFingerUseCase, InboxUseCase,
+    GetProfileWebFingerUseCase, GetWebFingerUseCase, InboxUseCase, ProfileInboxUseCase,
 };
 use axum::extract::FromRef;
 use axum::http::StatusCode;
@@ -144,6 +145,13 @@ impl ActivityPubApi {
             .http_signature_verifier()
             .fetch_actor_key(key_id)
             .await
+    }
+
+    pub async fn handle_profile_inbox_activity(
+        &self,
+        dto: ProfileInboxDto,
+    ) -> error_stack::Result<ProfileInboxOutcome, KernelError> {
+        self.module.handle_profile_inbox_activity(dto).await
     }
 
     pub async fn handle_inbox_activity(

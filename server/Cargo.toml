@@ -44,6 +44,10 @@ kernel = { path = "../kernel", features = ["openapi"] }
 sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "time"], optional = true }
 
 [dev-dependencies]
+# The Profile inbox tests sign requests from fake remote peers whose keys and actor documents are
+# injected through the test-mode caches (no network access).
+application = { path = "../application", features = ["test-mode"] }
+driver = { path = "../driver", features = ["test-mode"] }
 tower = { version = "0.5", features = ["util"] }
 rand = "0.8"
 rsa = { version = "0.9", features = ["sha2", "pem"] }

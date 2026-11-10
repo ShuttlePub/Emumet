@@ -4,15 +4,15 @@
 //! contract. They are intentionally NOT part of the production root router (see
 //! `ProfilePolicyContractRouter`, which only tests use) and every handler answers an explicit
 //! `501 Not Implemented`. Real behaviour arrives in P1/P2/P3o/P3i/D8G/D8R and the
-//! production mount in P4. The domain-controls routes were implemented by D8P and live in
-//! `route::profile_domain_control`.
+//! production mount in P4. The domain-controls routes were implemented by D8P
+//! (`route::profile_domain_control`) and the followers / following reads by P3i
+//! (`route::profile_follow_list`).
 
 use crate::error::ErrorStatus;
 use crate::schema::account::ProfileResponse;
 use crate::schema::profile_policy::{
-    CreateProfileFollowRequest, CreateProfileRelationRequest, ProfileFollowListResponse,
-    ProfileFollowResponse, ProfileFollowerListResponse, ProfileRelationListResponse,
-    ProfileRelationResponse,
+    CreateProfileFollowRequest, CreateProfileRelationRequest, ProfileFollowResponse,
+    ProfileRelationListResponse, ProfileRelationResponse,
 };
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
@@ -90,52 +90,6 @@ pub(crate) async fn create_profile_follow() -> ErrorStatus {
 )]
 pub(crate) async fn delete_profile_follow() -> ErrorStatus {
     not_implemented("DELETE /api/v1/profiles/{profile_nanoid}/follows/{follow_id}")
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/v1/profiles/{profile_nanoid}/following",
-    description = "Profiles/actors followed by the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
-    params(
-        ("profile_nanoid" = String, Path, description = "Profile nanoid"),
-        ("limit" = Option<u32>, Query, description = "Pagination limit"),
-        ("cursor" = Option<String>, Query, description = "Pagination cursor"),
-    ),
-    responses(
-        (status = 200, description = "Following list", body = ProfileFollowListResponse),
-        (status = 401, description = "Missing or invalid bearer token"),
-        (status = 403, description = "Caller is not the current owner of the Profile"),
-        (status = 404, description = "Profile not found"),
-        (status = 501, description = "Contract only: not implemented and not mounted on the production router"),
-    ),
-    security(("bearer_auth" = [])),
-    tag = "ProfilePolicy",
-)]
-pub(crate) async fn list_profile_following() -> ErrorStatus {
-    not_implemented("GET /api/v1/profiles/{profile_nanoid}/following")
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/v1/profiles/{profile_nanoid}/followers",
-    description = "Actors following the Profile; each follower is a local Profile or a remote actor identified by its canonical actor URL (`follower.kind`, `follower.actor_url`; `follower.profile_id` only for local). NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
-    params(
-        ("profile_nanoid" = String, Path, description = "Profile nanoid"),
-        ("limit" = Option<u32>, Query, description = "Pagination limit"),
-        ("cursor" = Option<String>, Query, description = "Pagination cursor"),
-    ),
-    responses(
-        (status = 200, description = "Followers list", body = ProfileFollowerListResponse),
-        (status = 401, description = "Missing or invalid bearer token"),
-        (status = 403, description = "Caller is not the current owner of the Profile"),
-        (status = 404, description = "Profile not found"),
-        (status = 501, description = "Contract only: not implemented and not mounted on the production router"),
-    ),
-    security(("bearer_auth" = [])),
-    tag = "ProfilePolicy",
-)]
-pub(crate) async fn list_profile_followers() -> ErrorStatus {
-    not_implemented("GET /api/v1/profiles/{profile_nanoid}/followers")
 }
 
 #[utoipa::path(
@@ -296,14 +250,6 @@ where
             .route(
                 "/profiles/{profile_nanoid}/follows/{follow_id}",
                 delete(delete_profile_follow),
-            )
-            .route(
-                "/profiles/{profile_nanoid}/following",
-                get(list_profile_following),
-            )
-            .route(
-                "/profiles/{profile_nanoid}/followers",
-                get(list_profile_followers),
             )
             .route(
                 "/profiles/{profile_nanoid}/blocks",

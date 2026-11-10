@@ -8,6 +8,7 @@ pub mod me;
 pub mod media;
 pub mod oauth2;
 pub mod profile_domain_control;
+pub mod profile_follow_list;
 pub mod profile_policy;
 pub mod profile_transfer;
 pub mod registration_gate;
@@ -17,6 +18,9 @@ pub mod signing;
 
 #[cfg(feature = "test-mode")]
 pub mod test_mode;
+
+#[cfg(test)]
+pub(crate) mod profile_graph_test_support;
 
 const MAX_BATCH_SIZE: usize = 100;
 

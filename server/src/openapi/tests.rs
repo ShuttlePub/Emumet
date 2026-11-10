@@ -218,12 +218,12 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
         (
             format!("{profile}/following"),
             "get",
-            vec!["200", "401", "403", "404", "501"],
+            vec!["200", "400", "401", "403", "404"],
         ),
         (
             format!("{profile}/followers"),
             "get",
-            vec!["200", "401", "403", "404", "501"],
+            vec!["200", "400", "401", "403", "404"],
         ),
         (
             format!("{profile}/blocks"),
@@ -316,6 +316,25 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
     );
     assert!(actor["responses"].get("501").is_none());
     assert!(actor["responses"].get("404").is_some());
+
+    let inbox = &spec["paths"]["/ap/profiles/{profile_nanoid}/inbox"]["post"];
+    assert!(inbox.is_object(), "Profile inbox must be registered");
+    assert_eq!(inbox["tags"], serde_json::json!(["ProfileActor"]));
+    let description = inbox["description"].as_str().unwrap_or_default();
+    assert!(description.contains("NOT MOUNTED"));
+    for activity in ["Follow", "Accept", "Reject", "Undo", "Block", "Create"] {
+        assert!(
+            description.contains(activity),
+            "the received activity table must mention {activity}"
+        );
+    }
+    for status in ["202", "400", "401", "404", "422"] {
+        assert!(
+            inbox["responses"].get(status).is_some(),
+            "inbox must document {status}"
+        );
+    }
+    assert!(inbox["responses"].get("501").is_none());
 }
 
 #[test]

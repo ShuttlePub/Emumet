@@ -8,6 +8,7 @@ pub mod media;
 pub mod mute;
 pub mod organization;
 pub mod profile;
+pub mod profile_follow_list;
 pub mod profile_transfer;
 pub mod profile_username;
 pub mod registration_gate;

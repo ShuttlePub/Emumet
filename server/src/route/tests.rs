@@ -253,6 +253,42 @@ async fn profile_actor_and_contract_routes_are_absent_from_the_root_router() {
             }
         }
     }
+    // Every operation of every unit that implements a Profile route without mounting it
+    // (E8 contract, D8P domain-controls, P1 actor, P3i inbox / followers / following) must be
+    // among the probes, so dropping an OpenAPI tag cannot silently shrink this check. A unit
+    // that mounts a route (P3o / P4) removes it here and adds a presence test instead.
+    for (method, template) in [
+        ("GET", "/api/v1/profiles/{profile_nanoid}"),
+        ("POST", "/api/v1/profiles/{profile_nanoid}/follows"),
+        (
+            "DELETE",
+            "/api/v1/profiles/{profile_nanoid}/follows/{follow_id}",
+        ),
+        ("GET", "/api/v1/profiles/{profile_nanoid}/following"),
+        ("GET", "/api/v1/profiles/{profile_nanoid}/followers"),
+        ("GET", "/api/v1/profiles/{profile_nanoid}/blocks"),
+        ("POST", "/api/v1/profiles/{profile_nanoid}/mutes"),
+        ("GET", "/api/v1/profiles/{profile_nanoid}/domain-controls"),
+        (
+            "GET",
+            "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
+        ),
+        (
+            "PUT",
+            "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
+        ),
+        (
+            "DELETE",
+            "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
+        ),
+        ("GET", "/ap/profiles/{profile_nanoid}"),
+        ("POST", "/ap/profiles/{profile_nanoid}/inbox"),
+    ] {
+        assert!(
+            probes.contains(&(method.to_string(), replace_path_params(template))),
+            "{method} {template} must be probed for absence"
+        );
+    }
     assert!(
         probes.len() >= 16,
         "expected the ProfilePolicy contract and the Profile actor, found {} operations",
@@ -334,6 +370,112 @@ async fn profile_actor_and_contract_routes_are_absent_from_the_root_router() {
         StatusCode::UNAUTHORIZED,
         "the one-time username setter is mounted (and authenticated)"
     );
+}
+
+/// The same absence check against a world where the routes would visibly work: a real Profile
+/// (username, key, owner with a valid token) on a database that has the P2 graph tables. If one of
+/// these routes were mounted by mistake it would answer 200 / 401 / 422 instead of 404.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn profile_routes_stay_absent_from_the_root_router_for_a_real_profile_and_owner() {
+    use crate::route::profile_graph_test_support::GraphWorld;
+
+    let world = GraphWorld::new().await;
+    let owner = world.new_user().await;
+    let profile = world.create_profile(&owner, true).await;
+    let router = world.root_router();
+    let nanoid = &profile.nanoid;
+
+    // Positive controls: the very same requests ARE served when the routes are mounted (test-only
+    // routers), so a 404 below really means "not mounted".
+    let served = world
+        .follow_list_router()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/profiles/{nanoid}/followers"))
+                .header("authorization", format!("Bearer {}", owner.token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(served.status(), StatusCode::OK);
+    let served = world
+        .inbox_router()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/ap/profiles/{nanoid}/inbox"))
+                .header("content-type", "application/activity+json")
+                .header("host", world.host_header.clone())
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(served.status(), StatusCode::UNAUTHORIZED);
+
+    let mut probes: Vec<(&str, String)> = Vec::new();
+    for suffix in [
+        "",
+        "/follows",
+        "/following",
+        "/followers",
+        "/blocks",
+        "/mutes",
+        "/domain-controls",
+        "/domain-controls/example.com",
+    ] {
+        for method in ["GET", "POST", "PUT", "DELETE"] {
+            probes.push((method, format!("/api/v1/profiles/{nanoid}{suffix}")));
+        }
+    }
+    for suffix in ["", "/inbox", "/outbox", "/followers", "/following"] {
+        for method in ["GET", "POST"] {
+            probes.push((method, format!("/ap/profiles/{nanoid}{suffix}")));
+        }
+    }
+    for (method, uri) in &probes {
+        for token in [Some(owner.token.as_str()), None] {
+            let mut builder = Request::builder()
+                .method(*method)
+                .uri(uri)
+                .header("content-type", "application/activity+json");
+            if let Some(token) = token {
+                builder = builder.header("authorization", format!("Bearer {token}"));
+            }
+            let response = router
+                .clone()
+                .oneshot(builder.body(Body::from("{}")).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            // The authentication layer of the /api/v1 subtree answers before routing.
+            if status == StatusCode::UNAUTHORIZED && token.is_none() && uri.starts_with("/api/v1") {
+                continue;
+            }
+            assert!(
+                status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
+                "{method} {uri} (authenticated: {}) must not be served, got {status}",
+                token.is_some()
+            );
+        }
+    }
+}
+
+/// Production serves exactly what `build_root_router` builds (the router the absence test above
+/// probes): `main` must not add routes of its own on top of it.
+#[test]
+fn main_serves_only_the_root_router() {
+    let main_rs = include_str!("../main.rs");
+    assert!(main_rs.contains("root_router::build_root_router("));
+    for forbidden in [".route(", ".nest(", ".merge(", "Router::new"] {
+        assert!(
+            !main_rs.contains(forbidden),
+            "main.rs must not build routes itself ({forbidden})"
+        );
+    }
 }
 
 /// The production entrypoint starts exactly the projection worker and the Registration Gate

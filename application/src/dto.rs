@@ -7,4 +7,5 @@ pub mod metadata;
 pub mod organization;
 pub mod pagination;
 pub mod profile;
+pub mod profile_inbound;
 pub mod profile_transfer;
