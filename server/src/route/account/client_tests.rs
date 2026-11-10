@@ -30,6 +30,8 @@ const AUDIENCE: &str = "emumet";
 struct Fixture {
     router: axum::Router,
     token: String,
+    fresh_subject: String,
+    fresh_token: String,
     module: AppModule,
     organization: Account,
 }
@@ -48,6 +50,14 @@ fn claims(issuer: &str, subject: &str) -> AuthClaims {
 }
 
 async fn fixture(keto_read_url: &str, membership: Option<OrgRole>) -> Fixture {
+    fixture_with_keto_write(keto_read_url, "http://localhost:65535", membership).await
+}
+
+async fn fixture_with_keto_write(
+    keto_read_url: &str,
+    keto_write_url: &str,
+    membership: Option<OrgRole>,
+) -> Fixture {
     kernel::ensure_generator_initialized();
     let issuer = format!("https://issuer.example/{}", uuid::Uuid::new_v4());
     let subject = format!("subject-{}", uuid::Uuid::new_v4());
@@ -55,7 +65,7 @@ async fn fixture(keto_read_url: &str, membership: Option<OrgRole>) -> Fixture {
         "http://localhost:65535".to_string(),
         "http://localhost:65535".to_string(),
         keto_read_url.to_string(),
-        "http://localhost:65535".to_string(),
+        keto_write_url.to_string(),
     )
     .await
     .expect("AppModule init");
@@ -138,6 +148,12 @@ async fn fixture(keto_read_url: &str, membership: Option<OrgRole>) -> Fixture {
     }
     let keys = generate_test_keys();
     let token = encode_test_jwt(&claims(&issuer, &subject), &keys.encoding_key, &keys.kid);
+    let fresh_subject = format!("fresh-subject-{}", uuid::Uuid::new_v4());
+    let fresh_token = encode_test_jwt(
+        &claims(&issuer, &fresh_subject),
+        &keys.encoding_key,
+        &keys.kid,
+    );
     let oidc_config = Arc::new(OidcConfig {
         issuer_url: issuer.clone(),
         expected_audience: AUDIENCE.to_string(),
@@ -147,6 +163,8 @@ async fn fixture(keto_read_url: &str, membership: Option<OrgRole>) -> Fixture {
     Fixture {
         router: build_test_router_with_auth(module.clone(), oidc_config, jwks_cache),
         token,
+        fresh_subject,
+        fresh_token,
         module,
         organization,
     }
@@ -389,4 +407,299 @@ async fn update_profile_with_organization_context_allows_active_member_without_k
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response_json(response).await["display_name"], "After");
+}
+
+async fn keto_with_writes() -> MockServer {
+    let keto = empty_keto().await;
+    Mock::given(method("PUT"))
+        .and(path("/admin/relation-tuples"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&keto)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/relation-tuples/check"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"allowed": true})),
+        )
+        .mount(&keto)
+        .await;
+    keto
+}
+
+async fn count_rows(module: &AppModule, sql: &str, bind: &str) -> i64 {
+    let mut executor = module.database_connection().connection().await.unwrap();
+    let con: &mut sqlx::PgConnection = &mut executor;
+    sqlx::query_scalar::<_, i64>(sql)
+        .bind(bind)
+        .fetch_one(con)
+        .await
+        .unwrap()
+}
+
+async fn assert_no_account_side_effects(fixture: &Fixture, account_name: &str, context: &str) {
+    assert_eq!(
+        count_rows(
+            &fixture.module,
+            "SELECT count(*) FROM auth_accounts WHERE client_id = $1",
+            &fixture.fresh_subject,
+        )
+        .await,
+        0,
+        "{context}: auth account must not be find-or-created before the username gate"
+    );
+    assert_eq!(
+        count_rows(
+            &fixture.module,
+            "SELECT count(*) FROM accounts WHERE name = $1",
+            account_name,
+        )
+        .await,
+        0,
+        "{context}: no account row may be created"
+    );
+    assert_eq!(
+        count_rows(
+            &fixture.module,
+            "SELECT count(*) FROM account_events WHERE data::text LIKE '%' || $1 || '%'",
+            account_name,
+        )
+        .await,
+        0,
+        "{context}: no account event may be persisted"
+    );
+}
+
+/// Account creation encrypts the signing key with `./master-key-password` (cwd = `server/`).
+/// Provision a development password when none exists, as `e2e/run-ap-e2e.sh` and the e2e
+/// workflow do. The hard link makes creation atomic so parallel tests never read a partial file.
+fn ensure_master_key_password_file() {
+    use std::io::Write;
+
+    let target = std::path::Path::new("./master-key-password");
+    if target.exists() {
+        return;
+    }
+    let temporary = std::path::PathBuf::from(format!(
+        "./master-key-password.{}.tmp",
+        uuid::Uuid::new_v4()
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temporary)
+        .expect("create temporary master key password file");
+    file.write_all(b"develop\n")
+        .expect("write master key password");
+    drop(file);
+    let linked = std::fs::hard_link(&temporary, target);
+    std::fs::remove_file(&temporary).expect("remove temporary master key password file");
+    if let Err(error) = linked {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::AlreadyExists,
+            "provision master key password: {error}"
+        );
+    }
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn create_account_legacy_payload_without_username_still_succeeds() {
+    ensure_master_key_password_file();
+    let keto = keto_with_writes().await;
+    let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
+    let name = format!("legacy-{}", uuid::Uuid::new_v4());
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/v1/accounts",
+            &fixture.token,
+            None,
+            Body::from(format!(r#"{{"name":"{name}","is_bot":false}}"#)),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let json = response_json(response).await;
+    assert_eq!(json["name"].as_str(), Some(name.as_str()));
+    assert_eq!(
+        count_rows(
+            &fixture.module,
+            "SELECT count(*) FROM accounts WHERE name = $1",
+            &name,
+        )
+        .await,
+        1
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn create_account_with_null_username_behaves_like_omitted() {
+    ensure_master_key_password_file();
+    let keto = keto_with_writes().await;
+    let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
+    let name = format!("null-username-{}", uuid::Uuid::new_v4());
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/v1/accounts",
+            &fixture.token,
+            None,
+            Body::from(format!(
+                r#"{{"name":"{name}","is_bot":false,"profile_username":null}}"#
+            )),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn create_account_with_valid_username_returns_501_before_any_side_effect() {
+    let keto = keto_with_writes().await;
+    let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
+    let name = format!("unstored-username-{}", uuid::Uuid::new_v4());
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/v1/accounts",
+            &fixture.fresh_token,
+            None,
+            Body::from(format!(
+                r#"{{"name":"{name}","is_bot":false,"profile_username":"alice"}}"#
+            )),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_no_account_side_effects(&fixture, &name, "valid username").await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn create_account_with_invalid_username_returns_400_before_any_side_effect() {
+    let keto = keto_with_writes().await;
+    let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
+    let too_long = "a".repeat(65);
+    for (index, username) in [
+        "",
+        " alice",
+        "alice ",
+        "Alice",
+        "-alice",
+        "alice@example",
+        "admin",
+        "well-known",
+        too_long.as_str(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("invalid-username-{index}-{}", uuid::Uuid::new_v4());
+        let body = serde_json::json!({
+            "name": name,
+            "is_bot": false,
+            "profile_username": username,
+        });
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/v1/accounts",
+                &fixture.fresh_token,
+                None,
+                Body::from(body.to_string()),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "username {username:?} must be a validation error"
+        );
+        assert_no_account_side_effects(&fixture, &name, username).await;
+    }
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn create_profile_with_username_returns_501_without_creating_profile() {
+    let keto = empty_keto().await;
+    let fixture = fixture(&keto.uri(), Some(OrgRole::Member)).await;
+    let organization_nanoid = fixture.organization.nanoid().as_ref().to_string();
+
+    for (username, expected) in [
+        ("alice", StatusCode::NOT_IMPLEMENTED),
+        ("Alice", StatusCode::BAD_REQUEST),
+        ("root", StatusCode::BAD_REQUEST),
+    ] {
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/v1/profiles",
+                &fixture.token,
+                Some(&organization_nanoid),
+                Body::from(serde_json::json!({"username": username}).to_string()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "username {username:?}");
+    }
+
+    let mut executor = fixture
+        .module
+        .database_connection()
+        .connection()
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .module
+            .profile_read_model()
+            .find_by_account_id(&mut executor, fixture.organization.id())
+            .await
+            .unwrap()
+            .is_none(),
+        "rejected username must not create a Profile"
+    );
+    drop(executor);
+
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/v1/profiles",
+            &fixture.token,
+            Some(&organization_nanoid),
+            Body::from(r#"{"display_name":"Legacy payload"}"#),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let json = response_json(response).await;
+    assert!(
+        json.get("username").is_some_and(serde_json::Value::is_null),
+        "an unset username must be readable as null, got {json}"
+    );
 }
