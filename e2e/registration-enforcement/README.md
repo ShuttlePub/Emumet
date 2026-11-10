@@ -4,6 +4,8 @@ Linux + Docker Compose v2 (rootful CI), or Podman host networking locally. Dedic
 
 Run `bash e2e/registration-enforcement/run.sh`. It starts PostgreSQL + Kratos v1.3.1 and runs `registration_guard::kratos_e2e::real_kratos_d15_q01_through_q11` with `--ignored` and explicit opt-in. **Success requires 1 passed / 0 failed / 0 ignored**. Outside this fixture the integration test is intentionally ignored, never counted as acceptance. A failed assertion cannot become a skip.
 
+Both Kratos migrate/serve images are pinned to the same verified v1.3.1 OCI digest `sha256:c47903ba278bbcb330b5af4ce43d33dc17adacc1d40456b8e2a235add8ababa5` (E15b recorded manifest + locally pulled RepoDigest; exercised on Linux/amd64). The container engine verifies image content against that digest on pull; the renderer tests reject tag-only or divergent references.
+
 The suite starts actual Emumet production root/hook routers on TCP, real SMTP and Siteverify protocol doubles, and an E15w Webhook receiver. Registration success/denial must agree with both Kratos admin API and identity SQL rows. The production config renderer and hook body are reused; only fixture addresses and HaveIBeenPwned lookup are changed. Restarting Kratos really removes/restores the method hook. Emumet restart reconstructs running routers against the same persisted database.
 
 Protected browser submissions use JSON transient_payload; a traditional form without the required proof/token must fail closed. Browser JSON/API successes and direct form denial are all tested.
@@ -25,6 +27,8 @@ Each checkpoint printed below is a scenario in that single ordered integration t
 | q11 | `q11_persistent_notifications_unread_and_e15w_webhook`: outage/recovery/degradation/config-loss/enforcement-loss+restoration/override events in DB-backed unread list and external E15w delivery |
 
 Also: provider timeout bounded fail-closed; `enforcement_hook_removed_negative_canary_restart_manual_reack` creates and cleans reserved identities, persists stop independently of override/provider readiness, survives Emumet restart, requires renewed warning to resume unprotected. Hook receipt matching prevents native-validation failure from masquerading as attestation.
+
+Rejected email addresses are retained across every scenario. After provider timeout and again at suite completion, the test first waits for the counted hook requests to finish, then repeatedly checks **both admin API and identity SQL** for every rejected address for at least **10 seconds** (two five-second hook deadlines, also longer than the six-second synthetic Siteverify stall). This is bounded late-persist observation, not a claim about arbitrarily delayed database work. The q08 regressions assert successful login + two Account additions in **both manual-closed and provider-outage states**, with **hook call increment exactly zero** around each set of operations.
 
 Logs: `result.log` and CI artifact `registration-enforcement-real-kratos`. The script deliberately does not tear down implicitly. Cleanup separately:
 

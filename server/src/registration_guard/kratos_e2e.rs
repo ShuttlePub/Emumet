@@ -30,6 +30,21 @@ const APP: &str = "http://127.0.0.1:19480";
 const SECRET: &str = "fixture-only-guard-secret-at-least-32-bytes";
 const PASSWORD: &str = "Fixture-only-Password-4281!";
 const GATE: &str = "/api/v1/admin/registration-gate";
+const HOOK_DEADLINE: Duration = Duration::from_secs(5);
+const DELAYED_OBSERVATION: Duration = Duration::from_secs(10);
+
+#[derive(Default)]
+struct HookActivity {
+    calls: AtomicUsize,
+    inflight: AtomicUsize,
+}
+
+struct ActiveHook(Arc<HookActivity>);
+impl Drop for ActiveHook {
+    fn drop(&mut self) {
+        self.0.inflight.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 struct Smtp {
     port: u16,
@@ -134,6 +149,8 @@ struct Harness {
     tasks: Vec<JoinHandle<()>>,
     http: Client,
     kratos_db: sqlx::PgPool,
+    denied_emails: Mutex<Vec<String>>,
+    hook_activity: Arc<HookActivity>,
 }
 impl Drop for Harness {
     fn drop(&mut self) {
@@ -168,11 +185,23 @@ impl Harness {
                 listen: listener.local_addr().unwrap(),
                 allowed_peers: vec!["127.0.0.1".parse().unwrap()],
                 secret: SECRET.to_string(),
-                deadline: Duration::from_secs(5),
+                deadline: HOOK_DEADLINE,
                 period: Duration::from_secs(30),
             },
             GuardApi(Arc::new(self.module.clone())),
         );
+        let activity = self.hook_activity.clone();
+        let guard = guard.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let activity = activity.clone();
+                async move {
+                    activity.calls.fetch_add(1, Ordering::SeqCst);
+                    activity.inflight.fetch_add(1, Ordering::SeqCst);
+                    let _active = ActiveHook(activity);
+                    next.run(request).await
+                }
+            },
+        ));
         self.tasks.push(tokio::spawn(async move {
             axum::serve(
                 listener,
@@ -359,6 +388,9 @@ impl Harness {
         expected: bool,
         form: bool,
     ) {
+        if !expected {
+            self.denied_emails.lock().unwrap().push(email.to_string());
+        }
         let before = self.identity_count(email).await;
         assert_eq!(before, 0, "synthetic address must be fresh");
         let csrf = flow["ui"]["nodes"]
@@ -427,6 +459,45 @@ impl Harness {
         self.submit(&client, &flow, &email, payload, expected, false)
             .await;
     }
+    async fn wait_for_hook_quiescence(&self) {
+        tokio::time::timeout(HOOK_DEADLINE * 2, async {
+            while self.hook_activity.inflight.load(Ordering::SeqCst) != 0 {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("all observed hook requests must finish before post-processing checks");
+    }
+
+    async fn observe_denied_after_processing(&self, phase: &str) {
+        self.wait_for_hook_quiescence().await;
+        // Two hook deadlines and longer than the fixture's six-second Siteverify stall.
+        // A response-time absence check alone does not exclude a later persist.
+        assert!(DELAYED_OBSERVATION >= HOOK_DEADLINE * 2);
+        let denied = self.denied_emails.lock().unwrap().clone();
+        assert!(!denied.is_empty());
+        let began = std::time::Instant::now();
+        loop {
+            assert_eq!(self.hook_activity.inflight.load(Ordering::SeqCst), 0);
+            for email in &denied {
+                assert_eq!(
+                    self.identity_count(email).await,
+                    0,
+                    "late identity persistence after denied registration: {email} ({phase})"
+                );
+            }
+            if began.elapsed() >= DELAYED_OBSERVATION {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        println!(
+            "D15 denied_identity_reobserved_{phase} emails={} window_secs={} hook_inflight=0 ok",
+            denied.len(),
+            began.elapsed().as_secs()
+        );
+    }
+
     async fn identity_count(&self, email: &str) -> i64 {
         let rows: Value = self
             .http
@@ -640,6 +711,8 @@ async fn real_kratos_d15_q01_through_q11() {
     .unwrap();
     let mut app = Harness {
         kratos_db,
+        denied_emails: Mutex::new(Vec::new()),
+        hook_activity: Arc::new(HookActivity::default()),
         module,
         source: settings,
         siteverify,
@@ -779,36 +852,67 @@ async fn real_kratos_d15_q01_through_q11() {
     )
     .await;
     println!("D15 q04_no_public_invitation_bypass_no_invitation_feature ok");
-    // The login subject was created by the real protected registration above.
-    let flow: Value = app
-        .http
-        .get(format!("{PUBLIC}/self-service/login/api"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let login = app.http.post(flow["ui"]["action"].as_str().unwrap()).json(&json!({"method":"password","identifier":"q01-bot-only@example.test","password":PASSWORD})).send().await.unwrap();
-    assert_eq!(login.status(), HttpStatus::OK);
-    let logged_in: Value = login.json().await.unwrap();
-    let account_claims = AuthClaims {
-        iss: claims.iss.clone(),
-        sub: logged_in["session"]["identity"]["id"]
-            .as_str()
-            .expect("real login identity")
-            .to_string(),
-        aud: OneOrMany::One("account".into()),
-        exp: claims.exp,
-    };
-    app.token = encode_test_jwt(&account_claims, &keys.encoding_key, &keys.kid);
-    for name in ["First", "Second"] {
-        app.post(
-            "/api/v1/accounts",
-            json!({"name":format!("e15d-{name}-{}",uuid::Uuid::new_v4()),"is_bot":false}),
-            HttpStatus::CREATED,
-        )
-        .await;
+    app.probe().await; // Refresh evidence before the isolated non-registration regressions.
+    for phase in ["closed", "provider_outage"] {
+        let expected_decision = if phase == "provider_outage" {
+            app.command("open", false, HttpStatus::OK).await;
+            mode.store(1, Ordering::SeqCst);
+            smtp.mode.store(1, Ordering::SeqCst);
+            app.maintenance().await;
+            app.registration("q08-outage-denied", "api", false, true, &smtp, false)
+                .await;
+            "temporary_reject"
+        } else {
+            "admin_closed"
+        };
+        assert_eq!(app.get(GATE).await["decision"], expected_decision);
+        app.wait_for_hook_quiescence().await;
+        let before = app.hook_activity.calls.load(Ordering::SeqCst);
+        // The login subject was created by the real protected registration above.
+        let flow: Value = app
+            .http
+            .get(format!("{PUBLIC}/self-service/login/api"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let login = app.http.post(flow["ui"]["action"].as_str().unwrap()).json(&json!({"method":"password","identifier":"q01-bot-only@example.test","password":PASSWORD})).send().await.unwrap();
+        assert_eq!(login.status(), HttpStatus::OK);
+        let logged_in: Value = login.json().await.unwrap();
+        let account_claims = AuthClaims {
+            iss: claims.iss.clone(),
+            sub: logged_in["session"]["identity"]["id"]
+                .as_str()
+                .expect("real login identity")
+                .to_string(),
+            aud: OneOrMany::One("account".into()),
+            exp: claims.exp,
+        };
+        app.token = encode_test_jwt(&account_claims, &keys.encoding_key, &keys.kid);
+        for name in ["First", "Second"] {
+            app.post(
+                "/api/v1/accounts",
+                json!({"name":format!("e15d-{name}-{}",uuid::Uuid::new_v4()),"is_bot":false}),
+                HttpStatus::CREATED,
+            )
+            .await;
+        }
+
+        app.wait_for_hook_quiescence().await;
+        assert_eq!(
+            app.hook_activity.calls.load(Ordering::SeqCst),
+            before,
+            "login and authenticated Account additions must not call registration hook ({phase})"
+        );
+        println!("D15 q08_{phase}_login_accounts_hook_delta_zero ok");
+        if phase == "provider_outage" {
+            mode.store(0, Ordering::SeqCst);
+            smtp.mode.store(0, Ordering::SeqCst);
+            app.maintenance().await;
+            app.command("close", false, HttpStatus::OK).await;
+        }
     }
     println!("D15 q08_login_and_authenticated_account_additions ok");
     println!("D15 q10_override_persists_until_revoked_and_enforces_ready_protection ok");
@@ -825,6 +929,7 @@ async fn real_kratos_d15_q01_through_q11() {
     )
     .await;
     assert!(began.elapsed() < Duration::from_secs(10));
+    app.observe_denied_after_processing("timeout_drained").await;
     app.maintenance().await;
     // Hook deletion really creates reserved identities. Monitor persists the stop/events
     // before cleanup; a restored hook/healthy providers never clears the stop latch.
@@ -928,4 +1033,5 @@ async fn real_kratos_d15_q01_through_q11() {
         );
     }
     println!("D15 q11_persistent_notifications_unread_and_e15w_webhook ok");
+    app.observe_denied_after_processing("suite_finished").await;
 }

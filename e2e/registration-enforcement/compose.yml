@@ -14,14 +14,14 @@ services:
       timeout: 3s
       retries: 60
   kratos-migrate:
-    image: docker.io/oryd/kratos:v1.3.1
+    image: docker.io/oryd/kratos:v1.3.1@sha256:c47903ba278bbcb330b5af4ce43d33dc17adacc1d40456b8e2a235add8ababa5
     network_mode: host
     environment:
       DSN: postgres://guard:fixture-only@127.0.0.1:15448/kratos?sslmode=disable
     command: [migrate, sql, -e, --yes]
     tmpfs: ["/home/ory:rw,size=8m,mode=0777"]
   kratos:
-    image: docker.io/oryd/kratos:v1.3.1
+    image: docker.io/oryd/kratos:v1.3.1@sha256:c47903ba278bbcb330b5af4ce43d33dc17adacc1d40456b8e2a235add8ababa5
     network_mode: host
     environment:
       DSN: postgres://guard:fixture-only@127.0.0.1:15448/kratos?sslmode=disable

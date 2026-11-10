@@ -1,5 +1,6 @@
 import copy
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -12,6 +13,16 @@ from render_registration_kratos import PLACEHOLDER, TEMPLATE, render, validate_c
 class RegistrationKratosConfigTests(unittest.TestCase):
     def setUp(self):
         self.config = json.loads(TEMPLATE.read_text())
+
+    def test_integration_migrate_and_serve_use_the_same_verified_image_digest(self):
+        root = TEMPLATE.parents[2]
+        digest = "sha256:c47903ba278bbcb330b5af4ce43d33dc17adacc1d40456b8e2a235add8ababa5"
+        expected = "docker.io/oryd/kratos:v1.3.1@" + digest
+        compose = (root / "e2e/registration-enforcement/compose.yml").read_text()
+        images = re.findall(r"^\s+image:\s*(\S+)", compose, re.MULTILINE)
+        self.assertEqual([ref for ref in images if "oryd/kratos" in ref], [expected, expected])
+        baseline = (root / "e2e/registration-guard/evidence/manifest.json").read_text()
+        self.assertIn("docker.io/oryd/kratos@" + digest, baseline)
 
     def test_all_enabled_registration_methods_have_authenticated_pre_persist_coverage(self):
         hook = validate_contract(self.config)
