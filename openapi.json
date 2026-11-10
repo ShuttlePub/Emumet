@@ -2667,7 +2667,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "List the Profile's domain mute/block controls (ordered by domain). NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R). Domains match exactly (`example.com` does not cover `sub.example.com`). Controls are per Profile: they never apply to other Profiles of the same Account or to other Accounts, and are unrelated to server-wide HostModeration. Authorization: only the Profile's current owner (after a Profile transfer, the new owner; the controls stay attached to the Profile).",
+        "description": "List the Profile's domain mute/block controls (ordered by domain). Domains match exactly (`example.com` does not cover `sub.example.com`). Controls are per Profile: they never apply to other Profiles of the same Account or to other Accounts, and are unrelated to server-wide HostModeration. Authorization: only the Profile's current owner (after a Profile transfer, the new owner; the controls stay attached to the Profile).",
         "operationId": "list_domain_controls",
         "parameters": [
           {
@@ -2713,7 +2713,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Read the control for one exact domain. NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R). The `domain` is normalized before lookup (case, trailing dot, IDNA): `Example.COM.` and `example.com` address the same control. Authorization: only the Profile's current owner.",
+        "description": "Read the control for one exact domain. The `domain` is normalized before lookup (case, trailing dot, IDNA): `Example.COM.` and `example.com` address the same control. Authorization: only the Profile's current owner.",
         "operationId": "get_domain_control",
         "parameters": [
           {
@@ -2769,7 +2769,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Create or replace the mute/block control for one exact domain. NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R, block writes stay unmounted until D8R). Revision: `expected_revision` omitted creates (409 if the control already exists); `expected_revision` = current revision replaces (409 on mismatch, including a control deleted meanwhile). Every successful write increments the revision, which never repeats for a Profile x domain even across delete and re-create. Concurrent writers: exactly one succeeds, the others get 409. mute = display suppression only. block = display suppression, bidirectional follow detachment and rejection of new follows; no ActivityPub Block is sent and removing the block does not restore relations (D8P only stores the setting; applying it is D8G/D8R). Authorization: only the Profile's current owner.",
+        "description": "Create or replace the mute/block control for one exact domain. Revision: `expected_revision` omitted creates (409 if the control already exists); `expected_revision` = current revision replaces (409 on mismatch, including a control deleted meanwhile). Every successful write increments the revision, which never repeats for a Profile x domain even across delete and re-create. Concurrent writers: exactly one succeeds, the others get 409. mute = display suppression only. block = display suppression, rejection of new follows (D8G) and, in the same transaction as the write, detachment of every existing follow relation (pending included, both directions) with an actor of that exact domain: your own Follow is retracted with an Undo(Follow) that references the original Follow, a Follow the other side sent is rejected with Reject(Follow), unsent deliveries are cancelled. Remote delivery failures never undo the write. No ActivityPub Block is sent; removing the block does not restore relations. Authorization: only the Profile's current owner.",
         "operationId": "put_domain_control",
         "parameters": [
           {
@@ -2841,7 +2841,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Remove the control for one exact domain. Detached follow relations are NOT restored and no restore list is kept. NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R). `expected_revision` is required: 409 if it does not match the current revision. Authorization: only the Profile's current owner.",
+        "description": "Remove the control for one exact domain. Detached follow relations are NOT restored and no restore list is kept. `expected_revision` is required: 409 if it does not match the current revision. Authorization: only the Profile's current owner.",
         "operationId": "delete_domain_control",
         "parameters": [
           {
@@ -4236,7 +4236,6 @@
       },
       "DomainControlListResponse": {
         "type": "object",
-        "description": "Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.",
         "required": [
           "items"
         ],
@@ -4251,7 +4250,7 @@
       },
       "DomainControlMode": {
         "type": "string",
-        "description": "Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.\n\nTreatment applied to every actor whose canonical actor-ID host equals the domain.",
+        "description": "Treatment applied to every actor whose canonical actor-ID host equals the domain.",
         "enum": [
           "mute",
           "block"
@@ -4259,7 +4258,7 @@
       },
       "DomainControlResponse": {
         "type": "object",
-        "description": "Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.\n\nA Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
+        "description": "A Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
         "required": [
           "profile_id",
           "domain",
@@ -5194,7 +5193,7 @@
       },
       "PutDomainControlRequest": {
         "type": "object",
-        "description": "Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.\n\nCreate or replace the control for one domain.",
+        "description": "Create or replace the control for one domain.",
         "required": [
           "mode"
         ],
@@ -6044,7 +6043,7 @@
     },
     {
       "name": "ProfilePolicy",
-      "description": "Profile identity, Profile-scoped follow, individual block/mute and followers/following (served by the P4 cutover; owner-only authorization, revision conflicts (409) and errors are the contract). The domain-controls operations (D8P: stored, revision-controlled, owner-only) are NOT MOUNTED on the production router: block writes are enabled by D8R, so the whole domain-controls family answers 404 until then. The Account scoped follow/block/mute operations were retired (410 Gone)."
+      "description": "Profile identity, Profile-scoped follow, individual block/mute and followers/following (served by the P4 cutover; owner-only authorization, revision conflicts (409) and errors are the contract). The domain-controls operations (D8P storage, D8R mount: stored, revision-controlled, owner-only) are served too: a block write detaches the existing follow relations with that domain (both directions, pending included) in the same transaction and never sends an ActivityPub Block. The Account scoped follow/block/mute operations were retired (410 Gone)."
     },
     {
       "name": "ProfileTransfer",

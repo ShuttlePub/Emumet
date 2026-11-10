@@ -345,21 +345,14 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
             );
         }
         let description = operation["description"].as_str().unwrap_or_default();
-        if path.contains("/domain-controls") {
-            assert!(
-                description.contains("NOT MOUNTED"),
-                "{method} {path} description must state it is not mounted in production"
-            );
-        } else {
-            assert!(
-                !description.contains("NOT MOUNTED"),
-                "{method} {path} is served by the cutover"
-            );
-            assert!(
-                operation["responses"].get("501").is_none(),
-                "{method} {path} is implemented: the E8 501 must be gone"
-            );
-        }
+        assert!(
+            !description.contains("NOT MOUNTED"),
+            "{method} {path} is mounted on the production router"
+        );
+        assert!(
+            operation["responses"].get("501").is_none(),
+            "{method} {path} is implemented: the E8 501 must be gone"
+        );
         assert!(
             description.contains("current owner"),
             "{method} {path} description must state owner-only authorization"
@@ -574,7 +567,7 @@ fn username_is_required_on_creation_stored_once_and_has_no_update_api() {
 }
 
 #[test]
-fn profile_policy_tag_states_what_is_served_and_what_is_not_mounted() {
+fn profile_policy_tag_states_what_is_served_and_what_is_retired() {
     let spec = generated_spec();
     let tag = spec["tags"]
         .as_array()
@@ -584,7 +577,8 @@ fn profile_policy_tag_states_what_is_served_and_what_is_not_mounted() {
         .expect("ProfilePolicy tag must be registered");
     let description = tag["description"].as_str().unwrap();
     assert!(!description.contains("CONTRACT ONLY"));
-    assert!(description.contains("NOT MOUNTED"));
+    assert!(!description.contains("NOT MOUNTED"));
+    assert!(description.contains("domain-controls"));
     assert!(description.contains("D8R"));
     assert!(description.contains("410"));
 }
@@ -622,24 +616,23 @@ fn followers_contract_identifies_local_and_remote_followers() {
 }
 
 #[test]
-fn only_domain_control_schemas_state_they_are_not_mounted() {
+fn no_schema_states_it_is_not_mounted() {
     let spec = generated_spec();
     let schemas = spec["components"]["schemas"].as_object().unwrap();
-    let domain_control_schemas = [
+    for name in [
         "DomainControlMode",
         "DomainControlResponse",
         "DomainControlListResponse",
         "PutDomainControlRequest",
-    ];
-    for name in domain_control_schemas {
+    ] {
         let description = schemas
             .get(name)
             .unwrap_or_else(|| panic!("{name} must be registered"))["description"]
             .as_str()
             .unwrap_or_default();
         assert!(
-            description.contains("NOT MOUNTED"),
-            "{name} description must state the not-mounted boundary, got {description:?}"
+            !description.contains("CONTRACT ONLY") && !description.contains("NOT MOUNTED"),
+            "{name} is mounted on the production router, got {description:?}"
         );
     }
     for name in [
@@ -671,13 +664,12 @@ fn only_domain_control_schemas_state_they_are_not_mounted() {
         .filter(|name| {
             schemas[name.as_str()]["description"]
                 .as_str()
-                .is_some_and(|d| d.contains("NOT MOUNTED"))
+                .is_some_and(|d| d.contains("NOT MOUNTED") || d.contains("CONTRACT ONLY"))
         })
         .count();
     assert_eq!(
-        not_mounted,
-        domain_control_schemas.len(),
-        "only the domain-controls schemas may be marked not mounted"
+        not_mounted, 0,
+        "every schema is served by the production router"
     );
 }
 

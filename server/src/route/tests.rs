@@ -54,12 +54,6 @@ fn has_not_found_response(operation: &serde_json::Value) -> bool {
         .is_some_and(|responses| responses.contains_key("404"))
 }
 
-/// The domain-controls operations (D8P) are documented but deliberately not mounted until D8R; their
-/// absence is checked by `domain_controls_are_not_mounted_on_the_root_router_and_write_nothing`.
-fn is_unmounted_operation(path_template: &str) -> bool {
-    path_template.contains("/domain-controls")
-}
-
 fn is_activitypub_operation(operation: &serde_json::Value) -> bool {
     operation
         .get("tags")
@@ -80,9 +74,6 @@ fn load_routes_from_openapi() -> Vec<RouteCase> {
         let path_item = path_item.as_object().expect("path item must be an object");
         for (key, operation) in path_item {
             if !HTTP_METHODS.contains(&key.as_str()) {
-                continue;
-            }
-            if is_unmounted_operation(path_template) {
                 continue;
             }
             let requires_auth = is_authed(operation.get("security"));
@@ -188,81 +179,318 @@ async fn nonexistent_route_returns_404() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
-/// The production root router (built by the same function the server binary uses) serves the
-/// Profile federation model of the P4 cutover. The domain-controls routes (D8P) are the one
-/// documented family that is deliberately NOT mounted: block writes wait for D8R, so every
-/// request answers 404 (also for the real owner of a real Profile) and nothing is stored.
+/// The production root router (built by the same function the server binary uses) mounts the
+/// domain-controls routes (D8R enables them after the P4 cutover): every documented operation is
+/// reachable, authenticated, owner-only and stores / reads the control of the real Profile.
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn domain_controls_are_not_mounted_on_the_root_router_and_write_nothing() {
+async fn domain_controls_are_mounted_on_the_root_router_with_owner_only_access() {
     use crate::route::profile_graph_test_support::GraphWorld;
 
     let world = GraphWorld::new().await;
     let owner = world.new_user().await;
+    let stranger = world.new_user().await;
     let profile = world.create_profile(&owner, true).await;
     let router = world.root_router();
     let nanoid = &profile.nanoid;
+    let send = |method: &'static str, uri: String, token: Option<&str>, body: &'static str| {
+        let router = router.clone();
+        let token = token.map(str::to_string);
+        async move {
+            let mut builder = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json");
+            if let Some(token) = token {
+                builder = builder.header("authorization", format!("Bearer {token}"));
+            }
+            let response = router
+                .oneshot(builder.body(Body::from(body)).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (
+                status,
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default(),
+            )
+        }
+    };
 
-    // The operations come from the OpenAPI document, so a newly documented domain-controls
-    // operation is probed too.
+    // Every documented domain-controls operation is registered (the list comes from OpenAPI).
     let spec: serde_json::Value = serde_json::from_str(&crate::openapi::generate_openapi_json())
         .expect("generated OpenAPI spec");
-    let mut probes: Vec<(String, String)> = Vec::new();
+    let mut documented = 0;
     for (template, item) in spec["paths"].as_object().unwrap() {
         if !template.contains("/domain-controls") {
             continue;
         }
         for method in item.as_object().unwrap().keys() {
-            if HTTP_METHODS.contains(&method.as_str()) {
-                probes.push((
-                    method.to_uppercase(),
-                    template
-                        .replace("{profile_nanoid}", nanoid)
-                        .replace("{domain}", "example.com"),
-                ));
+            if !HTTP_METHODS.contains(&method.as_str()) {
+                continue;
             }
+            documented += 1;
+            let uri = template
+                .replace("{profile_nanoid}", nanoid)
+                .replace("{domain}", "example.com");
+            let method: &'static str = match method.as_str() {
+                "get" => "GET",
+                "put" => "PUT",
+                "delete" => "DELETE",
+                other => panic!("unexpected documented method {other}"),
+            };
+            let (status, _) = send(method, uri.clone(), None, "{}").await;
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "{method} {uri} without a token"
+            );
         }
     }
-    assert!(
-        probes.len() >= 4,
-        "the domain-controls operations must be documented: {probes:?}"
+    assert_eq!(
+        documented, 4,
+        "list, get, put and delete are documented and mounted"
     );
-    // Block and mute writes, whatever the documented methods are.
-    for method in ["GET", "PUT", "DELETE", "POST"] {
-        probes.push((
-            method.to_string(),
-            format!("/api/v1/profiles/{nanoid}/domain-controls/example.com?expected_revision=1"),
-        ));
-        probes.push((
-            method.to_string(),
-            format!("/api/v1/profiles/{nanoid}/domain-controls"),
-        ));
-    }
-    for (method, uri) in &probes {
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(method.as_str())
-                    .uri(uri)
-                    .header("content-type", "application/json")
-                    .header("authorization", format!("Bearer {}", owner.token))
-                    .body(Body::from(r#"{"mode":"block"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+
+    let list = format!("/api/v1/profiles/{nanoid}/domain-controls");
+    let item = format!("{list}/example.com");
+    let owner_token = owner.token.as_str();
+    let stranger_token = stranger.token.as_str();
+
+    let (status, body) = send("GET", list.clone(), Some(owner_token), "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["items"], serde_json::json!([]));
+    for (method, uri) in [("GET", &list), ("GET", &item), ("PUT", &item)] {
+        let (status, _) = send(
+            method,
+            uri.clone(),
+            Some(stranger_token),
+            r#"{"mode":"block"}"#,
+        )
+        .await;
         assert_eq!(
-            response.status(),
-            StatusCode::NOT_FOUND,
-            "{method} {uri} must not be mounted (D8R enables domain-controls)"
+            status,
+            StatusCode::FORBIDDEN,
+            "{method} {uri} by a non-owner"
         );
     }
-    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM profile_domain_controls")
+
+    let (status, body) = send(
+        "PUT",
+        item.clone(),
+        Some(owner_token),
+        r#"{"mode":"block"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (body["mode"].as_str(), body["revision"].as_u64()),
+        (Some("block"), Some(1))
+    );
+    let (status, _) = send("PUT", item.clone(), Some(owner_token), r#"{"mode":"mute"}"#).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "create on an existing control"
+    );
+    let (status, _) = send(
+        "PUT",
+        format!("{list}/bad%2Fdomain"),
+        Some(owner_token),
+        r#"{"mode":"block"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = send(
+        "GET",
+        format!("{list}/missing.example"),
+        Some(owner_token),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = send("DELETE", item.clone(), Some(owner_token), "").await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "expected_revision is required"
+    );
+    let (status, _) = send(
+        "DELETE",
+        format!("{item}?expected_revision=9"),
+        Some(owner_token),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = send(
+        "DELETE",
+        format!("{item}?expected_revision=1"),
+        Some(owner_token),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = send("GET", item, Some(owner_token), "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a deleted control is gone");
+}
+
+/// A block written through the production root router detaches the stored relations with that
+/// exact domain (both directions, pending included) in the same request; an unblock restores
+/// nothing, and relations with other domains, other Profiles and other Accounts are untouched.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_block_through_the_root_router_detaches_relations_and_the_unblock_restores_nothing() {
+    use crate::route::profile_graph_test_support::GraphWorld;
+    use kernel::prelude::entity::{GraphActorUrl, ProfileGraphActor};
+
+    let world = GraphWorld::new().await;
+    let owner = world.new_user().await;
+    let profile = world.create_profile(&owner, true).await;
+    let other_owner = world.new_user().await;
+    let other = world.create_profile(&other_owner, true).await;
+    let router = world.root_router();
+    let remote = |url: &str| ProfileGraphActor::Remote(GraphActorUrl::new(url).unwrap());
+    let me = ProfileGraphActor::Local(profile.id.clone());
+    let theirs = ProfileGraphActor::Local(other.id.clone());
+
+    // Mine: following (accepted), following (pending), a follower; other host: untouched.
+    world
+        .seed_follow(
+            me.clone(),
+            remote("https://blocked.example/users/a"),
+            "https://local.test/f/1",
+            true,
+        )
+        .await;
+    world
+        .seed_follow(
+            me.clone(),
+            remote("https://blocked.example/users/b"),
+            "https://local.test/f/2",
+            false,
+        )
+        .await;
+    world
+        .seed_follow(
+            remote("https://blocked.example/users/c"),
+            me.clone(),
+            "https://blocked.example/f/3",
+            true,
+        )
+        .await;
+    world
+        .seed_follow(
+            me.clone(),
+            remote("https://sub.blocked.example/users/d"),
+            "https://local.test/f/4",
+            true,
+        )
+        .await;
+    world
+        .seed_follow(
+            me.clone(),
+            remote("https://elsewhere.example/users/e"),
+            "https://local.test/f/5",
+            true,
+        )
+        .await;
+    world
+        .seed_follow(
+            theirs.clone(),
+            remote("https://blocked.example/users/a"),
+            "https://local.test/f/6",
+            true,
+        )
+        .await;
+    let active = |profile_id: i64| {
+        let pool = world.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM profile_follows WHERE state <> 'ended' AND (follower_profile_id = $1 OR followee_profile_id = $1)",
+            )
+            .bind(profile_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(active(*profile.id.as_ref()).await, 5);
+
+    let send = |method: &'static str, uri: String, body: &'static str| {
+        let router = router.clone();
+        let token = owner.token.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            response.status()
+        }
+    };
+    let item = format!(
+        "/api/v1/profiles/{}/domain-controls/blocked.example",
+        profile.nanoid
+    );
+
+    // A mute detaches nothing.
+    assert_eq!(
+        send("PUT", item.clone(), r#"{"mode":"mute"}"#).await,
+        StatusCode::OK
+    );
+    assert_eq!(active(*profile.id.as_ref()).await, 5);
+    // The block (a replace of the mute) detaches the three relations of exactly that host.
+    assert_eq!(
+        send(
+            "PUT",
+            item.clone(),
+            r#"{"mode":"block","expected_revision":1}"#
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        active(*profile.id.as_ref()).await,
+        2,
+        "sub.blocked.example and elsewhere.example stay"
+    );
+    assert_eq!(
+        active(*other.id.as_ref()).await,
+        1,
+        "another Profile is untouched"
+    );
+    let ended_by_block: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM profile_follows WHERE end_reason = 'blocked'")
+            .fetch_one(world.pool())
+            .await
+            .unwrap();
+    assert_eq!(ended_by_block, 3);
+
+    // The unblock restores nothing and reserves nothing.
+    let jobs_before: i64 = sqlx::query_scalar("SELECT count(*) FROM profile_delivery_jobs")
         .fetch_one(world.pool())
         .await
         .unwrap();
-    assert_eq!(stored, 0, "an unmounted route must not store a block");
+    assert_eq!(
+        send("DELETE", format!("{item}?expected_revision=2"), "").await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(active(*profile.id.as_ref()).await, 2);
+    let jobs_after: i64 = sqlx::query_scalar("SELECT count(*) FROM profile_delivery_jobs")
+        .fetch_one(world.pool())
+        .await
+        .unwrap();
+    assert_eq!(jobs_before, jobs_after);
 }
 
 /// The retired Account based federation surface answers an explicit `410 Gone` on the production

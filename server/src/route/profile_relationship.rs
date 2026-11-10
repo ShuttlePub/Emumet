@@ -3,8 +3,8 @@
 //! The following / followers reads are in `route::profile_follow_list`; both mount functions are
 //! combined on the production root router (the paths do not overlap).
 //!
-//! These routes are mounted on the production router by the P4 cutover (`root_router`). The
-//! domain-controls routes are NOT (they wait for D8R). Authorization (current owner only), the
+//! These routes are mounted on the production router by the P4 cutover (`root_router`); the
+//! domain-controls routes by D8R (`route::profile_domain_control`). Authorization (current owner only), the
 //! transaction that couples a relationship change with its delivery job, and block / mute
 //! semantics live in `application::service::profile_relationship`.
 

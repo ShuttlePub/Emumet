@@ -13,15 +13,18 @@
 
 use crate::dto::domain_control::DomainControlDto;
 use crate::service::domain_follow_guard::lock_profile_for_domain_control_write;
+use crate::service::profile_relationship::domain_block::{
+    detach_counterparts, lock_for_block_write, LockOutcome,
+};
+use crate::service::profile_relationship::{Conn, RelationshipDeps};
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
 use kernel::interfaces::database::{
-    DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
+    DatabaseConnection, DependOnDatabaseConnection, TransactionManager,
 };
 use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{
-    DependOnDomainControlRepository, DependOnProfileRelationshipLock, DomainControlDeleteOutcome,
-    DomainControlRepository,
+    DependOnDomainControlRepository, DomainControlDeleteOutcome, DomainControlRepository,
 };
 use kernel::prelude::entity::{
     AccountKind, AuthAccountId, ControlDomain, DomainControl, DomainControlMode, InvalidDomain,
@@ -85,16 +88,7 @@ where
     Ok(profile_id)
 }
 
-pub trait DomainControlUseCase:
-    'static
-    + Sync
-    + Send
-    + Clone
-    + DependOnAccountQuery
-    + DependOnDomainControlRepository
-    + DependOnProfileRelationshipLock
-    + DependOnTransactionManager
-{
+pub trait DomainControlUseCase: RelationshipDeps {
     fn list_domain_controls<'a>(
         &'a self,
         auth_account_id: &'a AuthAccountId,
@@ -174,6 +168,11 @@ pub trait DomainControlUseCase:
 
     /// Create (`expected_revision` = `None`) or replace (`Some`) the control of one domain.
     /// Create on an existing control and replace on a missing / different revision are conflicts.
+    ///
+    /// Storing mode `block` also detaches, **in the same transaction**, every existing relation
+    /// (pending included, both directions) with an actor of that exact domain and reserves the
+    /// minimal clean-up activities (D8R, see `profile_relationship::domain_block`). A failure anywhere
+    /// rolls back the block together with the detachment.
     fn put_domain_control<'a>(
         &'a self,
         auth_account_id: &'a AuthAccountId,
@@ -189,43 +188,43 @@ pub trait DomainControlUseCase:
             let org_context = org_context.cloned();
             let profile_nanoid = profile_nanoid.to_string();
             let domain = domain.to_string();
-            self.transaction_manager()
-                .transaction(move |executor| {
-                    Box::pin(async move {
-                        let profile_id = require_profile_owner(
-                            &deps,
-                            executor,
-                            &auth_account_id,
-                            org_context.as_ref(),
-                            &profile_nanoid,
-                        )
-                        .await?;
-                        lock_profile_for_domain_control_write(&deps, executor, &profile_id).await?;
-                        let domain = ControlDomain::parse(&domain).map_err(invalid_domain)?;
-                        let control = match expected_revision {
-                            None => deps
-                                .domain_control_repository()
-                                .create(executor, &profile_id, &domain, mode)
-                                .await?
-                                .ok_or_else(|| {
-                                    revision_conflict(
-                                        "A domain control already exists; send expected_revision",
-                                    )
-                                })?,
-                            Some(expected_revision) => deps
-                                .domain_control_repository()
-                                .replace(executor, &profile_id, &domain, mode, expected_revision)
-                                .await?
-                                .ok_or_else(|| {
-                                    revision_conflict(
-                                        "expected_revision does not match the current control",
-                                    )
-                                })?,
-                        };
-                        Ok(DomainControlDto::new(&profile_nanoid, &control))
-                    })
-                })
-                .await
+            let mut attempts = 0;
+            loop {
+                attempts += 1;
+                let attempt = {
+                    let deps = deps.clone();
+                    let auth_account_id = auth_account_id.clone();
+                    let org_context = org_context.clone();
+                    let profile_nanoid = profile_nanoid.clone();
+                    let domain = domain.clone();
+                    self.transaction_manager()
+                        .transaction(move |executor| {
+                            Box::pin(async move {
+                                put_attempt(
+                                    &deps,
+                                    executor,
+                                    &auth_account_id,
+                                    org_context.as_ref(),
+                                    &profile_nanoid,
+                                    &domain,
+                                    mode,
+                                    expected_revision,
+                                )
+                                .await
+                            })
+                        })
+                        .await?
+                };
+                match attempt {
+                    PutAttempt::Done(dto) => return Ok(dto),
+                    PutAttempt::Retry if attempts < MAX_PUT_ATTEMPTS => {}
+                    PutAttempt::Retry => {
+                        return Err(revision_conflict(
+                            "relations of the blocked domain kept changing; retry the request",
+                        ))
+                    }
+                }
+            }
         }
     }
 
@@ -277,16 +276,60 @@ pub trait DomainControlUseCase:
     }
 }
 
-impl<T> DomainControlUseCase for T where
-    T: 'static
-        + Sync
-        + Send
-        + Clone
-        + DependOnAccountQuery
-        + DependOnDomainControlRepository
-        + DependOnProfileRelationshipLock
-        + DependOnTransactionManager
-{
+impl<T> DomainControlUseCase for T where T: RelationshipDeps {}
+
+/// How often a block write is retried when a local counterpart appeared between reading the
+/// relations and taking their locks (nothing was written in that attempt).
+const MAX_PUT_ATTEMPTS: usize = 5;
+
+enum PutAttempt {
+    Done(DomainControlDto),
+    Retry,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn put_attempt<T: RelationshipDeps>(
+    deps: &T,
+    executor: &mut Conn<T>,
+    auth_account_id: &AuthAccountId,
+    org_context: Option<&OrganizationContext>,
+    profile_nanoid: &str,
+    domain: &str,
+    mode: DomainControlMode,
+    expected_revision: Option<u64>,
+) -> error_stack::Result<PutAttempt, KernelError> {
+    let profile_id =
+        require_profile_owner(deps, executor, auth_account_id, org_context, profile_nanoid).await?;
+    let domain = ControlDomain::parse(domain).map_err(invalid_domain)?;
+    let detaching = mode == DomainControlMode::Block;
+    let counterparts =
+        match lock_for_block_write(deps, executor, &profile_id, &domain, detaching).await? {
+            LockOutcome::Locked { counterparts } => counterparts,
+            LockOutcome::Retry => return Ok(PutAttempt::Retry),
+        };
+    let control = match expected_revision {
+        None => deps
+            .domain_control_repository()
+            .create(executor, &profile_id, &domain, mode)
+            .await?
+            .ok_or_else(|| {
+                revision_conflict("A domain control already exists; send expected_revision")
+            })?,
+        Some(expected_revision) => deps
+            .domain_control_repository()
+            .replace(executor, &profile_id, &domain, mode, expected_revision)
+            .await?
+            .ok_or_else(|| {
+                revision_conflict("expected_revision does not match the current control")
+            })?,
+    };
+    if detaching {
+        detach_counterparts(deps, executor, &profile_id, profile_nanoid, &counterparts).await?;
+    }
+    Ok(PutAttempt::Done(DomainControlDto::new(
+        profile_nanoid,
+        &control,
+    )))
 }
 
 /// Matching lookup for later units (D8G Follow rejection, D8R relation detachment, display filters).

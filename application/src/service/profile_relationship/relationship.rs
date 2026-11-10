@@ -50,7 +50,7 @@ use kernel::KernelError;
 use std::future::Future;
 use time::{Duration, OffsetDateTime};
 
-type Conn<T> =
+pub(crate) type Conn<T> =
     <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection;
 
 /// 送信中だった Follow job を取り消したとき、その Follow が相手に届く可能性のある時間。Undo はこの後に送る
@@ -58,7 +58,7 @@ type Conn<T> =
 const IN_FLIGHT_GRACE: Duration = Duration::seconds(120);
 
 /// PostgreSQL の timestamptz に合わせてマイクロ秒へ丸める。
-fn now() -> OffsetDateTime {
+pub(super) fn now() -> OffsetDateTime {
     let now = OffsetDateTime::now_utc();
     now.replace_nanosecond(now.nanosecond() / 1000 * 1000)
         .unwrap_or(now)
@@ -186,7 +186,7 @@ async fn resolve_target<T: RelationshipDeps>(
 }
 
 /// 関係の当事者の canonical actor URL。ローカル Profile は Profile から導出する。
-async fn actor_url<T: RelationshipDeps>(
+pub(super) async fn actor_url<T: RelationshipDeps>(
     deps: &T,
     executor: &mut Conn<T>,
     actor: &ProfileGraphActor,
@@ -218,9 +218,9 @@ fn follow_dto(follow: &ProfileFollow, profile_nanoid: &str, target: String) -> P
 }
 
 /// 送信元のローカル Profile (内部 ID と、actor URL の元になる nanoid)。
-struct LocalSender<'a> {
-    profile_id: &'a ProfileId,
-    nanoid: &'a str,
+pub(super) struct LocalSender<'a> {
+    pub(super) profile_id: &'a ProfileId,
+    pub(super) nanoid: &'a str,
 }
 
 /// 自分が送った Follow が終了したとき、相手に `Undo(Follow)` を送る job を予約する (同じ transaction)。
@@ -228,7 +228,7 @@ struct LocalSender<'a> {
 /// 宛先 inbox は元の Follow job から取る。まだ一度も送信を試みていない Follow は取り消すだけで
 /// Undo を送らない (相手は Follow を知らない)。試行済み (配送済み・再試行中・送信中・失敗) なら、
 /// 相手に届いている可能性があるので Undo を送る。送信中の Follow があれば Undo はその後に回す。
-async fn retract_outgoing_follow<T: RelationshipDeps>(
+pub(super) async fn retract_outgoing_follow<T: RelationshipDeps>(
     deps: &T,
     executor: &mut Conn<T>,
     sender: &LocalSender<'_>,
@@ -291,7 +291,7 @@ async fn retract_outgoing_follow<T: RelationshipDeps>(
 /// 相手から受けていた Follow が終了したとき、相手に `Reject(Follow)` を送る job を予約する (同じ
 /// transaction)。宛先は、その Follow への Accept job (P3i が予約) の inbox。未送信の Accept は取り消す。
 /// Accept job がない (承認前など) 場合は宛先が分からないので何も送らない。
-async fn reject_incoming_follow<T: RelationshipDeps>(
+pub(super) async fn reject_incoming_follow<T: RelationshipDeps>(
     deps: &T,
     executor: &mut Conn<T>,
     sender: &LocalSender<'_>,
@@ -326,6 +326,15 @@ async fn reject_incoming_follow<T: RelationshipDeps>(
         now,
     )
     .await?;
+    // 送信中の Accept (または cancel と競合して試行が進んだ Accept) は、取り消しても相手に届いている
+    // かもしれない。Reject が先に届き、後から Accept が届いて相手側に関係が残る逆転を避けるため、Reject は
+    // その Accept が届き得る時間の後に回す。
+    let accept_after = jobs
+        .find_by_id(executor, &accept.id)
+        .await?
+        .ok_or_else(|| not_found("delivery job disappeared"))?;
+    let in_flight_possible = accept.state == ProfileDeliveryJobState::InFlight
+        || accept.attempt_count < accept_after.attempt_count;
     let follower_url = actor_url(deps, executor, follow.follower()).await?;
     let reject_id = reject_activity_id(deps.public_base_url(), sender.nanoid, follow.id())?;
     let body = reject_follow_body(
@@ -334,7 +343,7 @@ async fn reject_incoming_follow<T: RelationshipDeps>(
         &follower_url,
         follow.activity_id(),
     )?;
-    let reject = NewProfileDeliveryJob::new(
+    let mut reject = NewProfileDeliveryJob::new(
         sender.profile_id.clone(),
         DeliveryActivityType::Reject,
         reject_id,
@@ -343,6 +352,9 @@ async fn reject_incoming_follow<T: RelationshipDeps>(
         now,
     )?
     .with_follow(follow.id().clone());
+    if in_flight_possible {
+        reject = reject.not_before(now + IN_FLIGHT_GRACE);
+    }
     deps.profile_delivery_enqueuer()
         .enqueue(executor, &reject)
         .await?;

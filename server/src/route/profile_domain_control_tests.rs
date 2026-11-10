@@ -1452,7 +1452,7 @@ async fn owner_check_waits_for_an_in_flight_transfer_and_rejects_the_previous_ow
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn domain_control_routes_are_absent_from_the_production_shaped_router() {
+async fn domain_control_routes_are_mounted_on_the_production_shaped_router() {
     let module = AppModule::new_for_oauth2_test(
         "http://localhost:65535".to_string(),
         "http://localhost:65535".to_string(),
@@ -1475,8 +1475,8 @@ async fn domain_control_routes_are_absent_from_the_production_shaped_router() {
             let (status, _) = send(&router, method.clone(), &uri, None, None, None).await;
             assert_eq!(
                 status,
-                StatusCode::NOT_FOUND,
-                "{method} {uri} must not be routed in the production-shaped router"
+                StatusCode::UNAUTHORIZED,
+                "{method} {uri} must be routed (and authenticated) in the production-shaped router"
             );
             checked += 1;
         }

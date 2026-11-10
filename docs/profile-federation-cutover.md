@@ -107,9 +107,23 @@ Account 管理 API (作成・取得・更新・無効化・再有効化・組織
 | `POST /api/v1/profiles/{profile_nanoid}/follows`、`DELETE .../follows/{follow_id}` | Follow / unfollow |
 | `GET .../following`、`GET .../followers` | 所有者のみ |
 | `GET|POST .../blocks`、`DELETE .../blocks/{id}`、`GET|POST .../mutes`、`DELETE .../mutes/{id}` | 個別 actor の block / mute (AP `Block` は送らない) |
+| `GET .../domain-controls`、`GET|PUT|DELETE .../domain-controls/{domain}` | domain 単位の mute / block (D8P の保存 + D8R の mount)。block の PUT は同一 transaction で対象 domain の既存関係を解除する (下記) |
 | `POST /api/v1/profiles/{profile_nanoid}/username` | 一回限りの username 設定 (切替前の既存 Profile 用。切替後は全 Profile が設定済みなので 409) |
 
-**未 mount**: `/api/v1/profiles/{profile_nanoid}/domain-controls...` (D8P)。block の書込を D8R が有効化するまで本番で受け付けない (block を保存するだけで関係解除をしない中途状態を作らない)。
+### domain block の既存関係の解除 (D8R)
+
+`PUT .../domain-controls/{domain}` で mode=block を保存する (新規作成・mute からの置換・block の再保存) と、**同一 transaction** で、その Profile の対象 domain (完全一致) の actor との有効な関係 (pending 含む・following / followers 両方向) を `blocked` で終了し、必要最小限の後始末を配送 job として予約する。途中で失敗すれば block も含めて全体が rollback される。
+
+| 関係の作者 | 未送信 job | 送信済み・結果不明 |
+|---|---|---|
+| 自分の Follow | Follow job を取消 (相手は Follow を知らないので何も送らない) | 元 Follow を埋め込んだ `Undo(Follow)`。送信中だった可能性があれば 120 秒後に回す |
+| 相手の Follow | Accept job を取消し、`Reject(Follow)` (元 Follow を参照) を予約 | 同上 (送信中の Accept があれば Reject を 120 秒後に回す) |
+
+- 相手の Follow を自分が作者であるかのように Undo しない。AP `Block` は送らない。外部配送の成否は block・解除のローカル適用に影響しない。
+- block を解除 (DELETE) しても関係は復元せず、何も配送しない。復元用の一覧も持たない。
+- 自 instance の host を block した場合は、同じ host のローカル Profile との関係も解除する (配送なし)。ロックはその相手 Profile も含めて昇順の単一呼び出しで取る。
+- ロック順: Profile 行 FOR SHARE → advisory (`lock_profiles`) → job → Follow 行。
+- CORS (`CORS_ALLOWED_ORIGINS` 指定時) は PUT / DELETE を許可する。
 
 ## 6. ロールバック・運用上の注意
 
