@@ -18,7 +18,11 @@ async fn login_create_and_update_integrated_account() {
     let created = client
         .post("http://localhost:8080/api/v1/accounts")
         .bearer_auth(&jwt)
-        .json(&serde_json::json!({"name": "E2E Test Account", "is_bot": false}))
+        .json(&serde_json::json!({
+            "name": "E2E Test Account",
+            "is_bot": false,
+            "profile_username": "basic.flow_e2e-1",
+        }))
         .send()
         .await
         .expect("failed to create account");
@@ -139,7 +143,11 @@ async fn media_upload_flows_to_actor_icon_end_to_end() {
     let created = client
         .post("http://localhost:8080/api/v1/accounts")
         .bearer_auth(&jwt)
-        .json(&serde_json::json!({"name": name, "is_bot": false}))
+        .json(&serde_json::json!({
+            "name": name,
+            "is_bot": false,
+            "profile_username": "media.e2e_flow-1",
+        }))
         .send()
         .await
         .expect("failed to create account");
@@ -149,6 +157,7 @@ async fn media_upload_flows_to_actor_icon_end_to_end() {
         .as_str()
         .expect("missing account id")
         .to_string();
+    let profile_id = db::profile_nanoid_of_account(&account_id).await;
 
     // When: an image is uploaded through the multipart media API.
     let file_part = reqwest::multipart::Part::bytes(PIXEL_PNG.to_vec())
@@ -204,7 +213,7 @@ async fn media_upload_flows_to_actor_icon_end_to_end() {
     // Then: the patch succeeds and the Actor document exposes the uploaded icon.
     assert_eq!(patched.status(), reqwest::StatusCode::OK);
     let actor = client
-        .get(format!("http://localhost:8080/ap/accounts/{account_id}"))
+        .get(format!("http://localhost:8080/ap/profiles/{profile_id}"))
         .header("Accept", "application/activity+json")
         .send()
         .await
@@ -212,4 +221,60 @@ async fn media_upload_flows_to_actor_icon_end_to_end() {
     assert_eq!(actor.status(), reqwest::StatusCode::OK);
     let actor: serde_json::Value = actor.json().await.expect("invalid actor response");
     assert_eq!(actor["icon"]["url"], url);
+}
+
+#[tokio::test]
+#[ignore]
+async fn account_creation_requires_a_profile_username() {
+    db::reset_test_data().await;
+    let _server = EmumetServer::start().await;
+    let jwt = auth::get_jwt_for_test_user().await;
+    let client = reqwest::Client::new();
+
+    // Omitted and null usernames are validation errors; nothing is created.
+    for body in [
+        serde_json::json!({"name": "no-username", "is_bot": false}),
+        serde_json::json!({"name": "null-username", "is_bot": false, "profile_username": null}),
+    ] {
+        let response = client
+            .post("http://localhost:8080/api/v1/accounts")
+            .bearer_auth(&jwt)
+            .json(&body)
+            .send()
+            .await
+            .expect("create request failed");
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::BAD_REQUEST,
+            "{body}"
+        );
+    }
+    let listed: serde_json::Value = client
+        .get("http://localhost:8080/api/v1/accounts")
+        .bearer_auth(&jwt)
+        .send()
+        .await
+        .expect("list request failed")
+        .json()
+        .await
+        .expect("invalid list response");
+    assert_eq!(listed["items"].as_array().map(Vec::len), Some(0));
+
+    // A taken username is a conflict (also across Accounts); a new one is accepted and gets an actor.
+    let created = client
+        .post("http://localhost:8080/api/v1/accounts")
+        .bearer_auth(&jwt)
+        .json(&serde_json::json!({"name": "first", "is_bot": false, "profile_username": "shared.name_1-x"}))
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    let taken = client
+        .post("http://localhost:8080/api/v1/accounts")
+        .bearer_auth(&jwt)
+        .json(&serde_json::json!({"name": "second", "is_bot": false, "profile_username": "shared.name_1-x"}))
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(taken.status(), reqwest::StatusCode::CONFLICT);
 }

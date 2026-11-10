@@ -1,58 +1,18 @@
-mod actor;
-mod collections;
 mod discovery;
-mod inbox;
+mod inbox_support;
 pub(crate) mod profile_actor;
 pub(crate) mod profile_inbox;
 
-pub(crate) use actor::{__path_get_actor, get_actor};
-pub(crate) use collections::{
-    __path_get_followers, __path_get_following, __path_get_outbox, get_followers, get_following,
-    get_outbox,
-};
-pub(crate) use discovery::{__path_webfinger, webfinger};
-pub(crate) use inbox::{__path_post_inbox, post_inbox};
-pub(crate) use profile_actor::__path_get_profile_actor;
+pub(crate) use profile_actor::{__path_get_profile_actor, __path_profile_webfinger};
 pub(crate) use profile_inbox::__path_post_profile_inbox;
 
 use crate::error::ErrorStatus;
-use crate::handler::AppModule;
-use axum::extract::DefaultBodyLimit;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::Router;
 use serde::Serialize;
 
 pub(super) const ACTIVITY_JSON: &str = "application/activity+json";
 pub(super) const JRD_JSON: &str = "application/jrd+json";
-
-pub trait ActivityPubRouter {
-    fn route_activitypub(self) -> Self;
-}
-
-pub trait FederationRouter {
-    fn route_federation(self) -> Self;
-}
-
-impl ActivityPubRouter for Router<AppModule> {
-    fn route_activitypub(self) -> Self {
-        self.route("/.well-known/webfinger", get(webfinger))
-    }
-}
-
-impl FederationRouter for Router<AppModule> {
-    fn route_federation(self) -> Self {
-        self.route("/accounts/{account_id}", get(get_actor))
-            .route(
-                "/accounts/{account_id}/inbox",
-                post(post_inbox).layer(DefaultBodyLimit::max(1024 * 1024)),
-            )
-            .route("/accounts/{account_id}/outbox", get(get_outbox))
-            .route("/accounts/{account_id}/followers", get(get_followers))
-            .route("/accounts/{account_id}/following", get(get_following))
-    }
-}
 
 pub(super) fn json_response<T: Serialize>(
     value: &T,

@@ -106,6 +106,7 @@ impl DependOnRemoteActorResolver for TestModule {
 
 pub(super) struct User {
     pub auth: AuthAccountId,
+    #[allow(dead_code)]
     pub account: Account,
     pub profile_id: ProfileId,
     pub nanoid: String,

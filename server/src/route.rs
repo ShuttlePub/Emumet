@@ -9,7 +9,6 @@ pub mod media;
 pub mod oauth2;
 pub mod profile_domain_control;
 pub mod profile_follow_list;
-pub mod profile_policy;
 pub mod profile_relationship;
 pub mod profile_transfer;
 pub mod profile_username_availability;
@@ -17,7 +16,7 @@ pub mod registration_gate;
 pub mod registration_gate_webhook;
 pub mod registration_protection;
 pub mod report;
-pub mod signing;
+pub mod retired;
 
 #[cfg(feature = "test-mode")]
 pub mod test_mode;

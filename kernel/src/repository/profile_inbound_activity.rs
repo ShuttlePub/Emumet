@@ -31,6 +31,10 @@ pub trait InboundActivityRepository: Sync + Send + 'static {
     ) -> impl Future<Output = error_stack::Result<Option<InboundActivityRecord>, KernelError>> + Send;
 
     /// `cutoff` より前に初めて受信した記録を消す (保持期間の管理用)。消した件数を返す。
+    ///
+    /// `UndoFollow` の記録は消さない: 元の Follow より先に届いた Undo の目印で、消すと保持期間より
+    /// 遅れて届いた Follow が「Undo 済み」と判別できずに受理されてしまう。P4 時点では本番のどこからも
+    /// 呼ばれない (定期 purge は未接続)。接続するときもこの保持方針を変えないこと。
     fn purge_received_before(
         &self,
         executor: &mut Self::Connection,

@@ -54,15 +54,10 @@ fn has_not_found_response(operation: &serde_json::Value) -> bool {
         .is_some_and(|responses| responses.contains_key("404"))
 }
 
-/// `ProfilePolicy` operations are OpenAPI contract only and are intentionally not mounted on the
-/// router under test (see `route::profile_policy`); their reachability is covered separately.
-fn is_contract_only_operation(operation: &serde_json::Value) -> bool {
-    operation
-        .get("tags")
-        .and_then(|tags| tags.as_array())
-        .into_iter()
-        .flatten()
-        .any(|tag| matches!(tag.as_str(), Some("ProfilePolicy" | "ProfileActor")))
+/// The domain-controls operations (D8P) are documented but deliberately not mounted until D8R; their
+/// absence is checked by `domain_controls_are_not_mounted_on_the_root_router_and_write_nothing`.
+fn is_unmounted_operation(path_template: &str) -> bool {
+    path_template.contains("/domain-controls")
 }
 
 fn is_activitypub_operation(operation: &serde_json::Value) -> bool {
@@ -71,7 +66,7 @@ fn is_activitypub_operation(operation: &serde_json::Value) -> bool {
         .and_then(|tags| tags.as_array())
         .into_iter()
         .flatten()
-        .any(|tag| tag.as_str() == Some("ActivityPub"))
+        .any(|tag| tag.as_str() == Some("ProfileActor"))
 }
 
 fn load_routes_from_openapi() -> Vec<RouteCase> {
@@ -87,7 +82,7 @@ fn load_routes_from_openapi() -> Vec<RouteCase> {
             if !HTTP_METHODS.contains(&key.as_str()) {
                 continue;
             }
-            if is_contract_only_operation(operation) {
+            if is_unmounted_operation(path_template) {
                 continue;
             }
             let requires_auth = is_authed(operation.get("security"));
@@ -193,191 +188,13 @@ async fn nonexistent_route_returns_404() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
-/// The production root router (built by the same function the server binary uses) must not serve
-/// any Profile actor / relationship / domain-control route before the P4 cutover. Every operation
-/// of the not-yet-mounted OpenAPI tags, plus the actor sub-resources, must be a plain 404 even for
-/// an authenticated caller, and the Account based actor routes must still be there.
+/// The production root router (built by the same function the server binary uses) serves the
+/// Profile federation model of the P4 cutover. The domain-controls routes (D8P) are the one
+/// documented family that is deliberately NOT mounted: block writes wait for D8R, so every
+/// request answers 404 (also for the real owner of a real Profile) and nothing is stored.
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn profile_actor_and_contract_routes_are_absent_from_the_root_router() {
-    use crate::auth::{
-        encode_test_jwt, generate_test_keys, AuthClaims, JwksCache, OidcConfig, OneOrMany,
-    };
-    use crate::route::build_test_router_with_auth;
-    use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let issuer = format!("https://issuer.example/{}", uuid::Uuid::new_v4());
-    let keys = generate_test_keys();
-    let token = encode_test_jwt(
-        &AuthClaims {
-            iss: issuer.clone(),
-            sub: "absence-subject".to_string(),
-            aud: OneOrMany::One("emumet".to_string()),
-            exp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + 3600,
-        },
-        &keys.encoding_key,
-        &keys.kid,
-    );
-    let module = AppModule::new_for_oauth2_test(
-        "http://localhost:65535".into(),
-        "http://localhost:65535".into(),
-    )
-    .await
-    .expect("AppModule init failed (is DATABASE_URL set?)");
-    let router = build_test_router_with_auth(
-        module,
-        Arc::new(OidcConfig {
-            issuer_url: issuer.clone(),
-            expected_audience: "emumet".to_string(),
-            jwks_refetch_interval_secs: 0,
-        }),
-        Arc::new(JwksCache::new_with_jwks(issuer, keys.jwk_set)),
-    );
-
-    let spec: serde_json::Value =
-        serde_json::from_str(&crate::openapi::generate_openapi_json()).unwrap();
-    let mut probes: Vec<(String, String)> = Vec::new();
-    for (template, item) in spec["paths"].as_object().unwrap() {
-        for (method, operation) in item.as_object().unwrap() {
-            let unmounted = operation["tags"].as_array().is_some_and(|tags| {
-                tags.iter()
-                    .any(|tag| tag == "ProfilePolicy" || tag == "ProfileActor")
-            });
-            if unmounted && HTTP_METHODS.contains(&method.as_str()) {
-                probes.push((method.to_uppercase(), replace_path_params(template)));
-            }
-        }
-    }
-    // Every operation of every unit that implements a Profile route without mounting it
-    // (E8 contract, D8P domain-controls, P1 actor, P3i inbox / followers / following) must be
-    // among the probes, so dropping an OpenAPI tag cannot silently shrink this check. A unit
-    // that mounts a route (P3o / P4) removes it here and adds a presence test instead.
-    for (method, template) in [
-        ("GET", "/api/v1/profiles/{profile_nanoid}"),
-        ("POST", "/api/v1/profiles/{profile_nanoid}/follows"),
-        (
-            "DELETE",
-            "/api/v1/profiles/{profile_nanoid}/follows/{follow_id}",
-        ),
-        ("GET", "/api/v1/profiles/{profile_nanoid}/following"),
-        ("GET", "/api/v1/profiles/{profile_nanoid}/followers"),
-        ("GET", "/api/v1/profiles/{profile_nanoid}/blocks"),
-        ("POST", "/api/v1/profiles/{profile_nanoid}/mutes"),
-        ("GET", "/api/v1/profiles/{profile_nanoid}/domain-controls"),
-        (
-            "GET",
-            "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
-        ),
-        (
-            "PUT",
-            "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
-        ),
-        (
-            "DELETE",
-            "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
-        ),
-        ("GET", "/ap/profiles/{profile_nanoid}"),
-        ("POST", "/ap/profiles/{profile_nanoid}/inbox"),
-    ] {
-        assert!(
-            probes.contains(&(method.to_string(), replace_path_params(template))),
-            "{method} {template} must be probed for absence"
-        );
-    }
-    assert!(
-        probes.len() >= 16,
-        "expected the ProfilePolicy contract and the Profile actor, found {} operations",
-        probes.len()
-    );
-    for suffix in ["/inbox", "/outbox", "/followers", "/following"] {
-        for method in ["GET", "POST"] {
-            probes.push((
-                method.to_string(),
-                format!("/ap/profiles/test-nanoid{suffix}"),
-            ));
-        }
-    }
-    for path in ["/ap/profiles", "/ap/profiles/test-nanoid"] {
-        probes.push(("POST".to_string(), path.to_string()));
-    }
-
-    for (method, uri) in &probes {
-        for authenticated in [true, false] {
-            let mut builder = Request::builder()
-                .method(method.as_str())
-                .uri(uri)
-                .header("content-type", "application/json");
-            if authenticated {
-                builder = builder.header("authorization", format!("Bearer {token}"));
-            }
-            let response = router
-                .clone()
-                .oneshot(builder.body(Body::from("{}")).unwrap())
-                .await
-                .unwrap();
-            let status = response.status();
-            assert!(
-                status == StatusCode::NOT_FOUND
-                    || (!authenticated && status == StatusCode::UNAUTHORIZED),
-                "{method} {uri} (authenticated: {authenticated}) must not be served by the root router, got {status}"
-            );
-            if authenticated {
-                assert_eq!(
-                    status,
-                    StatusCode::NOT_FOUND,
-                    "{method} {uri} must be absent for an authenticated caller too"
-                );
-            }
-        }
-    }
-
-    // Positive control: the Account based federation routes of the same router are served.
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/ap/accounts/does-not-exist")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        StatusCode::NOT_FOUND,
-        "unknown Account actor"
-    );
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/profiles/test-nanoid/username")
-                .header("content-type", "application/json")
-                .body(Body::from("{}"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        StatusCode::UNAUTHORIZED,
-        "the one-time username setter is mounted (and authenticated)"
-    );
-}
-
-/// The same absence check against a world where the routes would visibly work: a real Profile
-/// (username, key, owner with a valid token) on a database that has the P2 graph tables. If one of
-/// these routes were mounted by mistake it would answer 200 / 401 / 422 instead of 404.
-#[test_with::env(DATABASE_URL)]
-#[tokio::test]
-async fn profile_routes_stay_absent_from_the_root_router_for_a_real_profile_and_owner() {
+async fn domain_controls_are_not_mounted_on_the_root_router_and_write_nothing() {
     use crate::route::profile_graph_test_support::GraphWorld;
 
     let world = GraphWorld::new().await;
@@ -386,142 +203,382 @@ async fn profile_routes_stay_absent_from_the_root_router_for_a_real_profile_and_
     let router = world.root_router();
     let nanoid = &profile.nanoid;
 
-    // Positive controls: the very same requests ARE served when the routes are mounted (test-only
-    // routers), so a 404 below really means "not mounted".
-    let served = world
-        .follow_list_router()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri(format!("/api/v1/profiles/{nanoid}/followers"))
-                .header("authorization", format!("Bearer {}", owner.token))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(served.status(), StatusCode::OK);
-    let served = world
-        .inbox_router()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/ap/profiles/{nanoid}/inbox"))
-                .header("content-type", "application/activity+json")
-                .header("host", world.host_header.clone())
-                .body(Body::from("{}"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(served.status(), StatusCode::UNAUTHORIZED);
-
-    // Real relationships owned by the caller: a DELETE with their ids would visibly remove them if
-    // the relationship routes were mounted by mistake (they are mounted only in test routers).
-    let other_owner = world.new_user().await;
-    let other = world.create_profile(&other_owner, true).await;
-    let block_target = world.create_profile(&other_owner, true).await;
-    let (follow_id, block_id, mute_id) = {
-        use application::service::profile_relationship::ProfileRelationshipUseCase;
-        let follow = world
-            .module
-            .follow_profile(&owner.auth_account_id, None, nanoid, &other.actor_url)
-            .await
-            .unwrap();
-        let block = world
-            .module
-            .block_actor(
-                &owner.auth_account_id,
-                None,
-                nanoid,
-                &block_target.actor_url,
+    // The operations come from the OpenAPI document, so a newly documented domain-controls
+    // operation is probed too.
+    let spec: serde_json::Value = serde_json::from_str(&crate::openapi::generate_openapi_json())
+        .expect("generated OpenAPI spec");
+    let mut probes: Vec<(String, String)> = Vec::new();
+    for (template, item) in spec["paths"].as_object().unwrap() {
+        if !template.contains("/domain-controls") {
+            continue;
+        }
+        for method in item.as_object().unwrap().keys() {
+            if HTTP_METHODS.contains(&method.as_str()) {
+                probes.push((
+                    method.to_uppercase(),
+                    template
+                        .replace("{profile_nanoid}", nanoid)
+                        .replace("{domain}", "example.com"),
+                ));
+            }
+        }
+    }
+    assert!(
+        probes.len() >= 4,
+        "the domain-controls operations must be documented: {probes:?}"
+    );
+    // Block and mute writes, whatever the documented methods are.
+    for method in ["GET", "PUT", "DELETE", "POST"] {
+        probes.push((
+            method.to_string(),
+            format!("/api/v1/profiles/{nanoid}/domain-controls/example.com?expected_revision=1"),
+        ));
+        probes.push((
+            method.to_string(),
+            format!("/api/v1/profiles/{nanoid}/domain-controls"),
+        ));
+    }
+    for (method, uri) in &probes {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method.as_str())
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {}", owner.token))
+                    .body(Body::from(r#"{"mode":"block"}"#))
+                    .unwrap(),
             )
             .await
             .unwrap();
-        let mute = world
-            .module
-            .mute_actor(&owner.auth_account_id, None, nanoid, &other.actor_url)
-            .await
-            .unwrap();
-        (follow.nanoid, block.nanoid, mute.nanoid)
-    };
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "{method} {uri} must not be mounted (D8R enables domain-controls)"
+        );
+    }
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM profile_domain_controls")
+        .fetch_one(world.pool())
+        .await
+        .unwrap();
+    assert_eq!(stored, 0, "an unmounted route must not store a block");
+}
 
-    let mut probes: Vec<(&str, String)> = vec![
-        (
-            "DELETE",
-            format!("/api/v1/profiles/{nanoid}/follows/{follow_id}"),
-        ),
-        (
-            "DELETE",
-            format!("/api/v1/profiles/{nanoid}/blocks/{block_id}"),
-        ),
-        (
-            "DELETE",
-            format!("/api/v1/profiles/{nanoid}/mutes/{mute_id}"),
-        ),
-    ];
-    for suffix in [
-        "",
-        "/follows",
-        "/following",
-        "/followers",
-        "/blocks",
-        "/mutes",
-        "/domain-controls",
-        "/domain-controls/example.com",
-    ] {
-        for method in ["GET", "POST", "PUT", "DELETE"] {
-            probes.push((method, format!("/api/v1/profiles/{nanoid}{suffix}")));
-        }
-    }
-    for suffix in ["", "/inbox", "/outbox", "/followers", "/following"] {
-        for method in ["GET", "POST"] {
-            probes.push((method, format!("/ap/profiles/{nanoid}{suffix}")));
-        }
-    }
-    for (method, uri) in &probes {
-        for token in [Some(owner.token.as_str()), None] {
+/// The retired Account based federation surface answers an explicit `410 Gone` on the production
+/// root router: no redirect to the new actor, no signing, no Account scoped Follow / block / mute.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn retired_account_federation_answers_410_on_the_root_router() {
+    use crate::route::profile_graph_test_support::GraphWorld;
+
+    let world = GraphWorld::new().await;
+    let owner = world.new_user().await;
+    let profile = world.create_profile(&owner, true).await;
+    let router = world.root_router();
+    let send = |method: &'static str, uri: String, token: Option<String>, accept: bool| {
+        let router = router.clone();
+        async move {
             let mut builder = Request::builder()
-                .method(*method)
+                .method(method)
                 .uri(uri)
-                .header("content-type", "application/activity+json");
+                .header("content-type", "application/json");
+            if accept {
+                builder = builder.header("accept", "application/activity+json");
+            }
             if let Some(token) = token {
                 builder = builder.header("authorization", format!("Bearer {token}"));
             }
-            let response = router
-                .clone()
+            router
                 .oneshot(builder.body(Body::from("{}")).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+
+    // /ap/accounts/... (public): 410, never a redirect to the Profile actor.
+    for (method, uri) in [
+        ("GET", "/ap/accounts"),
+        ("GET", "/ap/accounts/some-account"),
+        ("POST", "/ap/accounts/some-account/inbox"),
+        ("GET", "/ap/accounts/some-account/outbox"),
+        ("GET", "/ap/accounts/some-account/followers"),
+        ("GET", "/ap/accounts/some-account/following"),
+    ] {
+        let response = send(method, uri.to_string(), None, true).await;
+        assert_eq!(response.status(), StatusCode::GONE, "{method} {uri}");
+        assert!(
+            response.headers().get("location").is_none(),
+            "{method} {uri} must not redirect to the new actor"
+        );
+    }
+
+    // The signing / public-key endpoints: 410 even for a valid token; 401 without one.
+    for (method, uri) in [
+        ("POST", "/internal/v1/accounts/some-account/sign"),
+        ("GET", "/internal/v1/accounts/some-account/public-key"),
+    ] {
+        let response = send(method, uri.to_string(), Some(owner.token.clone()), false).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::GONE,
+            "{method} {uri} must be retired for an authenticated caller"
+        );
+        let response = send(method, uri.to_string(), None, false).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri}"
+        );
+    }
+
+    // Account scoped Follow / block / mute operations are retired; the Account management API is not.
+    for (method, suffix) in [
+        ("POST", "follow"),
+        ("POST", "unfollow"),
+        ("GET", "followers"),
+        ("GET", "following"),
+        ("POST", "block"),
+        ("POST", "unblock"),
+        ("GET", "blocks"),
+        ("POST", "mute"),
+        ("POST", "unmute"),
+        ("GET", "mutes"),
+    ] {
+        let uri = format!("/api/v1/accounts/some-account/{suffix}");
+        let response = send(method, uri.clone(), Some(owner.token.clone()), false).await;
+        assert_eq!(response.status(), StatusCode::GONE, "{method} {uri}");
+        let response = send(method, uri.clone(), None, false).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri}"
+        );
+    }
+    let response = send(
+        "GET",
+        "/api/v1/accounts/some-account".to_string(),
+        Some(owner.token.clone()),
+        false,
+    )
+    .await;
+    assert_ne!(
+        response.status(),
+        StatusCode::GONE,
+        "the Account management API stays"
+    );
+
+    // The Account WebFinger is gone: the Account name does not resolve, the Profile does.
+    let account_name: String = sqlx::query_scalar(
+        "SELECT a.name FROM accounts a JOIN profiles p ON p.account_id = a.id WHERE p.id = $1",
+    )
+    .bind(profile.id.as_ref())
+    .fetch_one(world.pool())
+    .await
+    .unwrap();
+    let response = send(
+        "GET",
+        format!(
+            "/.well-known/webfinger?resource=acct:{account_name}@{}",
+            world.host_header
+        ),
+        None,
+        false,
+    )
+    .await;
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "an Account name must not resolve over WebFinger"
+    );
+}
+
+/// Positive checks on the production root router with a real Profile and owner: the Profile actor
+/// document, WebFinger, the inbox, the identity read, Follow / unfollow, individual block / mute
+/// (create / list / delete) and the followers / following reads are all served, with
+/// owner-only authorization.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn profile_federation_routes_are_served_by_the_root_router() {
+    use crate::route::profile_graph_test_support::GraphWorld;
+
+    let world = GraphWorld::new().await;
+    let owner = world.new_user().await;
+    let stranger = world.new_user().await;
+    let profile = world.create_profile(&owner, true).await;
+    let other_owner = world.new_user().await;
+    let other = world.create_profile(&other_owner, true).await;
+    let router = world.root_router();
+    let nanoid = profile.nanoid.clone();
+
+    let call = |method: &'static str,
+                uri: String,
+                token: Option<String>,
+                body: Option<serde_json::Value>| {
+        let router = router.clone();
+        let host = world.host_header.clone();
+        async move {
+            let mut builder = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("host", host)
+                .header("content-type", "application/json");
+            if let Some(token) = token {
+                builder = builder.header("authorization", format!("Bearer {token}"));
+            }
+            let body = body.map(|value| value.to_string()).unwrap_or_default();
+            let response = router
+                .oneshot(builder.body(Body::from(body)).unwrap())
                 .await
                 .unwrap();
             let status = response.status();
-            // The authentication layer of the /api/v1 subtree answers before routing.
-            if status == StatusCode::UNAUTHORIZED && token.is_none() && uri.starts_with("/api/v1") {
-                continue;
-            }
-            assert!(
-                status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
-                "{method} {uri} (authenticated: {}) must not be served, got {status}",
-                token.is_some()
-            );
-        }
-    }
-
-    // The relationships the DELETE probes named are all still there.
-    for (table, id) in [
-        ("profile_follows", &follow_id),
-        ("profile_blocks", &block_id),
-        ("profile_mutes", &mute_id),
-    ] {
-        let remaining: i64 =
-            sqlx::query_scalar(&format!("SELECT count(*) FROM {table} WHERE nanoid = $1"))
-                .bind(id)
-                .fetch_one(world.pool())
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
                 .await
                 .unwrap();
-        assert_eq!(
-            remaining, 1,
-            "{table} {id} must not be touched by an unmounted route"
-        );
+            let json: serde_json::Value =
+                serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+    };
+    let owner_token = Some(owner.token.clone());
+
+    // Actor document, WebFinger (public).
+    let (status, actor) = call("GET", format!("/ap/profiles/{nanoid}"), None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(actor["id"], profile.actor_url.as_str());
+    assert!(actor["preferredUsername"].is_string());
+    assert!(actor["publicKey"]["publicKeyPem"]
+        .as_str()
+        .unwrap()
+        .contains("BEGIN PUBLIC KEY"));
+    let username = actor["preferredUsername"].as_str().unwrap().to_string();
+    let (status, jrd) = call(
+        "GET",
+        format!(
+            "/.well-known/webfinger?resource=acct:{username}@{}",
+            world.host_header
+        ),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(jrd["links"][0]["href"], profile.actor_url.as_str());
+
+    // Inbox: mounted, and an unsigned request is refused by the signature check (not 404).
+    let (status, _) = call("POST", format!("/ap/profiles/{nanoid}/inbox"), None, None).await;
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+        "inbox must be mounted and guarded, got {status}"
+    );
+
+    // Identity read: owner only.
+    let (status, identity) = call(
+        "GET",
+        format!("/api/v1/profiles/{nanoid}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(identity["id"], nanoid.as_str());
+    assert_eq!(identity["username"], username.as_str());
+    let (status, _) = call(
+        "GET",
+        format!("/api/v1/profiles/{nanoid}"),
+        Some(stranger.token.clone()),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call("GET", format!("/api/v1/profiles/{nanoid}"), None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Follow a local Profile, list, unfollow.
+    let (status, follow) = call(
+        "POST",
+        format!("/api/v1/profiles/{nanoid}/follows"),
+        owner_token.clone(),
+        Some(serde_json::json!({"target": other.actor_url})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{follow}");
+    let follow_id = follow["id"].as_str().unwrap().to_string();
+    let (status, list) = call(
+        "GET",
+        format!("/api/v1/profiles/{nanoid}/following"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    let (status, list) = call(
+        "GET",
+        format!("/api/v1/profiles/{}/followers", other.nanoid),
+        Some(other_owner.token.clone()),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    let (status, _) = call(
+        "DELETE",
+        format!("/api/v1/profiles/{nanoid}/follows/{follow_id}"),
+        owner_token.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Individual mute and block: create, list, delete.
+    for (kind, plural) in [("mute", "mutes"), ("block", "blocks")] {
+        let (status, created) = call(
+            "POST",
+            format!("/api/v1/profiles/{nanoid}/{plural}"),
+            owner_token.clone(),
+            Some(serde_json::json!({"target": other.actor_url})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{kind}: {created}");
+        assert_eq!(created["kind"], kind);
+        let id = created["id"].as_str().unwrap().to_string();
+        let (status, list) = call(
+            "GET",
+            format!("/api/v1/profiles/{nanoid}/{plural}"),
+            owner_token.clone(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let items = list["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1, "{kind}");
+        assert_eq!(items[0]["id"], id.as_str());
+        assert_eq!(items[0]["target"], other.actor_url.as_str());
+        let (status, _) = call(
+            "GET",
+            format!("/api/v1/profiles/{nanoid}/{plural}"),
+            Some(stranger.token.clone()),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{kind} list is owner-only");
+        let (status, _) = call(
+            "DELETE",
+            format!("/api/v1/profiles/{nanoid}/{plural}/{id}"),
+            owner_token.clone(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{kind}");
+        let (_, list) = call(
+            "GET",
+            format!("/api/v1/profiles/{nanoid}/{plural}"),
+            owner_token.clone(),
+            None,
+        )
+        .await;
+        assert!(list["items"].as_array().unwrap().is_empty(), "{kind}");
     }
 }
 
@@ -540,19 +597,22 @@ fn main_serves_only_the_root_router() {
 }
 
 /// The production entrypoint starts projection, Registration Gate webhook, provider maintenance,
-/// and independent enforcement probing. A Profile relationship worker must not start from `main`
-/// before P4 owns the cutover; whoever adds one has to update this list deliberately.
+/// independent enforcement probing and (since the P4 cutover) the Profile delivery worker. Whoever
+/// adds another worker has to update this list deliberately.
 #[test]
-fn main_starts_no_profile_delivery_worker() {
+fn main_starts_the_expected_workers() {
     let main_rs = include_str!("../main.rs");
     let spawns: Vec<&str> = main_rs
         .lines()
         .map(str::trim)
-        .filter(|line| !line.starts_with("//") && line.contains("spawn"))
+        .filter(|line| {
+            !line.starts_with("//") && !line.starts_with("use ") && line.contains("spawn")
+        })
+        .filter(|line| !line.ends_with("spawn_profile_delivery_worker,"))
         .collect();
     assert_eq!(
         spawns.len(),
-        4,
+        5,
         "unexpected worker start in main.rs: {spawns:?}"
     );
     assert!(spawns[0].contains("ProjectionWorker::spawn"), "{spawns:?}");
@@ -565,15 +625,29 @@ fn main_starts_no_profile_delivery_worker() {
         spawns[3].contains("registration_guard::spawn_monitor"),
         "{spawns:?}"
     );
-    for forbidden in [
-        "tokio::spawn",
-        "profile_delivery",
-        "ProfileDelivery",
-        "profile_relationship",
-    ] {
-        assert!(
-            !main_rs.contains(forbidden),
-            "main.rs must not contain {forbidden}"
-        );
-    }
+    assert!(
+        spawns[4].contains("spawn_profile_delivery_worker("),
+        "{spawns:?}"
+    );
+    assert!(
+        !main_rs.contains("tokio::spawn"),
+        "main.rs must not spawn tasks itself"
+    );
+}
+
+/// The Profile actor keys are provisioned right after the migrations and before anything serves
+/// requests or delivers: a Profile without a key is not an actor.
+#[test]
+fn main_provisions_profile_keys_before_workers_and_routes() {
+    let main_rs = include_str!("../main.rs");
+    let position = |needle: &str| {
+        main_rs
+            .find(needle)
+            .unwrap_or_else(|| panic!("main.rs must contain {needle}"))
+    };
+    let provision = position("cutover::provision_profile_keys(&app)");
+    assert!(position("AppModule::new()") < provision);
+    assert!(provision < position("ProjectionWorker::spawn"));
+    assert!(provision < position("spawn_profile_delivery_worker("));
+    assert!(provision < position("root_router::build_root_router("));
 }

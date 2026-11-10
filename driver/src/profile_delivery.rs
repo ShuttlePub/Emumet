@@ -8,6 +8,8 @@ mod resolver;
 mod sender;
 mod target;
 
+#[cfg(any(test, feature = "test-mode"))]
+pub use resolver::inject_test_resolved_actor;
 pub use resolver::HttpRemoteActorResolver;
 pub use sender::HttpProfileDeliverySender;
 pub use target::ProfileDeliveryNetworkSettings;

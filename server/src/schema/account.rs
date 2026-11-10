@@ -19,14 +19,15 @@ pub struct GetAllAccountQuery {
 pub struct CreateAccountRequest {
     pub name: String,
     pub is_bot: bool,
-    /// Optional Profile username (staged migration: optional until P4, then required).
-    /// Never derived from `name`. Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word
-    /// list without trimming or case folding (400 on violation). A valid value is stored on the
-    /// created Profile in the same transaction; it is unique across all Profiles (also deleted ones)
-    /// and immutable afterwards (409 if already taken, nothing is created). Omit the field to keep
-    /// the legacy behaviour.
+    /// **Required** Profile username (400 when omitted, before anything is created). Never derived
+    /// from `name`. Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without
+    /// trimming or case folding (400 on violation). It is stored on the created Profile in the same
+    /// transaction; it is unique across all Profiles (also deleted ones) and immutable afterwards
+    /// (409 if already taken, nothing is created). It is the acct name of the Profile's actor.
     #[serde(default)]
     #[schema(
+        required = true,
+        nullable = false,
         pattern = "^[a-z0-9][a-z0-9._-]{0,63}$",
         min_length = 1,
         max_length = 64
@@ -38,13 +39,15 @@ pub struct CreateAccountRequest {
 pub struct CreateProfileRequest {
     pub display_name: Option<String>,
     pub summary: Option<String>,
-    /// Optional Profile username (staged migration: optional until P4, then required).
-    /// Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without trimming or
-    /// case folding (400 on violation). A valid value is stored on the created Profile; it is unique
-    /// across all Profiles (also deleted ones) and immutable afterwards (409 if already taken, nothing
-    /// is created). Usernames cannot be changed through an update API.
+    /// **Required** Profile username (400 when omitted, before anything is created). Validated
+    /// against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without trimming or case
+    /// folding (400 on violation). It is stored on the created Profile; it is unique across all
+    /// Profiles (also deleted ones) and immutable afterwards (409 if already taken, nothing is
+    /// created). Usernames cannot be changed through an update API.
     #[serde(default)]
     #[schema(
+        required = true,
+        nullable = false,
         pattern = "^[a-z0-9][a-z0-9._-]{0,63}$",
         min_length = 1,
         max_length = 64
@@ -53,11 +56,12 @@ pub struct CreateProfileRequest {
 }
 
 impl CreateProfileRequest {
-    pub fn into_dto(self) -> CreateProfileDto {
+    /// `username` is the already validated required username (see `require_username`).
+    pub fn into_dto(self, username: String) -> CreateProfileDto {
         CreateProfileDto {
             display_name: self.display_name,
             summary: self.summary,
-            username: self.username,
+            username,
         }
     }
 }
@@ -273,46 +277,6 @@ pub struct AccountsResponse {
     pub first: Option<String>,
     pub last: Option<String>,
     pub items: Vec<AccountResponse>,
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct FollowAccountRequest {
-    /// Remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain
-    pub target: String,
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct BlockAccountRequest {
-    /// Local account nanoid, remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain
-    pub target: String,
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct MuteAccountRequest {
-    /// Local account nanoid, remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain
-    pub target: String,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct RelationResponse {
-    pub id: String,
-    pub target_type: String,
-    pub target: String,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RelationListResponse {
-    pub items: Vec<RelationResponse>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FollowAccountResponse {
-    pub follow_id: String,
-    pub remote_actor_url: String,
-    pub activity_id: String,
-    pub approved: bool,
 }
 
 pub fn to_moderation_response(dto: Option<&ModerationDto>) -> Option<ModerationResponse> {

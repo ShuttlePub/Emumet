@@ -60,13 +60,72 @@ fn me_endpoint_contract_is_registered() {
 }
 
 #[test]
-fn follow_management_contract_is_registered() {
+fn retired_account_federation_is_gone_from_the_contract_and_profile_apis_replace_it() {
     let spec: serde_json::Value = serde_json::from_str(&generate_openapi_json())
         .expect("generated OpenAPI spec is valid JSON");
+    let paths = spec["paths"].as_object().unwrap();
+    // The P4 cutover retired the Account based federation: none of it is part of the contract.
+    for gone in [
+        "/api/v1/accounts/{account_id}/follow",
+        "/api/v1/accounts/{account_id}/unfollow",
+        "/api/v1/accounts/{account_id}/followers",
+        "/api/v1/accounts/{account_id}/following",
+        "/api/v1/accounts/{account_id}/block",
+        "/api/v1/accounts/{account_id}/unblock",
+        "/api/v1/accounts/{account_id}/blocks",
+        "/api/v1/accounts/{account_id}/mute",
+        "/api/v1/accounts/{account_id}/unmute",
+        "/api/v1/accounts/{account_id}/mutes",
+        "/internal/v1/accounts/{id}/sign",
+        "/internal/v1/accounts/{id}/public-key",
+        "/ap/accounts/{account_id}",
+        "/ap/accounts/{account_id}/inbox",
+        "/ap/accounts/{account_id}/outbox",
+        "/ap/accounts/{account_id}/followers",
+        "/ap/accounts/{account_id}/following",
+    ] {
+        assert!(
+            !paths.contains_key(gone),
+            "{gone} must not be in the contract"
+        );
+    }
+    assert!(
+        !paths.keys().any(|path| path.starts_with("/internal/")),
+        "there is no internal signing API any more"
+    );
+    for name in [
+        "SignRequestBody",
+        "SignResponse",
+        "PublicKeyResponse",
+        "FollowAccountRequest",
+        "FollowAccountResponse",
+        "BlockAccountRequest",
+        "MuteAccountRequest",
+        "OrderedCollection",
+    ] {
+        assert!(
+            spec["components"]["schemas"].get(name).is_none(),
+            "{name} schema must be gone with its endpoint"
+        );
+    }
+    let tags: Vec<&str> = spec["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tag| tag["name"].as_str())
+        .collect();
+    assert!(!tags.contains(&"Signing") && !tags.contains(&"ActivityPub"));
+    // The Profile based replacements are there (and the Account management API stays).
     for (path, method) in [
-        ("/api/v1/accounts/{account_id}/unfollow", "post"),
-        ("/api/v1/accounts/{account_id}/followers", "get"),
-        ("/api/v1/accounts/{account_id}/following", "get"),
+        ("/api/v1/profiles/{profile_nanoid}/follows", "post"),
+        ("/api/v1/profiles/{profile_nanoid}/followers", "get"),
+        ("/api/v1/profiles/{profile_nanoid}/following", "get"),
+        ("/api/v1/profiles/{profile_nanoid}/blocks", "post"),
+        ("/api/v1/profiles/{profile_nanoid}/mutes", "post"),
+        ("/api/v1/accounts", "post"),
+        ("/api/v1/accounts/{account_id}", "get"),
+        ("/api/v1/accounts/{account_id}", "patch"),
+        ("/api/v1/accounts/{account_id}", "delete"),
     ] {
         let operation = &spec["paths"][path][method];
         assert!(operation.is_object(), "{method} {path} must be registered");
@@ -200,20 +259,16 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
     let spec = generated_spec();
     let profile = "/api/v1/profiles/{profile_nanoid}";
     for (path, method, statuses) in [
-        (
-            profile.to_string(),
-            "get",
-            vec!["200", "401", "403", "404", "501"],
-        ),
+        (profile.to_string(), "get", vec!["200", "401", "403", "404"]),
         (
             format!("{profile}/follows"),
             "post",
-            vec!["201", "401", "403", "404", "409", "422", "501"],
+            vec!["201", "401", "403", "404", "409", "422"],
         ),
         (
             format!("{profile}/follows/{{follow_id}}"),
             "delete",
-            vec!["204", "401", "403", "404", "501"],
+            vec!["204", "401", "403", "404"],
         ),
         (
             format!("{profile}/following"),
@@ -228,32 +283,32 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
         (
             format!("{profile}/blocks"),
             "get",
-            vec!["200", "401", "403", "404", "501"],
+            vec!["200", "400", "401", "403", "404"],
         ),
         (
             format!("{profile}/blocks"),
             "post",
-            vec!["201", "401", "403", "404", "409", "501"],
+            vec!["201", "401", "403", "404", "409"],
         ),
         (
             format!("{profile}/blocks/{{block_id}}"),
             "delete",
-            vec!["204", "401", "403", "404", "501"],
+            vec!["204", "401", "403", "404"],
         ),
         (
             format!("{profile}/mutes"),
             "get",
-            vec!["200", "401", "403", "404", "501"],
+            vec!["200", "400", "401", "403", "404"],
         ),
         (
             format!("{profile}/mutes"),
             "post",
-            vec!["201", "401", "403", "404", "409", "501"],
+            vec!["201", "401", "403", "404", "409"],
         ),
         (
             format!("{profile}/mutes/{{mute_id}}"),
             "delete",
-            vec!["204", "401", "403", "404", "501"],
+            vec!["204", "401", "403", "404"],
         ),
         (
             format!("{profile}/domain-controls"),
@@ -290,10 +345,21 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
             );
         }
         let description = operation["description"].as_str().unwrap_or_default();
-        assert!(
-            description.contains("NOT MOUNTED"),
-            "{method} {path} description must state it is not mounted in production"
-        );
+        if path.contains("/domain-controls") {
+            assert!(
+                description.contains("NOT MOUNTED"),
+                "{method} {path} description must state it is not mounted in production"
+            );
+        } else {
+            assert!(
+                !description.contains("NOT MOUNTED"),
+                "{method} {path} is served by the cutover"
+            );
+            assert!(
+                operation["responses"].get("501").is_none(),
+                "{method} {path} is implemented: the E8 501 must be gone"
+            );
+        }
         assert!(
             description.contains("current owner"),
             "{method} {path} description must state owner-only authorization"
@@ -306,13 +372,13 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
         "Profile actor contract must be registered"
     );
     let description = actor["description"].as_str().unwrap_or_default();
-    assert!(description.contains("NOT MOUNTED"));
+    assert!(!description.contains("NOT MOUNTED"));
     assert!(description.contains("/ap/profiles/{profile_nanoid}"));
     assert!(description.contains("#main-key"));
     assert_eq!(
         actor["tags"],
         serde_json::json!(["ProfileActor"]),
-        "the actor document is real (P1) and no longer part of the 501 ProfilePolicy skeleton"
+        "the actor document is not part of the ProfilePolicy operations"
     );
     assert!(actor["responses"].get("501").is_none());
     assert!(actor["responses"].get("404").is_some());
@@ -321,7 +387,7 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
     assert!(inbox.is_object(), "Profile inbox must be registered");
     assert_eq!(inbox["tags"], serde_json::json!(["ProfileActor"]));
     let description = inbox["description"].as_str().unwrap_or_default();
-    assert!(description.contains("NOT MOUNTED"));
+    assert!(!description.contains("NOT MOUNTED"));
     for activity in ["Follow", "Accept", "Reject", "Undo", "Block", "Create"] {
         assert!(
             description.contains(activity),
@@ -386,7 +452,7 @@ fn domain_control_contract_defines_revision_and_exact_match_semantics() {
 }
 
 #[test]
-fn username_is_optional_nullable_stored_once_and_has_no_update_api() {
+fn username_is_required_on_creation_stored_once_and_has_no_update_api() {
     let spec = generated_spec();
     let schemas = &spec["components"]["schemas"];
     let pattern = "^[a-z0-9][a-z0-9._-]{0,63}$";
@@ -400,8 +466,12 @@ fn username_is_optional_nullable_stored_once_and_has_no_update_api() {
             .cloned()
             .unwrap_or_default();
         assert!(
-            !required.iter().any(|name| name == field),
-            "{schema}.{field} must stay optional until P4"
+            required.iter().any(|name| name == field),
+            "{schema}.{field} is required since the P4 cutover"
+        );
+        assert_eq!(
+            schemas[schema]["properties"][field]["type"], "string",
+            "{schema}.{field} must not be nullable"
         );
         assert_eq!(
             schemas[schema]["properties"][field]["pattern"], pattern,
@@ -504,7 +574,7 @@ fn username_is_optional_nullable_stored_once_and_has_no_update_api() {
 }
 
 #[test]
-fn contract_only_tag_states_it_is_not_mounted() {
+fn profile_policy_tag_states_what_is_served_and_what_is_not_mounted() {
     let spec = generated_spec();
     let tag = spec["tags"]
         .as_array()
@@ -513,8 +583,10 @@ fn contract_only_tag_states_it_is_not_mounted() {
         .find(|tag| tag["name"] == "ProfilePolicy")
         .expect("ProfilePolicy tag must be registered");
     let description = tag["description"].as_str().unwrap();
-    assert!(description.contains("CONTRACT ONLY"));
-    assert!(description.contains("not mounted"));
+    assert!(!description.contains("CONTRACT ONLY"));
+    assert!(description.contains("NOT MOUNTED"));
+    assert!(description.contains("D8R"));
+    assert!(description.contains("410"));
 }
 
 #[test]
@@ -550,10 +622,27 @@ fn followers_contract_identifies_local_and_remote_followers() {
 }
 
 #[test]
-fn contract_only_component_schemas_state_they_are_not_mounted() {
+fn only_domain_control_schemas_state_they_are_not_mounted() {
     let spec = generated_spec();
     let schemas = spec["components"]["schemas"].as_object().unwrap();
-    let contract_schemas = [
+    let domain_control_schemas = [
+        "DomainControlMode",
+        "DomainControlResponse",
+        "DomainControlListResponse",
+        "PutDomainControlRequest",
+    ];
+    for name in domain_control_schemas {
+        let description = schemas
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} must be registered"))["description"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            description.contains("NOT MOUNTED"),
+            "{name} description must state the not-mounted boundary, got {description:?}"
+        );
+    }
+    for name in [
         "CreateProfileFollowRequest",
         "ProfileFollowState",
         "ProfileFollowResponse",
@@ -566,34 +655,29 @@ fn contract_only_component_schemas_state_they_are_not_mounted() {
         "ProfileRelationKind",
         "ProfileRelationResponse",
         "ProfileRelationListResponse",
-        "DomainControlMode",
-        "DomainControlResponse",
-        "DomainControlListResponse",
-        "PutDomainControlRequest",
-    ];
-    for name in contract_schemas {
+    ] {
         let description = schemas
             .get(name)
             .unwrap_or_else(|| panic!("{name} must be registered"))["description"]
             .as_str()
             .unwrap_or_default();
         assert!(
-            description.contains("CONTRACT ONLY") && description.contains("not mounted"),
-            "{name} description must state the not-mounted boundary, got {description:?}"
+            !description.contains("CONTRACT ONLY") && !description.contains("NOT MOUNTED"),
+            "{name} is served by the cutover, got {description:?}"
         );
     }
-    let registered_contract_types = schemas
+    let not_mounted = schemas
         .keys()
         .filter(|name| {
             schemas[name.as_str()]["description"]
                 .as_str()
-                .is_some_and(|d| d.contains("CONTRACT ONLY"))
+                .is_some_and(|d| d.contains("NOT MOUNTED"))
         })
         .count();
     assert_eq!(
-        registered_contract_types,
-        contract_schemas.len(),
-        "every contract-only schema must be listed in this test"
+        not_mounted,
+        domain_control_schemas.len(),
+        "only the domain-controls schemas may be marked not mounted"
     );
 }
 

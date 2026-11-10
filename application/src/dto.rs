@@ -1,6 +1,5 @@
 pub mod account;
 pub mod activitypub;
-pub mod block_mute;
 pub mod domain_control;
 pub mod media;
 pub mod metadata;

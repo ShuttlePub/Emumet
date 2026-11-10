@@ -16,15 +16,16 @@
     "/.well-known/webfinger": {
       "get": {
         "tags": [
-          "ActivityPub"
+          "ProfileActor"
         ],
-        "description": "WebFinger account discovery for ActivityPub.",
-        "operationId": "webfinger",
+        "summary": "WebFinger for Profile acct names (`acct:username@domain`). The Account based WebFinger it\nreplaced is gone: Account names no longer resolve.",
+        "description": "WebFinger discovery of a Profile actor by acct name (`acct:username@{PUBLIC_BASE_URL host[:port]}`, domain compared case-insensitively). The `self` link is the Profile actor URL. Account names are not resolvable.",
+        "operationId": "profile_webfinger",
         "parameters": [
           {
             "name": "resource",
             "in": "query",
-            "description": "Resource URI (acct:user@domain)",
+            "description": "Resource URI (acct:username@domain)",
             "required": true,
             "schema": {
               "type": "string"
@@ -46,258 +47,7 @@
             "description": "Invalid resource format"
           },
           "404": {
-            "description": "Account not found"
-          }
-        }
-      }
-    },
-    "/ap/accounts/{account_id}": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub Actor document for a local account.",
-        "operationId": "get_actor",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "ActivityPub Actor",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Actor"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Actor not found"
-          }
-        }
-      }
-    },
-    "/ap/accounts/{account_id}/followers": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub followers OrderedCollection for a local account.",
-        "operationId": "get_followers",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Followers collection",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderedCollection"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid account ID"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        }
-      }
-    },
-    "/ap/accounts/{account_id}/following": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub following OrderedCollection for a local account.",
-        "operationId": "get_following",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Following collection",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderedCollection"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid account ID"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        }
-      }
-    },
-    "/ap/accounts/{account_id}/inbox": {
-      "post": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "ActivityPub inbox for signed inbound federation activities.",
-        "operationId": "post_inbox",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/activity+json": {
-              "schema": {}
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Activity accepted or ignored"
-          },
-          "400": {
-            "description": "Malformed ActivityPub activity"
-          },
-          "401": {
-            "description": "Missing or invalid HTTP Signature"
-          },
-          "404": {
-            "description": "Local actor not found"
-          }
-        }
-      }
-    },
-    "/ap/accounts/{account_id}/outbox": {
-      "get": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Retrieve an ActivityPub outbox OrderedCollection for a local account.",
-        "operationId": "get_outbox",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum number of activities to return",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Return activities with IDs older than this cursor",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "account_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Outbox collection",
-            "content": {
-              "application/activity+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderedCollection"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid account ID or pagination parameter"
-          },
-          "404": {
-            "description": "Account not found"
+            "description": "No such Profile actor, or the domain is not this instance"
           }
         }
       }
@@ -307,7 +57,7 @@
         "tags": [
           "ProfileActor"
         ],
-        "description": "Profile ActivityPub actor document (1 Profile = 1 actor, ADR 0002). Actor id: {PUBLIC_BASE_URL}/ap/profiles/{profile_nanoid}; inbox/outbox/followers/following are that URL plus /inbox, /outbox, /followers, /following; the key id is that URL plus #main-key; preferredUsername is the Profile username. A Profile is only an actor once it has a username and a Profile signing key (404 otherwise). NOT MOUNTED on the production router: the production mount is owned by the P4 cutover; P1 only provides the generation logic.",
+        "description": "Profile ActivityPub actor document (1 Profile = 1 actor, ADR 0002). Actor id: {PUBLIC_BASE_URL}/ap/profiles/{profile_nanoid}; inbox/outbox/followers/following are that URL plus /inbox, /outbox, /followers, /following; the key id is that URL plus #main-key; preferredUsername is the Profile username. A Profile is only an actor once it has a username and a Profile signing key (404 otherwise); every Profile has both after the cutover. The public key published here is the only way to obtain a Profile key: there is no signing or key-export API.",
         "operationId": "get_profile_actor",
         "parameters": [
           {
@@ -342,7 +92,7 @@
         "tags": [
           "ProfileActor"
         ],
-        "description": "ActivityPub inbox of one Profile actor. NOT MOUNTED on the production router (the production mount is owned by the P4 cutover). Requires a valid HTTP Signature whose key owner is `activity.actor`. Received activity table: Follow (object = this Profile; stored as an accepted generation and an Accept delivery job is reserved in the same transaction; when the Profile blocks the signer the Follow is refused instead: an ended generation is stored and a Reject(Follow) delivery job is reserved), Accept / Reject (object = a Follow this Profile sent, matched by the original Follow activity ID and by both parties), Undo (object = a Follow of the signer; an Undo that overtakes its Follow is remembered so the late Follow creates nothing). Every other activity (post activities such as Create / Like / EmojiReact / Announce, Block, Undo of a non-Follow, ...) is acknowledged with 202 and changes nothing: post authorization belongs to ShuttlePub and domain policy to D8G. Stale (ended generation), foreign (other Profile / other actor), unknown-Follow and duplicate activities are acknowledged with 202 without changing any relation.",
+        "description": "ActivityPub inbox of one Profile actor. Requires a valid HTTP Signature whose key owner is `activity.actor`. Received activity table: Follow (object = this Profile; stored as an accepted generation and an Accept delivery job is reserved in the same transaction; when the Profile blocks the signer the Follow is refused instead: an ended generation is stored and a Reject(Follow) delivery job is reserved), Accept / Reject (object = a Follow this Profile sent, matched by the original Follow activity ID and by both parties), Undo (object = a Follow of the signer; an Undo that overtakes its Follow is remembered so the late Follow creates nothing). Every other activity (post activities such as Create / Like / EmojiReact / Announce, Block, Undo of a non-Follow, ...) is acknowledged with 202 and changes nothing: post authorization belongs to ShuttlePub and domain policy to D8G. Stale (ended generation), foreign (other Profile / other actor), unknown-Follow and duplicate activities are acknowledged with 202 without changing any relation.",
         "operationId": "post_profile_inbox",
         "parameters": [
           {
@@ -460,7 +210,7 @@
         "tags": [
           "Account"
         ],
-        "description": "Create a new account with a generated signing key pair. `profile_username` is optional: a valid value is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards); omit it to keep the legacy behaviour.",
+        "description": "Create a new account and its Profile. `profile_username` is REQUIRED (400 when omitted): it is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards) and is the acct name of the Profile's actor. The Profile's ActivityPub signing key is generated in the same transaction; no Account-level signing key exists.",
         "operationId": "create_account",
         "requestBody": {
           "content": {
@@ -484,7 +234,7 @@
             }
           },
           "400": {
-            "description": "Invalid request (including a malformed or reserved profile_username)"
+            "description": "Invalid request (including a missing, malformed or reserved profile_username)"
           },
           "409": {
             "description": "profile_username is already taken; nothing was created"
@@ -616,352 +366,6 @@
         ]
       }
     },
-    "/api/v1/accounts/{account_id}/block": {
-      "post": {
-        "tags": [
-          "Account"
-        ],
-        "description": "Block a local or remote account. Also removes any follow relationships between the two accounts in both directions.",
-        "operationId": "block_account",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BlockAccountRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Account blocked",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RelationResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "404": {
-            "description": "Account not found"
-          },
-          "422": {
-            "description": "Cannot block (self-block or already blocked)"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/accounts/{account_id}/blocks": {
-      "get": {
-        "tags": [
-          "Account"
-        ],
-        "description": "List accounts blocked by the given account.",
-        "operationId": "get_blocks",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Blocked accounts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RelationListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/accounts/{account_id}/follow": {
-      "post": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Follow a remote ActivityPub account.",
-        "operationId": "follow_account",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FollowAccountRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Follow initiated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FollowAccountResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "404": {
-            "description": "Account not found"
-          },
-          "409": {
-            "description": "Already following"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/accounts/{account_id}/followers": {
-      "get": {
-        "tags": [
-          "Account"
-        ],
-        "description": "List approved followers of the given account.",
-        "operationId": "get_followers",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Approved followers",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RelationListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "403": {
-            "description": "Insufficient permission"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/accounts/{account_id}/following": {
-      "get": {
-        "tags": [
-          "Account"
-        ],
-        "description": "List approved accounts followed by the given account.",
-        "operationId": "get_following",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Approved following accounts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RelationListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "403": {
-            "description": "Insufficient permission"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/accounts/{account_id}/mute": {
-      "post": {
-        "tags": [
-          "Account"
-        ],
-        "description": "Mute a local or remote account.",
-        "operationId": "mute_account",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MuteAccountRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Account muted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RelationResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "404": {
-            "description": "Account not found"
-          },
-          "422": {
-            "description": "Cannot mute (self-mute or already muted)"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/accounts/{account_id}/mutes": {
-      "get": {
-        "tags": [
-          "Account"
-        ],
-        "description": "List accounts muted by the given account.",
-        "operationId": "get_mutes",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Muted accounts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RelationListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "404": {
-            "description": "Account not found"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
     "/api/v1/accounts/{account_id}/reactivate": {
       "post": {
         "tags": [
@@ -992,150 +396,6 @@
           },
           "404": {
             "description": "Account not found"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/accounts/{account_id}/unblock": {
-      "post": {
-        "tags": [
-          "Account"
-        ],
-        "description": "Remove a block on a local or remote account.",
-        "operationId": "unblock_account",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BlockAccountRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Block removed"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "404": {
-            "description": "Account or block relationship not found"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/accounts/{account_id}/unfollow": {
-      "post": {
-        "tags": [
-          "ActivityPub"
-        ],
-        "description": "Unfollow a remote ActivityPub account by delivering a signed Undo(Follow).",
-        "operationId": "unfollow_account",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FollowAccountRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Follow removed"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "403": {
-            "description": "Insufficient permission"
-          },
-          "404": {
-            "description": "Account or follow relationship not found"
-          },
-          "422": {
-            "description": "Undo delivery failed"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/accounts/{account_id}/unmute": {
-      "post": {
-        "tags": [
-          "Account"
-        ],
-        "description": "Remove a mute on a local or remote account.",
-        "operationId": "unmute_account",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Local account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MuteAccountRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Mute removed"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "404": {
-            "description": "Account or mute relationship not found"
           }
         },
         "security": [
@@ -3076,7 +2336,7 @@
         "tags": [
           "Account"
         ],
-        "description": "Create an organization-owned Profile. `username` is optional: a valid value is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards).",
+        "description": "Create an organization-owned Profile. `username` is REQUIRED (400 when omitted): it is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards). The Profile's ActivityPub signing key is generated in the same transaction.",
         "operationId": "create_profile",
         "parameters": [
           {
@@ -3111,7 +2371,7 @@
             }
           },
           "400": {
-            "description": "Missing organization header or malformed/reserved username"
+            "description": "Missing organization header or missing/malformed/reserved username"
           },
           "403": {
             "description": "Authenticated person is not an active organization member"
@@ -3184,7 +2444,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Profile identity read. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner (the owning personal Account, or an active member of the owning organization via X-Organization-Id). `username` is null while the Profile has no username (legacy Profiles; username is set once in P1 and is immutable afterwards). There is deliberately no username update API.",
+        "description": "Profile identity read. Authorization: only the Profile's current owner (the owning personal Account, or an active member of the owning organization via X-Organization-Id). `username` is set for every Profile once the cutover has run (it is required at creation, and the cutover refuses to run while a Profile has none); it is immutable and there is deliberately no username update API.",
         "operationId": "get_profile_identity",
         "parameters": [
           {
@@ -3216,9 +2476,6 @@
           },
           "404": {
             "description": "Profile not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -3233,7 +2490,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Individual blocks owned by the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "description": "Individual blocks owned by the Profile. Authorization: only the Profile's current owner.",
         "operationId": "list_profile_blocks",
         "parameters": [
           {
@@ -3277,6 +2534,9 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid cursor"
+          },
           "401": {
             "description": "Missing or invalid bearer token"
           },
@@ -3285,9 +2545,6 @@
           },
           "404": {
             "description": "Profile not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -3300,8 +2557,8 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Block one target (individual actor) as the Profile. NOT MOUNTED in production (contract only; block writes stay unmounted until D8R); the skeleton answers 501. Semantics: display suppression, detaches existing follow relations in both directions and rejects new follows/interactions in both directions. No ActivityPub Block is sent. Removing the block never restores detached relations. Authorization: only the Profile's current owner. Settings never propagate to other Profiles or Accounts.",
-        "operationId": "create_profile_block",
+        "description": "Block one target (individual actor) as the Profile. Semantics: display suppression, detaches existing follow relations in both directions and rejects new follows/interactions in both directions. No ActivityPub Block is sent. Removing the block never restores detached relations. Authorization: only the Profile's current owner. Settings never propagate to other Profiles or Accounts.",
+        "operationId": "block_actor",
         "parameters": [
           {
             "name": "profile_nanoid",
@@ -3348,9 +2605,6 @@
           },
           "409": {
             "description": "Target is already blocked"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -3365,8 +2619,8 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Remove an individual block. Detached follow relations are NOT restored and no restore list is kept. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
-        "operationId": "delete_profile_block",
+        "description": "Remove an individual block. Detached follow relations are NOT restored and no restore list is kept. Authorization: only the Profile's current owner.",
+        "operationId": "unblock_actor",
         "parameters": [
           {
             "name": "profile_nanoid",
@@ -3399,9 +2653,6 @@
           },
           "404": {
             "description": "Profile or block not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -3658,7 +2909,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Actors following the Profile (pending and accepted follows); each follower is a local Profile or a remote actor identified by its canonical actor URL (`follower.kind`, `follower.actor_url`; `follower.profile_id` only for local). NOT MOUNTED in production (implemented by P3i; the route is mounted only in tests until P4). Oldest first; `cursor` is the opaque `next_cursor` of the previous page, `limit` defaults to 20 (1..=100). Authorization: only the Profile's current owner; other Profiles' and Accounts' relations are never returned.",
+        "description": "Actors following the Profile (pending and accepted follows); each follower is a local Profile or a remote actor identified by its canonical actor URL (`follower.kind`, `follower.actor_url`; `follower.profile_id` only for local). Oldest first; `cursor` is the opaque `next_cursor` of the previous page, `limit` defaults to 20 (1..=100). Authorization: only the Profile's current owner; other Profiles' and Accounts' relations are never returned.",
         "operationId": "list_profile_followers",
         "parameters": [
           {
@@ -3727,7 +2978,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Actors followed by the Profile (pending and accepted follows; ended generations are not listed). `target` is the canonical actor URL (the Profile actor URL for a local target). NOT MOUNTED in production (implemented by P3i; the route is mounted only in tests until P4). Oldest first; `cursor` is the opaque `next_cursor` of the previous page, `limit` defaults to 20 (1..=100). Authorization: only the Profile's current owner; other Profiles' and Accounts' relations are never returned.",
+        "description": "Actors followed by the Profile (pending and accepted follows; ended generations are not listed). `target` is the canonical actor URL (the Profile actor URL for a local target). Oldest first; `cursor` is the opaque `next_cursor` of the previous page, `limit` defaults to 20 (1..=100). Authorization: only the Profile's current owner; other Profiles' and Accounts' relations are never returned.",
         "operationId": "list_profile_following",
         "parameters": [
           {
@@ -3796,8 +3047,8 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Follow a target as the Profile (the Profile, not the Account, is the follower). NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner. A new follow is rejected (422) when the target or its domain is blocked by the Profile or blocks the Profile. Mute does not reject follows.",
-        "operationId": "create_profile_follow",
+        "description": "Follow a target as the Profile (the Profile, not the Account, is the follower). Authorization: only the Profile's current owner. A new follow is rejected (422) when the target or its domain is blocked by the Profile or blocks the Profile. Mute does not reject follows.",
+        "operationId": "follow_profile",
         "parameters": [
           {
             "name": "profile_nanoid",
@@ -3847,9 +3098,6 @@
           },
           "422": {
             "description": "Follow refused by a block (individual or domain)"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -3864,8 +3112,8 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Unfollow: remove a follow owned by the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
-        "operationId": "delete_profile_follow",
+        "description": "Unfollow: remove a follow owned by the Profile. Authorization: only the Profile's current owner.",
+        "operationId": "unfollow_profile",
         "parameters": [
           {
             "name": "profile_nanoid",
@@ -3898,9 +3146,6 @@
           },
           "404": {
             "description": "Profile or follow not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -3915,7 +3160,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Individual mutes owned by the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "description": "Individual mutes owned by the Profile. Authorization: only the Profile's current owner.",
         "operationId": "list_profile_mutes",
         "parameters": [
           {
@@ -3959,6 +3204,9 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid cursor"
+          },
           "401": {
             "description": "Missing or invalid bearer token"
           },
@@ -3967,9 +3215,6 @@
           },
           "404": {
             "description": "Profile not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -3982,8 +3227,8 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Mute one target (individual actor) as the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Semantics: display suppression only; follow relations are kept and nothing is rejected. Authorization: only the Profile's current owner.",
-        "operationId": "create_profile_mute",
+        "description": "Mute one target (individual actor) as the Profile. Semantics: display suppression only; follow relations are kept and nothing is rejected. Authorization: only the Profile's current owner.",
+        "operationId": "mute_actor",
         "parameters": [
           {
             "name": "profile_nanoid",
@@ -4030,9 +3275,6 @@
           },
           "409": {
             "description": "Target is already muted"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -4047,8 +3289,8 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Remove an individual mute. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
-        "operationId": "delete_profile_mute",
+        "description": "Remove an individual mute. Authorization: only the Profile's current owner.",
+        "operationId": "unmute_actor",
         "parameters": [
           {
             "name": "profile_nanoid",
@@ -4081,9 +3323,6 @@
           },
           "404": {
             "description": "Profile or mute not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -4159,7 +3398,7 @@
         "tags": [
           "Account"
         ],
-        "description": "Set the username of a Profile that has none, exactly once. This is the only way to set a username after creation: there is no update API, a Profile that already has a username is refused with 409, and the username is unique across all Profiles (also deleted ones). Authorization: only the Profile's current owner (the owning personal Account, or an active member of the owning organization via X-Organization-Id). The username becomes the acct name of the Profile's future ActivityPub actor; the actor itself is not published before the P4 cutover.",
+        "description": "Set the username of a Profile that has none, exactly once. This is the only way to set a username after creation: there is no update API, a Profile that already has a username is refused with 409, and the username is unique across all Profiles (also deleted ones). Authorization: only the Profile's current owner (the owning personal Account, or an active member of the owning organization via X-Organization-Id). The username is the acct name of the Profile's ActivityPub actor. Since the P4 cutover every Profile is created with a username, so this only applies to Profiles created before it (a Profile that already has one is refused with 409).",
         "operationId": "set_profile_username",
         "parameters": [
           {
@@ -4352,105 +3591,6 @@
           },
           "404": {
             "description": "Target account not found"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/internal/v1/accounts/{id}/public-key": {
-      "get": {
-        "tags": [
-          "Signing"
-        ],
-        "description": "Retrieve the public key for an account.",
-        "operationId": "get_public_key",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Public key info",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PublicKeyResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Account or signing key not found"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/internal/v1/accounts/{id}/sign": {
-      "post": {
-        "tags": [
-          "Signing"
-        ],
-        "description": "Sign an HTTP request using the account's signing key.",
-        "operationId": "sign_request",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account nanoid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SignRequestBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Signed headers",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SignResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient permissions"
-          },
-          "404": {
-            "description": "Account or signing key not found"
           }
         },
         "security": [
@@ -4854,18 +3994,6 @@
           }
         }
       },
-      "BlockAccountRequest": {
-        "type": "object",
-        "required": [
-          "target"
-        ],
-        "properties": {
-          "target": {
-            "type": "string",
-            "description": "Local account nanoid, remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain"
-          }
-        }
-      },
       "ChangeRoleRequest": {
         "type": "object",
         "required": [
@@ -4934,7 +4062,8 @@
         "type": "object",
         "required": [
           "name",
-          "is_bot"
+          "is_bot",
+          "profile_username"
         ],
         "properties": {
           "is_bot": {
@@ -4944,11 +4073,8 @@
             "type": "string"
           },
           "profile_username": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Optional Profile username (staged migration: optional until P4, then required).\nNever derived from `name`. Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word\nlist without trimming or case folding (400 on violation). A valid value is stored on the\ncreated Profile in the same transaction; it is unique across all Profiles (also deleted ones)\nand immutable afterwards (409 if already taken, nothing is created). Omit the field to keep\nthe legacy behaviour.",
+            "type": "string",
+            "description": "**Required** Profile username (400 when omitted, before anything is created). Never derived\nfrom `name`. Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without\ntrimming or case folding (400 on violation). It is stored on the created Profile in the same\ntransaction; it is unique across all Profiles (also deleted ones) and immutable afterwards\n(409 if already taken, nothing is created). It is the acct name of the Profile's actor.",
             "maxLength": 64,
             "minLength": 1,
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
@@ -4985,7 +4111,7 @@
       },
       "CreateProfileFollowRequest": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nRequest to follow a target from a Profile.",
+        "description": "Request to follow a target from a Profile.",
         "required": [
           "target"
         ],
@@ -4998,7 +4124,7 @@
       },
       "CreateProfileRelationRequest": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nRequest to block or mute one target (individual actor) from a Profile.",
+        "description": "Request to block or mute one target (individual actor) from a Profile.",
         "required": [
           "target"
         ],
@@ -5011,6 +4137,9 @@
       },
       "CreateProfileRequest": {
         "type": "object",
+        "required": [
+          "username"
+        ],
         "properties": {
           "display_name": {
             "type": [
@@ -5025,11 +4154,8 @@
             ]
           },
           "username": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Optional Profile username (staged migration: optional until P4, then required).\nValidated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without trimming or\ncase folding (400 on violation). A valid value is stored on the created Profile; it is unique\nacross all Profiles (also deleted ones) and immutable afterwards (409 if already taken, nothing\nis created). Usernames cannot be changed through an update API.",
+            "type": "string",
+            "description": "**Required** Profile username (400 when omitted, before anything is created). Validated\nagainst `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without trimming or case\nfolding (400 on violation). It is stored on the created Profile; it is unique across all\nProfiles (also deleted ones) and immutable afterwards (409 if already taken, nothing is\ncreated). Usernames cannot be changed through an update API.",
             "maxLength": 64,
             "minLength": 1,
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
@@ -5110,7 +4236,7 @@
       },
       "DomainControlListResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).",
+        "description": "Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.",
         "required": [
           "items"
         ],
@@ -5125,7 +4251,7 @@
       },
       "DomainControlMode": {
         "type": "string",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).\n\nTreatment applied to every actor whose canonical actor-ID host equals the domain.",
+        "description": "Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.\n\nTreatment applied to every actor whose canonical actor-ID host equals the domain.",
         "enum": [
           "mute",
           "block"
@@ -5133,7 +4259,7 @@
       },
       "DomainControlResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).\n\nA Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
+        "description": "Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.\n\nA Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
         "required": [
           "profile_id",
           "domain",
@@ -5218,41 +4344,6 @@
             "type": "integer",
             "format": "int64",
             "description": "取得した状態の revision。一致しなければ 409。"
-          }
-        }
-      },
-      "FollowAccountRequest": {
-        "type": "object",
-        "required": [
-          "target"
-        ],
-        "properties": {
-          "target": {
-            "type": "string",
-            "description": "Remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain"
-          }
-        }
-      },
-      "FollowAccountResponse": {
-        "type": "object",
-        "required": [
-          "followId",
-          "remoteActorUrl",
-          "activityId",
-          "approved"
-        ],
-        "properties": {
-          "activityId": {
-            "type": "string"
-          },
-          "approved": {
-            "type": "boolean"
-          },
-          "followId": {
-            "type": "string"
-          },
-          "remoteActorUrl": {
-            "type": "string"
           }
         }
       },
@@ -5438,18 +4529,6 @@
           }
         ]
       },
-      "MuteAccountRequest": {
-        "type": "object",
-        "required": [
-          "target"
-        ],
-        "properties": {
-          "target": {
-            "type": "string",
-            "description": "Local account nanoid, remote actor URL (e.g. https://remote.example/users/bob) or acct:user@domain"
-          }
-        }
-      },
       "MyOrganizationResponse": {
         "type": "object",
         "required": [
@@ -5531,56 +4610,6 @@
             }
           }
         ]
-      },
-      "OrderedCollection": {
-        "type": "object",
-        "description": "An ActivityPub `OrderedCollection` (e.g. followers, following, outbox).",
-        "required": [
-          "@context",
-          "id",
-          "type"
-        ],
-        "properties": {
-          "@context": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "first": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "last": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "orderedItems": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {}
-          },
-          "totalItems": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "minimum": 0
-          },
-          "type": {
-            "type": "string"
-          }
-        }
       },
       "OrganizationContextResponse": {
         "type": "object",
@@ -5712,7 +4741,7 @@
       },
       "ProfileActorKind": {
         "type": "string",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nWhether an actor lives on this server or on a remote server.",
+        "description": "Whether an actor lives on this server or on a remote server.",
         "enum": [
           "local",
           "remote"
@@ -5720,7 +4749,7 @@
       },
       "ProfileActorRef": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nReference to a follower or target actor, local or remote.",
+        "description": "Reference to a follower or target actor, local or remote.",
         "required": [
           "kind",
           "actor_url"
@@ -5744,7 +4773,7 @@
       },
       "ProfileFollowListResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nProfiles/actors followed by a Profile (the \"following\" list).",
+        "description": "Profiles/actors followed by a Profile (the \"following\" list).",
         "required": [
           "items"
         ],
@@ -5766,7 +4795,7 @@
       },
       "ProfileFollowResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nA Profile-scoped follow relationship (the Profile is the follower).",
+        "description": "A Profile-scoped follow relationship (the Profile is the follower).",
         "required": [
           "id",
           "profile_id",
@@ -5798,7 +4827,7 @@
       },
       "ProfileFollowState": {
         "type": "string",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nLifecycle state of a Profile follow.",
+        "description": "Lifecycle state of a Profile follow.",
         "enum": [
           "pending",
           "accepted"
@@ -5806,7 +4835,7 @@
       },
       "ProfileFollowerListResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nActors following a Profile (the \"followers\" list).",
+        "description": "Actors following a Profile (the \"followers\" list).",
         "required": [
           "items"
         ],
@@ -5828,7 +4857,7 @@
       },
       "ProfileFollowerResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nA follow relationship in which the Profile is the followed party (the follower is the actor).",
+        "description": "A follow relationship in which the Profile is the followed party (the follower is the actor).",
         "required": [
           "id",
           "profile_id",
@@ -5860,7 +4889,7 @@
       },
       "ProfileRelationKind": {
         "type": "string",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nKind of individual (non-domain) relation setting.",
+        "description": "Kind of individual (non-domain) relation setting.",
         "enum": [
           "mute",
           "block"
@@ -5868,7 +4897,6 @@
       },
       "ProfileRelationListResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.",
         "required": [
           "items"
         ],
@@ -5890,7 +4918,7 @@
       },
       "ProfileRelationResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nAn individual block or mute setting owned by one Profile.",
+        "description": "An individual block or mute setting owned by one Profile.",
         "required": [
           "id",
           "profile_id",
@@ -6164,28 +5192,9 @@
           }
         }
       },
-      "PublicKeyResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "owner",
-          "publicKeyPem"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "owner": {
-            "type": "string"
-          },
-          "publicKeyPem": {
-            "type": "string"
-          }
-        }
-      },
       "PutDomainControlRequest": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).\n\nCreate or replace the control for one domain.",
+        "description": "Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.\n\nCreate or replace the control for one domain.",
         "required": [
           "mode"
         ],
@@ -6390,39 +5399,6 @@
           }
         }
       },
-      "RelationListResponse": {
-        "type": "object",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RelationResponse"
-            }
-          }
-        }
-      },
-      "RelationResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "targetType",
-          "target"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "target": {
-            "type": "string"
-          },
-          "targetType": {
-            "type": "string"
-          }
-        }
-      },
       "SessionContextResponse": {
         "type": "object",
         "required": [
@@ -6464,65 +5440,6 @@
             "maxLength": 64,
             "minLength": 1,
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
-          }
-        }
-      },
-      "SignRequestBody": {
-        "type": "object",
-        "required": [
-          "method",
-          "url",
-          "headers"
-        ],
-        "properties": {
-          "body": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Base64-encoded request body (optional)"
-          },
-          "headers": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "method": {
-            "type": "string"
-          },
-          "url": {
-            "type": "string"
-          }
-        }
-      },
-      "SignResponse": {
-        "type": "object",
-        "required": [
-          "cavage",
-          "rfc9421"
-        ],
-        "properties": {
-          "cavage": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "rfc9421": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "propertyNames": {
-              "type": "string"
-            }
           }
         }
       },
@@ -7118,24 +6035,16 @@
       "description": "OAuth2 Login/Consent Provider"
     },
     {
-      "name": "Signing",
-      "description": "HTTP Signature signing"
-    },
-    {
-      "name": "ActivityPub",
-      "description": "ActivityPub discovery and actor endpoints"
-    },
-    {
       "name": "Report",
       "description": "Account moderation reports"
     },
     {
       "name": "ProfileActor",
-      "description": "Profile ActivityPub actor document and inbox (1 Profile = 1 actor). The actor generation logic (P1) and the inbox (P3i: Follow / Accept / Reject / Undo(Follow)) exist but the routes are NOT MOUNTED on the production router before the P4 cutover."
+      "description": "Profile ActivityPub actor document, WebFinger and inbox (1 Profile = 1 actor, ADR 0002). Served by the P4 cutover: the actor id is {PUBLIC_BASE_URL}/ap/profiles/{profile_nanoid}, the acct name is username@{host}. The old Account based federation (/ap/accounts/..., the Account WebFinger, /internal/v1/accounts/{id}/sign and /public-key) is retired and answers 410 Gone; there is no redirect to the new actor and no signing API."
     },
     {
       "name": "ProfilePolicy",
-      "description": "CONTRACT ONLY, not mounted on the production router (mounted in P4 at the earliest): Profile identity, Profile-scoped follow, individual block/mute and domain-controls. Handlers answer 501 until P3o/D8G/D8R implement them, except domain-controls (D8P: stored, revision-controlled, owner-only) and followers/following (P3i: read from the P2 follow graph, owner-only), which are implemented but stay unmounted on the production router until P4/D8R. Owner-only authorization, revision conflicts (409) and errors are the contract."
+      "description": "Profile identity, Profile-scoped follow, individual block/mute and followers/following (served by the P4 cutover; owner-only authorization, revision conflicts (409) and errors are the contract). The domain-controls operations (D8P: stored, revision-controlled, owner-only) are NOT MOUNTED on the production router: block writes are enabled by D8R, so the whole domain-controls family answers 404 until then. The Account scoped follow/block/mute operations were retired (410 Gone)."
     },
     {
       "name": "ProfileTransfer",

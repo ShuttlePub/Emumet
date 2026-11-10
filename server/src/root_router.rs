@@ -1,17 +1,27 @@
 //! Construction of the production root router.
 //!
 //! Extracted from `main` so that tests can build the very same router the server serves and
-//! assert which routes exist on it (for example that the Profile actor / relationship routes of
-//! P1-P3 are absent until the P4 cutover mounts them).
+//! assert which routes exist on it. Since the P4 cutover it serves the Profile federation model:
+//!
+//! - mounted: Profile actor document, Profile WebFinger and Profile inbox (P1/P3i), the Profile
+//!   identity read, Follow / unfollow, individual block / mute and the followers / following
+//!   reads (E8/P3o/P3i), the one-time username setter and the Account management API;
+//! - retired (explicit `410 Gone`, `route::retired`): `/ap/accounts/...`, the Account signing and
+//!   public-key endpoints, and the Account scoped Follow / block / mute operations;
+//! - NOT mounted: the domain-controls routes (D8P). Their block writes would store a block
+//!   without detaching existing relations, so they wait for D8R.
 
 use crate::api;
 use crate::auth::{self, JwksCache, OidcConfig};
 use crate::handler::AppModule;
 use crate::route::account::{AccountRouter, AdminAccountRouter, OrgAccountRouter};
-use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
+use crate::route::activitypub::profile_actor::ProfileActorRouter;
+use crate::route::activitypub::profile_inbox::ProfileInboxRouter;
 use crate::route::me::MeRouter;
 use crate::route::media::MediaRouter;
 use crate::route::oauth2::OAuth2Router;
+use crate::route::profile_follow_list::ProfileFollowListRouter;
+use crate::route::profile_relationship::ProfileRelationshipRouter;
 use crate::route::profile_transfer::ProfileTransferRouter;
 use crate::route::profile_username_availability::ProfileUsernameAvailabilityRouter;
 use crate::route::registration_gate::AdminRegistrationGateRouter;
@@ -20,7 +30,7 @@ use crate::route::registration_protection::{
     AdminRegistrationProtectionRouter, RegistrationEmailRouter,
 };
 use crate::route::report::{AdminReportRouter, ReportRouter};
-use crate::route::signing::SigningRouter;
+use crate::route::retired::RetiredRouter;
 #[cfg(feature = "test-mode")]
 use crate::route::test_mode::TestModeRouter;
 use axum::http::{header, HeaderValue, Method};
@@ -41,6 +51,9 @@ pub(crate) fn build_root_router(
         .route_reports()
         .route_me()
         .route_media()
+        .route_profile_relationships()
+        .route_profile_follow_lists()
+        .route_retired_account_relations()
         .nest(
             "/admin",
             axum::Router::new()
@@ -53,7 +66,7 @@ pub(crate) fn build_root_router(
 
     let authed_routes = axum::Router::new()
         .nest("/api/v1", api_v1)
-        .nest("/internal/v1", axum::Router::new().route_signing())
+        .nest("/internal/v1", axum::Router::new().route_retired_signing())
         .layer(axum::middleware::from_fn_with_state(
             app.clone(),
             api::organization_context::organization_context_middleware,
@@ -76,12 +89,19 @@ pub(crate) fn build_root_router(
             auth::auth_middleware,
         ));
 
-    // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider,
-    // webfinger, federation under /ap — inbox is HTTP-Signature guarded)
+    // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider, Profile WebFinger,
+    // Profile federation under /ap — the inbox is HTTP-Signature guarded, the retired Account
+    // actor paths answer 410).
     let public_routes = axum::Router::new()
         .route_oauth2()
-        .route_activitypub()
-        .nest("/ap", axum::Router::new().route_federation())
+        .route_profile_webfinger()
+        .nest(
+            "/ap",
+            axum::Router::new()
+                .route_profile_actor()
+                .route_profile_inbox()
+                .route_retired_account_federation(),
+        )
         .route_registration_email();
 
     #[cfg(feature = "test-mode")]

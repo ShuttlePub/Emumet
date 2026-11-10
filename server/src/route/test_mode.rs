@@ -4,7 +4,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use driver::http_signing::inject_test_actor_key;
-use serde::{Deserialize, Serialize};
+use driver::profile_delivery::inject_test_resolved_actor;
+use serde::Deserialize;
 
 async fn get_pool() -> Result<sqlx::PgPool, ErrorStatus> {
     let url = std::env::var("DATABASE_URL").map_err(|_| {
@@ -54,7 +55,6 @@ impl TestModeRouter for Router<crate::handler::AppModule> {
     fn route_test_mode(self) -> Self {
         self.route("/__test__/health", get(health))
             .route("/__test__/reset", post(reset))
-            .route("/__test__/inbox", get(inbox))
             .route("/__test__/cache-actor-key", post(cache_actor_key))
             .route("/__test__/cache-remote-actor", post(cache_remote_actor))
     }
@@ -71,7 +71,9 @@ async fn reset(headers: HeaderMap) -> Result<StatusCode, ErrorStatus> {
     sqlx::query(
         "TRUNCATE accounts, account_events, auth_accounts, auth_emumet_accounts, \
          profiles, profile_events, metadatas, metadata_events, projection_checkpoints, \
-         auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities \
+         auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities, \
+         profile_signing_keys, profile_follows, profile_blocks, profile_mutes, \
+         profile_inbound_activities, profile_delivery_jobs, profile_delivery_attempts \
          CASCADE",
     )
     .execute(&pool)
@@ -84,78 +86,6 @@ async fn reset(headers: HeaderMap) -> Result<StatusCode, ErrorStatus> {
     })?;
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-#[derive(Serialize)]
-struct InboxActivity {
-    id: String,
-    activity_type: String,
-    actor: Option<String>,
-    object: Option<String>,
-    created_at: String,
-}
-
-#[derive(Serialize)]
-struct InboxResponse {
-    activities: Vec<InboxActivity>,
-}
-
-async fn inbox(headers: HeaderMap) -> Result<Json<InboxResponse>, ErrorStatus> {
-    verify_token(&headers)?;
-    let pool = get_pool().await?;
-
-    use sqlx::Row;
-
-    let rows = sqlx::query(
-        "SELECT id, activity_type, object_json, created_at \
-         FROM outbox_activities \
-         ORDER BY id DESC \
-         LIMIT 100",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| {
-        ErrorStatus::from((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to query inbox activities: {e}"),
-        ))
-    })?;
-
-    let activities: Vec<InboxActivity> = rows
-        .iter()
-        .map(|row| {
-            let id: i64 = row.get("id");
-            let activity_type: String = row.get("activity_type");
-            let object_json: String = row.get("object_json");
-            let created_at: time::OffsetDateTime = row.get("created_at");
-
-            let (actor, object) = serde_json::from_str::<serde_json::Value>(&object_json)
-                .ok()
-                .map(|v| {
-                    (
-                        v.get("actor").and_then(|a| a.as_str()).map(String::from),
-                        v.get("object").and_then(|o| {
-                            o.as_str().map(String::from).or_else(|| {
-                                o.get("id").and_then(|id| id.as_str()).map(String::from)
-                            })
-                        }),
-                    )
-                })
-                .unwrap_or((None, None));
-
-            InboxActivity {
-                id: id.to_string(),
-                activity_type,
-                actor,
-                object,
-                created_at: created_at
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default(),
-            }
-        })
-        .collect();
-
-    Ok(Json(InboxResponse { activities }))
 }
 
 #[derive(Deserialize)]
@@ -189,13 +119,11 @@ async fn cache_actor_key(
 #[derive(Deserialize)]
 struct CacheRemoteActorRequest {
     actor_url: String,
-    username: String,
     inbox_url: String,
-    public_key_pem: String,
 }
 
-/// Inject a remote actor's data into the test global cache so that
-/// `resolve_remote_actor` returns it without making a remote fetch.
+/// Inject a remote actor's inbox into the test global caches so that actor resolution (inbound
+/// follower lookup and outbound Follow target lookup) returns it without making a remote fetch.
 ///
 /// This is needed for E2E tests against instances whose ActivityPub actor
 /// endpoints require authentication (e.g. Iceshrimp).
@@ -205,11 +133,7 @@ async fn cache_remote_actor(
     Json(body): Json<CacheRemoteActorRequest>,
 ) -> Result<StatusCode, ErrorStatus> {
     verify_token(&headers)?;
-    inject_test_remote_actor(
-        &body.actor_url,
-        &body.username,
-        &body.inbox_url,
-        &body.public_key_pem,
-    );
+    inject_test_remote_actor(&body.actor_url, &body.inbox_url);
+    inject_test_resolved_actor(&body.actor_url, &body.inbox_url);
     Ok(StatusCode::NO_CONTENT)
 }

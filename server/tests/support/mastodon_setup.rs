@@ -10,7 +10,7 @@
 //! If account creation succeeds but `verify_credentials` fails, the helper
 //! falls back to `docker exec` to confirm/approve the account via `tootctl`.
 
-use super::account_helper::fetch_collection;
+use super::account_helper::{wait_for_relation_count, wait_for_relation_count_at_most};
 use super::config::ap_e2e_config;
 
 pub struct MastodonUser {
@@ -254,9 +254,7 @@ async fn inject_mastodon_actor_into_emumet_cache(
         .header("X-Emumet-Test-Token", &test_token)
         .json(&serde_json::json!({
             "actor_url": actor_id,
-            "username": user.username,
             "inbox_url": inbox_url,
-            "public_key_pem": public_key_pem,
         }))
         .send()
         .await
@@ -270,11 +268,12 @@ async fn inject_mastodon_actor_into_emumet_cache(
 
 // -- URL builders -------------------------------------------------
 
-pub fn emumet_actor_url(public_base_url: &str, account_id: &str) -> String {
+/// The Profile actor URL: `{PUBLIC_BASE_URL}/ap/profiles/{profile_nanoid}`.
+pub fn emumet_actor_url(public_base_url: &str, profile_id: &str) -> String {
     format!(
-        "{}/ap/accounts/{}",
+        "{}/ap/profiles/{}",
         public_base_url.trim_end_matches('/'),
-        account_id
+        profile_id
     )
 }
 
@@ -387,38 +386,28 @@ pub async fn wait_for_mastodon_following_absent(
     false
 }
 
+/// Polls the owner-only `following` / `followers` list of the Profile until it has at most
+/// `max_items` entries.
 pub async fn wait_for_emumet_collection_count_at_most(
     base_url: &str,
-    account_id: &str,
+    jwt: &str,
+    profile_id: &str,
     collection: &str,
-    max_items: u64,
+    max_items: usize,
 ) -> bool {
-    for _ in 1..=60 {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        let col = fetch_collection(base_url, account_id, collection).await;
-        if col["totalItems"].as_u64().unwrap_or(u64::MAX) <= max_items {
-            return true;
-        }
-    }
-    false
+    wait_for_relation_count_at_most(jwt, profile_id, base_url, collection, max_items).await
 }
 
+/// Polls the owner-only `following` / `followers` list of the Profile until it has at least
+/// `min_items` entries.
 pub async fn wait_for_emumet_collection_count(
     base_url: &str,
-    account_id: &str,
+    jwt: &str,
+    profile_id: &str,
     collection: &str,
-    min_items: u64,
+    min_items: usize,
 ) -> bool {
-    // Emumet processes follows synchronously during the request, so a
-    // shorter poll interval is acceptable here.
-    for _ in 1..=60 {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        let col = fetch_collection(base_url, account_id, collection).await;
-        if col["totalItems"].as_u64().unwrap_or(0) >= min_items {
-            return true;
-        }
-    }
-    false
+    wait_for_relation_count(jwt, profile_id, base_url, collection, min_items).await
 }
 
 pub async fn wait_for_mastodon_note_uri(

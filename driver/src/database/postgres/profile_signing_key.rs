@@ -202,6 +202,47 @@ impl ProfileSigningKeyRepository for PostgresProfileSigningKeyRepository {
         }
         Ok(())
     }
+
+    async fn lock_provisioning(
+        &self,
+        executor: &mut Self::Connection,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('emumet.profile_signing_keys.provisioning', 0))")
+            .execute(con)
+            .await
+            .convert_error()?;
+        Ok(())
+    }
+
+    async fn find_profiles_without_active_key(
+        &self,
+        executor: &mut Self::Connection,
+        limit: i64,
+    ) -> error_stack::Result<Vec<(ProfileId, String)>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let rows: Vec<(i64, String)> = sqlx::query_as(
+            //language=postgresql
+            r#"
+            SELECT p.id, p.nanoid
+            FROM profiles p
+            WHERE NOT EXISTS (
+                SELECT 1 FROM profile_signing_keys k
+                WHERE k.profile_id = p.id AND k.revoked_at IS NULL
+            )
+            ORDER BY p.id
+            LIMIT $1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(con)
+        .await
+        .convert_error()?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, nanoid)| (ProfileId::new(id), nanoid))
+            .collect())
+    }
 }
 
 impl DependOnProfileSigningKeyRepository for PostgresDatabase {

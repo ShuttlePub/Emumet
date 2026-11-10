@@ -60,6 +60,25 @@ pub struct AppModule {
     enforcement_probe: driver::registration_enforcement_probe::HttpKratosEnforcementProbe,
 }
 
+/// Production: https only, internal destinations refused. A `test-mode` build run by the AP E2E
+/// (`AP_TEST_ALLOWED_FETCH_HOSTS` set) reaches the mock peers and the nip.io instances on loopback;
+/// that construction does not exist in a normal build and cannot be selected there.
+fn profile_delivery_sender() -> HttpProfileDeliverySender {
+    #[cfg(feature = "test-mode")]
+    if dotenvy::var("AP_TEST_ALLOWED_FETCH_HOSTS").is_ok() {
+        return HttpProfileDeliverySender::allowing_insecure_loopback();
+    }
+    HttpProfileDeliverySender::new()
+}
+
+fn remote_actor_resolver() -> HttpRemoteActorResolver {
+    #[cfg(feature = "test-mode")]
+    if dotenvy::var("AP_TEST_ALLOWED_FETCH_HOSTS").is_ok() {
+        return HttpRemoteActorResolver::allowing_insecure_loopback();
+    }
+    HttpRemoteActorResolver::new()
+}
+
 fn positive_secs_from_env(key: &str) -> Option<i64> {
     dotenvy::var(key)
         .ok()
@@ -128,8 +147,8 @@ impl AppModule {
             registration_flow_directory,
             readiness_policy,
             email_challenge_policy,
-            profile_delivery_sender: HttpProfileDeliverySender::new(),
-            remote_actor_resolver: HttpRemoteActorResolver::new(),
+            profile_delivery_sender: profile_delivery_sender(),
+            remote_actor_resolver: remote_actor_resolver(),
             enforcement_probe:
                 driver::registration_enforcement_probe::HttpKratosEnforcementProbe::from_env(),
         })

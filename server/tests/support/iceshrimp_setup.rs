@@ -8,7 +8,9 @@ use rand::rngs::OsRng;
 use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
 use rsa::RsaPrivateKey;
 
-use super::account_helper::{e2e_http_client, fetch_collection};
+use super::account_helper::{
+    e2e_http_client, wait_for_relation_count, wait_for_relation_count_at_most,
+};
 use super::config::ap_e2e_config;
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -179,9 +181,7 @@ pub async fn inject_iceshrimp_actor_into_emumet_cache(
         .header("X-Emumet-Test-Token", &test_token)
         .json(&serde_json::json!({
             "actor_url": user.actor_url,
-            "username": user.username,
             "inbox_url": user.inbox_url,
-            "public_key_pem": public_key_pem,
         }))
         .send()
         .await
@@ -206,12 +206,12 @@ pub async fn setup_iceshrimp_remote_actor() -> (super::config::ApE2eConfig, Ices
 
 // ── URL builders ──────────────────────────────────────────────────
 
-/// Build the ActivityPub actor URL for an Emumet account.
-pub fn emumet_actor_url(public_base_url: &str, account_id: &str) -> String {
+/// Build the ActivityPub actor URL for an Emumet Profile: `{PUBLIC_BASE_URL}/ap/profiles/{nanoid}`.
+pub fn emumet_actor_url(public_base_url: &str, profile_id: &str) -> String {
     format!(
-        "{}/ap/accounts/{}",
+        "{}/ap/profiles/{}",
         public_base_url.trim_end_matches('/'),
-        account_id
+        profile_id
     )
 }
 
@@ -299,6 +299,34 @@ pub async fn wait_for_iceshrimp_following_contains(
     false
 }
 
+/// Poll Iceshrimp's following list until the followee with the expected actor URL disappears
+/// (or timeout after ~15 s).
+pub async fn wait_for_iceshrimp_following_absent(
+    client: &super::iceshrimp::IceshrimpClient,
+    local_iceshrimp_user_id: &str,
+    token: &str,
+    expected_actor_url: &str,
+) -> bool {
+    for _ in 1..=30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(following) = client.get_following(local_iceshrimp_user_id, token).await {
+            let still_present = following.iter().any(|entry| {
+                let followee = &entry["followee"];
+                followee["uri"]
+                    .as_str()
+                    .is_some_and(|u| u == expected_actor_url)
+                    || followee["id"]
+                        .as_str()
+                        .is_some_and(|i| i == expected_actor_url)
+            });
+            if !still_present {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Poll Iceshrimp's `users/show` until the remote user is observed blocking
 /// the local user (`isBlocked == true`), or timeout after ~15 s.
 pub async fn wait_for_iceshrimp_block_present(
@@ -331,22 +359,28 @@ pub async fn wait_for_iceshrimp_block_absent(
     false
 }
 
-/// Poll an Emumet ActivityPub collection (followers / following) until
-/// `totalItems >= min_items` (or timeout after ~15 s).
+/// Poll the owner-only followers / following list of an Emumet Profile until it has at least
+/// `min_items` entries (or timeout after ~15 s).
 pub async fn wait_for_emumet_collection_count(
     base_url: &str,
-    account_id: &str,
+    jwt: &str,
+    profile_id: &str,
     collection: &str,
-    min_items: u64,
+    min_items: usize,
 ) -> bool {
-    for _ in 1..=30 {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        let col = fetch_collection(base_url, account_id, collection).await;
-        if col["totalItems"].as_u64().unwrap_or(0) >= min_items {
-            return true;
-        }
-    }
-    false
+    wait_for_relation_count(jwt, profile_id, base_url, collection, min_items).await
+}
+
+/// Poll the owner-only followers / following list of an Emumet Profile until it has at most
+/// `max_items` entries (or timeout after ~15 s).
+pub async fn wait_for_emumet_collection_count_at_most(
+    base_url: &str,
+    jwt: &str,
+    profile_id: &str,
+    collection: &str,
+    max_items: usize,
+) -> bool {
+    wait_for_relation_count_at_most(jwt, profile_id, base_url, collection, max_items).await
 }
 
 /// Poll Iceshrimp's global timeline until a note with the given

@@ -131,7 +131,8 @@ impl InboundActivityRepository for PostgresInboundActivityRepository {
         let result = sqlx::query(
             //language=postgresql
             r#"
-            DELETE FROM profile_inbound_activities WHERE first_received_at < $1
+            DELETE FROM profile_inbound_activities
+            WHERE first_received_at < $1 AND activity_type <> 'UndoFollow'
             "#,
         )
         .bind(cutoff)

@@ -1,7 +1,6 @@
 //! Profile followers / following reads (P3i).
 //!
-//! The handlers are real, but the routes are intentionally NOT part of the production root
-//! router: [`ProfileFollowListRouter`] is only used by tests until the P4 mount. The response
+//! Real handlers, mounted on the production root router by the P4 cutover. The response
 //! shapes are the E8 contract (`ProfileFollowListResponse`, `ProfileFollowerListResponse`,
 //! `ProfileActorRef`); authorization and reads live in
 //! `application::service::profile_follow_list`.
@@ -79,7 +78,7 @@ fn follower_response(item: ProfileFollowItemDto) -> ProfileFollowerResponse {
 #[utoipa::path(
     get,
     path = "/api/v1/profiles/{profile_nanoid}/following",
-    description = "Actors followed by the Profile (pending and accepted follows; ended generations are not listed). `target` is the canonical actor URL (the Profile actor URL for a local target). NOT MOUNTED in production (implemented by P3i; the route is mounted only in tests until P4). \
+    description = "Actors followed by the Profile (pending and accepted follows; ended generations are not listed). `target` is the canonical actor URL (the Profile actor URL for a local target). \
 Oldest first; `cursor` is the opaque `next_cursor` of the previous page, `limit` defaults to 20 (1..=100). Authorization: only the Profile's current owner; other Profiles' and Accounts' relations are never returned.",
     params(
         ("profile_nanoid" = String, Path, description = "Profile nanoid"),
@@ -123,7 +122,7 @@ pub(crate) async fn list_profile_following(
 #[utoipa::path(
     get,
     path = "/api/v1/profiles/{profile_nanoid}/followers",
-    description = "Actors following the Profile (pending and accepted follows); each follower is a local Profile or a remote actor identified by its canonical actor URL (`follower.kind`, `follower.actor_url`; `follower.profile_id` only for local). NOT MOUNTED in production (implemented by P3i; the route is mounted only in tests until P4). \
+    description = "Actors following the Profile (pending and accepted follows); each follower is a local Profile or a remote actor identified by its canonical actor URL (`follower.kind`, `follower.actor_url`; `follower.profile_id` only for local). \
 Oldest first; `cursor` is the opaque `next_cursor` of the previous page, `limit` defaults to 20 (1..=100). Authorization: only the Profile's current owner; other Profiles' and Accounts' relations are never returned.",
     params(
         ("profile_nanoid" = String, Path, description = "Profile nanoid"),
@@ -164,9 +163,7 @@ pub(crate) async fn list_profile_followers(
     }))
 }
 
-/// Mounts the followers / following reads. Production code must NOT call this: the production
-/// mount is owned by P4. Only tests use it.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Mounts the followers / following reads on the production root router.
 pub trait ProfileFollowListRouter {
     /// Routes relative to `/api/v1`.
     fn route_profile_follow_lists(self) -> Self;

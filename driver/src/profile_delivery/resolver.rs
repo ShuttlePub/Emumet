@@ -10,6 +10,22 @@ use kernel::KernelError;
 use reqwest::header::ACCEPT;
 use std::sync::Arc;
 
+/// Test-mode only: remote actors whose documents cannot be fetched without authentication (for
+/// example Iceshrimp with authorized fetch). `resolve` answers from this cache before any request.
+#[cfg(any(test, feature = "test-mode"))]
+static TEST_RESOLVED_ACTORS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Registers the inbox of a remote actor in the test cache used by [`HttpRemoteActorResolver`].
+#[cfg(any(test, feature = "test-mode"))]
+pub fn inject_test_resolved_actor(actor_url: &str, inbox_url: &str) {
+    TEST_RESOLVED_ACTORS
+        .lock()
+        .expect("poisoned lock")
+        .insert(actor_url.to_string(), inbox_url.to_string());
+}
+
 const ACTOR_ACCEPT: &str = "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"";
 
 /// remote actor の actor 文書を取得して inbox を解決する。
@@ -144,6 +160,22 @@ impl RemoteActorResolver for HttpRemoteActorResolver {
         &self,
         actor_url: &GraphActorUrl,
     ) -> error_stack::Result<RemoteActorInfo, KernelError> {
+        #[cfg(any(test, feature = "test-mode"))]
+        {
+            let cached = TEST_RESOLVED_ACTORS
+                .lock()
+                .expect("poisoned lock")
+                .get(actor_url.as_str())
+                .cloned();
+            if let Some(inbox) = cached {
+                let inbox = GraphInboxUrl::new(inbox)
+                    .map_err(|_| rejected("cached actor inbox is not a URL"))?;
+                return Ok(RemoteActorInfo {
+                    actor_url: actor_url.clone(),
+                    inbox,
+                });
+            }
+        }
         let target = resolve_target(
             actor_url.as_str(),
             self.mode,

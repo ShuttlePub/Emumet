@@ -27,3 +27,6 @@ pub mod mastodon;
 
 #[path = "support/mastodon_setup.rs"]
 pub mod mastodon_setup;
+
+#[path = "support/profile_signer.rs"]
+pub mod profile_signer;

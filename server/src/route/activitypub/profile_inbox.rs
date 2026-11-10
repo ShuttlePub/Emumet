@@ -1,15 +1,14 @@
 //! Profile ActivityPub inbox (P3i).
 //!
 //! `POST /ap/profiles/{profile_nanoid}/inbox` receives signed Follow / Accept / Reject /
-//! Undo(Follow) activities for one Profile. Like the Profile actor handlers it is NOT part of the
-//! production root router (the mount, together with retiring `/ap/accounts/{id}/inbox`, is owned
-//! by P4); only tests mount it through [`ProfileInboxRouter`].
+//! Undo(Follow) activities for one Profile. It is mounted on the production root router by the P4
+//! cutover (replacing the retired `/ap/accounts/{id}/inbox`) through [`ProfileInboxRouter`].
 //!
 //! The route verifies the HTTP Signature and that the key owner is the `activity.actor`; the
 //! relation rules (target Profile, original Follow ID, stale / foreign / duplicate handling) live
 //! in `application::service::activitypub::ProfileInboxUseCase`.
 
-use super::inbox::{
+use super::inbox_support::{
     ensure_host_matches_public_base_url, headers_to_map, same_activitypub_id,
     signature_key_document_matches_actor,
 };
@@ -30,7 +29,7 @@ use kernel::interfaces::http_signing::{
 #[utoipa::path(
     post,
     path = "/ap/profiles/{profile_nanoid}/inbox",
-    description = "ActivityPub inbox of one Profile actor. NOT MOUNTED on the production router (the production mount is owned by the P4 cutover). \
+    description = "ActivityPub inbox of one Profile actor. \
 Requires a valid HTTP Signature whose key owner is `activity.actor`. \
 Received activity table: Follow (object = this Profile; stored as an accepted generation and an Accept delivery job is reserved in the same transaction; when the Profile blocks the signer the Follow is refused instead: an ended generation is stored and a Reject(Follow) delivery job is reserved), \
 Accept / Reject (object = a Follow this Profile sent, matched by the original Follow activity ID and by both parties), \
@@ -127,8 +126,7 @@ pub(crate) async fn post_profile_inbox(
     Ok(StatusCode::ACCEPTED.into_response())
 }
 
-/// Mounts the Profile inbox. Production code must NOT call this before P4.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Mounts the Profile inbox on the production root router.
 pub trait ProfileInboxRouter {
     /// Routes relative to `/ap`.
     fn route_profile_inbox(self) -> Self;

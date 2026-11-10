@@ -94,7 +94,7 @@ Copy `.env.example` to `.env`:
 
 ### Master Key Password
 
-Account creation requires a master key password file for signing key encryption:
+Account / Profile creation and the start-up Profile key provisioning require a master key password file for Profile signing key encryption (federation is per Profile since the P4 cutover, see `docs/profile-federation-cutover.md`):
 - Production: `/run/secrets/master-key-password`
 - Development: `./master-key-password` (create manually, `chmod 600`)
 
@@ -206,7 +206,7 @@ Event Sourcing対象エンティティ (Account, AuthAccount, Profile, Metadata)
 
 `AppModule` — single wiring root. Owns `PostgresDatabase` + crypto providers + HydraAdminClient + KratosClient. `impl_database_delegation!` wires all DB `DependOn*` traits; small handwritten impls for non-DB traits (crypto, permission, http_signing, config). Provides `hydra_admin_client()` and `kratos_client()` accessors.
 
-**Facade newtypes** (server/src/api/): `AccountApi`, `AdminAccountApi`, `MeApi`, `OAuth2Api`, `ActivityPubApi`, `SigningApi`. Each wraps `AppModule` via `FromRef`, exposes only use-case methods + legitimate helpers. Facades do NOT implement `DependOn*` — route handlers cannot reach raw ports/executors (compile-time block).
+**Facade newtypes** (server/src/api/): `AccountApi`, `AdminAccountApi`, `MeApi`, `OAuth2Api`, `ActivityPubApi`, `ProfileRelationshipApi`, `ProfileFollowListApi`. Each wraps `AppModule` via `FromRef`, exposes only use-case methods + legitimate helpers. Facades do NOT implement `DependOn*` — route handlers cannot reach raw ports/executors (compile-time block).
 
 ### Testing
 

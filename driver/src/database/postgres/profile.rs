@@ -256,7 +256,10 @@ impl ProfileReadModel for PostgresProfileReadModel {
                 summary = $4,
                 icon_id = $5,
                 banner_id = $6,
-                version = $7,
+                -- Never move the projection version backwards: when two writers race, the one that
+                -- committed second may carry the older event version (the tailing projector then
+                -- re-applies and converges).
+                version = GREATEST(version, $7),
                 -- NULL -> value only: a Profile edit that did not observe a concurrently stored
                 -- one-time username (its event stream was read before that commit) must not erase it.
                 username = COALESCE(username, $8)
@@ -465,6 +468,80 @@ mod test {
             assert_eq!(result.id(), updated_profile.id());
             assert_eq!(result.display_name(), updated_profile.display_name());
             assert_eq!(result.summary(), updated_profile.summary());
+
+            database
+                .account_read_model()
+                .deactivate(&mut conn, account.id())
+                .await
+                .unwrap();
+        }
+
+        /// Two writers racing on one Profile: the update that carries the older event version arrives
+        /// last. The projection version must not go backwards (P1 hand-over).
+        #[test_with::env(DATABASE_URL)]
+        #[tokio::test]
+        async fn update_with_an_older_version_never_moves_the_version_backwards() {
+            kernel::ensure_generator_initialized();
+            let database = PostgresDatabase::new().await.unwrap();
+            let mut conn = database.connection().await.unwrap();
+
+            let profile_id = ProfileId::new(kernel::generate_id());
+            let account_id = AccountId::default();
+            let account = AccountBuilder::new().id(account_id.clone()).build();
+            let profile = |version: i64, display: &str| {
+                ProfileBuilder::new()
+                    .id(profile_id.clone())
+                    .account_id(account_id.clone())
+                    .display_name(Some(display.to_string()))
+                    .version(EventVersion::new(version))
+                    .build()
+            };
+            database
+                .account_read_model()
+                .create(&mut conn, &account)
+                .await
+                .unwrap();
+            database
+                .profile_read_model()
+                .create(&mut conn, &profile(1, "v1"))
+                .await
+                .unwrap();
+            // Newer first, then the older one (reverse order).
+            database
+                .profile_read_model()
+                .update(&mut conn, &profile(5, "v5"))
+                .await
+                .unwrap();
+            database
+                .profile_read_model()
+                .update(&mut conn, &profile(3, "v3"))
+                .await
+                .unwrap();
+
+            let stored = database
+                .profile_read_model()
+                .find_by_id(&mut conn, &profile_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                stored.version().as_ref(),
+                &5,
+                "version must stay at the newest"
+            );
+            // A later, newer update still advances it.
+            database
+                .profile_read_model()
+                .update(&mut conn, &profile(6, "v6"))
+                .await
+                .unwrap();
+            let stored = database
+                .profile_read_model()
+                .find_by_id(&mut conn, &profile_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored.version().as_ref(), &6);
 
             database
                 .account_read_model()

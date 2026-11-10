@@ -1,10 +1,17 @@
 use crate::dto::profile::{CreateProfileDto, ProfileDto};
+use crate::profile_signing_key::CreateProfileSigningKeyUseCase;
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
+use kernel::interfaces::config::DependOnPublicBaseUrl;
+use kernel::interfaces::crypto::{
+    DependOnPasswordProvider, DependOnSigningKeyGenerator, SigningAlgorithm,
+};
 use kernel::interfaces::database::{DependOnTransactionManager, TransactionManager};
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
-use kernel::interfaces::repository::{AggregateRepository, DependOnProfileRepository};
+use kernel::interfaces::repository::{
+    AggregateRepository, DependOnProfileRepository, DependOnProfileSigningKeyRepository,
+};
 use kernel::prelude::entity::{
     Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary, ProfileUsername,
 };
@@ -12,8 +19,18 @@ use kernel::KernelError;
 use std::future::Future;
 
 pub trait CreateOrganizationProfileUseCase:
-    'static + Clone + DependOnProfileRepository + DependOnProfileReadModel + DependOnTransactionManager
+    'static
+    + Clone
+    + DependOnProfileRepository
+    + DependOnProfileReadModel
+    + DependOnTransactionManager
+    + DependOnProfileSigningKeyRepository
+    + DependOnSigningKeyGenerator
+    + DependOnPublicBaseUrl
+    + DependOnPasswordProvider
 {
+    /// Creates an organization-owned Profile. `username` is required (P4) and validated before
+    /// any side effect; the Profile's actor signing key is generated in the same transaction.
     fn create_organization_profile(
         &self,
         org_context: OrganizationContext,
@@ -28,7 +45,7 @@ pub trait CreateOrganizationProfileUseCase:
             if let Some(summary) = &summary {
                 summary.validate()?;
             }
-            let username = dto.username.map(ProfileUsername::parse).transpose()?;
+            let username = Some(ProfileUsername::parse(dto.username)?);
 
             let account_id = org_context.org_account_id;
             let account_nanoid = org_context.org_account_nanoid;
@@ -55,6 +72,13 @@ pub trait CreateOrganizationProfileUseCase:
                                 .attach_printable("Failed to construct organization profile")
                         })?;
                         deps.profile_read_model().create(executor, &profile).await?;
+                        deps.create_profile_signing_key(
+                            executor,
+                            profile.id().clone(),
+                            profile.nanoid(),
+                            SigningAlgorithm::Rsa2048,
+                        )
+                        .await?;
                         Ok(profile)
                     })
                 })
@@ -70,5 +94,9 @@ impl<T> CreateOrganizationProfileUseCase for T where
         + DependOnProfileRepository
         + DependOnProfileReadModel
         + DependOnTransactionManager
+        + DependOnProfileSigningKeyRepository
+        + DependOnSigningKeyGenerator
+        + DependOnPublicBaseUrl
+        + DependOnPasswordProvider
 {
 }

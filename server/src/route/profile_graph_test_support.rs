@@ -11,22 +11,18 @@ use crate::auth::{
 };
 use crate::handler::AppModule;
 use application::dto::account::CreateAccountDto;
-use application::profile_signing_key::CreateProfileSigningKeyUseCase;
 use application::service::account::CreateAccountUseCase;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::SigningAlgorithm;
-use kernel::interfaces::database::{
-    DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
-};
+use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::http_signing::{HttpSigner, HttpSigningRequest};
 use kernel::interfaces::repository::{
     BeginFollowOutcome, DependOnProfileFollowRepository, ProfileFollowRepository,
 };
 use kernel::prelude::entity::{
-    AuthAccountId, GraphActivityId, Nanoid, Profile, ProfileFollow, ProfileFollowId,
-    ProfileGraphActor, ProfileId,
+    AuthAccountId, GraphActivityId, ProfileFollow, ProfileFollowId, ProfileGraphActor, ProfileId,
 };
 use serde_json::{json, Value};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -43,13 +39,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 pub(crate) const AUDIENCE: &str = "emumet";
 
-const GRAPH_SCHEMA_SQL: &str = include_str!(
-    "../../../driver/fixtures/profile_social_graph/01_profile_social_graph_schema.sql"
-);
-
 static DATABASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// A throw-away database with the production migrations and the P2 schema fixture.
+/// A throw-away database with all production migrations applied.
 pub(crate) struct IsolatedDatabase {
     pub pool: PgPool,
     name: String,
@@ -83,7 +75,6 @@ impl IsolatedDatabase {
             .await
             .unwrap();
         sqlx::migrate!("../migrations").run(&pool).await.unwrap();
-        pool.execute(GRAPH_SCHEMA_SQL).await.unwrap();
         Self {
             pool,
             name,
@@ -296,12 +287,13 @@ impl GraphWorld {
     }
 
     /// A Profile of a new personal Account of `user`. With `actor` it has a username and an
-    /// active signing key (an actor), otherwise neither.
+    /// active signing key (an actor, as every Profile created through the API), otherwise
+    /// neither (a stripped, pre-cutover shaped Profile).
     pub async fn create_profile(&self, user: &User, actor: bool) -> LocalProfile {
         let name = kernel::test_utils::unique_account_name()
             .as_ref()
             .to_string();
-        let username = actor.then(|| format!("u{}", uuid::Uuid::new_v4().simple()));
+        let username = format!("u{}", uuid::Uuid::new_v4().simple());
         self.module
             .create_account_with_profile_username(
                 user.auth_account_id.clone(),
@@ -325,31 +317,21 @@ impl GraphWorld {
             actor_url: format!("{}/ap/profiles/{nanoid}", self.base_url),
             nanoid,
         };
-        if actor {
-            self.create_key(&profile).await;
+        if !actor {
+            // Creation always gives a Profile its username and key; tests that need a Profile
+            // that is not an actor (a pre-cutover Profile) strip both.
+            sqlx::query("DELETE FROM profile_signing_keys WHERE profile_id = $1")
+                .bind(profile.id.as_ref())
+                .execute(self.pool())
+                .await
+                .unwrap();
+            sqlx::query("UPDATE profiles SET username = NULL WHERE id = $1")
+                .bind(profile.id.as_ref())
+                .execute(self.pool())
+                .await
+                .unwrap();
         }
         profile
-    }
-
-    pub async fn create_key(&self, profile: &LocalProfile) {
-        let deps = self.module.clone();
-        let profile_id = profile.id.clone();
-        let nanoid = Nanoid::<Profile>::new(profile.nanoid.clone());
-        self.module
-            .transaction_manager()
-            .transaction(move |executor| {
-                Box::pin(async move {
-                    deps.create_profile_signing_key(
-                        executor,
-                        profile_id,
-                        &nanoid,
-                        SigningAlgorithm::Rsa2048,
-                    )
-                    .await
-                })
-            })
-            .await
-            .unwrap();
     }
 
     /// An actor Profile owned by a fresh user.
@@ -470,9 +452,7 @@ impl RemotePeer {
     pub fn register_actor_document(&self) {
         application::service::activitypub::inject_test_remote_actor(
             &self.actor_url,
-            "peer",
             &self.inbox_url,
-            &PEER_KEYS.public_pem,
         );
     }
 

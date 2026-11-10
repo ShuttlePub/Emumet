@@ -1,23 +1,17 @@
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
-use application::dto::activitypub::{
-    GetActorDto, GetProfileActorDto, GetProfileWebFingerDto, GetWebFingerDto, InboxActivityDto,
-};
+use application::dto::activitypub::{GetProfileActorDto, GetProfileWebFingerDto};
 use application::dto::profile_inbound::{ProfileInboxDto, ProfileInboxOutcome};
 use application::service::activitypub::{
-    GetActorUseCase, GetFollowersCollectionUseCase, GetOutboxUseCase, GetProfileActorUseCase,
-    GetProfileWebFingerUseCase, GetWebFingerUseCase, InboxUseCase, ProfileInboxUseCase,
+    GetProfileActorUseCase, GetProfileWebFingerUseCase, ProfileInboxUseCase,
 };
 use axum::extract::FromRef;
 use axum::http::StatusCode;
-use kernel::activitypub::{Actor, OrderedCollection, WebFingerResponse};
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::activitypub::{Actor, WebFingerResponse};
 use kernel::interfaces::http_signing::{
     ActorPublicKey, DependOnHttpSignatureVerifier, HttpSignatureVerificationInput,
     HttpSignatureVerifier, SignatureVerificationResult,
 };
-use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
-use kernel::prelude::entity::{Account, AccountId, Nanoid};
 use kernel::KernelError;
 use std::sync::Arc;
 
@@ -56,34 +50,6 @@ impl ActivityPubApi {
         })
     }
 
-    pub async fn find_account_id_by_nanoid(&self, id: String) -> Result<AccountId, ErrorStatus> {
-        if id.trim().is_empty() {
-            return Err(ErrorStatus::from((
-                StatusCode::BAD_REQUEST,
-                "Account ID cannot be empty".to_string(),
-            )));
-        }
-
-        let mut executor = self
-            .module
-            .database_connection()
-            .connection()
-            .await
-            .map_err(ErrorStatus::from)?;
-        let nanoid = Nanoid::<Account>::new(id);
-        self.module
-            .account_query()
-            .find_by_nanoid(&mut executor, &nanoid)
-            .await
-            .map_err(ErrorStatus::from)?
-            .map(|account| account.id().clone())
-            .ok_or_else(|| ErrorStatus::from(StatusCode::NOT_FOUND))
-    }
-
-    pub async fn get_actor(&self, dto: GetActorDto) -> error_stack::Result<Actor, KernelError> {
-        self.module.get_actor(dto).await
-    }
-
     pub async fn get_profile_actor(
         &self,
         dto: GetProfileActorDto,
@@ -96,38 +62,6 @@ impl ActivityPubApi {
         dto: GetProfileWebFingerDto,
     ) -> error_stack::Result<WebFingerResponse, KernelError> {
         self.module.get_profile_webfinger(dto).await
-    }
-
-    pub async fn get_followers_collection(
-        &self,
-        account_id: &AccountId,
-    ) -> error_stack::Result<OrderedCollection, KernelError> {
-        self.module.get_followers_collection(account_id).await
-    }
-
-    pub async fn get_following_collection(
-        &self,
-        account_id: &AccountId,
-    ) -> error_stack::Result<OrderedCollection, KernelError> {
-        self.module.get_following_collection(account_id).await
-    }
-
-    pub async fn get_outbox_collection(
-        &self,
-        account_id: &AccountId,
-        limit: usize,
-        cursor: Option<i64>,
-    ) -> error_stack::Result<OrderedCollection, KernelError> {
-        self.module
-            .get_outbox_collection(account_id, limit, cursor)
-            .await
-    }
-
-    pub async fn get_webfinger(
-        &self,
-        dto: GetWebFingerDto,
-    ) -> error_stack::Result<WebFingerResponse, KernelError> {
-        self.module.get_webfinger(dto).await
     }
 
     pub async fn verify_http_signature(
@@ -152,13 +86,6 @@ impl ActivityPubApi {
         dto: ProfileInboxDto,
     ) -> error_stack::Result<ProfileInboxOutcome, KernelError> {
         self.module.handle_profile_inbox_activity(dto).await
-    }
-
-    pub async fn handle_inbox_activity(
-        &self,
-        dto: InboxActivityDto,
-    ) -> error_stack::Result<(), KernelError> {
-        self.module.handle_inbox_activity(dto).await
     }
 }
 

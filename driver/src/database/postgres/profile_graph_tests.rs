@@ -920,6 +920,60 @@ mod inbound {
         assert_eq!(purged, 1);
         assert!(repo.record(&mut conn, &old).await.unwrap().first_seen);
     }
+
+    /// A late Follow must still be recognised as undone after the retention period, so the
+    /// `UndoFollow` markers are never purged (P3i hand-over).
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn purge_keeps_undo_follow_markers() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.inbound_activity_repository();
+        let actor = GraphActorUrl::new("https://remote.example/users/undoer").unwrap();
+        let undo_marker = NewInboundActivity::new(
+            p1.clone(),
+            actor.clone(),
+            activity("undo-marker"),
+            "UndoFollow",
+            now() - Duration::days(400),
+        )
+        .unwrap();
+        let stale_follow = NewInboundActivity::new(
+            p1.clone(),
+            actor,
+            activity("stale-follow"),
+            "Follow",
+            now() - Duration::days(400),
+        )
+        .unwrap();
+        repo.record(&mut conn, &undo_marker).await.unwrap();
+        repo.record(&mut conn, &stale_follow).await.unwrap();
+
+        let purged = repo
+            .purge_received_before(&mut conn, now() - Duration::days(30))
+            .await
+            .unwrap();
+
+        assert_eq!(purged, 1, "only the ordinary record is purged");
+        assert!(
+            !repo
+                .record(&mut conn, &undo_marker)
+                .await
+                .unwrap()
+                .first_seen,
+            "the UndoFollow marker survives the purge"
+        );
+        assert!(
+            repo.record(&mut conn, &stale_follow)
+                .await
+                .unwrap()
+                .first_seen,
+            "the ordinary record was purged"
+        );
+    }
 }
 
 mod delivery {

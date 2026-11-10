@@ -2,20 +2,11 @@ use super::resolve_auth_account_id;
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
 use application::dto::account::{AccountDetailDto, AccountDto, CreateAccountDto, UpdateAccountDto};
-use application::dto::activitypub::{
-    FollowRelationDto, SendFollowDto, SendFollowResultDto, SendUndoFollowDto,
-};
-use application::dto::block_mute::{BlockAccountDto, MuteAccountDto, RelationDto};
 use application::dto::pagination::Pagination;
 use application::service::account::{
     CreateAccountUseCase, DeactivateAccountUseCase, ReactivateAccountUseCase,
 };
 use application::service::account_detail::{GetAccountDetailUseCase, UpdateAccountDetailUseCase};
-use application::service::activitypub::{
-    GetFollowRelationsUseCase, SendFollowUseCase, SendUndoFollowUseCase,
-};
-use application::service::block::{BlockAccountUseCase, GetBlocksUseCase, UnblockAccountUseCase};
-use application::service::mute::{GetMutesUseCase, MuteAccountUseCase, UnmuteAccountUseCase};
 use application::service::profile::CreateOrganizationProfileUseCase;
 use application::service::profile_username::SetProfileUsernameUseCase;
 use application::service::session_context::OrganizationContext;
@@ -75,7 +66,7 @@ impl AccountApi {
         &self,
         auth_account_id: AuthAccountId,
         dto: CreateAccountDto,
-        profile_username: Option<String>,
+        profile_username: String,
     ) -> error_stack::Result<AccountDto, KernelError> {
         self.module
             .create_account_with_profile_username(auth_account_id, dto, profile_username)
@@ -132,92 +123,6 @@ impl AccountApi {
     ) -> error_stack::Result<(), KernelError> {
         self.module
             .reactivate_account(auth_account_id, account_id)
-            .await
-    }
-
-    pub async fn block_account(
-        &self,
-        auth_account_id: AuthAccountId,
-        dto: BlockAccountDto,
-    ) -> error_stack::Result<RelationDto, KernelError> {
-        self.module.block_account(auth_account_id, dto).await
-    }
-
-    pub async fn unblock_account(
-        &self,
-        auth_account_id: AuthAccountId,
-        dto: BlockAccountDto,
-    ) -> error_stack::Result<(), KernelError> {
-        self.module.unblock_account(auth_account_id, dto).await
-    }
-
-    pub async fn get_blocks(
-        &self,
-        auth_account_id: AuthAccountId,
-        account_nanoid: String,
-    ) -> error_stack::Result<Vec<RelationDto>, KernelError> {
-        self.module
-            .get_blocks(auth_account_id, account_nanoid)
-            .await
-    }
-
-    pub async fn mute_account(
-        &self,
-        auth_account_id: AuthAccountId,
-        dto: MuteAccountDto,
-    ) -> error_stack::Result<RelationDto, KernelError> {
-        self.module.mute_account(auth_account_id, dto).await
-    }
-
-    pub async fn unmute_account(
-        &self,
-        auth_account_id: AuthAccountId,
-        dto: MuteAccountDto,
-    ) -> error_stack::Result<(), KernelError> {
-        self.module.unmute_account(auth_account_id, dto).await
-    }
-
-    pub async fn get_mutes(
-        &self,
-        auth_account_id: AuthAccountId,
-        account_nanoid: String,
-    ) -> error_stack::Result<Vec<RelationDto>, KernelError> {
-        self.module.get_mutes(auth_account_id, account_nanoid).await
-    }
-
-    pub async fn send_follow(
-        &self,
-        auth_account_id: AuthAccountId,
-        dto: SendFollowDto,
-    ) -> error_stack::Result<SendFollowResultDto, KernelError> {
-        self.module.send_follow(auth_account_id, dto).await
-    }
-
-    pub async fn send_undo_follow(
-        &self,
-        auth_account_id: AuthAccountId,
-        dto: SendUndoFollowDto,
-    ) -> error_stack::Result<(), KernelError> {
-        self.module.send_undo_follow(auth_account_id, dto).await
-    }
-
-    pub async fn get_followers(
-        &self,
-        auth_account_id: AuthAccountId,
-        account_nanoid: String,
-    ) -> error_stack::Result<Vec<FollowRelationDto>, KernelError> {
-        self.module
-            .get_followers(auth_account_id, account_nanoid)
-            .await
-    }
-
-    pub async fn get_following(
-        &self,
-        auth_account_id: AuthAccountId,
-        account_nanoid: String,
-    ) -> error_stack::Result<Vec<FollowRelationDto>, KernelError> {
-        self.module
-            .get_following(auth_account_id, account_nanoid)
             .await
     }
 }

@@ -1,6 +1,6 @@
 //! Profile 配送 worker の常駐ループ (P3o)。
 //!
-//! 本番の `main` からは起動しない (P4 が root から起動する)。テストと P4 が使う部品として置く。
+//! P4 の切替で本番の `main` から起動される (切替前の P3o では部品としてテストだけが使っていた)。
 //! 1 サイクルの処理 (lease・署名・送信・再試行) は `application::service::profile_relationship`。
 
 use crate::handler::AppModule;
@@ -14,20 +14,27 @@ use time::OffsetDateTime;
 use tokio::sync::watch;
 
 #[derive(Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub struct ProfileDeliveryShutdown {
     tx: watch::Sender<bool>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl ProfileDeliveryShutdown {
     pub fn trigger(&self) {
         let _ = self.tx.send(true);
     }
 }
 
+/// `PROFILE_DELIVERY_POLL_INTERVAL_MS` (既定 2 秒)。
+pub fn profile_delivery_poll_interval_from_env() -> Duration {
+    let millis: u64 = std::env::var("PROFILE_DELIVERY_POLL_INTERVAL_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|millis| *millis > 0)
+        .unwrap_or(2000);
+    Duration::from_millis(millis)
+}
+
 /// 配送ループを起動する。`interval` ごとに 1 サイクル回す。
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn spawn_profile_delivery_worker(
     module: Arc<AppModule>,
     policy: ProfileDeliveryPolicy,

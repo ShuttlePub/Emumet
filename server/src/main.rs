@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod cutover;
 mod error;
 mod handler;
 mod hydra;
@@ -12,11 +13,15 @@ mod route;
 mod schema;
 mod webhook_worker;
 
+use crate::api::profile_delivery_worker::{
+    profile_delivery_poll_interval_from_env, spawn_profile_delivery_worker,
+};
 use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
 use crate::handler::AppModule;
 use crate::projection_worker::{projection_poll_interval_from_env, ProjectionWorker};
 use error_stack::ResultExt;
+use kernel::prelude::entity::ProfileDeliveryPolicy;
 use kernel::KernelError;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -66,7 +71,10 @@ async fn main() -> Result<(), StackTrace> {
     jwks_cache.try_init().await;
     let oidc_config = Arc::new(oidc_config);
 
+    // Applies the migrations (the in-place cutover migration included), then generates the actor
+    // keys of Profiles that have none. Both happen before any worker or route is started.
     let app = AppModule::new().await?;
+    cutover::provision_profile_keys(&app).await?;
 
     // Transactional log tailing worker for account projections (ADR 0006 Stage 3).
     let (_projection_handle, projection_shutdown) =
@@ -89,6 +97,12 @@ async fn main() -> Result<(), StackTrace> {
     use application::service::registration_enforcement_probe::RegistrationEnforcementMonitorUseCase;
     app.refresh_registration_enforcement().await?;
     let enforcement_shutdown = registration_guard::spawn_monitor(Arc::new(app.clone()));
+
+    let (profile_delivery_shutdown, _profile_delivery_handle) = spawn_profile_delivery_worker(
+        Arc::new(app.clone()),
+        ProfileDeliveryPolicy::default(),
+        profile_delivery_poll_interval_from_env(),
+    );
 
     #[cfg(feature = "test-mode")]
     {
@@ -127,6 +141,7 @@ async fn main() -> Result<(), StackTrace> {
     if let Some(shutdown) = registration_shutdown {
         shutdown.trigger();
     }
+    profile_delivery_shutdown.trigger();
     webhook_shutdown.trigger();
 
     Ok(())
