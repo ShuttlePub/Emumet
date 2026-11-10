@@ -9,6 +9,7 @@ mod organization_membership;
 mod outbox_activity;
 mod registration_gate;
 mod remote_account;
+mod webhook_delivery;
 
 pub use self::aggregate::*;
 pub use self::auth_account::*;
@@ -21,3 +22,4 @@ pub use self::organization_membership::*;
 pub use self::outbox_activity::*;
 pub use self::registration_gate::*;
 pub use self::remote_account::*;
+pub use self::webhook_delivery::*;

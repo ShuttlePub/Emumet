@@ -7,6 +7,7 @@ use driver::database::PostgresDatabase;
 use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
 use driver::keto::KetoClient;
 use driver::storage::{NoopProfileMediaCopyGateway, S3ImageStorage};
+use driver::webhook::HttpWebhookSender;
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
@@ -14,6 +15,7 @@ use kernel::interfaces::crypto::{
 };
 use kernel::interfaces::http_signing::{DependOnHttpSignatureVerifier, DependOnHttpSigner};
 use kernel::interfaces::permission::{DependOnPermissionChecker, DependOnPermissionWriter};
+use kernel::interfaces::repository::DependOnWebhookSender;
 use kernel::KernelError;
 
 /// Single wiring root for the HTTP server (ADR 0006 decision 7).
@@ -37,6 +39,7 @@ pub struct AppModule {
     keto_client: KetoClient,
     image_storage: S3ImageStorage,
     profile_media_copy_gateway: NoopProfileMediaCopyGateway,
+    webhook_sender: HttpWebhookSender,
 }
 
 impl AppModule {
@@ -70,6 +73,7 @@ impl AppModule {
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
             image_storage,
             profile_media_copy_gateway: NoopProfileMediaCopyGateway,
+            webhook_sender: HttpWebhookSender::from_env(),
         })
     }
 
@@ -99,7 +103,14 @@ impl AppModule {
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
             image_storage,
             profile_media_copy_gateway: NoopProfileMediaCopyGateway,
+            webhook_sender: HttpWebhookSender::disabled(),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_webhook_sender(mut self, webhook_sender: HttpWebhookSender) -> Self {
+        self.webhook_sender = webhook_sender;
+        self
     }
 
     #[cfg(test)]
@@ -213,5 +224,13 @@ impl kernel::interfaces::storage::DependOnProfileMediaCopyGateway for AppModule 
 
     fn profile_media_copy_gateway(&self) -> &Self::ProfileMediaCopyGateway {
         &self.profile_media_copy_gateway
+    }
+}
+
+impl DependOnWebhookSender for AppModule {
+    type WebhookSender = HttpWebhookSender;
+
+    fn webhook_sender(&self) -> &Self::WebhookSender {
+        &self.webhook_sender
     }
 }

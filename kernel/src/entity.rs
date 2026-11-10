@@ -16,6 +16,7 @@ mod profile_transfer_request;
 mod registration_gate;
 mod remote_account;
 mod signing_key;
+mod webhook_delivery;
 
 pub use self::account::*;
 pub use self::account_report::*;
@@ -35,3 +36,4 @@ pub use self::profile_transfer_request::*;
 pub use self::registration_gate::*;
 pub use self::remote_account::*;
 pub use self::signing_key::*;
+pub use self::webhook_delivery::*;

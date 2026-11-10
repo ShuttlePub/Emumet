@@ -27,6 +27,7 @@ mod remote_account;
 mod signing_key;
 #[cfg(test)]
 mod transaction_manager_tests;
+mod webhook_delivery;
 
 use crate::database::env;
 use crate::ConvertError;
@@ -39,6 +40,11 @@ use kernel::KernelError;
 use sqlx::pool::PoolConnection;
 use sqlx::{Error, PgConnection, Pool, Postgres, Transaction};
 use std::ops::{Deref, DerefMut};
+
+/// 登録ゲート関連テーブルを TRUNCATE する実 DB テスト (E15a のゲートと E15w の配送) が共有する直列化 lock。
+#[cfg(test)]
+pub(crate) static REGISTRATION_GATE_DB_TEST_LOCK: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
 
 const POSTGRESQL: &str = "DATABASE_URL";
 

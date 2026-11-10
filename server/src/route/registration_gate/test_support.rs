@@ -55,6 +55,13 @@ pub(super) struct GateTestApp {
 
 impl GateTestApp {
     pub async fn new(keto: &MockServer) -> Self {
+        Self::with_webhook_sender(keto, driver::webhook::HttpWebhookSender::disabled()).await
+    }
+
+    pub async fn with_webhook_sender(
+        keto: &MockServer,
+        webhook_sender: driver::webhook::HttpWebhookSender,
+    ) -> Self {
         kernel::ensure_generator_initialized();
         let issuer = format!("https://issuer.example/{}", uuid::Uuid::new_v4());
         let module = AppModule::new_for_test_urls(
@@ -64,7 +71,8 @@ impl GateTestApp {
             "http://localhost:65535".to_string(),
         )
         .await
-        .expect("AppModule init failed (is DATABASE_URL set?)");
+        .expect("AppModule init failed (is DATABASE_URL set?)")
+        .with_webhook_sender(webhook_sender);
 
         let mut executor = module
             .database_connection()
@@ -72,8 +80,9 @@ impl GateTestApp {
             .await
             .expect("database executor");
         sqlx::query(
-            "TRUNCATE registration_gate_event_reads, registration_gate_events, \
-             registration_gate_audit, registration_gate_state",
+            "TRUNCATE registration_gate_webhook_attempts, registration_gate_webhook_deliveries, \
+             registration_gate_webhook_state, registration_gate_event_reads, \
+             registration_gate_events, registration_gate_audit, registration_gate_state",
         )
         .execute(&mut *executor)
         .await

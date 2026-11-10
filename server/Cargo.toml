@@ -34,6 +34,7 @@ vodca = { workspace = true }
 destructure = { workspace = true }
 serde = { workspace = true }
 base64 = "0.22"
+rand = "0.8"
 
 utoipa = { version = "5.4.0", features = ["axum_extras", "time"] }
 

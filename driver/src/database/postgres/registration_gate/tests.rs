@@ -19,7 +19,7 @@ use kernel::KernelError;
 use sqlx::types::time::OffsetDateTime;
 use sqlx::PgConnection;
 
-static GATE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+use crate::database::REGISTRATION_GATE_DB_TEST_LOCK as GATE_TEST_LOCK;
 
 const H: ProtectionObservation = ProtectionObservation {
     configured: true,

@@ -1814,6 +1814,121 @@
         ]
       }
     },
+    "/api/v1/admin/registration-gate/webhook": {
+      "get": {
+        "tags": [
+          "RegistrationGateWebhook"
+        ],
+        "description": "Webhook delivery status: whether the external Webhook is configured (`not_configured` means it is disabled, which is not an error: nothing is delivered and the gate is unaffected), a misconfiguration classification, the destination host only (never userinfo, path, query or the signing secret), delivery counts, the last success/failure times and the most recent delivery records. Delivery guarantees: at-least-once (the same event can arrive more than once after a retry, a crash or an admin retry, so receivers must de-duplicate by the stable event ID), no ordering guarantee, signed with HMAC-SHA256 over timestamp and body. The endpoint and secret are server configuration only and cannot be changed through the API. Delivery runs outside the gate state transition: Webhook failures never change the gate and never create new notification events.",
+        "operationId": "get_registration_gate_webhook_status",
+        "responses": {
+          "200": {
+            "description": "Webhook status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/webhook/retry": {
+      "post": {
+        "tags": [
+          "RegistrationGateWebhook"
+        ],
+        "description": "Requeue failed deliveries so they are sent again with the same event ID (at-least-once: the receiver may see the event more than once). With `event_id`, only that failed delivery is requeued (404 if it is not currently failed); without it, every failed delivery is requeued. Failed deliveries are never retried automatically.",
+        "operationId": "retry_registration_gate_webhooks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Number of requeued deliveries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookRetryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "No failed delivery with that event ID"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/webhook/test": {
+      "post": {
+        "tags": [
+          "RegistrationGateWebhook"
+        ],
+        "description": "Send one synthetic `webhook_test` event (event ID prefixed `test_`) to the configured endpoint through the same path as real deliveries (signature, destination check, timeout) and return the result. The test is a single attempt: it is not retried and no delivery record is stored. It never changes the gate state, the notification list or unread counts. Returns 409 when the Webhook is not configured or misconfigured (nothing is sent).",
+        "operationId": "send_registration_gate_webhook_test",
+        "responses": {
+          "200": {
+            "description": "Test sent; `delivered` tells whether the receiver answered 2xx",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookTestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "409": {
+            "description": "Webhook is not configured or misconfigured"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/reports": {
       "get": {
         "tags": [
@@ -4288,6 +4403,228 @@
             "type": "string"
           }
         }
+      },
+      "WebhookDeliveryCountsResponse": {
+        "type": "object",
+        "required": [
+          "pending",
+          "in_flight",
+          "retrying",
+          "delivered",
+          "failed"
+        ],
+        "properties": {
+          "delivered": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "retrying": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "WebhookDeliveryResponse": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "event_type",
+          "status",
+          "attempt_count",
+          "created_at"
+        ],
+        "properties": {
+          "attempt_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "通算の送信試行回数 (管理者の再試行をまたいで増える)。",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivered_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "event_id": {
+            "type": "string",
+            "description": "通知イベント ID。Webhook の `X-Emumet-Event-Id` ヘッダーと同じ値 (再試行・再送で不変)。"
+          },
+          "event_type": {
+            "type": "string",
+            "description": "`outage_started` / `outage_recovered` / `protection_degraded` /\n`protection_lost_stopped` / `override_started` / `override_revoked`"
+          },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "failed のときの理由: `permanent_error` / `retries_exhausted`。"
+          },
+          "last_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_http_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "last_result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最後の試行結果の分類。secret・宛先 URL・応答本文・内部エラー詳細を含まない固定語彙\n(`delivered` / `timeout` / `connect_failed` / `dns_failed` / `http_request_timeout` /\n`http_too_many_requests` / `http_server_error` / `http_redirect` / `http_client_error` /\n`http_unexpected_status` / `ssrf_blocked` / `config_invalid` / `lease_expired`)。"
+          },
+          "next_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "description": "`pending` / `in_flight` / `retrying` / `delivered` / `failed`"
+          }
+        }
+      },
+      "WebhookRetryRequest": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "再試行する配送の event ID (通知イベント ID)。省略すると failed の配送すべてを再キューする。"
+          }
+        }
+      },
+      "WebhookRetryResponse": {
+        "type": "object",
+        "required": [
+          "requeued"
+        ],
+        "properties": {
+          "requeued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "再キューした failed 配送の件数。同じ event ID が再送される。",
+            "minimum": 0
+          }
+        }
+      },
+      "WebhookStatusResponse": {
+        "type": "object",
+        "required": [
+          "configuration",
+          "counts",
+          "recent_deliveries"
+        ],
+        "properties": {
+          "configuration": {
+            "type": "string",
+            "description": "`not_configured` (未設定 = Webhook 無効。エラーではなく、配送もゲート動作への影響もない) /\n`misconfigured` (設定不備。`issue` を参照。ゲート動作には影響しない) / `configured`"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/WebhookDeliveryCountsResponse"
+          },
+          "destination_host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "宛先の host 部分のみ (userinfo・port・path・query・secret は出さない)。"
+          },
+          "issue": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`misconfigured` のときの不備の分類 (`invalid_url` / `unsupported_scheme` /\n`credentials_in_url` / `missing_host` / `forbidden_destination` / `missing_secret` /\n`secret_too_short` / `secret_unreadable` / `ambiguous_secret_source` / `missing_url`)。"
+          },
+          "last_failure_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "recent_deliveries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookDeliveryResponse"
+            },
+            "description": "新しい順の直近の配送記録 (本文は含まない)。"
+          }
+        }
+      },
+      "WebhookTestResponse": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "delivered",
+          "result",
+          "attempted_at"
+        ],
+        "properties": {
+          "attempted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivered": {
+            "type": "boolean",
+            "description": "受信側が 2xx を返したら true。"
+          },
+          "event_id": {
+            "type": "string",
+            "description": "テスト用の合成 event ID (`test_` で始まる。通知イベント ID とは衝突しない)。"
+          },
+          "http_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "result": {
+            "type": "string",
+            "description": "結果の分類 (配送記録の `last_result` と同じ語彙)。"
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -4338,6 +4675,10 @@
     {
       "name": "RegistrationGate",
       "description": "Registration readiness gate control plane (admin only). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet."
+    },
+    {
+      "name": "RegistrationGateWebhook",
+      "description": "External Webhook delivery of registration gate notification events (admin only; E15w). The endpoint URL and the HMAC-SHA256 signing secret are server configuration only (REGISTRATION_WEBHOOK_URL, REGISTRATION_WEBHOOK_SECRET or REGISTRATION_WEBHOOK_SECRET_FILE). When they are unset the Webhook is disabled: nothing is delivered, the status endpoint reports `not_configured`, and the gate is unaffected (this is not an error). Delivery guarantees: at-least-once, so the same event can be delivered more than once (retries, crash recovery, admin retry) and receivers must de-duplicate by the stable event ID (`X-Emumet-Event-Id`); ordering is not guaranteed (order by `occurred_at` if needed). Retries: 408/429/5xx/timeouts/connection failures are retried with exponential backoff and jitter (Retry-After is honored up to a cap) until the attempt or age limit, then the delivery is `failed`; redirects, other 4xx responses and destination-check (SSRF) rejections fail immediately. Failed deliveries are resent only when an admin requests a retry. Webhook trouble never changes the gate state and never creates a new notification event. HTTPS only, no redirects, destinations are checked at connect time and pinned. Receiver documentation: docs/registration-gate-webhook.md."
     }
   ]
 }

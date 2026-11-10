@@ -351,5 +351,12 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnWebhookDeliveryRepository for $impl_type {
+            type WebhookDeliveryRepository = <$db_type as $crate::interfaces::repository::DependOnWebhookDeliveryRepository>::WebhookDeliveryRepository;
+            fn webhook_delivery_repository(&self) -> &Self::WebhookDeliveryRepository {
+                $crate::interfaces::repository::DependOnWebhookDeliveryRepository::webhook_delivery_repository(&self.$field)
+            }
+        }
+
     };
 }

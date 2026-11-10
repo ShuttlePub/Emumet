@@ -112,7 +112,7 @@ fn validate_public_ip(ip: IpAddr) -> Result<(), KernelError> {
     }
 }
 
-fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
+pub(crate) fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
     let octets = ip.octets();
     ip.is_private()
         || ip.is_loopback()
@@ -128,7 +128,7 @@ fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
         || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
 }
 
-fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
+pub(crate) fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
     if let Some(ipv4) = ip.to_ipv4_mapped() {
         return is_blocked_ipv4(ipv4);
     }
