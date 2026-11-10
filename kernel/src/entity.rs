@@ -13,6 +13,7 @@ mod mute;
 mod organization_membership;
 mod profile;
 mod profile_transfer_request;
+mod registration_gate;
 mod remote_account;
 mod signing_key;
 
@@ -31,5 +32,6 @@ pub use self::mute::*;
 pub use self::organization_membership::*;
 pub use self::profile::*;
 pub use self::profile_transfer_request::*;
+pub use self::registration_gate::*;
 pub use self::remote_account::*;
 pub use self::signing_key::*;

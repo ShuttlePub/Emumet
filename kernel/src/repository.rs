@@ -7,6 +7,7 @@ mod image;
 mod mute;
 mod organization_membership;
 mod outbox_activity;
+mod registration_gate;
 mod remote_account;
 
 pub use self::aggregate::*;
@@ -18,4 +19,5 @@ pub use self::image::*;
 pub use self::mute::*;
 pub use self::organization_membership::*;
 pub use self::outbox_activity::*;
+pub use self::registration_gate::*;
 pub use self::remote_account::*;

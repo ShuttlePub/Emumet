@@ -12,6 +12,7 @@ pub(crate) mod oauth2;
 pub(crate) mod organization;
 pub(crate) mod organization_context;
 pub(crate) mod profile_transfer;
+pub(crate) mod registration_gate;
 pub(crate) mod report;
 pub(crate) mod signing;
 
@@ -36,6 +37,7 @@ pub(crate) use media::MediaApi;
 pub(crate) use oauth2::OAuth2Api;
 pub(crate) use organization::OrgAccountApi;
 pub(crate) use profile_transfer::ProfileTransferApi;
+pub(crate) use registration_gate::AdminRegistrationGateApi;
 pub(crate) use report::{AdminReportApi, ReportApi};
 pub(crate) use signing::SigningApi;
 

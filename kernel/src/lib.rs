@@ -344,5 +344,12 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnRegistrationGateRepository for $impl_type {
+            type RegistrationGateRepository = <$db_type as $crate::interfaces::repository::DependOnRegistrationGateRepository>::RegistrationGateRepository;
+            fn registration_gate_repository(&self) -> &Self::RegistrationGateRepository {
+                $crate::interfaces::repository::DependOnRegistrationGateRepository::registration_gate_repository(&self.$field)
+            }
+        }
+
     };
 }
