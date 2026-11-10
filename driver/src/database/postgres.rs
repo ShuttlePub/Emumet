@@ -22,6 +22,7 @@ mod profile_transfer_request;
 mod profile_transfer_request_event_store;
 mod profile_transfer_request_repository;
 mod projection;
+mod registration_gate;
 mod remote_account;
 mod signing_key;
 #[cfg(test)]

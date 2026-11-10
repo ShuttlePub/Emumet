@@ -19,6 +19,7 @@ use crate::route::me::MeRouter;
 use crate::route::media::MediaRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile_transfer::ProfileTransferRouter;
+use crate::route::registration_gate::AdminRegistrationGateRouter;
 use crate::route::report::{AdminReportRouter, ReportRouter};
 use crate::route::signing::SigningRouter;
 #[cfg(feature = "test-mode")]
@@ -105,7 +106,8 @@ async fn main() -> Result<(), StackTrace> {
             "/admin",
             axum::Router::new()
                 .route_admin_account()
-                .route_admin_reports(),
+                .route_admin_reports()
+                .route_admin_registration_gate(),
         );
 
     let authed_routes = axum::Router::new()

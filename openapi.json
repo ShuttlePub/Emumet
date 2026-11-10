@@ -1407,6 +1407,413 @@
         ]
       }
     },
+    "/api/v1/admin/registration-gate": {
+      "get": {
+        "tags": [
+          "RegistrationGate"
+        ],
+        "description": "Get the registration gate state. `override.active` is true while the override is in effect so the admin UI can keep showing the warning on every page. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "operationId": "get_registration_gate",
+        "responses": {
+          "200": {
+            "description": "Registration gate state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationGateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/close": {
+      "post": {
+        "tags": [
+          "RegistrationGate"
+        ],
+        "description": "Manually close the registration gate. The closure is never lifted automatically. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "operationId": "close_registration_gate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrationGateRevisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Gate closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationGateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "409": {
+            "description": "Revision conflict"
+          },
+          "422": {
+            "description": "Already closed"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/notifications": {
+      "get": {
+        "tags": [
+          "RegistrationGate"
+        ],
+        "description": "List registration gate notification events (newest first) with the caller's own read state.",
+        "operationId": "list_registration_gate_notifications",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "path",
+            "description": "1〜100 (既定 50)。",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "path",
+            "description": "前ページ最後の通知イベント ID。これより古いものを返す。",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notification events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationGateNotificationListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/notifications/read": {
+      "post": {
+        "tags": [
+          "RegistrationGate"
+        ],
+        "description": "Mark the given notification events as read for the calling admin only. Other admins' read state is unaffected.",
+        "operationId": "mark_registration_gate_notifications_read",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkNotificationsReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Unread count after marking",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCountResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/notifications/read-all": {
+      "post": {
+        "tags": [
+          "RegistrationGate"
+        ],
+        "description": "Mark every notification event as read for the calling admin only.",
+        "operationId": "mark_all_registration_gate_notifications_read",
+        "responses": {
+          "200": {
+            "description": "Unread count after marking",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCountResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/notifications/unread-count": {
+      "get": {
+        "tags": [
+          "RegistrationGate"
+        ],
+        "description": "Unread notification count for the calling admin only.",
+        "operationId": "unread_registration_gate_notifications",
+        "responses": {
+          "200": {
+            "description": "Unread count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCountResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/open": {
+      "post": {
+        "tags": [
+          "RegistrationGate"
+        ],
+        "description": "Open (or manually resume after a config-loss stop) the registration gate. Succeeds only when at least one protection (email or bot) is verified; clears the stop latch. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "operationId": "open_registration_gate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrationGateRevisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Gate opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationGateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "409": {
+            "description": "Revision conflict"
+          },
+          "422": {
+            "description": "Minimum protection condition not met, or already open"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/override": {
+      "post": {
+        "tags": [
+          "RegistrationGate"
+        ],
+        "description": "Open the registration gate with override: allowed even without a verified protection, but only after the warning is explicitly acknowledged. Stays in effect until explicitly revoked; automatic stop and outage rejection are not applied while it is active (verified protections are still enforced). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "operationId": "enable_registration_gate_override",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnableOverrideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Override enabled and gate opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationGateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or warning not acknowledged"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "409": {
+            "description": "Revision conflict"
+          },
+          "422": {
+            "description": "Override already active"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/override/revoke": {
+      "post": {
+        "tags": [
+          "RegistrationGate"
+        ],
+        "description": "Revoke the override and return to normal judgement, re-evaluated against the current observation. Never closes the gate by itself. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "operationId": "revoke_registration_gate_override",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrationGateRevisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Override revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationGateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "409": {
+            "description": "Revision conflict"
+          },
+          "422": {
+            "description": "Override is not active"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/reports": {
       "get": {
         "tags": [
@@ -2867,6 +3274,23 @@
           }
         }
       },
+      "EnableOverrideRequest": {
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "acknowledge_warning": {
+            "type": "boolean",
+            "description": "保護が整っていない状態でも一般登録を開放する危険を理解したことの明示確認。false なら 400。"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "取得した状態の revision。一致しなければ 409。"
+          }
+        }
+      },
       "FollowAccountRequest": {
         "type": "object",
         "required": [
@@ -2938,6 +3362,21 @@
           },
           "role": {
             "$ref": "#/components/schemas/OrganizationRole"
+          }
+        }
+      },
+      "MarkNotificationsReadRequest": {
+        "type": "object",
+        "required": [
+          "event_ids"
+        ],
+        "properties": {
+          "event_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "既読にする通知イベント ID (1〜100 件)。"
           }
         }
       },
@@ -3253,6 +3692,31 @@
           "member"
         ]
       },
+      "OverrideResponse": {
+        "type": "object",
+        "required": [
+          "active"
+        ],
+        "properties": {
+          "activated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "activated_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "active": {
+            "type": "boolean",
+            "description": "override 有効中は true。管理画面は全ページで常時警告表示する。"
+          }
+        }
+      },
       "ProfileResponse": {
         "type": "object",
         "required": [
@@ -3315,6 +3779,22 @@
           }
         }
       },
+      "ProtectionObservationResponse": {
+        "type": "object",
+        "required": [
+          "configured",
+          "probe"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "probe": {
+            "type": "string",
+            "description": "`healthy` / `unhealthy` / `unknown`"
+          }
+        }
+      },
       "PublicKey": {
         "type": "object",
         "description": "An ActivityPub public key object attached to an Actor.",
@@ -3351,6 +3831,182 @@
           },
           "publicKeyPem": {
             "type": "string"
+          }
+        }
+      },
+      "RegistrationGateNotificationListResponse": {
+        "type": "object",
+        "required": [
+          "notifications",
+          "unread_count"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "次ページを取るための `before` 値。最後のページでは null。"
+          },
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegistrationGateNotificationResponse"
+            }
+          },
+          "unread_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "呼び出した管理者自身の未読件数。"
+          }
+        }
+      },
+      "RegistrationGateNotificationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "revision",
+          "observation",
+          "created_at",
+          "read"
+        ],
+        "properties": {
+          "actor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "override の開始・解除を実行した管理者 (auth account ID)。"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "description": "安定した通知イベント ID (外部 Webhook 配送の重複排除キーにもなる)。"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`outage_started` / `outage_recovered` / `protection_degraded` /\n`protection_lost_stopped` / `override_started` / `override_revoked`"
+          },
+          "observation": {
+            "$ref": "#/components/schemas/RegistrationObservationResponse"
+          },
+          "read": {
+            "type": "boolean",
+            "description": "呼び出した管理者自身の既読状態。"
+          },
+          "read_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "このイベントを生んだ遷移後のゲート revision。"
+          }
+        }
+      },
+      "RegistrationGateResponse": {
+        "type": "object",
+        "description": "E15a は control plane のみ。Kratos 遮断 (E15d) が接続されるまで、この状態は実際の登録を\n遮断も許可もしない (実登録はまだ守られない)。",
+        "required": [
+          "revision",
+          "admin_state",
+          "decision",
+          "accepting",
+          "requires_manual_resume",
+          "config_lost_latch",
+          "health_episode",
+          "enforced_protections",
+          "degraded_protections",
+          "override",
+          "observation",
+          "updated_at"
+        ],
+        "properties": {
+          "accepting": {
+            "type": "boolean"
+          },
+          "admin_state": {
+            "type": "string",
+            "description": "`open` / `closed` (管理者の開閉状態)"
+          },
+          "config_lost_latch": {
+            "type": "boolean"
+          },
+          "decision": {
+            "type": "string",
+            "description": "`accepting` / `admin_closed` / `stopped` / `temporary_reject`"
+          },
+          "degraded_protections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "設定済みだが検証 API が応答しない対策 (防御低下)"
+          },
+          "enforced_protections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "登録時に課す対策 (検証 API が実際に応答した対策のみ)"
+          },
+          "health_episode": {
+            "type": "string",
+            "description": "`none` / `outage` / `degraded`"
+          },
+          "observation": {
+            "$ref": "#/components/schemas/RegistrationObservationResponse"
+          },
+          "override": {
+            "$ref": "#/components/schemas/OverrideResponse"
+          },
+          "requires_manual_resume": {
+            "type": "boolean",
+            "description": "`stopped` (設定喪失の停止ラッチ) のとき true。復旧しても自動再開せず手動再開が必要。"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RegistrationGateRevisionRequest": {
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "取得した状態の revision。一致しなければ 409。"
+          }
+        }
+      },
+      "RegistrationObservationResponse": {
+        "type": "object",
+        "required": [
+          "email",
+          "bot"
+        ],
+        "properties": {
+          "bot": {
+            "$ref": "#/components/schemas/ProtectionObservationResponse"
+          },
+          "email": {
+            "$ref": "#/components/schemas/ProtectionObservationResponse"
           }
         }
       },
@@ -3489,6 +4145,19 @@
           },
           "reason": {
             "type": "string"
+          }
+        }
+      },
+      "UnreadCountResponse": {
+        "type": "object",
+        "required": [
+          "unread_count"
+        ],
+        "properties": {
+          "unread_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "呼び出した管理者自身の未読件数。"
           }
         }
       },
@@ -3665,6 +4334,10 @@
     {
       "name": "Organization",
       "description": "Organization account and membership management"
+    },
+    {
+      "name": "RegistrationGate",
+      "description": "Registration readiness gate control plane (admin only). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet."
     }
   ]
 }

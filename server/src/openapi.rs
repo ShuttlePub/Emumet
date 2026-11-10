@@ -83,6 +83,15 @@ impl Modify for SecurityAddon {
         crate::route::profile_transfer::accept_profile_transfer_request,
         crate::route::profile_transfer::reject_profile_transfer_request,
         crate::route::profile_transfer::cancel_profile_transfer_request,
+        crate::route::registration_gate::get_registration_gate,
+        crate::route::registration_gate::open_registration_gate,
+        crate::route::registration_gate::close_registration_gate,
+        crate::route::registration_gate::enable_registration_gate_override,
+        crate::route::registration_gate::revoke_registration_gate_override,
+        crate::route::registration_gate::list_registration_gate_notifications,
+        crate::route::registration_gate::unread_registration_gate_notifications,
+        crate::route::registration_gate::mark_registration_gate_notifications_read,
+        crate::route::registration_gate::mark_all_registration_gate_notifications_read,
     ),
     components(schemas(
         crate::schema::account::CreateAccountRequest,
@@ -134,6 +143,16 @@ impl Modify for SecurityAddon {
         crate::schema::organization::MyOrganizationsResponse,
         crate::schema::organization::OrganizationMemberResponse,
         crate::schema::organization::OrganizationMembersResponse,
+        crate::schema::registration_gate::RegistrationGateRevisionRequest,
+        crate::schema::registration_gate::EnableOverrideRequest,
+        crate::schema::registration_gate::MarkNotificationsReadRequest,
+        crate::schema::registration_gate::ProtectionObservationResponse,
+        crate::schema::registration_gate::RegistrationObservationResponse,
+        crate::schema::registration_gate::OverrideResponse,
+        crate::schema::registration_gate::RegistrationGateResponse,
+        crate::schema::registration_gate::RegistrationGateNotificationResponse,
+        crate::schema::registration_gate::RegistrationGateNotificationListResponse,
+        crate::schema::registration_gate::UnreadCountResponse,
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -146,6 +165,7 @@ impl Modify for SecurityAddon {
         (name = "Report", description = "Account moderation reports"),
         (name = "ProfileTransfer", description = "Profile ownership transfer requests"),
         (name = "Organization", description = "Organization account and membership management"),
+        (name = "RegistrationGate", description = "Registration readiness gate control plane (admin only). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet."),
     )
 )]
 #[allow(dead_code)] // utoipa OpenApiマクロ内部で使用される
