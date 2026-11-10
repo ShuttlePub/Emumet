@@ -1,10 +1,10 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::{
-    apply_scoped_provider_result, decide_confirmation, decide_proof_use, evaluate_send_limits,
-    ChallengePurpose, ChallengeRejection, ChallengeStatus, CheckScope, ConfigGeneration,
-    ConfirmDecision, EmailChallenge, EmailChallengePolicy, ProofBinding, ProofDecision,
-    ProofRejection, Protection, ProtectionConfigSnapshot, ProviderResult, ReadinessPolicy,
-    ReadinessRecord, SendCounts, SendLimitDecision, SendLimitScope,
+    apply_provider_result, decide_confirmation, decide_proof_use, evaluate_send_limits,
+    ChallengePurpose, ChallengeRejection, ChallengeStatus, ConfigGeneration, ConfirmDecision,
+    EmailChallenge, EmailChallengePolicy, ProofBinding, ProofDecision, ProofRejection, Protection,
+    ProtectionConfigSnapshot, ProviderResult, ReadinessPolicy, ReadinessRecord, SendCounts,
+    SendLimitDecision, SendLimitScope,
 };
 use crate::KernelError;
 use std::future::Future;
@@ -228,14 +228,13 @@ pub async fn record_provider_result<R: RegistrationProtectionRepository>(
     executor: &mut R::Connection,
     config: &ProtectionConfigSnapshot,
     result: &ProviderResult,
-    scope: CheckScope,
     at: OffsetDateTime,
     policy: &ReadinessPolicy,
 ) -> error_stack::Result<Option<ReadinessRecord>, KernelError> {
     let existing = repository
         .find_for_update(executor, config.protection)
         .await?;
-    let record = apply_scoped_provider_result(existing.as_ref(), config, result, scope, at, policy);
+    let record = apply_provider_result(existing.as_ref(), config, result, at, policy);
     if let Some(record) = &record {
         repository.upsert(executor, record).await?;
     }

@@ -18,9 +18,9 @@ use super::registration_gate::{from_column, to_column};
 const READINESS_COLUMNS: &str = "protection, provider, enabled, generation, fingerprint, \
     checked_at, check_outcome, check_reason, check_transport, last_success_at, \
     success_valid_until, status, reason, valid_until, delivery_failure_outcome, \
-    delivery_failure_reason, delivery_failure_transport, delivery_failure_at, \
-    connection_failure_outcome, connection_failure_reason, connection_failure_transport, \
-    connection_failure_at";
+    delivery_failure_reason, delivery_failure_transport, delivery_failure_stage, \
+    delivery_failure_at, connection_failure_outcome, connection_failure_reason, \
+    connection_failure_transport, connection_failure_stage, connection_failure_at";
 
 #[derive(sqlx::FromRow)]
 struct ReadinessRow {
@@ -41,49 +41,60 @@ struct ReadinessRow {
     delivery_failure_outcome: Option<String>,
     delivery_failure_reason: Option<String>,
     delivery_failure_transport: Option<String>,
+    delivery_failure_stage: Option<String>,
     delivery_failure_at: Option<OffsetDateTime>,
     connection_failure_outcome: Option<String>,
     connection_failure_reason: Option<String>,
     connection_failure_transport: Option<String>,
+    connection_failure_stage: Option<String>,
     connection_failure_at: Option<OffsetDateTime>,
 }
 
-fn known_failure(
+#[derive(Default)]
+struct FailureColumns {
     outcome: Option<String>,
     reason: Option<String>,
     transport: Option<String>,
+    stage: Option<String>,
     at: Option<OffsetDateTime>,
-) -> Result<Option<KnownFailure>, Report<KernelError>> {
-    match (outcome, reason, transport, at) {
-        (Some(outcome), Some(reason), Some(transport), Some(at)) => Ok(Some(KnownFailure {
-            outcome: from_column(&outcome)?,
-            reason: from_column(&reason)?,
-            transport: from_column(&transport)?,
-            at,
-        })),
-        (None, None, None, None) => Ok(None),
-        _ => Err(Report::new(KernelError::Internal)
-            .attach_printable("Inconsistent readiness known failure columns")),
-    }
 }
 
-type FailureColumns = (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<OffsetDateTime>,
-);
+impl FailureColumns {
+    fn into_failure(self) -> Result<Option<KnownFailure>, Report<KernelError>> {
+        match (
+            self.outcome,
+            self.reason,
+            self.transport,
+            self.stage,
+            self.at,
+        ) {
+            (Some(outcome), Some(reason), Some(transport), Some(stage), Some(at)) => {
+                Ok(Some(KnownFailure {
+                    outcome: from_column(&outcome)?,
+                    reason: from_column(&reason)?,
+                    transport: from_column(&transport)?,
+                    stage: from_column(&stage)?,
+                    at,
+                }))
+            }
+            (None, None, None, None, None) => Ok(None),
+            _ => Err(Report::new(KernelError::Internal)
+                .attach_printable("Inconsistent readiness known failure columns")),
+        }
+    }
 
-fn failure_columns(failure: Option<KnownFailure>) -> Result<FailureColumns, Report<KernelError>> {
-    Ok(match failure {
-        Some(failure) => (
-            Some(to_column(&failure.outcome)?),
-            Some(to_column(&failure.reason)?),
-            Some(to_column(&failure.transport)?),
-            Some(failure.at),
-        ),
-        None => (None, None, None, None),
-    })
+    fn from_failure(failure: Option<KnownFailure>) -> Result<Self, Report<KernelError>> {
+        Ok(match failure {
+            Some(failure) => Self {
+                outcome: Some(to_column(&failure.outcome)?),
+                reason: Some(to_column(&failure.reason)?),
+                transport: Some(to_column(&failure.transport)?),
+                stage: Some(to_column(&failure.stage)?),
+                at: Some(failure.at),
+            },
+            None => Self::default(),
+        })
+    }
 }
 
 impl TryFrom<ReadinessRow> for ReadinessRecord {
@@ -102,18 +113,22 @@ impl TryFrom<ReadinessRow> for ReadinessRecord {
             check_transport: from_column(&row.check_transport)?,
             last_success_at: row.last_success_at,
             success_valid_until: row.success_valid_until,
-            delivery_failure: known_failure(
-                row.delivery_failure_outcome,
-                row.delivery_failure_reason,
-                row.delivery_failure_transport,
-                row.delivery_failure_at,
-            )?,
-            connection_failure: known_failure(
-                row.connection_failure_outcome,
-                row.connection_failure_reason,
-                row.connection_failure_transport,
-                row.connection_failure_at,
-            )?,
+            delivery_failure: FailureColumns {
+                outcome: row.delivery_failure_outcome,
+                reason: row.delivery_failure_reason,
+                transport: row.delivery_failure_transport,
+                stage: row.delivery_failure_stage,
+                at: row.delivery_failure_at,
+            }
+            .into_failure()?,
+            connection_failure: FailureColumns {
+                outcome: row.connection_failure_outcome,
+                reason: row.connection_failure_reason,
+                transport: row.connection_failure_transport,
+                stage: row.connection_failure_stage,
+                at: row.connection_failure_at,
+            }
+            .into_failure()?,
             status: from_column(&row.status)?,
             reason: from_column(&row.reason)?,
             valid_until: row.valid_until,
@@ -176,8 +191,8 @@ impl RegistrationProtectionRepository for PostgresRegistrationProtectionReposito
         executor: &mut Self::Connection,
         record: &ReadinessRecord,
     ) -> error_stack::Result<(), KernelError> {
-        let delivery = failure_columns(record.delivery_failure)?;
-        let connection = failure_columns(record.connection_failure)?;
+        let delivery = FailureColumns::from_failure(record.delivery_failure)?;
+        let connection = FailureColumns::from_failure(record.connection_failure)?;
         let con: &mut PgConnection = executor;
         sqlx::query(
             //language=postgresql
@@ -185,10 +200,11 @@ impl RegistrationProtectionRepository for PostgresRegistrationProtectionReposito
              generation, fingerprint, checked_at, check_outcome, check_reason, check_transport, \
              last_success_at, success_valid_until, status, reason, valid_until, \
              delivery_failure_outcome, delivery_failure_reason, delivery_failure_transport, \
-             delivery_failure_at, connection_failure_outcome, connection_failure_reason, \
-             connection_failure_transport, connection_failure_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, \
-             $19, $20, $21, $22) \
+             delivery_failure_stage, delivery_failure_at, connection_failure_outcome, \
+             connection_failure_reason, connection_failure_transport, connection_failure_stage, \
+             connection_failure_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, \
+             $18, $19, $20, $21, $22, $23, $24) \
              ON CONFLICT (protection) DO UPDATE SET provider = EXCLUDED.provider, \
              enabled = EXCLUDED.enabled, generation = EXCLUDED.generation, \
              fingerprint = EXCLUDED.fingerprint, checked_at = EXCLUDED.checked_at, \
@@ -200,10 +216,12 @@ impl RegistrationProtectionRepository for PostgresRegistrationProtectionReposito
              delivery_failure_outcome = EXCLUDED.delivery_failure_outcome, \
              delivery_failure_reason = EXCLUDED.delivery_failure_reason, \
              delivery_failure_transport = EXCLUDED.delivery_failure_transport, \
+             delivery_failure_stage = EXCLUDED.delivery_failure_stage, \
              delivery_failure_at = EXCLUDED.delivery_failure_at, \
              connection_failure_outcome = EXCLUDED.connection_failure_outcome, \
              connection_failure_reason = EXCLUDED.connection_failure_reason, \
              connection_failure_transport = EXCLUDED.connection_failure_transport, \
+             connection_failure_stage = EXCLUDED.connection_failure_stage, \
              connection_failure_at = EXCLUDED.connection_failure_at",
         )
         .bind(to_column(&record.protection)?)
@@ -220,14 +238,16 @@ impl RegistrationProtectionRepository for PostgresRegistrationProtectionReposito
         .bind(to_column(&record.status)?)
         .bind(to_column(&record.reason)?)
         .bind(record.valid_until)
-        .bind(delivery.0)
-        .bind(delivery.1)
-        .bind(delivery.2)
-        .bind(delivery.3)
-        .bind(connection.0)
-        .bind(connection.1)
-        .bind(connection.2)
-        .bind(connection.3)
+        .bind(delivery.outcome)
+        .bind(delivery.reason)
+        .bind(delivery.transport)
+        .bind(delivery.stage)
+        .bind(delivery.at)
+        .bind(connection.outcome)
+        .bind(connection.reason)
+        .bind(connection.transport)
+        .bind(connection.stage)
+        .bind(connection.at)
         .execute(con)
         .await
         .convert_error()?;

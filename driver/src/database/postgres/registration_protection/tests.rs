@@ -17,7 +17,7 @@ use kernel::interfaces::repository::{
 };
 use kernel::prelude::entity::{
     evaluate_readiness, observation_from_readiness, ChallengePurpose, ChallengeRejection,
-    ChallengeStatus, CheckScope, ConfigGeneration, EmailChallengePolicy, ProofBinding,
+    ChallengeStatus, CheckStage, ConfigGeneration, EmailChallengePolicy, ProofBinding,
     ProofRejection, Protection, ProtectionConfigSnapshot, ProtectionProvider, ProviderResult,
     ReadinessPolicy, ReadinessStatus, ReasonCode, SendLimitScope, TransportClass,
 };
@@ -95,7 +95,6 @@ impl Fixture {
                         conn,
                         &config,
                         &result,
-                        CheckScope::Connection,
                         at,
                         &readiness_policy(),
                     )
@@ -319,7 +318,6 @@ async fn concurrent_readiness_writes_never_lose_the_business_success() {
                         conn,
                         &config,
                         &result,
-                        CheckScope::Connection,
                         at,
                         &readiness_policy(),
                     )
@@ -1276,175 +1274,165 @@ async fn rate_limits_do_not_depend_on_the_order_in_which_requests_reserve() {
     ));
 }
 
-#[test_with::env(DATABASE_URL)]
-#[tokio::test]
-async fn a_delivery_failure_is_persisted_carried_by_connection_probes_and_cleared_by_a_delivery_success(
-) {
-    let fx = Fixture::new().await;
-    let email = snapshot(Protection::Email, "e1");
-    let scoped = |result: ProviderResult, scope: CheckScope, at: OffsetDateTime| {
-        let db = fx.db.clone();
-        let email = email.clone();
-        async move {
-            db.transaction(move |conn| {
-                Box::pin(async move {
-                    record_provider_result(
-                        &PostgresRegistrationProtectionRepository,
-                        conn,
-                        &email,
-                        &result,
-                        scope,
-                        at,
-                        &readiness_policy(),
-                    )
-                    .await
-                    .map(|record| record.is_some())
-                })
-            })
+async fn record_at(
+    fx: &Fixture,
+    config: &ProtectionConfigSnapshot,
+    result: ProviderResult,
+    at: OffsetDateTime,
+) -> bool {
+    let db = fx.db.clone();
+    let config = config.clone();
+    db.transaction(move |conn| {
+        Box::pin(async move {
+            record_provider_result(
+                &PostgresRegistrationProtectionRepository,
+                conn,
+                &config,
+                &result,
+                at,
+                &readiness_policy(),
+            )
             .await
-            .unwrap()
-        }
-    };
-    assert!(scoped(success(), CheckScope::Delivery, t0()).await);
-    assert!(fx
-        .readiness(Protection::Email)
-        .await
-        .unwrap()
-        .delivery_failure
-        .is_none());
+            .map(|record| record.is_some())
+        })
+    })
+    .await
+    .unwrap()
+}
 
-    let failure = ProviderResult::temporarily_unavailable(
-        ReasonCode::SmtpTransientFailure,
-        TransportClass::SmtpTransient,
-    );
-    assert!(scoped(failure, CheckScope::Delivery, t0() + Duration::minutes(1)).await);
-    let blocked = fx.readiness(Protection::Email).await.unwrap();
-    let block = blocked
-        .delivery_failure
-        .expect("the delivery failure is stored");
-    assert_eq!(block.reason, ReasonCode::SmtpTransientFailure);
-    assert_eq!(block.at, t0() + Duration::minutes(1));
+fn smtp_failed(
+    outcome: kernel::prelude::entity::ProviderOutcome,
+    stage: CheckStage,
+    reason: ReasonCode,
+) -> ProviderResult {
+    ProviderResult::new(outcome, reason, TransportClass::SmtpPermanent).at_stage(stage)
+}
 
-    // 接続範囲の受理 (接続 probe) は block を保持したまま、評価も非健全のまま。
-    assert!(
-        scoped(
-            accepted(),
-            CheckScope::Connection,
-            t0() + Duration::minutes(2)
-        )
-        .await
-    );
-    let after_probe = fx.readiness(Protection::Email).await.unwrap();
-    assert_eq!(after_probe.delivery_failure, Some(block));
-    assert_eq!(
-        evaluate_readiness(
-            &email,
-            Some(&after_probe),
-            t0() + Duration::minutes(2),
-            &readiness_policy()
-        )
-        .status,
-        ReadinessStatus::TemporarilyUnavailable
-    );
-
-    // 配送範囲の成功で解除され、DB からも消える。
-    assert!(
-        scoped(
-            accepted(),
-            CheckScope::Delivery,
-            t0() + Duration::minutes(3)
-        )
-        .await
-    );
-    let cleared = fx.readiness(Protection::Email).await.unwrap();
-    assert!(cleared.delivery_failure.is_none());
-    assert_eq!(
-        evaluate_readiness(
-            &email,
-            Some(&cleared),
-            t0() + Duration::minutes(3),
-            &readiness_policy()
-        )
-        .status,
-        ReadinessStatus::Operational
-    );
+fn reached(stage: CheckStage, at: OffsetDateTime) -> ProviderResult {
+    ProviderResult::accepted(TransportClass::SmtpAccepted)
+        .at_stage(stage)
+        .observed(at)
 }
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn a_connection_failure_is_persisted_and_survives_a_lighter_failure_until_a_connection_success(
+async fn known_failures_persist_with_their_stage_and_time_and_clear_only_with_covering_later_evidence(
 ) {
+    use kernel::prelude::entity::ProviderOutcome;
     let fx = Fixture::new().await;
     let email = snapshot(Protection::Email, "e1");
-    let scoped = |result: ProviderResult, at: OffsetDateTime| {
-        let db = fx.db.clone();
+    let state = |at: OffsetDateTime| {
+        let fx = &fx;
         let email = email.clone();
         async move {
-            db.transaction(move |conn| {
-                Box::pin(async move {
-                    record_provider_result(
-                        &PostgresRegistrationProtectionRepository,
-                        conn,
-                        &email,
-                        &result,
-                        CheckScope::Connection,
-                        at,
-                        &readiness_policy(),
-                    )
-                    .await
-                    .map(|record| record.is_some())
-                })
-            })
-            .await
-            .unwrap()
+            let record = fx.readiness(Protection::Email).await.unwrap();
+            let status = evaluate_readiness(&email, Some(&record), at, &readiness_policy()).status;
+            (record, status)
         }
     };
-    assert!(scoped(success(), t0()).await);
-    let invalid = ProviderResult::configuration_invalid(
-        ReasonCode::SmtpAuthFailed,
-        TransportClass::SmtpPermanent,
-    );
-    assert!(scoped(invalid, t0() + Duration::minutes(1)).await);
-    let stored = fx.readiness(Protection::Email).await.unwrap();
-    assert_eq!(
-        stored.connection_failure.map(|failure| failure.reason),
-        Some(ReasonCode::SmtpAuthFailed)
-    );
-    assert!(stored.delivery_failure.is_none());
+    let business = ProviderResult::business_success(TransportClass::SmtpAccepted)
+        .at_stage(CheckStage::Data)
+        .observed(t0());
+    assert!(record_at(&fx, &email, business, t0()).await);
 
-    let timeout =
-        ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout);
-    assert!(scoped(timeout, t0() + Duration::minutes(2)).await);
-    let after_timeout = fx.readiness(Protection::Email).await.unwrap();
-    assert_eq!(
-        after_timeout
-            .connection_failure
-            .map(|failure| failure.outcome),
-        Some(kernel::prelude::entity::ProviderOutcome::ConfigurationInvalid)
-    );
-    assert_eq!(
-        after_timeout.check_outcome,
-        kernel::prelude::entity::ProviderOutcome::TemporarilyUnavailable
-    );
-    let at = t0() + Duration::minutes(2);
-    assert_eq!(
-        evaluate_readiness(&email, Some(&after_timeout), at, &readiness_policy()).status,
-        ReadinessStatus::ConfigurationInvalid
-    );
-    // 鮮度切れの後でも改善しない。
-    let much_later = t0() + Duration::hours(3);
-    assert_eq!(
-        evaluate_readiness(
+    // MAIL FROM の障害 (接続範囲) と RCPT の障害 (配送範囲) がそれぞれ段階・時刻つきで保存される。
+    let mail_from = smtp_failed(
+        ProviderOutcome::ConfigurationInvalid,
+        CheckStage::MailFrom,
+        ReasonCode::SmtpPermanentFailure,
+    )
+    .observed(t0() + Duration::minutes(1));
+    assert!(record_at(&fx, &email, mail_from, t0() + Duration::minutes(1)).await);
+    let rcpt = smtp_failed(
+        ProviderOutcome::TemporarilyUnavailable,
+        CheckStage::Rcpt,
+        ReasonCode::SmtpTransientFailure,
+    )
+    .observed(t0() + Duration::minutes(2));
+    assert!(record_at(&fx, &email, rcpt, t0() + Duration::minutes(2)).await);
+    let (record, status) = state(t0() + Duration::minutes(2)).await;
+    let connection = record
+        .connection_failure
+        .expect("connection failure stored");
+    assert_eq!(connection.stage, CheckStage::MailFrom);
+    assert_eq!(connection.at, t0() + Duration::minutes(1));
+    let delivery = record.delivery_failure.expect("delivery failure stored");
+    assert_eq!(delivery.stage, CheckStage::Rcpt);
+    assert_eq!(delivery.at, t0() + Duration::minutes(2));
+    assert_eq!(status, ReadinessStatus::ConfigurationInvalid);
+
+    // 認証までしか検証しない成功、証拠時刻が障害より前の成功は、どちらも解除しない。
+    assert!(
+        record_at(
+            &fx,
             &email,
-            Some(&after_timeout),
-            much_later,
-            &readiness_policy()
+            reached(CheckStage::Auth, t0() + Duration::minutes(3)),
+            t0() + Duration::minutes(3)
         )
-        .status,
-        ReadinessStatus::ConfigurationInvalid
+        .await
     );
+    assert!(
+        record_at(
+            &fx,
+            &email,
+            reached(CheckStage::Data, t0() + Duration::minutes(1)),
+            t0() + Duration::minutes(4)
+        )
+        .await
+    );
+    let (record, status) = state(t0() + Duration::minutes(4)).await;
+    assert!(record.connection_failure.is_some() && record.delivery_failure.is_some());
+    assert_eq!(status, ReadinessStatus::ConfigurationInvalid);
 
-    assert!(scoped(success(), t0() + Duration::minutes(3)).await);
-    let healed = fx.readiness(Protection::Email).await.unwrap();
-    assert!(healed.connection_failure.is_none());
+    // MAIL FROM まで検証した新しい probe は接続範囲だけを解除する (RCPT の障害は残る)。
+    assert!(
+        record_at(
+            &fx,
+            &email,
+            reached(CheckStage::MailFrom, t0() + Duration::minutes(5)),
+            t0() + Duration::minutes(5)
+        )
+        .await
+    );
+    let (record, status) = state(t0() + Duration::minutes(5)).await;
+    assert!(record.connection_failure.is_none());
+    assert_eq!(
+        record.delivery_failure.map(|failure| failure.stage),
+        Some(CheckStage::Rcpt)
+    );
+    assert_eq!(status, ReadinessStatus::TemporarilyUnavailable);
+
+    // 新しい DATA 受理 (canary の配送成功) で配送範囲も解除され、鮮度内の business success で operational。
+    assert!(
+        record_at(
+            &fx,
+            &email,
+            reached(CheckStage::Data, t0() + Duration::minutes(6)),
+            t0() + Duration::minutes(6)
+        )
+        .await
+    );
+    let (record, status) = state(t0() + Duration::minutes(6)).await;
+    assert!(record.connection_failure.is_none() && record.delivery_failure.is_none());
+    assert_eq!(status, ReadinessStatus::Operational);
+
+    // 設定変更 (generation) は保持した障害を破棄する。
+    let failure = smtp_failed(
+        ProviderOutcome::ConfigurationInvalid,
+        CheckStage::Auth,
+        ReasonCode::SmtpAuthFailed,
+    );
+    assert!(record_at(&fx, &email, failure, t0() + Duration::minutes(7)).await);
+    let next = snapshot(Protection::Email, "e2");
+    assert!(
+        record_at(
+            &fx,
+            &next,
+            ProviderResult::accepted(TransportClass::SmtpAccepted),
+            t0() + Duration::minutes(8)
+        )
+        .await
+    );
+    let record = fx.readiness(Protection::Email).await.unwrap();
+    assert!(record.connection_failure.is_none() && record.delivery_failure.is_none());
 }

@@ -63,11 +63,20 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
 
 ### 単調性の原則と網羅表
 
-**より悪い既知状態は、それを解消する証拠 (同じ範囲の成功) か generation の変更でしか改善しない。** 後続のより軽い失敗 (`configuration_invalid` の後の timeout)、時間の経過 (鮮度切れ)、別の範囲の成功では、解除も軽減もされない。
-成功が解消する範囲: 接続範囲の成功 (接続 probe・BOT の business success・登録者の code 確認の成功) は **接続範囲の障害だけ**、canary の配送成功は **接続・配送の両方**。失敗は同じ範囲の既存の障害へ「より軽ければ据え置き、同格以上なら最新で置き換え」で畳む。
-`attempt_rejected` は何も変えず、記録もしない。
+**より悪い既知状態は、それを解消する証拠か generation の変更でしか改善しない。** 後続のより軽い失敗 (`configuration_invalid` の後の timeout)、時間の経過 (鮮度切れ)、対話を伴わない成功 (code 確認)、検証していない段階の成功では、解除も軽減もされない。
 
-配送範囲の障害 × 最新の接続結果 × 時間・generation の全組合せ (`kernel` の `readiness_is_monotonic_over_every_combination` が期待値を手書きで網羅する。E15a への観測 = (configured, healthy)):
+#### 証拠 (どの段階を、いつ検証したか)
+
+検証結果 (`ProviderResult`) は分類に加えて **証拠** を持つ: `stage` = 検証した (失敗では失敗した) SMTP の段階 (`connect` < `start_tls` < `auth` < `mail_from` < `rcpt` < `data`)、`observed_at` = その SMTP 対話が実際に行われた時刻 (記録時刻ではない)。HTTP provider (Turnstile) は段階を持たないので、失敗を `connect`、成功を `data` (全段階) として扱う。
+
+- **障害の保持**: 失敗は段階で範囲に分かれる。`connect`〜`mail_from` = 接続範囲 (`connection_failure`)、`rcpt`・`data` = 配送範囲 (`delivery_failure`)。それぞれ分類・理由・失敗した段階・観測時刻を保持する。同じ範囲に複数の失敗が来たら、分類と理由は最も悪い方 (同格なら新しい方)、段階と観測時刻は **最も遅いもの** を保持する (どれも覆う成功だけが解除する)。
+- **解除の規則**: 成功が既知の障害を解除できるのは、**成功の段階が障害の段階を覆い (`success.stage >= failure.stage`)、かつ成功の証拠時刻が障害の観測時刻より後** のときだけ。両方が必要で、記録時刻 (遅れて届いた古い結果) は順序の根拠にならない。
+- **code 確認は SMTP 対話ではない**: 登録者の確認も canary の確認も、business 鮮度 (`success_ttl`) の更新と所有確認にだけ使い、**既知の障害を解除しない** (`without_evidence`)。障害より前に送ったメールに対する確認 (過去のメール所有) は、現在の SMTP の復旧の証拠ではない。
+- **probe**: 宛先を提示せず **MAIL FROM まで** 検証する (接続 → STARTTLS → 認証 → MAIL FROM → RSET → QUIT。メールは送らない)。成功の証拠は `mail_from` 段階・MAIL FROM 受理時刻で、接続範囲の障害 (MAIL FROM を含む) を解除できるが、RCPT・DATA の障害は覆えない。
+- **canary の配送成功**: DATA を受理された時刻を証拠時刻とし、`data` 段階 (全段階) を覆う。**RCPT・DATA の障害は canary の新規送信の成功 (DATA 受理) でのみ解除される。**
+- `attempt_rejected` は何も変えず、記録もしない。
+
+配送範囲 (RCPT 段階) の障害 × 最新の接続結果 (probe の成功は `mail_from` 段階) × 時間・generation の全組合せ (`kernel` の `readiness_is_monotonic_over_every_combination` が期待値を手書きで網羅する。E15a への観測 = (configured, healthy))。段階 × 成功の段階 × 証拠時刻の順序の全組合せは `a_success_clears_a_failure_only_when_it_covers_the_stage_and_is_later` が手書きの覆い行列で網羅する:
 
 | 保持する配送障害 | 最新の接続結果 | 通常 (鮮度内) | 鮮度切れ | generation 変更 |
 |---|---|---|---|---|
@@ -109,24 +118,13 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
 
 - **bootstrap**: 管理者が、サイトキーの widget が発行した**有効な token** を `POST .../protections/bot/verify` `{"token": "..."}` に渡す。Siteverify の `success:true` かつ
   hostname/action/token の期限が合致して初めて `business_success` が当該 generation に記録され `operational` になる。dummy token・空 response の失敗だけでは operational にならない。
-- **継続検証**: token を伴わない**負の probe** (`verify` を `{}` で呼ぶ / `run_registration_protection_probe`)。有効でない固定 token を送り、provider が secret を受理するか
-  (`invalid-input-response` 等 → `accepted`)、secret が拒否されるか (`invalid-input-secret` → `configuration_invalid`)、一時障害か (429/5xx/timeout → `temporarily_unavailable`) を判定する。
-  probe は `accepted` なので **operational 自体は business success の鮮度 (`success_ttl`) で維持**される。
-- 実際の登録者の token の検証 (`verify_registration_bot_token`、hook から呼ぶ内部 use case) は、business success を記録して鮮度を更新し、provider 起因の失敗も記録する。
-  登録者の不正 token (`attempt_rejected`) は記録しない。
-
-### email (SMTP)
-
-- **bootstrap**: `POST .../protections/email/verify` `{}` が (1) 接続・認証 probe (メールは送らない) (2) 承認済み canary mailbox へ実際の code を送信、を行い `pending_confirmation` と
-  `challenge_id` を返す。管理者が canary mailbox に届いた code を `{"challenge_id": "...", "code": "..."}` で確認すると、**実 code の確認 roundtrip が business success** として当該 generation に記録され `operational` になる。
-  SMTP の接続・250 では operational にならない。`REGISTRATION_EMAIL_CANARY_ADDRESS` が無ければ `canary_not_configured` を返し、メールは `unverified` のまま。
-- **継続検証**: 接続・認証 probe (`run_registration_protection_probe`)。実際の登録者の code 確認の成功 (配送と確認の end-to-end の business success) も鮮度を更新する。
-- **検証の範囲 (接続範囲と配送範囲)**: 接続・認証 probe は **接続範囲** だけを確認する。管理者 canary の配送失敗 (RCPT/DATA/timeout/切断を含む) は **配送範囲の障害** として generation ごとに保持され (`delivery_failure`)、**接続 probe の成功 (`accepted`) や登録者の code 確認の成功では解除されない**。operational へ戻る (BOT のみへの縮退が解除される) のは、canary の配送成功だけ。接続範囲の障害 (接続 probe・公開発行の宛先提示前の失敗 = `connection_failure`) は、接続範囲の成功 (または canary の配送成功) まで保持され、後続のより軽い失敗や時間経過では改善しない (上の単調性の原則)。設定変更 (generation 変更) で保持された障害は破棄される。canary の配送受理は周期的に実行できる (周期実行は E15d)。
+- **継続検証**: 接続・認証・MAIL FROM の probe (`run_registration_protection_probe`) と canary の配送 (宛先を伴う RCPT/DATA の再検証)。登録者の code 確認の成功 (配送と確認の end-to-end の business success) は鮮度を更新するだけで、障害を解除しない。
+- **障害の解除は証拠で決まる** (上の「証拠」): probe は接続範囲 (MAIL FROM まで) の障害だけを、canary の新規送信の成功 (DATA 受理) は RCPT・DATA を含む全段階の障害を、証拠時刻が障害より後のときに解除する。operational へ戻る (BOT のみへの縮退が解除される) のは、保持している障害がすべて解除され、かつ `success_ttl` 内の business success があるとき。設定変更 (generation 変更) で保持された障害は破棄される。
 - canary の確認は **proof を発行せず**、登録者向けの公開確認では使えない。provider の健全性と登録者ごとの所有証明は分離されている。一回の配送成功から全宛先への到達は保証しない。
 
 ### 周期実行は E15d
 
-継続 probe を `probe_max_age` (既定 10 分) より短い周期で回すのは E15d (scheduler)。**それまでは bootstrap から 10 分で `unverified` (probe_stale) に戻る**のが仕様どおり (古い成功を使わない)。
+継続 probe と **canary の配送再検証** を `probe_max_age` (既定 10 分) より短い周期で回すのは E15d (scheduler)。**RCPT・DATA の障害は canary の新規送信の成功でしか解除されないので、canary 配送再検証の周期実行が、配送障害・設定喪失からの自動復旧 (自動再開) の前提になる**。それが無い間は管理者が canary を手動で検証する。**それまでは bootstrap から 10 分で `unverified` (probe_stale) に戻る**のが仕様どおり (古い成功を使わない)。
 成功の有効期間 `success_ttl` (既定 24 時間) は、probe が続いていても成功が古ければ operational にしないための上限。
 
 ### 実 credential が無い場合
@@ -203,7 +201,7 @@ lettre の `AsyncSmtpConnection` (tokio + native-tls) で、接続 → STARTTLS 
 
 - 観測入力の反映: `RegistrationProtectionReadinessUseCase::sync_registration_observation(_at)` (`RecordRegistrationObservationUseCase` 経由のみ)。probe: `run_registration_protection_probe(_at)`。時刻を引数にした評価: `registration_protection_readiness_at` / `registration_observation_at`。
 - hook から: `verify_registration_email_proof` (proof の照合・消費)、`verify_registration_bot_token`。いずれも内部 use case で HTTP の書込口ではない。
-- E15d が実装するもの: 認証付き pre-persist hook、継続 probe の周期実行 (`probe_max_age` より短く)、hook 時の gate 最新評価、全 method/全到達経路、設定喪失/latch の統合試験、config attestation。
+- E15d が実装するもの: 認証付き pre-persist hook、継続 probe と **canary 配送再検証** の周期実行 (`probe_max_age` より短く。配送範囲の障害の自動復旧の前提)、hook 時の gate 最新評価、全 method/全到達経路、設定喪失/latch の統合試験、config attestation。
 
 ## 9. 試験
 

@@ -21,24 +21,29 @@ CREATE TABLE registration_protection_readiness (
     )),
     reason TEXT NOT NULL,
     valid_until TIMESTAMPTZ,
-    -- 範囲ごとの未復旧の既知の障害。同一 generation の間、同じ範囲の成功 (配送の成功は接続範囲も) まで解消されない (単調性)。
+    -- 範囲 (接続: 接続〜MAIL FROM / 配送: RCPT・DATA) ごとの未復旧の既知の障害。stage = 失敗した段階、at = 観測時刻。
+    -- 同じ範囲に畳んだ失敗は最も遅い段階・時刻を保持し、段階を覆い時刻が後の成功の証拠でだけ解除する (単調性)。
     connection_failure_outcome TEXT CHECK (connection_failure_outcome IN ('configuration_invalid', 'temporarily_unavailable')),
     connection_failure_reason TEXT,
     connection_failure_transport TEXT,
+    connection_failure_stage TEXT CHECK (connection_failure_stage IN ('connect', 'start_tls', 'auth', 'mail_from', 'rcpt', 'data')),
     connection_failure_at TIMESTAMPTZ,
     delivery_failure_outcome TEXT CHECK (delivery_failure_outcome IN ('configuration_invalid', 'temporarily_unavailable')),
     delivery_failure_reason TEXT,
     delivery_failure_transport TEXT,
+    delivery_failure_stage TEXT CHECK (delivery_failure_stage IN ('connect', 'start_tls', 'auth', 'mail_from', 'rcpt', 'data')),
     delivery_failure_at TIMESTAMPTZ,
     CHECK ((last_success_at IS NULL) = (success_valid_until IS NULL)),
     CHECK (
         (delivery_failure_outcome IS NULL) = (delivery_failure_reason IS NULL)
         AND (delivery_failure_outcome IS NULL) = (delivery_failure_transport IS NULL)
+        AND (delivery_failure_outcome IS NULL) = (delivery_failure_stage IS NULL)
         AND (delivery_failure_outcome IS NULL) = (delivery_failure_at IS NULL)
     ),
     CHECK (
         (connection_failure_outcome IS NULL) = (connection_failure_reason IS NULL)
         AND (connection_failure_outcome IS NULL) = (connection_failure_transport IS NULL)
+        AND (connection_failure_outcome IS NULL) = (connection_failure_stage IS NULL)
         AND (connection_failure_outcome IS NULL) = (connection_failure_at IS NULL)
     )
 );

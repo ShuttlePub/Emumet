@@ -58,6 +58,8 @@ pub struct MockSmtp {
     pub addr: SocketAddr,
     pub mails: Arc<Mutex<Vec<ReceivedMail>>>,
     pub connections: Arc<AtomicUsize>,
+    /// 受信したコマンド行 (DATA 本文は含めない)。
+    pub commands: Arc<Mutex<Vec<String>>>,
 }
 
 impl MockSmtp {
@@ -66,6 +68,8 @@ impl MockSmtp {
         let addr = listener.local_addr().unwrap();
         let mails = Arc::new(Mutex::new(Vec::new()));
         let connections = Arc::new(AtomicUsize::new(0));
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let accept_commands = commands.clone();
         let accept_mails = mails.clone();
         let accept_connections = connections.clone();
         tokio::spawn(async move {
@@ -76,8 +80,9 @@ impl MockSmtp {
                 accept_connections.fetch_add(1, Ordering::SeqCst);
                 let script = script.clone();
                 let mails = accept_mails.clone();
+                let commands = accept_commands.clone();
                 tokio::spawn(async move {
-                    let _ = handle(stream, script, mails).await;
+                    let _ = handle(stream, script, mails, commands).await;
                 });
             }
         });
@@ -85,6 +90,7 @@ impl MockSmtp {
             addr,
             mails,
             connections,
+            commands,
         }
     }
 
@@ -94,6 +100,10 @@ impl MockSmtp {
 
     pub fn mails(&self) -> Vec<ReceivedMail> {
         self.mails.lock().unwrap().clone()
+    }
+
+    pub fn commands(&self) -> Vec<String> {
+        self.commands.lock().unwrap().clone()
     }
 
     /// 受信した最後のメールから 8 桁の code を取り出す。
@@ -110,6 +120,7 @@ async fn handle(
     stream: tokio::net::TcpStream,
     script: SmtpScript,
     mails: Arc<Mutex<Vec<ReceivedMail>>>,
+    commands: Arc<Mutex<Vec<String>>>,
 ) -> std::io::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -131,6 +142,7 @@ async fn handle(
             return Ok(());
         }
         let command = line.trim_end().to_string();
+        commands.lock().unwrap().push(command.clone());
         let upper = command.to_ascii_uppercase();
         if let Some(prefix) = &script.close_on {
             if upper.starts_with(prefix.as_str()) {

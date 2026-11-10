@@ -1,7 +1,7 @@
 //! SMTP adapter (lettre)。
 //!
 //! 実際に使う SMTP 設定 (host/port/TLS/認証/from) から設定世代を導き、code メールの送信と
-//! 接続・認証 probe を提供する。SMTP の 2xx は「受理」(`Accepted`) であって所有確認ではない。
+//! 接続・認証・MAIL FROM の probe を提供する。SMTP の 2xx は「受理」(`Accepted`) であって所有確認ではない。
 //! 失敗は ADR の分類に写像する: 認証・設定不正・TLS 不正 = `configuration_invalid`、宛先拒否
 //! (550 等) = `attempt_rejected`、接続失敗・timeout・4xx = `temporarily_unavailable`。
 //! code・本文・secret はログ・エラー・分類に出さない。
@@ -12,8 +12,8 @@ use super::config::{
 };
 use kernel::interfaces::repository::{EmailTransport, SendPurpose};
 use kernel::prelude::entity::{
-    NormalizedEmail, Protection, ProtectionConfigSnapshot, ProtectionProvider, ProviderResult,
-    ReasonCode, TransportClass,
+    CheckStage, NormalizedEmail, Protection, ProtectionConfigSnapshot, ProtectionProvider,
+    ProviderOutcome, ProviderResult, ReasonCode, TransportClass,
 };
 use lettre::address::Envelope;
 use lettre::message::header::ContentType;
@@ -21,12 +21,14 @@ use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::authentication::Mechanism;
 use lettre::transport::smtp::client::{AsyncSmtpConnection, TlsParameters};
-use lettre::transport::smtp::commands::{Data, Mail, Rcpt};
+use lettre::transport::smtp::commands::{Data, Mail, Rcpt, Rset};
 use lettre::transport::smtp::extension::ClientId;
+use lettre::Address;
 use lettre::Message;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
+use time::OffsetDateTime;
 
 pub const ENV_ENABLED: &str = "REGISTRATION_EMAIL_ENABLED";
 pub const ENV_HOST: &str = "REGISTRATION_SMTP_HOST";
@@ -301,9 +303,10 @@ fn build_session(
 /// 失敗した SMTP の段階。宛先拒否 (RCPT) と送信者・認証・transport の設定不正を分けるために保持する。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SmtpStage {
-    /// 接続・EHLO・STARTTLS。
+    /// 接続・EHLO。
     #[default]
     Connect,
+    StartTls,
     Auth,
     MailFrom,
     Rcpt,
@@ -311,13 +314,38 @@ pub enum SmtpStage {
 }
 
 impl SmtpStage {
+    fn as_u8(self) -> u8 {
+        match self {
+            Self::Connect => 0,
+            Self::StartTls => 1,
+            Self::Auth => 2,
+            Self::MailFrom => 3,
+            Self::Rcpt => 4,
+            Self::Data => 5,
+        }
+    }
+
     fn from_u8(value: u8) -> Self {
         match value {
-            1 => Self::Auth,
-            2 => Self::MailFrom,
-            3 => Self::Rcpt,
-            4 => Self::Data,
+            1 => Self::StartTls,
+            2 => Self::Auth,
+            3 => Self::MailFrom,
+            4 => Self::Rcpt,
+            5 => Self::Data,
             _ => Self::Connect,
+        }
+    }
+}
+
+impl From<SmtpStage> for CheckStage {
+    fn from(stage: SmtpStage) -> Self {
+        match stage {
+            SmtpStage::Connect => Self::Connect,
+            SmtpStage::StartTls => Self::StartTls,
+            SmtpStage::Auth => Self::Auth,
+            SmtpStage::MailFrom => Self::MailFrom,
+            SmtpStage::Rcpt => Self::Rcpt,
+            SmtpStage::Data => Self::Data,
         }
     }
 }
@@ -347,6 +375,16 @@ pub struct SmtpFailure {
 /// timeout・切断を含むすべての段階の失敗を provider の障害として分類する (4xx・timeout・切断は一時障害、
 /// 認証失敗・5xx・設定不備は設定不正。canary 宛先の 550 系も設定不正)
 pub fn classify_smtp_failure(failure: SmtpFailure, purpose: SendPurpose) -> ProviderResult {
+    let result = classify_outcome(failure, purpose);
+    // 障害を解除する証拠の段階を失敗した段階で記録する (`attempt_rejected` は記録されない)。
+    if result.outcome == ProviderOutcome::AttemptRejected {
+        result
+    } else {
+        result.at_stage(failure.stage.into())
+    }
+}
+
+fn classify_outcome(failure: SmtpFailure, purpose: SendPurpose) -> ProviderResult {
     if purpose == SendPurpose::Registration
         && matches!(failure.stage, SmtpStage::Rcpt | SmtpStage::Data)
     {
@@ -429,7 +467,8 @@ fn at_stage<T>(
 
 impl SmtpSession {
     /// 接続 → (STARTTLS) → 認証。ここまでが「接続・認証 probe」。
-    async fn open(&self) -> StageResult<AsyncSmtpConnection> {
+    async fn open(&self, progress: &AtomicU8) -> StageResult<AsyncSmtpConnection> {
+        progress.store(SmtpStage::Connect.as_u8(), Ordering::SeqCst);
         let hello = ClientId::default();
         let wrapper = match self.mode {
             SmtpTlsMode::Tls => self.tls.clone(),
@@ -447,16 +486,19 @@ impl SmtpSession {
             SmtpStage::Connect,
         )?;
         if self.mode == SmtpTlsMode::StartTls {
+            progress.store(SmtpStage::StartTls.as_u8(), Ordering::SeqCst);
             let Some(tls) = self.tls.clone() else {
                 return Err(SmtpFailure {
+                    stage: SmtpStage::StartTls,
                     client: true,
                     ..SmtpFailure::default()
                 });
             };
             // STARTTLS を必須にする。サーバーが提供しなければ平文へ降格せずエラー (client error)。
-            at_stage(connection.starttls(tls, &hello).await, SmtpStage::Connect)?;
+            at_stage(connection.starttls(tls, &hello).await, SmtpStage::StartTls)?;
         }
         if let Some(credentials) = &self.credentials {
+            progress.store(SmtpStage::Auth.as_u8(), Ordering::SeqCst);
             at_stage(
                 connection
                     .auth(&[Mechanism::Plain, Mechanism::Login], credentials)
@@ -468,12 +510,18 @@ impl SmtpSession {
     }
 
     /// 全体の期限 (`deadline`) は接続から DATA 受理までに掛け、QUIT は含めない。
-    async fn send(&self, envelope: &Envelope, body: &[u8], deadline: Duration) -> StageResult<()> {
+    /// 成功は **DATA を受理された時刻** を返す (その時刻が配送成功の証拠時刻)。
+    async fn send(
+        &self,
+        envelope: &Envelope,
+        body: &[u8],
+        deadline: Duration,
+    ) -> StageResult<OffsetDateTime> {
         // 最後に開始した段階。全体期限が切れたとき、宛先を提示した後 (RCPT 以降) の timeout は宛先に
         // 依存し得るので、段階つきで分類する。
-        let progress = AtomicU8::new(SmtpStage::Connect as u8);
+        let progress = AtomicU8::new(SmtpStage::Connect.as_u8());
         let work = async {
-            let mut connection = self.open().await?;
+            let mut connection = self.open(&progress).await?;
             let result = Self::deliver(&mut connection, envelope, body, &progress).await;
             Ok::<_, SmtpFailure>((result, connection))
         };
@@ -497,8 +545,8 @@ impl SmtpSession {
         envelope: &Envelope,
         body: &[u8],
         progress: &AtomicU8,
-    ) -> StageResult<()> {
-        progress.store(SmtpStage::MailFrom as u8, Ordering::SeqCst);
+    ) -> StageResult<OffsetDateTime> {
+        progress.store(SmtpStage::MailFrom.as_u8(), Ordering::SeqCst);
         at_stage(
             connection
                 .command(Mail::new(envelope.from().cloned(), vec![]))
@@ -506,7 +554,7 @@ impl SmtpSession {
             SmtpStage::MailFrom,
         )?;
         // RCPT コマンドを送った時点で宛先を提示したことになる。
-        progress.store(SmtpStage::Rcpt as u8, Ordering::SeqCst);
+        progress.store(SmtpStage::Rcpt.as_u8(), Ordering::SeqCst);
         for recipient in envelope.to() {
             at_stage(
                 connection
@@ -515,21 +563,34 @@ impl SmtpSession {
                 SmtpStage::Rcpt,
             )?;
         }
-        progress.store(SmtpStage::Data as u8, Ordering::SeqCst);
+        progress.store(SmtpStage::Data.as_u8(), Ordering::SeqCst);
         at_stage(connection.command(Data).await, SmtpStage::Data)?;
         at_stage(connection.message(body).await, SmtpStage::Data)?;
-        Ok(())
+        Ok(OffsetDateTime::now_utc())
     }
 
-    async fn probe(&self, deadline: Duration) -> StageResult<()> {
+    /// 接続 → (STARTTLS) → 認証 → MAIL FROM (宛先は提示しない) → RSET。成功は **MAIL FROM を受理された時刻** を
+    /// 返す。MAIL FROM までの段階の障害を覆えるが、RCPT・DATA の障害は覆えない。
+    async fn probe(&self, from: Address, deadline: Duration) -> StageResult<OffsetDateTime> {
+        let progress = AtomicU8::new(SmtpStage::Connect.as_u8());
         let work = async {
-            let mut connection = self.open().await?;
-            let alive = connection.test_connected().await;
-            Ok::<_, SmtpFailure>((alive, connection))
+            let mut connection = self.open(&progress).await?;
+            progress.store(SmtpStage::MailFrom.as_u8(), Ordering::SeqCst);
+            let accepted = at_stage(
+                connection.command(Mail::new(Some(from), vec![])).await,
+                SmtpStage::MailFrom,
+            );
+            let at = OffsetDateTime::now_utc();
+            if accepted.is_ok() {
+                // 取引は破棄する (メールは送らない)。RSET の成否は結果に影響しない。
+                let _ = tokio::time::timeout(QUIT_TIMEOUT, connection.command(Rset)).await;
+            }
+            Ok::<_, SmtpFailure>((accepted.map(|_| at), connection))
         };
-        let (alive, mut connection) = match tokio::time::timeout(deadline, work).await {
+        let (accepted, mut connection) = match tokio::time::timeout(deadline, work).await {
             Err(_) => {
                 return Err(SmtpFailure {
+                    stage: SmtpStage::from_u8(progress.load(Ordering::SeqCst)),
                     timeout: true,
                     ..SmtpFailure::default()
                 })
@@ -538,11 +599,7 @@ impl SmtpSession {
             Ok(Ok(done)) => done,
         };
         let _ = tokio::time::timeout(QUIT_TIMEOUT, connection.quit()).await;
-        if alive {
-            Ok(())
-        } else {
-            Err(SmtpFailure::default())
-        }
+        accepted
     }
 }
 
@@ -636,8 +693,12 @@ impl EmailTransport for SmtpEmailTransport {
             .send(message.envelope(), &body, self.settings.deadline)
             .await
         {
-            Ok(()) => ProviderResult::accepted(TransportClass::SmtpAccepted),
-            Err(result) => classify_smtp_failure(result, purpose),
+            Ok(at) => ProviderResult::accepted(TransportClass::SmtpAccepted)
+                .at_stage(CheckStage::Data)
+                .observed(at),
+            Err(failure) => {
+                classify_smtp_failure(failure, purpose).observed(OffsetDateTime::now_utc())
+            }
         }
     }
 
@@ -645,15 +706,21 @@ impl EmailTransport for SmtpEmailTransport {
         if let Some(result) = self.unusable() {
             return result;
         }
-        let Some(session) = &self.settings.session else {
+        let (Some(session), Some(from)) = (&self.settings.session, &self.settings.from) else {
             return ProviderResult::configuration_invalid(
                 ReasonCode::InvalidConfiguration,
                 TransportClass::None,
             );
         };
-        match session.probe(self.settings.deadline).await {
-            Ok(()) => ProviderResult::accepted(TransportClass::SmtpAccepted),
-            Err(result) => classify_smtp_failure(result, SendPurpose::Canary),
+        match session
+            .probe(from.email.clone(), self.settings.deadline)
+            .await
+        {
+            Ok(at) => ProviderResult::accepted(TransportClass::SmtpAccepted)
+                .at_stage(CheckStage::MailFrom)
+                .observed(at),
+            Err(failure) => classify_smtp_failure(failure, SendPurpose::Canary)
+                .observed(OffsetDateTime::now_utc()),
         }
     }
 }

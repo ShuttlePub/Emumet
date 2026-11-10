@@ -17,8 +17,8 @@ use kernel::interfaces::repository::{
     RegistrationFlowStatus,
 };
 use kernel::prelude::entity::{
-    AdminState, EmailChallengePolicy, ProbeStatus, ProofRejection, ProtectionObservation,
-    ReadinessPolicy, RegistrationGateState,
+    AdminState, CheckStage, EmailChallengePolicy, ProbeStatus, ProofRejection,
+    ProtectionObservation, ReadinessPolicy, RegistrationGateState,
 };
 use sqlx::PgConnection;
 use std::collections::HashMap;
@@ -221,6 +221,11 @@ fn accepted() -> ProviderResult {
     ProviderResult::accepted(TransportClass::SmtpAccepted)
 }
 
+/// 実 adapter の接続 probe の成功: MAIL FROM まで検証し、宛先は提示しない。
+fn probe_ok() -> ProviderResult {
+    accepted().at_stage(CheckStage::MailFrom)
+}
+
 fn http_accepted() -> ProviderResult {
     ProviderResult::accepted(TransportClass::Http2xx)
 }
@@ -258,7 +263,7 @@ impl Fixture {
                 canary: Some(CANARY.to_string()),
                 send: Arc::new(Mutex::new(accepted())),
                 canary_send: Arc::new(Mutex::new(accepted())),
-                probe: Arc::new(Mutex::new(accepted())),
+                probe: Arc::new(Mutex::new(probe_ok())),
                 sent: Arc::new(Mutex::new(Vec::new())),
                 purposes: Arc::new(Mutex::new(Vec::new())),
             },
@@ -1763,7 +1768,7 @@ async fn a_connection_level_failure_is_still_recovered_by_a_connection_probe() {
         fx.email_view().await.effective.status,
         ReadinessStatus::TemporarilyUnavailable
     );
-    *fx.module.email.probe.lock().unwrap() = accepted();
+    *fx.module.email.probe.lock().unwrap() = probe_ok();
     fx.module
         .run_registration_protection_probe(Protection::Email)
         .await
@@ -1858,7 +1863,7 @@ async fn a_known_configuration_loss_survives_a_later_timeout_and_the_latch_needs
         )
         .await
         .unwrap();
-    *fx.module.email.probe.lock().unwrap() = accepted();
+    *fx.module.email.probe.lock().unwrap() = probe_ok();
     fx.module
         .run_registration_protection_probe(Protection::Email)
         .await
@@ -1888,4 +1893,187 @@ async fn a_known_configuration_loss_survives_a_later_timeout_and_the_latch_needs
         .unwrap();
     assert!(resumed.decision.accepts());
     assert!(!resumed.state.config_lost_latch);
+}
+
+fn smtp_failure(
+    stage: driver::registration_protection::smtp::SmtpStage,
+    code: u16,
+    purpose: SendPurpose,
+) -> ProviderResult {
+    use driver::registration_protection::smtp::{classify_smtp_failure, SmtpFailure};
+    classify_smtp_failure(
+        SmtpFailure {
+            stage,
+            code: Some(code),
+            ..SmtpFailure::default()
+        },
+        purpose,
+    )
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_public_code_confirmation_does_not_clear_a_connection_failure_observed_after_the_send() {
+    use driver::registration_protection::smtp::SmtpStage;
+    let fx = Fixture::new().await;
+    fx.ready_for_issuing().await;
+    let IssueOutcome::Issued { challenge_id, .. } = fx
+        .module
+        .issue_registration_email_challenge_at(
+            &fx.issue_request("alice@example.com", "flow-1", "203.0.113.1"),
+            now(),
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("expected an issued challenge");
+    };
+    let (_, code) = fx.last_sent();
+
+    // 送信の後に、現在の接続・認証の障害が観測される。
+    *fx.module.email.probe.lock().unwrap() =
+        smtp_failure(SmtpStage::Auth, 535, SendPurpose::Canary);
+    fx.module
+        .run_registration_protection_probe(Protection::Email)
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::ConfigurationInvalid
+    );
+
+    // 障害前の送信に対する code 確認 (過去のメール所有) は、現在の SMTP 認証の復旧の証拠ではない。
+    let confirmed = fx
+        .module
+        .confirm_registration_email_challenge_at(&challenge_id, &code, now())
+        .await
+        .unwrap();
+    assert!(matches!(confirmed, ConfirmOutcome::Confirmed { .. }));
+    let view = fx.email_view().await;
+    assert_eq!(view.effective.status, ReadinessStatus::ConfigurationInvalid);
+    assert_eq!(view.effective.reason, ReasonCode::SmtpAuthFailed);
+    assert_eq!(
+        fx.gate().await.observation.email,
+        ProtectionObservation::UNCONFIGURED
+    );
+
+    // SMTP 対話で MAIL FROM まで検証した新しい probe だけが解除する。
+    *fx.module.email.probe.lock().unwrap() = probe_ok();
+    fx.module
+        .run_registration_protection_probe(Protection::Email)
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::Operational
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_older_canary_code_confirmation_does_not_clear_a_later_delivery_failure() {
+    use driver::registration_protection::smtp::SmtpStage;
+    let fx = Fixture::new().await;
+    fx.bootstrap_bot().await;
+    let first = fx
+        .module
+        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .await
+        .unwrap();
+    let VerifyDisposition::PendingConfirmation {
+        challenge_id: old_id,
+        ..
+    } = first.disposition
+    else {
+        panic!("expected a pending canary challenge");
+    };
+    let (_, old_code) = fx.last_sent();
+
+    // 新しい canary の送信が宛先拒否で失敗する。古い challenge は新発行では失効しない。
+    *fx.module.email.canary_send.lock().unwrap() =
+        smtp_failure(SmtpStage::Rcpt, 550, SendPurpose::Canary);
+    let failed = fx
+        .module
+        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        failed.readiness.effective.status,
+        ReadinessStatus::ConfigurationInvalid
+    );
+
+    let late = fx
+        .module
+        .verify_registration_protection(
+            &fx.admin(),
+            Protection::Email,
+            AdminVerifyInput {
+                challenge_id: Some(old_id),
+                code: Some(old_code),
+                ..AdminVerifyInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(late.result.outcome, ProviderOutcome::BusinessSuccess);
+    assert_eq!(
+        late.readiness.effective.status,
+        ReadinessStatus::ConfigurationInvalid,
+        "a code confirmation is not an SMTP exchange"
+    );
+    assert_eq!(
+        fx.gate().await.observation.email,
+        ProtectionObservation::UNCONFIGURED
+    );
+
+    // 新しい canary の配送成功 (DATA 受理) と確認で回復する。
+    *fx.module.email.canary_send.lock().unwrap() = accepted();
+    fx.bootstrap_email().await;
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::Operational
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_mail_from_failure_is_cleared_only_by_a_probe_that_verifies_mail_from() {
+    use driver::registration_protection::smtp::SmtpStage;
+    let fx = Fixture::new().await;
+    fx.ready_for_issuing().await;
+    *fx.module.email.send.lock().unwrap() =
+        smtp_failure(SmtpStage::MailFrom, 550, SendPurpose::Registration);
+    fx.module
+        .issue_registration_email_challenge_at(
+            &fx.issue_request("alice@example.com", "flow-1", "203.0.113.1"),
+            now(),
+        )
+        .await
+        .unwrap();
+    let view = fx.email_view().await;
+    assert_eq!(view.effective.status, ReadinessStatus::ConfigurationInvalid);
+    assert_eq!(view.effective.reason, ReasonCode::SmtpPermanentFailure);
+
+    // 接続・認証までしか検証しない成功では MAIL FROM の障害を解除しない。
+    for stage in [CheckStage::Connect, CheckStage::StartTls, CheckStage::Auth] {
+        *fx.module.email.probe.lock().unwrap() = accepted().at_stage(stage);
+        fx.module
+            .run_registration_protection_probe(Protection::Email)
+            .await
+            .unwrap();
+        assert_eq!(
+            fx.email_view().await.effective.status,
+            ReadinessStatus::ConfigurationInvalid,
+            "{stage:?}"
+        );
+    }
+    *fx.module.email.probe.lock().unwrap() = probe_ok();
+    fx.module
+        .run_registration_protection_probe(Protection::Email)
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::Operational
+    );
 }

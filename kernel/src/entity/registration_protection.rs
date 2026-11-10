@@ -257,11 +257,53 @@ impl ProviderOutcome {
     }
 }
 
+/// 検証が到達した (または失敗した) 対話の段階。順序がそのまま「覆う」関係になる:
+/// 段階 s の成功は、段階 s 以前で起きた失敗を覆う。HTTP provider のように段階を持たない provider は、
+/// 失敗を最初の段階 (`Connect`)、成功を最後の段階 (`Data`) として扱う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckStage {
+    Connect,
+    StartTls,
+    Auth,
+    MailFrom,
+    Rcpt,
+    Data,
+}
+
+impl CheckStage {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Connect => "connect",
+            Self::StartTls => "start_tls",
+            Self::Auth => "auth",
+            Self::MailFrom => "mail_from",
+            Self::Rcpt => "rcpt",
+            Self::Data => "data",
+        }
+    }
+
+    /// 宛先を提示した段階以降 (配送範囲)。それより前は接続範囲。
+    pub fn is_delivery(self) -> bool {
+        self >= Self::Rcpt
+    }
+}
+
+/// provider 呼出し 1 回の分類済み結果と、その**証拠**。
+///
+/// 証拠は「どの段階まで検証したか (`stage`)」と「その対話が実際に行われた時刻 (`observed_at`)」。
+/// 失敗では失敗した段階、成功・受理では到達した段階を表す。`stage = None` は対話を伴わない成功
+/// (登録者・canary の code 確認など) で、business 鮮度の更新にだけ使われ、既知の障害を解除しない。
+/// `observed_at = None` は記録時刻を使う。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProviderResult {
     pub outcome: ProviderOutcome,
     pub reason: ReasonCode,
     pub transport: TransportClass,
+    #[serde(skip)]
+    pub stage: Option<CheckStage>,
+    #[serde(skip)]
+    pub observed_at: Option<OffsetDateTime>,
 }
 
 impl ProviderResult {
@@ -270,11 +312,39 @@ impl ProviderResult {
         reason: ReasonCode,
         transport: TransportClass,
     ) -> Self {
+        // 既定: 失敗は最初の段階、成功・受理は最後の段階 (段階を持たない provider 向け)。
+        let stage = match outcome {
+            ProviderOutcome::BusinessSuccess | ProviderOutcome::Accepted => Some(CheckStage::Data),
+            ProviderOutcome::ConfigurationInvalid | ProviderOutcome::TemporarilyUnavailable => {
+                Some(CheckStage::Connect)
+            }
+            ProviderOutcome::AttemptRejected => None,
+        };
         Self {
             outcome,
             reason,
             transport,
+            stage,
+            observed_at: None,
         }
+    }
+
+    /// 証拠の段階を指定する (失敗した段階 / 成功で到達した段階)。
+    pub const fn at_stage(mut self, stage: CheckStage) -> Self {
+        self.stage = Some(stage);
+        self
+    }
+
+    /// 対話を伴わない結果 (code 確認など)。鮮度の更新にだけ使い、既知の障害を解除しない。
+    pub const fn without_evidence(mut self) -> Self {
+        self.stage = None;
+        self
+    }
+
+    /// その対話が実際に行われた時刻を指定する。
+    pub const fn observed(mut self, at: OffsetDateTime) -> Self {
+        self.observed_at = Some(at);
+        self
     }
 
     pub const fn business_success(transport: TransportClass) -> Self {
@@ -302,26 +372,22 @@ impl ProviderResult {
     }
 }
 
-/// 検証結果が確認した範囲。メールでは、接続・認証だけを確認する probe と、宛先を伴う配送 (RCPT/DATA) を確認する
-/// canary を区別する。**配送範囲の失敗は、接続範囲の成功 (接続 probe の受理) では解除されない。**
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CheckScope {
-    /// 接続・認証・設定・HTTP provider 全般 (登録者の code 確認の成功も、配送の再検証ではなくここに含める)。
-    Connection,
-    /// 管理者 canary (固定宛先) の配送。成功すると接続範囲の既知の障害も解消する (接続して配送できた証拠)。
-    Delivery,
-}
-
-/// 範囲ごとに保持される未復旧の既知の障害 (`configuration_invalid` / `temporarily_unavailable`)。
+/// 範囲 (接続: 接続〜MAIL FROM / 配送: RCPT・DATA) ごとに保持される未復旧の既知の障害
+/// (`configuration_invalid` / `temporarily_unavailable`)。
 ///
-/// **単調性**: より悪い既知状態は、それを解消する証拠 (同じ範囲の成功) か generation の変更でしか改善しない。
-/// 後続のより軽い失敗 (例: configuration_invalid の後の timeout)、時間の経過 (鮮度切れ)、他の範囲の成功では
-/// 解除も軽減もされない。
+/// **単調性**: より悪い既知状態は、それを解消する証拠か generation の変更でしか改善しない。
+/// 後続のより軽い失敗 (例: configuration_invalid の後の timeout)、時間の経過 (鮮度切れ)、対話を伴わない成功
+/// (code 確認)、検証していない段階の成功では解除も軽減もされない。
+///
+/// **解除の規則**: 成功が障害を解除できるのは、成功の段階が障害の段階を覆い (`success.stage >= failure.stage`)、
+/// かつ成功の証拠時刻が障害の観測時刻より後のときだけ。同じ範囲に複数の失敗が畳まれたときは、
+/// 最も遅い段階と最も遅い観測時刻を保持する (どれも覆う成功だけが解除する)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KnownFailure {
     pub outcome: ProviderOutcome,
     pub reason: ReasonCode,
     pub transport: TransportClass,
+    pub stage: CheckStage,
     pub at: OffsetDateTime,
 }
 
@@ -342,16 +408,34 @@ impl KnownFailure {
             outcome: result.outcome,
             reason: result.reason,
             transport: result.transport,
+            stage: result.stage.unwrap_or(CheckStage::Connect),
             at,
         })
     }
 
-    /// 新しい失敗を既存の同範囲の失敗へ畳む。より軽い失敗では改善しない (同格以上なら最新で置き換える)。
+    /// 新しい失敗を同じ範囲の既存の失敗へ畳む。分類と理由はより悪い方 (同格なら新しい方)、
+    /// 段階と観測時刻は両者の遅い方を保持する。
     fn escalate(existing: Option<Self>, new: Self) -> Self {
         match existing {
-            Some(existing) if existing.severity() > new.severity() => existing,
-            _ => new,
+            Some(existing) => {
+                let worse = if existing.severity() > new.severity() {
+                    existing
+                } else {
+                    new
+                };
+                Self {
+                    stage: existing.stage.max(new.stage),
+                    at: existing.at.max(new.at),
+                    ..worse
+                }
+            }
+            None => new,
         }
+    }
+
+    /// この成功の証拠がこの障害を解除できるか。
+    fn is_cleared_by(&self, result: &ProviderResult, evidence_at: OffsetDateTime) -> bool {
+        result.stage.is_some_and(|stage| stage >= self.stage) && evidence_at > self.at
     }
 }
 
@@ -514,24 +598,12 @@ pub fn evaluate_readiness(
 ///
 /// - `attempt_rejected` は記録を変えない (`None`)。
 /// - 同一 generation なら過去の business success を引き継ぎ、別 generation なら破棄する。
-/// - `business_success` は成功時刻と `success_ttl` 後の期限を更新する。
+/// - `business_success` は成功時刻と `success_ttl` 後の期限を更新する (証拠の有無によらない)。
+/// - 既知の障害の解除は証拠で決まる: 成功の段階が障害の段階を覆い、証拠時刻が障害の観測時刻より後のときだけ。
 pub fn apply_provider_result(
     existing: Option<&ReadinessRecord>,
     config: &ProtectionConfigSnapshot,
     result: &ProviderResult,
-    at: OffsetDateTime,
-    policy: &ReadinessPolicy,
-) -> Option<ReadinessRecord> {
-    apply_scoped_provider_result(existing, config, result, CheckScope::Connection, at, policy)
-}
-
-/// `apply_provider_result` の範囲つき版。配送範囲の失敗は `delivery_failure` に保持し、配送範囲の成功
-/// (canary の配送受理・確認の business success) でだけ解除する。同一 generation でのみ引き継ぐ。
-pub fn apply_scoped_provider_result(
-    existing: Option<&ReadinessRecord>,
-    config: &ProtectionConfigSnapshot,
-    result: &ProviderResult,
-    scope: CheckScope,
     at: OffsetDateTime,
     policy: &ReadinessPolicy,
 ) -> Option<ReadinessRecord> {
@@ -541,19 +613,22 @@ pub fn apply_scoped_provider_result(
     let carried = existing.filter(|record| record.generation == config.generation);
     let carried_connection = carried.and_then(|record| record.connection_failure);
     let carried_delivery = carried.and_then(|record| record.delivery_failure);
+    let evidence_at = result.observed_at.unwrap_or(at);
     let (connection_failure, delivery_failure) =
-        match (scope, KnownFailure::from_result(result, at)) {
-            (CheckScope::Connection, Some(new)) => (
-                Some(KnownFailure::escalate(carried_connection, new)),
-                carried_delivery,
-            ),
-            (CheckScope::Delivery, Some(new)) => (
+        match KnownFailure::from_result(result, evidence_at) {
+            Some(new) if new.stage.is_delivery() => (
                 carried_connection,
                 Some(KnownFailure::escalate(carried_delivery, new)),
             ),
-            // 成功は同じ範囲の障害だけを解消する。配送の成功は接続できた証拠でもあるので接続範囲も解消する。
-            (CheckScope::Connection, None) => (None, carried_delivery),
-            (CheckScope::Delivery, None) => (None, None),
+            Some(new) => (
+                Some(KnownFailure::escalate(carried_connection, new)),
+                carried_delivery,
+            ),
+            // 成功は、段階を覆い、より後の時刻の証拠であるときだけ既知の障害を解除する。
+            None => (
+                carried_connection.filter(|failure| !failure.is_cleared_by(result, evidence_at)),
+                carried_delivery.filter(|failure| !failure.is_cleared_by(result, evidence_at)),
+            ),
         };
     let (last_success_at, success_valid_until) =
         if result.outcome == ProviderOutcome::BusinessSuccess {
@@ -910,8 +985,53 @@ mod tests {
     const GEN: (ReadinessStatus, ReasonCode) =
         (ReadinessStatus::Unverified, ReasonCode::GenerationChanged);
 
+    fn at(minute: i64) -> OffsetDateTime {
+        T0 + Duration::minutes(minute)
+    }
+
+    fn failed(outcome: ProviderOutcome, stage: CheckStage) -> ProviderResult {
+        let (reason, transport) = match outcome {
+            ProviderOutcome::ConfigurationInvalid => (
+                ReasonCode::SmtpPermanentFailure,
+                TransportClass::SmtpPermanent,
+            ),
+            _ => (
+                ReasonCode::SmtpTransientFailure,
+                TransportClass::SmtpTransient,
+            ),
+        };
+        ProviderResult::new(outcome, reason, transport).at_stage(stage)
+    }
+
+    /// 対話を伴う受理 (probe は MailFrom まで、canary の配送は Data まで) とその証拠時刻。
+    fn reached(stage: CheckStage, evidence_minute: i64) -> ProviderResult {
+        ProviderResult::accepted(TransportClass::SmtpAccepted)
+            .at_stage(stage)
+            .observed(at(evidence_minute))
+    }
+
+    fn apply_at(
+        existing: Option<&ReadinessRecord>,
+        result: ProviderResult,
+        minute: i64,
+    ) -> ReadinessRecord {
+        apply_provider_result(existing, &config("g1"), &result, at(minute), &policy()).unwrap()
+    }
+
+    /// code 確認の成功 (対話を伴わない business success)。
+    fn confirmed() -> ProviderResult {
+        ProviderResult::business_success(TransportClass::SmtpAccepted).without_evidence()
+    }
+
+    fn baseline() -> ReadinessRecord {
+        let success = ProviderResult::business_success(TransportClass::SmtpAccepted)
+            .at_stage(CheckStage::Data)
+            .observed(at(0));
+        apply_at(None, success, 0)
+    }
+
     /// 保持している配送範囲の障害 × 最新の接続結果 × 時間・generation の全組合せ。
-    /// 期待値は評価関数から導かず、単調性の原則 (より悪い既知状態は、それを解消する同じ範囲の成功か
+    /// 期待値は評価関数から導かず、単調性の原則 (より悪い既知状態は、それを解消する証拠か
     /// generation の変更でしか改善しない) から手で書いている。
     #[test]
     fn readiness_is_monotonic_over_every_combination() {
@@ -942,41 +1062,28 @@ mod tests {
             (Invalid, Inv, GenerationChanged, GEN),    (Invalid, NoObs, GenerationChanged, GEN),
         ];
         for (held, latest, when, (status, reason)) in table {
-            let apply = |existing: Option<&ReadinessRecord>,
-                         result: ProviderResult,
-                         scope: CheckScope,
-                         at: OffsetDateTime| {
-                apply_scoped_provider_result(existing, &config("g1"), &result, scope, at, &policy())
-                    .unwrap()
-            };
-            let mut current = apply(Option::None, success(), CheckScope::Delivery, T0);
+            let mut current = baseline();
             match held {
                 None => {}
+                // 保持する障害は canary の配送 (RCPT 段階) で観測したもの。
                 Temporary => {
-                    current = apply(
+                    current = apply_at(
                         Some(&current),
-                        ProviderResult::temporarily_unavailable(
-                            ReasonCode::SmtpTransientFailure,
-                            TransportClass::SmtpTransient,
-                        ),
-                        CheckScope::Delivery,
-                        T0 + Duration::minutes(1),
+                        failed(ProviderOutcome::TemporarilyUnavailable, CheckStage::Rcpt),
+                        1,
                     );
                 }
                 Invalid => {
-                    current = apply(
+                    current = apply_at(
                         Some(&current),
-                        ProviderResult::configuration_invalid(
-                            ReasonCode::SmtpPermanentFailure,
-                            TransportClass::SmtpPermanent,
-                        ),
-                        CheckScope::Delivery,
-                        T0 + Duration::minutes(1),
+                        failed(ProviderOutcome::ConfigurationInvalid, CheckStage::Rcpt),
+                        1,
                     );
                 }
             }
             let latest_result = match latest {
-                Latest::Accepted => Some(accepted()),
+                // 接続 probe (MAIL FROM まで検証) の成功は、配送段階の障害を覆わない。
+                Latest::Accepted => Some(reached(CheckStage::MailFrom, 2)),
                 Latest::Temporary => Some(ProviderResult::temporarily_unavailable(
                     ReasonCode::Timeout,
                     TransportClass::Timeout,
@@ -988,17 +1095,12 @@ mod tests {
                 Latest::NotObserved => Option::None,
             };
             if let Some(result) = latest_result {
-                current = apply(
-                    Some(&current),
-                    result,
-                    CheckScope::Connection,
-                    T0 + Duration::minutes(2),
-                );
+                current = apply_at(Some(&current), result, 2);
             }
             let (config, now) = match when {
-                Fresh => (config("g1"), T0 + Duration::minutes(3)),
-                Stale => (config("g1"), T0 + Duration::minutes(30)),
-                GenerationChanged => (config("g2"), T0 + Duration::minutes(3)),
+                Fresh => (config("g1"), at(3)),
+                Stale => (config("g1"), at(30)),
+                GenerationChanged => (config("g2"), at(3)),
             };
             let effective = evaluate_readiness(&config, Some(&current), now, &policy());
             let case = format!("{held:?} x {latest:?} x {when:?}");
@@ -1024,77 +1126,171 @@ mod tests {
         }
     }
 
+    /// 失敗の段階 × 成功の段階 × 証拠時刻の順序の全組合せ。
+    /// 「成功が既知の障害を解除できるのは、成功の段階が失敗の段階を覆い、かつ証拠時刻が失敗の観測時刻より
+    /// 後のときだけ」を、段階の覆い関係の行列を手書きして検証する (kernel の比較実装に依存しない)。
     #[test]
-    fn a_failure_is_cleared_only_by_a_success_of_the_same_scope() {
-        let apply = |existing: Option<&ReadinessRecord>,
-                     result: ProviderResult,
-                     scope: CheckScope,
-                     minute: i64| {
-            apply_scoped_provider_result(
-                existing,
-                &config("g1"),
-                &result,
-                scope,
-                T0 + Duration::minutes(minute),
-                &policy(),
-            )
-            .unwrap()
-        };
-        let timeout = || {
-            ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
-        };
-        let auth_failed = || {
-            ProviderResult::configuration_invalid(
-                ReasonCode::SmtpAuthFailed,
-                TransportClass::SmtpPermanent,
-            )
-        };
-        let rcpt_refused = || {
-            ProviderResult::configuration_invalid(
-                ReasonCode::SmtpPermanentFailure,
-                TransportClass::SmtpPermanent,
-            )
-        };
-        let status = |record: &ReadinessRecord, minute: i64| {
-            eval(Some(record), T0 + Duration::minutes(minute)).status
-        };
-        let ok = apply(None, success(), CheckScope::Delivery, 0);
+    fn a_success_clears_a_failure_only_when_it_covers_the_stage_and_is_later() {
+        use CheckStage::*;
+        let stages = [Connect, StartTls, Auth, MailFrom, Rcpt, Data];
+        // covers[成功の段階][失敗の段階]
+        #[rustfmt::skip]
+        let covers: [[bool; 6]; 6] = [
+            // 失敗:  Connect StartTls Auth   MailFrom Rcpt   Data
+            /* 成功 Connect  */ [true,  false, false, false, false, false],
+            /* 成功 StartTls */ [true,  true,  false, false, false, false],
+            /* 成功 Auth     */ [true,  true,  true,  false, false, false],
+            /* 成功 MailFrom */ [true,  true,  true,  true,  false, false],
+            /* 成功 Rcpt     */ [true,  true,  true,  true,  true,  false],
+            /* 成功 Data     */ [true,  true,  true,  true,  true,  true],
+        ];
+        // 失敗の観測は 2 分、成功の証拠時刻はその前・同時・後。
+        let evidences = [(1, false), (2, false), (3, true)];
+        for outcome in [
+            ProviderOutcome::ConfigurationInvalid,
+            ProviderOutcome::TemporarilyUnavailable,
+        ] {
+            for (failure_index, failure_stage) in stages.into_iter().enumerate() {
+                for (success_index, success_stage) in stages.into_iter().enumerate() {
+                    for (evidence_minute, is_later) in evidences {
+                        let failure =
+                            apply_at(Some(&baseline()), failed(outcome, failure_stage), 2);
+                        // 記録時刻は常に証拠時刻より後 (記録時刻は順序の根拠にならない)。
+                        let after =
+                            apply_at(Some(&failure), reached(success_stage, evidence_minute), 4);
+                        let cleared = covers[success_index][failure_index] && is_later;
+                        let case = format!(
+                            "{outcome:?} failure at {failure_stage:?}, success at {success_stage:?}, evidence minute {evidence_minute}"
+                        );
+                        let status = eval(Some(&after), at(5)).status;
+                        if cleared {
+                            assert_eq!(status, ReadinessStatus::Operational, "{case}");
+                        } else {
+                            let expected = match outcome {
+                                ProviderOutcome::ConfigurationInvalid => {
+                                    ReadinessStatus::ConfigurationInvalid
+                                }
+                                _ => ReadinessStatus::TemporarilyUnavailable,
+                            };
+                            assert_eq!(status, expected, "{case}");
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-        // 接続範囲の configuration_invalid は、より軽い失敗 (timeout) では軽くならず、接続範囲の成功で解消する。
-        let invalid = apply(Some(&ok), auth_failed(), CheckScope::Connection, 1);
-        let after_timeout = apply(Some(&invalid), timeout(), CheckScope::Connection, 2);
-        assert_eq!(
-            status(&after_timeout, 2),
-            ReadinessStatus::ConfigurationInvalid
-        );
-        assert_eq!(
-            eval(Some(&after_timeout), T0 + Duration::minutes(2)).reason,
-            ReasonCode::SmtpAuthFailed
-        );
-        let healed = apply(Some(&after_timeout), accepted(), CheckScope::Connection, 3);
-        assert_eq!(status(&healed, 3), ReadinessStatus::Operational);
+    #[test]
+    fn a_success_without_an_smtp_exchange_never_clears_a_failure() {
+        for stage in [CheckStage::Connect, CheckStage::Auth, CheckStage::Data] {
+            for outcome in [
+                ProviderOutcome::ConfigurationInvalid,
+                ProviderOutcome::TemporarilyUnavailable,
+            ] {
+                let failure = apply_at(Some(&baseline()), failed(outcome, stage), 2);
+                // 障害の後に届いた code 確認の成功 (公開・canary とも)。鮮度は更新するが解除しない。
+                let after = apply_at(Some(&failure), confirmed(), 3);
+                assert!(after.success_valid_until > failure.success_valid_until);
+                assert_ne!(
+                    eval(Some(&after), at(4)).status,
+                    ReadinessStatus::Operational,
+                    "{outcome:?} at {stage:?}"
+                );
+                assert!(after.connection_failure.is_some() || after.delivery_failure.is_some());
+            }
+        }
+    }
 
-        // 配送範囲の configuration_invalid は、接続範囲の成功・より軽い配送失敗では解消も軽減もしない。
-        let blocked = apply(Some(&ok), rcpt_refused(), CheckScope::Delivery, 1);
-        let by_connection = apply(Some(&blocked), success(), CheckScope::Connection, 2);
+    #[test]
+    fn failures_in_the_same_slot_keep_the_latest_stage_and_time_and_the_worst_class() {
+        let invalid = apply_at(
+            Some(&baseline()),
+            failed(ProviderOutcome::ConfigurationInvalid, CheckStage::Auth),
+            2,
+        );
+        // より軽い・より遅い段階の失敗は分類を軽くせず、解除に必要な段階と時刻だけを進める。
+        let both = apply_at(
+            Some(&invalid),
+            failed(
+                ProviderOutcome::TemporarilyUnavailable,
+                CheckStage::MailFrom,
+            ),
+            3,
+        );
+        let held = both.connection_failure.expect("held");
+        assert_eq!(held.outcome, ProviderOutcome::ConfigurationInvalid);
+        assert_eq!(held.stage, CheckStage::MailFrom);
+        assert_eq!(held.at, at(3));
+        // Auth までしか検証しない probe は解除できず、MAIL FROM まで検証した新しい probe は解除する。
+        let auth_only = apply_at(Some(&both), reached(CheckStage::Auth, 4), 4);
         assert_eq!(
-            status(&by_connection, 2),
+            eval(Some(&auth_only), at(4)).status,
             ReadinessStatus::ConfigurationInvalid
         );
-        let by_lighter = apply(Some(&by_connection), timeout(), CheckScope::Delivery, 3);
+        let mail_from = apply_at(Some(&auth_only), reached(CheckStage::MailFrom, 5), 5);
         assert_eq!(
-            status(&by_lighter, 3),
+            eval(Some(&mail_from), at(5)).status,
+            ReadinessStatus::Operational
+        );
+    }
+
+    #[test]
+    fn a_mail_from_failure_needs_a_probe_that_reaches_mail_from() {
+        let failure = apply_at(
+            Some(&baseline()),
+            failed(ProviderOutcome::ConfigurationInvalid, CheckStage::MailFrom),
+            2,
+        );
+        // 接続・STARTTLS・認証だけを確認する成功では解除されない。
+        for stage in [CheckStage::Connect, CheckStage::StartTls, CheckStage::Auth] {
+            let after = apply_at(Some(&failure), reached(stage, 3), 3);
+            assert_eq!(
+                eval(Some(&after), at(3)).status,
+                ReadinessStatus::ConfigurationInvalid,
+                "{stage:?}"
+            );
+        }
+        let probe = apply_at(Some(&failure), reached(CheckStage::MailFrom, 3), 3);
+        assert_eq!(
+            eval(Some(&probe), at(3)).status,
+            ReadinessStatus::Operational
+        );
+    }
+
+    #[test]
+    fn a_delivery_failure_needs_a_fresh_delivery_success_and_a_configuration_change_drops_it() {
+        let failure = apply_at(
+            Some(&baseline()),
+            failed(ProviderOutcome::ConfigurationInvalid, CheckStage::Rcpt),
+            2,
+        );
+        let probe = apply_at(Some(&failure), reached(CheckStage::MailFrom, 3), 3);
+        assert_eq!(
+            eval(Some(&probe), at(3)).status,
             ReadinessStatus::ConfigurationInvalid
         );
+        // 失敗より前に観測された配送成功 (遅れて届いた古い結果) は解除しない。
+        let stale_delivery = apply_at(Some(&probe), reached(CheckStage::Data, 1), 4);
         assert_eq!(
-            eval(Some(&by_lighter), T0 + Duration::minutes(3)).reason,
-            ReasonCode::SmtpPermanentFailure
+            eval(Some(&stale_delivery), at(4)).status,
+            ReadinessStatus::ConfigurationInvalid
         );
-        // 配送範囲の成功は接続範囲の障害も解消する (接続して配送できた証拠)。
-        let both = apply(Some(&by_lighter), auth_failed(), CheckScope::Connection, 4);
-        let healed = apply(Some(&both), success(), CheckScope::Delivery, 5);
-        assert!(healed.connection_failure.is_none() && healed.delivery_failure.is_none());
-        assert_eq!(status(&healed, 5), ReadinessStatus::Operational);
+        let delivered = apply_at(Some(&stale_delivery), reached(CheckStage::Data, 5), 5);
+        assert!(delivered.connection_failure.is_none() && delivered.delivery_failure.is_none());
+        assert_eq!(
+            eval(Some(&delivered), at(5)).status,
+            ReadinessStatus::Operational
+        );
+
+        let next = apply_provider_result(
+            Some(&failure),
+            &config("g2"),
+            &ProviderResult::accepted(TransportClass::SmtpAccepted),
+            at(6),
+            &policy(),
+        )
+        .unwrap();
+        assert!(next.connection_failure.is_none() && next.delivery_failure.is_none());
     }
 
     #[test]
@@ -1115,122 +1311,6 @@ mod tests {
         assert!(observation.email.is_effective());
         assert!(!observation.bot.is_effective());
         assert!(!observation.bot.configured);
-    }
-
-    #[test]
-    fn a_delivery_failure_is_not_cleared_by_a_connection_probe_only_by_a_delivery_success() {
-        let apply = |existing: Option<&ReadinessRecord>,
-                     result: ProviderResult,
-                     scope: CheckScope,
-                     at: OffsetDateTime| {
-            apply_scoped_provider_result(existing, &config("g1"), &result, scope, at, &policy())
-                .unwrap()
-        };
-        let delivery_temp = ProviderResult::temporarily_unavailable(
-            ReasonCode::SmtpTransientFailure,
-            TransportClass::SmtpTransient,
-        );
-        let delivery_invalid = ProviderResult::configuration_invalid(
-            ReasonCode::SmtpPermanentFailure,
-            TransportClass::SmtpPermanent,
-        );
-        let ok = apply(None, success(), CheckScope::Delivery, T0);
-
-        for (failure, expected, observation) in [
-            (
-                delivery_temp,
-                ReadinessStatus::TemporarilyUnavailable,
-                ProtectionObservation::new(true, ProbeStatus::Unhealthy),
-            ),
-            (
-                delivery_invalid,
-                ReadinessStatus::ConfigurationInvalid,
-                ProtectionObservation::UNCONFIGURED,
-            ),
-        ] {
-            let failed = apply(
-                Some(&ok),
-                failure,
-                CheckScope::Delivery,
-                T0 + Duration::minutes(1),
-            );
-            assert_eq!(
-                eval(Some(&failed), T0 + Duration::minutes(1)).status,
-                expected
-            );
-            // 障害継続中の接続 probe の成功 (Accepted) では operational へ戻らない。繰り返しても同じ。
-            let mut current = failed;
-            for step in 2..=5 {
-                let at = T0 + Duration::minutes(step);
-                current = apply(Some(&current), accepted(), CheckScope::Connection, at);
-                let effective = eval(Some(&current), at);
-                assert_eq!(effective.status, expected, "step {step}");
-                assert_eq!(
-                    effective.status.to_observation(),
-                    observation,
-                    "step {step}"
-                );
-                assert_eq!(effective.reason, failure.reason, "step {step}");
-            }
-            // 配送範囲の成功 (canary の配送受理) で初めて解除され、鮮度内の business success で operational。
-            let at = T0 + Duration::minutes(6);
-            let recovered = apply(Some(&current), accepted(), CheckScope::Delivery, at);
-            assert!(recovered.delivery_failure.is_none());
-            assert_eq!(
-                eval(Some(&recovered), at).status,
-                ReadinessStatus::Operational
-            );
-        }
-    }
-
-    #[test]
-    fn a_connection_level_failure_still_recovers_with_a_connection_probe() {
-        let ok = record(None, success(), T0);
-        let down = record(
-            Some(&ok),
-            ProviderResult::temporarily_unavailable(
-                ReasonCode::ConnectFailed,
-                TransportClass::ConnectFailed,
-            ),
-            T0 + Duration::minutes(1),
-        );
-        assert_eq!(
-            eval(Some(&down), T0 + Duration::minutes(1)).status,
-            ReadinessStatus::TemporarilyUnavailable
-        );
-        assert!(down.delivery_failure.is_none());
-        let recovered = record(Some(&down), accepted(), T0 + Duration::minutes(2));
-        assert_eq!(
-            eval(Some(&recovered), T0 + Duration::minutes(2)).status,
-            ReadinessStatus::Operational
-        );
-    }
-
-    #[test]
-    fn a_delivery_failure_does_not_survive_a_configuration_change() {
-        let failed = apply_scoped_provider_result(
-            None,
-            &config("g1"),
-            &ProviderResult::temporarily_unavailable(
-                ReasonCode::SmtpTransientFailure,
-                TransportClass::SmtpTransient,
-            ),
-            CheckScope::Delivery,
-            T0,
-            &policy(),
-        )
-        .unwrap();
-        assert!(failed.delivery_failure.is_some());
-        let next = apply_scoped_provider_result(
-            Some(&failed),
-            &config("g2"),
-            &accepted(),
-            CheckScope::Connection,
-            T0 + Duration::minutes(1),
-            &policy(),
-        )
-        .unwrap();
-        assert!(next.delivery_failure.is_none());
     }
 
     #[test]
