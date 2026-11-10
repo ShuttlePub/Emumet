@@ -171,16 +171,19 @@ pub trait DependOnEmailTransport: Sync + Send {
 pub enum RegistrationFlowStatus {
     /// 有効な registration flow。`expires_at` 以降は使えない。
     Active { expires_at: OffsetDateTime },
-    /// 存在しない・期限切れ・registration flow ではない。
+    /// 存在しない・期限切れ・registration flow ではない・実際の期限を確認できない。
     NotUsable,
 }
 
 /// Kratos の registration flow を実在確認するポート (challenge を実 flow に束縛するため)。
 pub trait RegistrationFlowDirectory: Sync + Send + 'static {
     /// Kratos に到達できない場合は `Err` (呼び出し側は一時障害として扱う)。
+    /// `browser_cookie` は browser flow の照会に必要な Kratos の CSRF cookie (`Cookie` ヘッダー値)。
+    /// cookie がなく中身を確認できない flow は `NotUsable` とし、期限を推測して許可しない。
     fn lookup(
         &self,
         flow_id: &str,
+        browser_cookie: Option<&str>,
     ) -> impl Future<Output = error_stack::Result<RegistrationFlowStatus, KernelError>> + Send;
 }
 

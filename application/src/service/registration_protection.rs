@@ -383,7 +383,8 @@ impl BotTokenVerdict {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IssueOutcome {
-    /// 発行した (宛先の状態によらず同じ応答。宛先拒否・送信失敗でも区別しない)。
+    /// 発行した。送信を試みた発行は、受理・宛先拒否・一時障害・provider 障害のいずれでも同じ応答で、
+    /// 宛先の状態を区別させない (届かなかった challenge は内部で失効させる)。
     Issued {
         challenge_id: String,
         expires_at: OffsetDateTime,
@@ -393,8 +394,8 @@ pub enum IssueOutcome {
     RateLimited {
         retry_after_secs: i64,
     },
-    /// gate が受付中でない・メール保護が operational でない・設定不正・SMTP 障害。
-    /// 任意宛先へ送らない。理由は外部に区別して返さない。
+    /// 送信前に判定できる拒否 (宛先に依存しない): gate が受付中でない・メール保護が operational でない・
+    /// Kratos に到達できない。任意宛先へ送らない。理由は外部に区別して返さない。
     Unavailable,
 }
 
@@ -411,6 +412,8 @@ pub enum ConfirmOutcome {
 pub struct IssueRequest<'a> {
     pub email: &'a str,
     pub flow_id: &'a str,
+    /// browser flow の実期限を Kratos に照会するための CSRF cookie (`Cookie` ヘッダー値)。
+    pub flow_cookie: Option<&'a str>,
     /// 送信元の識別子 (接続元アドレス。信頼できないヘッダーは使わない)。
     pub source: &'a str,
 }
@@ -445,6 +448,7 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
     ) -> impl Future<Output = error_stack::Result<IssueOutcome, KernelError>> + Send {
         let raw_email = request.email.to_string();
         let flow_id = request.flow_id.to_string();
+        let flow_cookie = request.flow_cookie.map(str::to_string);
         let source = request.source.to_string();
         async move {
             let Ok(email) = NormalizedEmail::parse(&raw_email) else {
@@ -456,7 +460,11 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
             if !registration_email_ready(self, at).await? {
                 return Ok(IssueOutcome::Unavailable);
             }
-            let flow_expires_at = match self.registration_flow_directory().lookup(&flow_id).await {
+            let flow_expires_at = match self
+                .registration_flow_directory()
+                .lookup(&flow_id, flow_cookie.as_deref())
+                .await
+            {
                 Ok(RegistrationFlowStatus::Active { expires_at }) if expires_at > at => expires_at,
                 Ok(_) => return Ok(IssueOutcome::InvalidFlow),
                 Err(_) => return Ok(IssueOutcome::Unavailable),
@@ -504,23 +512,18 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
                 .email_transport()
                 .send_code(email.as_str(), &code)
                 .await;
-            match result.outcome {
-                ProviderOutcome::Accepted | ProviderOutcome::BusinessSuccess => {
-                    Ok(IssueOutcome::Issued {
-                        challenge_id: id,
-                        expires_at,
-                    })
-                }
-                ProviderOutcome::AttemptRejected => {
-                    self.invalidate_registration_challenge(&id).await?;
-                    // 宛先拒否でも応答は変えない。届かないので確認は成立しない。
-                    Ok(IssueOutcome::Issued {
-                        challenge_id: id,
-                        expires_at,
-                    })
-                }
-                ProviderOutcome::ConfigurationInvalid | ProviderOutcome::TemporarilyUnavailable => {
-                    self.invalidate_registration_challenge(&id).await?;
+            // 送信を試みた発行の外部応答は結果によらず同一にする。宛先拒否 (RCPT 550) と宛先依存の
+            // 一時拒否 (RCPT 450 など) を公開応答で区別させない (宛先の状態の列挙を防ぐ)。
+            // provider の障害は内部の readiness に記録し、以降の発行を止める (宛先に依存しない 503)。
+            if !matches!(
+                result.outcome,
+                ProviderOutcome::Accepted | ProviderOutcome::BusinessSuccess
+            ) {
+                self.invalidate_registration_challenge(&id).await?;
+                if matches!(
+                    result.outcome,
+                    ProviderOutcome::ConfigurationInvalid | ProviderOutcome::TemporarilyUnavailable
+                ) {
                     tracing::warn!(
                         outcome = result.outcome.as_str(),
                         reason = result.reason.as_str(),
@@ -529,9 +532,12 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
                     if record_result(self, Protection::Email, result, at).await? {
                         sync_observation(self, at).await?;
                     }
-                    Ok(IssueOutcome::Unavailable)
                 }
             }
+            Ok(IssueOutcome::Issued {
+                challenge_id: id,
+                expires_at,
+            })
         }
     }
 

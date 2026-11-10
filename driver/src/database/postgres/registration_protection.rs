@@ -251,18 +251,17 @@ impl RegistrationEmailChallengeRepository for PostgresRegistrationEmailChallenge
             //language=postgresql
             "SELECT \
                (SELECT max(sent_at) FROM registration_email_send_log \
-                  WHERE email_hash = $1 AND sent_at <= $4), \
+                  WHERE email_hash = $1), \
                (SELECT count(*) FROM registration_email_send_log \
-                  WHERE email_hash = $1 AND sent_at > $5 AND sent_at <= $4), \
+                  WHERE email_hash = $1 AND sent_at > $4), \
                (SELECT count(*) FROM registration_email_send_log \
-                  WHERE flow_id = $2 AND sent_at > $5 AND sent_at <= $4), \
+                  WHERE flow_id = $2 AND sent_at > $4), \
                (SELECT count(*) FROM registration_email_send_log \
-                  WHERE source_hash = $3 AND sent_at > $5 AND sent_at <= $4)",
+                  WHERE source_hash = $3 AND sent_at > $4)",
         )
         .bind(email_hash)
         .bind(flow_id)
         .bind(source_hash)
-        .bind(now)
         .bind(since)
         .fetch_one(con)
         .await

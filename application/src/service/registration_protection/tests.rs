@@ -100,13 +100,19 @@ impl EmailTransport for FakeEmail {
 struct FakeFlows {
     flows: Arc<Mutex<HashMap<String, RegistrationFlowStatus>>>,
     unreachable: Arc<Mutex<bool>>,
+    cookies: Arc<Mutex<Vec<Option<String>>>>,
 }
 
 impl RegistrationFlowDirectory for FakeFlows {
     async fn lookup(
         &self,
         flow_id: &str,
+        browser_cookie: Option<&str>,
     ) -> error_stack::Result<RegistrationFlowStatus, KernelError> {
+        self.cookies
+            .lock()
+            .unwrap()
+            .push(browser_cookie.map(str::to_string));
         if *self.unreachable.lock().unwrap() {
             return Err(Report::new(KernelError::Internal));
         }
@@ -404,6 +410,7 @@ impl Fixture {
     ) -> IssueRequest<'a> {
         IssueRequest {
             email,
+            flow_cookie: None,
             flow_id: flow,
             source,
         }
@@ -1139,6 +1146,7 @@ async fn issuing_validates_email_and_flow_and_limits_the_rate() {
             module
                 .issue_registration_email_challenge_at(
                     &IssueRequest {
+                        flow_cookie: None,
                         email: &email,
                         flow_id: &flow,
                         source: &source,
@@ -1246,7 +1254,10 @@ async fn send_failures_never_leave_a_confirmable_challenge_and_do_not_reveal_the
         )
         .await
         .unwrap();
-    assert_eq!(outcome, IssueOutcome::Unavailable);
+    assert!(
+        matches!(outcome, IssueOutcome::Issued { .. }),
+        "a provider failure during sending is not distinguishable from any other issuance: {outcome:?}"
+    );
     assert_eq!(
         fx.email_view().await.effective.status,
         ReadinessStatus::ConfigurationInvalid
@@ -1283,15 +1294,28 @@ async fn smtp_temporary_failure_degrades_email_and_recovers_automatically() {
         ReasonCode::SmtpTransientFailure,
         TransportClass::SmtpTransient,
     );
+    let outcome = fx
+        .module
+        .issue_registration_email_challenge_at(
+            &fx.issue_request("a@example.com", "flow-1", "s"),
+            at,
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, IssueOutcome::Issued { .. }),
+        "{outcome:?}"
+    );
     assert_eq!(
         fx.module
             .issue_registration_email_challenge_at(
-                &fx.issue_request("a@example.com", "flow-1", "s"),
-                at
+                &fx.issue_request("a2@example.com", "flow-1", "s"),
+                at + Duration::seconds(1)
             )
             .await
             .unwrap(),
-        IssueOutcome::Unavailable
+        IssueOutcome::Unavailable,
+        "after the provider is degraded nothing more is sent (independent of the recipient)"
     );
     assert_eq!(
         fx.gate().await.observation.email,
@@ -1433,5 +1457,87 @@ async fn bot_token_verification_records_provider_outcomes_but_not_user_rejection
     assert_eq!(
         fx.gate().await.observation.bot,
         ProtectionObservation::new(true, ProbeStatus::Unhealthy)
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn the_public_response_is_identical_for_accepted_rcpt_550_and_rcpt_450() {
+    // 受理・宛先拒否 (RCPT 550)・宛先依存の一時拒否 (RCPT 450) を、公開応答 (発行結果) から区別できない。
+    let mut shapes = Vec::new();
+    for (index, result) in [
+        accepted(),
+        ProviderResult::attempt_rejected(
+            ReasonCode::RecipientRejected,
+            TransportClass::SmtpPermanent,
+        ),
+        ProviderResult::temporarily_unavailable(
+            ReasonCode::SmtpTransientFailure,
+            TransportClass::SmtpTransient,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let fx = Fixture::new().await;
+        fx.ready_for_issuing().await;
+        *fx.module.email.send.lock().unwrap() = result;
+        let at = now();
+        let outcome = fx
+            .module
+            .issue_registration_email_challenge_at(
+                &fx.issue_request("someone@example.com", "flow-1", "s"),
+                at,
+            )
+            .await
+            .unwrap();
+        let IssueOutcome::Issued {
+            challenge_id,
+            expires_at,
+        } = outcome
+        else {
+            panic!("case {index}: {outcome:?}");
+        };
+        assert_eq!(challenge_id.len(), 32, "case {index}");
+        shapes.push(expires_at - at);
+    }
+    assert!(shapes.windows(2).all(|pair| pair[0] == pair[1]));
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_short_lived_flow_caps_the_challenge_and_the_browser_cookie_is_forwarded() {
+    let fx = Fixture::new().await;
+    fx.ready_for_issuing().await;
+    fx.set_flow("short-flow", Duration::seconds(90));
+    let at = now();
+    let outcome = fx
+        .module
+        .issue_registration_email_challenge_at(
+            &IssueRequest {
+                email: "a@example.com",
+                flow_id: "short-flow",
+                flow_cookie: Some("csrf_token_x=1"),
+                source: "s",
+            },
+            at,
+        )
+        .await
+        .unwrap();
+    let IssueOutcome::Issued { expires_at, .. } = outcome else {
+        panic!("{outcome:?}")
+    };
+    assert!(expires_at <= at + Duration::seconds(90) + Duration::seconds(2));
+    assert!(expires_at < at + Duration::minutes(10));
+    assert_eq!(
+        fx.module
+            .flows
+            .cookies
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .flatten(),
+        Some("csrf_token_x=1".to_string())
     );
 }

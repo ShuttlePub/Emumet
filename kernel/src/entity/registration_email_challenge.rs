@@ -330,18 +330,21 @@ pub fn decide_proof_use(
     if challenge.generation != expected.generation {
         return ProofDecision::Reject(ProofRejection::GenerationMismatch);
     }
-    if let Some(consumed_at) = challenge.consumed_at {
-        return if now >= consumed_at && now < consumed_at + reuse_window {
-            ProofDecision::Replay
-        } else {
-            ProofDecision::Reject(ProofRejection::AlreadyConsumed)
-        };
+    // 期限 (proof・flow) は消費済みかどうかより先に確認する。消費済みの proof でも、期限後の retry は
+    // 再利用窓の内側であっても成功させない (期限ちょうどは期限切れ)。
+    let unexpired = matches!(
+        challenge.proof_expires_at,
+        Some(expires_at) if now < expires_at && now < challenge.flow_expires_at
+    );
+    if !unexpired {
+        return ProofDecision::Reject(ProofRejection::Expired);
     }
-    match challenge.proof_expires_at {
-        Some(expires_at) if now < expires_at && now < challenge.flow_expires_at => {
-            ProofDecision::Consume
+    match challenge.consumed_at {
+        Some(consumed_at) if now >= consumed_at && now < consumed_at + reuse_window => {
+            ProofDecision::Replay
         }
-        _ => ProofDecision::Reject(ProofRejection::Expired),
+        Some(_) => ProofDecision::Reject(ProofRejection::AlreadyConsumed),
+        None => ProofDecision::Consume,
     }
 }
 
@@ -686,6 +689,52 @@ mod tests {
                 window
             ),
             ProofDecision::Reject(ProofRejection::GenerationMismatch)
+        );
+    }
+
+    #[test]
+    fn a_consumed_proof_is_not_replayed_after_its_expiry_even_inside_the_reuse_window() {
+        let window = Duration::seconds(60);
+        let b = binding();
+        let proof_expires = confirmed().proof_expires_at.unwrap();
+        let consumed_at = proof_expires - Duration::seconds(10);
+        let c = EmailChallenge {
+            consumed_at: Some(consumed_at),
+            ..confirmed()
+        };
+        assert_eq!(
+            decide_proof_use(Some(&c), &b, proof_expires - Duration::seconds(1), window),
+            ProofDecision::Replay
+        );
+        for after in [Duration::ZERO, Duration::seconds(1), Duration::seconds(30)] {
+            assert_eq!(
+                decide_proof_use(Some(&c), &b, proof_expires + after, window),
+                ProofDecision::Reject(ProofRejection::Expired),
+                "{after:?}"
+            );
+        }
+        // flow の期限も同様 (proof より先に flow が切れる場合)。
+        let short_flow = EmailChallenge {
+            flow_expires_at: consumed_at + Duration::seconds(5),
+            ..c
+        };
+        assert_eq!(
+            decide_proof_use(
+                Some(&short_flow),
+                &b,
+                consumed_at + Duration::seconds(4),
+                window
+            ),
+            ProofDecision::Replay
+        );
+        assert_eq!(
+            decide_proof_use(
+                Some(&short_flow),
+                &b,
+                consumed_at + Duration::seconds(5),
+                window
+            ),
+            ProofDecision::Reject(ProofRejection::Expired)
         );
     }
 

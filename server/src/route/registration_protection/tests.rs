@@ -418,7 +418,7 @@ mod flow_directory {
     use kernel::interfaces::repository::{RegistrationFlowDirectory, RegistrationFlowStatus};
     use time::format_description::well_known::Rfc3339;
     use time::{Duration, OffsetDateTime};
-    use wiremock::matchers::{method, path, query_param};
+    use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn kratos(response: ResponseTemplate) -> (MockServer, KratosRegistrationFlowDirectory) {
@@ -433,14 +433,19 @@ mod flow_directory {
         (server, directory)
     }
 
+    fn flow_body(expires_in: Duration) -> (OffsetDateTime, serde_json::Value) {
+        let expires = OffsetDateTime::now_utc() + expires_in;
+        (
+            expires,
+            serde_json::json!({"id": "flow-1", "expires_at": expires.format(&Rfc3339).unwrap()}),
+        )
+    }
+
     #[tokio::test]
     async fn an_active_flow_returns_its_real_expiry() {
-        let expires = OffsetDateTime::now_utc() + Duration::minutes(30);
-        let (_server, directory) = kratos(ResponseTemplate::new(200).set_body_json(
-            serde_json::json!({"id": "flow-1", "expires_at": expires.format(&Rfc3339).unwrap()}),
-        ))
-        .await;
-        match directory.lookup("flow-1").await.unwrap() {
+        let (expires, body) = flow_body(Duration::minutes(30));
+        let (_server, directory) = kratos(ResponseTemplate::new(200).set_body_json(body)).await;
+        match directory.lookup("flow-1", None).await.unwrap() {
             RegistrationFlowStatus::Active { expires_at } => {
                 assert!((expires_at - expires).abs() < Duration::seconds(1));
             }
@@ -450,20 +455,16 @@ mod flow_directory {
 
     #[tokio::test]
     async fn expired_missing_or_gone_flows_are_not_usable() {
-        let past = OffsetDateTime::now_utc() - Duration::minutes(1);
-        let (_server, directory) = kratos(
-            ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!({"expires_at": past.format(&Rfc3339).unwrap()})),
-        )
-        .await;
+        let (_, body) = flow_body(Duration::minutes(-1));
+        let (_server, directory) = kratos(ResponseTemplate::new(200).set_body_json(body)).await;
         assert_eq!(
-            directory.lookup("flow-1").await.unwrap(),
+            directory.lookup("flow-1", None).await.unwrap(),
             RegistrationFlowStatus::NotUsable
         );
         for status in [404, 410] {
             let (_server, directory) = kratos(ResponseTemplate::new(status)).await;
             assert_eq!(
-                directory.lookup("flow-1").await.unwrap(),
+                directory.lookup("flow-1", None).await.unwrap(),
                 RegistrationFlowStatus::NotUsable,
                 "{status}"
             );
@@ -471,15 +472,51 @@ mod flow_directory {
     }
 
     #[tokio::test]
-    async fn a_browser_flow_without_its_cookie_exists_but_gets_a_short_conservative_expiry() {
-        let (_server, directory) = kratos(ResponseTemplate::new(403)).await;
-        match directory.lookup("flow-1").await.unwrap() {
+    async fn a_browser_flow_is_checked_with_its_csrf_cookie_and_keeps_its_short_real_expiry() {
+        // 残存期間の短い browser flow: 合成した期限ではなく Kratos が返した実際の期限を使う。
+        let (expires, body) = flow_body(Duration::seconds(90));
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/self-service/registration/flows"))
+            .and(header("cookie", "csrf_token_abc=value1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/self-service/registration/flows"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        let directory = KratosRegistrationFlowDirectory::new(&server.uri());
+        match directory
+            .lookup("flow-1", Some("csrf_token_abc=value1"))
+            .await
+            .unwrap()
+        {
             RegistrationFlowStatus::Active { expires_at } => {
-                let remaining = expires_at - OffsetDateTime::now_utc();
-                assert!(remaining <= Duration::minutes(10) && remaining > Duration::minutes(9));
+                assert!((expires_at - expires).abs() < Duration::seconds(1));
+                assert!(expires_at - OffsetDateTime::now_utc() <= Duration::seconds(90));
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_browser_flow_that_cannot_be_inspected_is_rejected_not_guessed() {
+        // cookie なし・不一致の cookie はどちらも 403。期限を確認できない flow は使えない (fail-closed)。
+        let (_server, directory) = kratos(ResponseTemplate::new(403)).await;
+        assert_eq!(
+            directory.lookup("flow-1", None).await.unwrap(),
+            RegistrationFlowStatus::NotUsable
+        );
+        assert_eq!(
+            directory
+                .lookup("flow-1", Some("csrf_token_abc=wrong"))
+                .await
+                .unwrap(),
+            RegistrationFlowStatus::NotUsable
+        );
     }
 
     #[tokio::test]
@@ -493,9 +530,9 @@ mod flow_directory {
                 .set_delay(std::time::Duration::from_secs(5)),
         ] {
             let (_server, directory) = kratos(response).await;
-            assert!(directory.lookup("flow-1").await.is_err());
+            assert!(directory.lookup("flow-1", None).await.is_err());
         }
         let unreachable = KratosRegistrationFlowDirectory::new("http://127.0.0.1:1");
-        assert!(unreachable.lookup("flow-1").await.is_err());
+        assert!(unreachable.lookup("flow-1", None).await.is_err());
     }
 }

@@ -5,7 +5,7 @@
 mod smtp_mock;
 
 use super::config::{secret_fingerprint, ProcessEnv, ValueSource};
-use super::smtp::{classify_smtp_failure, SmtpFailure};
+use super::smtp::{classify_smtp_failure, SmtpFailure, SmtpStage};
 use super::*;
 use kernel::interfaces::repository::{BotTokenCheck, EmailTransport, TurnstileVerifier};
 use kernel::prelude::entity::{ProviderOutcome, ProviderResult, ReasonCode, TransportClass};
@@ -901,102 +901,107 @@ async fn live_turnstile_official_test_keys() {
 // ---- SMTP: 分類 -------------------------------------------------------------------------------
 
 #[test]
-fn smtp_failures_are_classified_without_conflating_all_5xx() {
-    let code = |code: u16| SmtpFailure {
+fn smtp_failures_are_classified_by_stage_without_conflating_all_5xx() {
+    let at = |stage, code: u16| SmtpFailure {
+        stage,
         code: Some(code),
         ..SmtpFailure::default()
     };
-    let classify = |failure, recipient| classify_smtp_failure(failure, recipient);
+    let transient = ProviderResult::temporarily_unavailable(
+        ReasonCode::SmtpTransientFailure,
+        TransportClass::SmtpTransient,
+    );
+    let auth = ProviderResult::configuration_invalid(
+        ReasonCode::SmtpAuthFailed,
+        TransportClass::SmtpAuthRejected,
+    );
+    let permanent = ProviderResult::configuration_invalid(
+        ReasonCode::SmtpPermanentFailure,
+        TransportClass::SmtpPermanent,
+    );
+    let recipient = ProviderResult::attempt_rejected(
+        ReasonCode::RecipientRejected,
+        TransportClass::SmtpPermanent,
+    );
+    let stages = [
+        SmtpStage::Connect,
+        SmtpStage::Auth,
+        SmtpStage::MailFrom,
+        SmtpStage::Rcpt,
+        SmtpStage::Data,
+    ];
 
-    // 4xx / 接続失敗 / timeout は一時障害。
-    for status in [421, 450, 451, 452] {
-        assert_eq!(
-            classify(code(status), true),
-            ProviderResult::temporarily_unavailable(
-                ReasonCode::SmtpTransientFailure,
-                TransportClass::SmtpTransient
-            ),
-            "{status}"
-        );
+    for stage in stages {
+        // 4xx は段階によらず一時障害。認証・設定不正は configuration_invalid。
+        for status in [421, 450, 451, 452] {
+            assert_eq!(
+                classify_smtp_failure(at(stage, status)),
+                transient,
+                "{stage:?} {status}"
+            );
+        }
+        for status in [530, 534, 535, 538] {
+            assert_eq!(
+                classify_smtp_failure(at(stage, status)),
+                auth,
+                "{stage:?} {status}"
+            );
+        }
+        // 認証以外の 5xx は宛先拒否ではなく設定不正。
+        for status in [500, 501, 502, 503, 504, 521, 555] {
+            assert_eq!(
+                classify_smtp_failure(at(stage, status)),
+                permanent,
+                "{stage:?} {status}"
+            );
+        }
+        // 宛先拒否になれるのは RCPT 段階の 550-554 だけ (MAIL FROM の「送信者不許可」・DATA・接続・認証の
+        // 550 系は readiness を変えない attempt_rejected にせず、設定不正として扱う)。
+        for status in [550, 551, 552, 553, 554] {
+            let expected = if stage == SmtpStage::Rcpt {
+                recipient
+            } else {
+                permanent
+            };
+            assert_eq!(
+                classify_smtp_failure(at(stage, status)),
+                expected,
+                "{stage:?} {status}"
+            );
+        }
     }
     assert_eq!(
-        classify(SmtpFailure::default(), true),
+        classify_smtp_failure(SmtpFailure::default()),
         ProviderResult::temporarily_unavailable(
             ReasonCode::ConnectFailed,
             TransportClass::ConnectFailed
         )
     );
     assert_eq!(
-        classify(
-            SmtpFailure {
-                timeout: true,
-                ..SmtpFailure::default()
-            },
-            true
-        ),
+        classify_smtp_failure(SmtpFailure {
+            timeout: true,
+            ..SmtpFailure::default()
+        }),
         ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
     );
-    // 認証・設定不正は configuration_invalid。
-    for status in [530, 534, 535, 538] {
-        assert_eq!(
-            classify(code(status), true),
-            ProviderResult::configuration_invalid(
-                ReasonCode::SmtpAuthFailed,
-                TransportClass::SmtpAuthRejected
-            ),
-            "{status}"
-        );
-    }
     assert_eq!(
-        classify(
-            SmtpFailure {
-                tls: true,
-                ..SmtpFailure::default()
-            },
-            true
-        ),
+        classify_smtp_failure(SmtpFailure {
+            tls: true,
+            ..SmtpFailure::default()
+        }),
         ProviderResult::configuration_invalid(
             ReasonCode::SmtpTlsFailure,
             TransportClass::TlsFailed
         )
     );
     assert_eq!(
-        classify(
-            SmtpFailure {
-                client: true,
-                ..SmtpFailure::default()
-            },
-            true
-        )
+        classify_smtp_failure(SmtpFailure {
+            client: true,
+            ..SmtpFailure::default()
+        })
         .outcome,
         ProviderOutcome::ConfigurationInvalid
     );
-    // 宛先拒否 (550 系) は当該試行だけの拒否。
-    for status in [550, 551, 552, 553, 554] {
-        assert_eq!(
-            classify(code(status), true),
-            ProviderResult::attempt_rejected(
-                ReasonCode::RecipientRejected,
-                TransportClass::SmtpPermanent
-            ),
-            "{status}"
-        );
-    }
-    // 宛先を伴わない probe の 55x は設定不正。それ以外の 5xx も宛先拒否と同一視しない。
-    assert_eq!(
-        classify(code(550), false).outcome,
-        ProviderOutcome::ConfigurationInvalid
-    );
-    for status in [500, 501, 502, 503, 504, 521, 555] {
-        assert_eq!(
-            classify(code(status), true),
-            ProviderResult::configuration_invalid(
-                ReasonCode::SmtpPermanentFailure,
-                TransportClass::SmtpPermanent
-            ),
-            "{status}"
-        );
-    }
 }
 
 // ---- SMTP: ローカル SMTP 模擬への実送信 -----------------------------------------------------------
@@ -1109,8 +1114,43 @@ async fn smtp_transient_and_permanent_failures_are_distinguished() {
                 mail_reply: "553 5.7.1 sender not allowed".to_string(),
                 ..script_with_auth()
             },
-            // 宛先を伴うので宛先拒否に見えるが、mail は送られず readiness は変わらない (安全側)。
+            // MAIL FROM の拒否 (送信者不許可) は宛先拒否ではなく設定不正。
+            ProviderOutcome::ConfigurationInvalid,
+        ),
+        (
+            SmtpScript {
+                mail_reply: "550 5.7.1 sender not authorized".to_string(),
+                ..script_with_auth()
+            },
+            ProviderOutcome::ConfigurationInvalid,
+        ),
+        (
+            SmtpScript {
+                mail_reply: "530 5.7.0 authentication required".to_string(),
+                ..script_with_auth()
+            },
+            ProviderOutcome::ConfigurationInvalid,
+        ),
+        (
+            SmtpScript {
+                rcpt_reply: "450 4.2.1 mailbox busy".to_string(),
+                ..script_with_auth()
+            },
+            ProviderOutcome::TemporarilyUnavailable,
+        ),
+        (
+            SmtpScript {
+                rcpt_reply: "550 5.1.1 no such user".to_string(),
+                ..script_with_auth()
+            },
             ProviderOutcome::AttemptRejected,
+        ),
+        (
+            SmtpScript {
+                data_reply: "554 5.6.0 message rejected".to_string(),
+                ..script_with_auth()
+            },
+            ProviderOutcome::ConfigurationInvalid,
         ),
         (
             SmtpScript {

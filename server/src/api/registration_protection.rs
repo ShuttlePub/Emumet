@@ -26,11 +26,13 @@ impl RegistrationEmailApi {
         email: &str,
         flow_id: &str,
         source: &str,
+        flow_cookie: Option<&str>,
     ) -> error_stack::Result<IssueOutcome, KernelError> {
         self.module
             .issue_registration_email_challenge(&IssueRequest {
                 email,
                 flow_id,
+                flow_cookie,
                 source,
             })
             .await

@@ -15,12 +15,15 @@ use kernel::prelude::entity::{
     NormalizedEmail, Protection, ProtectionConfigSnapshot, ProtectionProvider, ProviderResult,
     ReasonCode, TransportClass,
 };
+use lettre::address::Envelope;
 use lettre::message::header::ContentType;
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
-use lettre::transport::smtp::client::Tls;
-use lettre::transport::smtp::client::TlsParameters;
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use lettre::transport::smtp::authentication::Mechanism;
+use lettre::transport::smtp::client::{AsyncSmtpConnection, TlsParameters};
+use lettre::transport::smtp::commands::{Data, Mail, Rcpt};
+use lettre::transport::smtp::extension::ClientId;
+use lettre::Message;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -70,7 +73,7 @@ impl SmtpTlsMode {
 /// 読み込んだ SMTP 設定 (secret を含むので Debug は伏せる)。
 pub struct SmtpSettings {
     snapshot: ProtectionConfigSnapshot,
-    transport: Option<AsyncSmtpTransport<Tokio1Executor>>,
+    session: Option<SmtpSession>,
     from: Option<Mailbox>,
     canary: Option<NormalizedEmail>,
     /// 1 回の送信・probe 全体の期限。lettre の timeout は応答待ちに効かない場面があるため、
@@ -214,9 +217,9 @@ impl SmtpSettings {
             &fingerprint,
         );
 
-        let mut transport = None;
+        let mut session = None;
         if enabled && issue.is_none() {
-            match build_transport(
+            match build_session(
                 host.as_deref().unwrap_or_default(),
                 port.unwrap_or(587),
                 tls_mode.unwrap_or(SmtpTlsMode::StartTls),
@@ -224,7 +227,7 @@ impl SmtpSettings {
                 password.as_ref(),
                 timeout,
             ) {
-                Ok(built) => transport = Some(built),
+                Ok(built) => session = Some(built),
                 Err(reason) => issue = Some(reason),
             }
         }
@@ -238,7 +241,7 @@ impl SmtpSettings {
                 generation,
                 fingerprint,
             },
-            transport,
+            session,
             from,
             canary,
             deadline: timeout,
@@ -250,48 +253,77 @@ impl SmtpSettings {
     }
 }
 
-fn build_transport(
+/// SMTP の 1 セッションの接続設定 (secret を含むので Debug を実装しない)。
+struct SmtpSession {
+    host: String,
+    port: u16,
+    mode: SmtpTlsMode,
+    tls: Option<TlsParameters>,
+    credentials: Option<Credentials>,
+    timeout: Duration,
+}
+
+fn build_session(
     host: &str,
     port: u16,
-    tls: SmtpTlsMode,
+    mode: SmtpTlsMode,
     username: Option<&str>,
     password: Option<&Secret>,
     timeout: Duration,
-) -> Result<AsyncSmtpTransport<Tokio1Executor>, ReasonCode> {
-    let tls_for =
-        |host: &str| TlsParameters::new(host.to_string()).map_err(|_| ReasonCode::SmtpTlsFailure);
-    let mut builder = match tls {
-        SmtpTlsMode::StartTls => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
-            .tls(Tls::Required(tls_for(host)?)),
-        SmtpTlsMode::Tls => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
-            .tls(Tls::Wrapper(tls_for(host)?)),
-        #[cfg(any(test, feature = "test-mode"))]
-        SmtpTlsMode::Plaintext => {
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host).tls(Tls::None)
+) -> Result<SmtpSession, ReasonCode> {
+    let tls = match mode {
+        SmtpTlsMode::StartTls | SmtpTlsMode::Tls => {
+            Some(TlsParameters::new(host.to_string()).map_err(|_| ReasonCode::SmtpTlsFailure)?)
         }
+        #[cfg(any(test, feature = "test-mode"))]
+        SmtpTlsMode::Plaintext => None,
     };
-    builder = builder.port(port).timeout(Some(timeout));
-    if let (Some(username), Some(password)) = (username, password) {
-        builder = builder.credentials(Credentials::new(
+    let credentials = match (username, password) {
+        (Some(username), Some(password)) => Some(Credentials::new(
             username.to_string(),
             password.as_str().to_string(),
-        ));
-    }
-    Ok(builder.build())
+        )),
+        _ => None,
+    };
+    Ok(SmtpSession {
+        host: host.to_string(),
+        port,
+        mode,
+        tls,
+        credentials,
+        timeout,
+    })
 }
 
-/// SMTP 失敗の観測 (lettre のエラーから導く。分類の純粋関数の入力)。
+/// 失敗した SMTP の段階。宛先拒否 (RCPT) と送信者・認証・transport の設定不正を分けるために保持する。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SmtpStage {
+    /// 接続・EHLO・STARTTLS。
+    #[default]
+    Connect,
+    Auth,
+    MailFrom,
+    Rcpt,
+    Data,
+}
+
+/// SMTP 失敗の観測 (分類の純粋関数の入力)。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SmtpFailure {
+    pub stage: SmtpStage,
     pub code: Option<u16>,
     pub timeout: bool,
     pub tls: bool,
     pub client: bool,
 }
 
-/// SMTP 失敗を分類する純粋関数。`recipient_phase` は宛先を伴う送信 (true) か、接続・認証だけの
-/// probe (false)。probe に宛先拒否はないので、55x でも `attempt_rejected` にしない。
-pub fn classify_smtp_failure(failure: SmtpFailure, recipient_phase: bool) -> ProviderResult {
+/// SMTP 失敗を段階つきで分類する純粋関数。
+///
+/// - timeout・接続失敗・4xx は一時障害
+/// - TLS 不正・認証失敗 (530/534/535/538)・STARTTLS 非対応などの設定不正は `configuration_invalid`
+/// - 宛先拒否 (**RCPT 段階の 550-554**) だけが `attempt_rejected`。MAIL FROM (送信者不許可) や
+///   DATA の 5xx、その他の 5xx は宛先拒否ではなく `configuration_invalid`
+pub fn classify_smtp_failure(failure: SmtpFailure) -> ProviderResult {
     if failure.timeout {
         return ProviderResult::temporarily_unavailable(
             ReasonCode::Timeout,
@@ -313,7 +345,7 @@ pub fn classify_smtp_failure(failure: SmtpFailure, recipient_phase: bool) -> Pro
             ReasonCode::SmtpAuthFailed,
             TransportClass::SmtpAuthRejected,
         ),
-        Some(550..=554) if recipient_phase => ProviderResult::attempt_rejected(
+        Some(550..=554) if failure.stage == SmtpStage::Rcpt => ProviderResult::attempt_rejected(
             ReasonCode::RecipientRejected,
             TransportClass::SmtpPermanent,
         ),
@@ -336,7 +368,7 @@ pub fn classify_smtp_failure(failure: SmtpFailure, recipient_phase: bool) -> Pro
     }
 }
 
-fn failure_of(error: &lettre::transport::smtp::Error) -> SmtpFailure {
+fn failure_of(error: &lettre::transport::smtp::Error, stage: SmtpStage) -> SmtpFailure {
     use std::fmt::Write;
     let code = error.status().map(|code| {
         let mut digits = String::new();
@@ -344,10 +376,107 @@ fn failure_of(error: &lettre::transport::smtp::Error) -> SmtpFailure {
         digits.parse::<u16>().unwrap_or(0)
     });
     SmtpFailure {
+        stage,
         code,
         timeout: error.is_timeout(),
         tls: error.is_tls(),
         client: error.is_client(),
+    }
+}
+
+type StageResult<T> = Result<T, ProviderResult>;
+
+fn at_stage<T>(
+    result: Result<T, lettre::transport::smtp::Error>,
+    stage: SmtpStage,
+) -> StageResult<T> {
+    result.map_err(|error| classify_smtp_failure(failure_of(&error, stage)))
+}
+
+impl SmtpSession {
+    /// 接続 → (STARTTLS) → 認証。ここまでが「接続・認証 probe」。
+    async fn open(&self) -> StageResult<AsyncSmtpConnection> {
+        let hello = ClientId::default();
+        let wrapper = match self.mode {
+            SmtpTlsMode::Tls => self.tls.clone(),
+            _ => None,
+        };
+        let mut connection = at_stage(
+            AsyncSmtpConnection::connect_tokio1(
+                (self.host.as_str(), self.port),
+                Some(self.timeout),
+                &hello,
+                wrapper,
+                None,
+            )
+            .await,
+            SmtpStage::Connect,
+        )?;
+        if self.mode == SmtpTlsMode::StartTls {
+            let Some(tls) = self.tls.clone() else {
+                return Err(classify_smtp_failure(SmtpFailure {
+                    client: true,
+                    ..SmtpFailure::default()
+                }));
+            };
+            // STARTTLS を必須にする。サーバーが提供しなければ平文へ降格せずエラー (client error)。
+            at_stage(connection.starttls(tls, &hello).await, SmtpStage::Connect)?;
+        }
+        if let Some(credentials) = &self.credentials {
+            at_stage(
+                connection
+                    .auth(&[Mechanism::Plain, Mechanism::Login], credentials)
+                    .await,
+                SmtpStage::Auth,
+            )?;
+        }
+        Ok(connection)
+    }
+
+    async fn send(&self, envelope: &Envelope, body: &[u8]) -> StageResult<()> {
+        let mut connection = self.open().await?;
+        let result = Self::deliver(&mut connection, envelope, body).await;
+        // 切断は best effort (結果は送信の成否に影響しない)。
+        let _ = connection.quit().await;
+        result
+    }
+
+    async fn deliver(
+        connection: &mut AsyncSmtpConnection,
+        envelope: &Envelope,
+        body: &[u8],
+    ) -> StageResult<()> {
+        at_stage(
+            connection
+                .command(Mail::new(envelope.from().cloned(), vec![]))
+                .await,
+            SmtpStage::MailFrom,
+        )?;
+        for recipient in envelope.to() {
+            at_stage(
+                connection
+                    .command(Rcpt::new(recipient.clone(), vec![]))
+                    .await,
+                SmtpStage::Rcpt,
+            )?;
+        }
+        at_stage(connection.command(Data).await, SmtpStage::Data)?;
+        at_stage(connection.message(body).await, SmtpStage::Data)?;
+        Ok(())
+    }
+
+    async fn probe(&self) -> StageResult<()> {
+        let mut connection = self.open().await?;
+        let alive = connection.test_connected().await;
+        let _ = connection.quit().await;
+        if alive {
+            Ok(())
+        } else {
+            Err(ProviderResult::temporarily_unavailable(
+                ReasonCode::ConnectFailed,
+                TransportClass::ConnectFailed,
+            ))
+        }
     }
 }
 
@@ -377,7 +506,7 @@ impl SmtpEmailTransport {
 
     fn unusable(&self) -> Option<ProviderResult> {
         let snapshot = &self.settings.snapshot;
-        if snapshot.is_usable() && self.settings.transport.is_some() {
+        if snapshot.is_usable() && self.settings.session.is_some() {
             return None;
         }
         Some(ProviderResult::configuration_invalid(
@@ -403,7 +532,7 @@ impl EmailTransport for SmtpEmailTransport {
         if let Some(result) = self.unusable() {
             return result;
         }
-        let (Some(transport), Some(from)) = (&self.settings.transport, &self.settings.from) else {
+        let (Some(session), Some(from)) = (&self.settings.session, &self.settings.from) else {
             return ProviderResult::configuration_invalid(
                 ReasonCode::InvalidConfiguration,
                 TransportClass::None,
@@ -436,22 +565,19 @@ impl EmailTransport for SmtpEmailTransport {
                 TransportClass::None,
             );
         };
-        let sent = tokio::time::timeout(self.settings.deadline, transport.send(message)).await;
-        let Ok(sent) = sent else {
-            return ProviderResult::temporarily_unavailable(
+        let body = message.formatted();
+        let sent = tokio::time::timeout(
+            self.settings.deadline,
+            session.send(message.envelope(), &body),
+        )
+        .await;
+        match sent {
+            Err(_) => ProviderResult::temporarily_unavailable(
                 ReasonCode::Timeout,
                 TransportClass::Timeout,
-            );
-        };
-        match sent {
-            Ok(response) if response.is_positive() => {
-                ProviderResult::accepted(TransportClass::SmtpAccepted)
-            }
-            Ok(_) => ProviderResult::temporarily_unavailable(
-                ReasonCode::SmtpTransientFailure,
-                TransportClass::SmtpTransient,
             ),
-            Err(error) => classify_smtp_failure(failure_of(&error), true),
+            Ok(Ok(())) => ProviderResult::accepted(TransportClass::SmtpAccepted),
+            Ok(Err(result)) => result,
         }
     }
 
@@ -459,27 +585,19 @@ impl EmailTransport for SmtpEmailTransport {
         if let Some(result) = self.unusable() {
             return result;
         }
-        let Some(transport) = &self.settings.transport else {
+        let Some(session) = &self.settings.session else {
             return ProviderResult::configuration_invalid(
                 ReasonCode::InvalidConfiguration,
                 TransportClass::None,
             );
         };
-        let probed =
-            tokio::time::timeout(self.settings.deadline, transport.test_connection()).await;
-        let Ok(probed) = probed else {
-            return ProviderResult::temporarily_unavailable(
+        match tokio::time::timeout(self.settings.deadline, session.probe()).await {
+            Err(_) => ProviderResult::temporarily_unavailable(
                 ReasonCode::Timeout,
                 TransportClass::Timeout,
-            );
-        };
-        match probed {
-            Ok(true) => ProviderResult::accepted(TransportClass::SmtpAccepted),
-            Ok(false) => ProviderResult::temporarily_unavailable(
-                ReasonCode::ConnectFailed,
-                TransportClass::ConnectFailed,
             ),
-            Err(error) => classify_smtp_failure(failure_of(&error), false),
+            Ok(Ok(())) => ProviderResult::accepted(TransportClass::SmtpAccepted),
+            Ok(Err(result)) => result,
         }
     }
 }

@@ -71,12 +71,13 @@ pub struct KratosIdentity {
     pub traits: serde_json::Value,
 }
 
-/// Kratos public API で registration flow の実在を確認する (登録前 email challenge を実 flow に束縛するため)。
+/// Kratos public API で registration flow の実在と **実際の期限** を確認する (登録前 email challenge を実 flow
+/// に束縛し、その期限以内にするため)。
 ///
 /// `GET /self-service/registration/flows?id=` は browser flow だと CSRF cookie を要求し、cookie なしでは
-/// 403 になる (Kratos v1.3.1)。flow は先に読み込まれるので 403 は「存在するが中身を見られない」を意味し、
-/// 期限は不明なので保守的に短い期限 (`UNKNOWN_FLOW_EXPIRY`) を当てる。最終的な flow 束縛の強制は
-/// hook が Kratos の実 context と proof を照合する側 (E15d) の責務。
+/// 403 になる (Kratos v1.3.1)。そのため呼び出し側が受け取ったブラウザの CSRF cookie を転送して照会する。
+/// cookie がなく 403 になった flow は期限を確認できないので **使えない (`NotUsable`) とし、期限を推測しない**
+/// (fail-closed)。最終的な flow 束縛の強制は hook が Kratos の実 context と proof を照合する側 (E15d)。
 #[derive(Clone)]
 pub struct KratosRegistrationFlowDirectory {
     public_url: String,
@@ -84,7 +85,6 @@ pub struct KratosRegistrationFlowDirectory {
 }
 
 const FLOW_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-const UNKNOWN_FLOW_EXPIRY: time::Duration = time::Duration::minutes(10);
 
 #[derive(Deserialize)]
 struct KratosFlowBody {
@@ -108,30 +108,32 @@ impl kernel::interfaces::repository::RegistrationFlowDirectory for KratosRegistr
     async fn lookup(
         &self,
         flow_id: &str,
+        browser_cookie: Option<&str>,
     ) -> error_stack::Result<
         kernel::interfaces::repository::RegistrationFlowStatus,
         kernel::KernelError,
     > {
         use kernel::interfaces::repository::RegistrationFlowStatus;
         use kernel::KernelError;
-        let response = self
+        let mut request = self
             .http_client
             .get(format!(
                 "{}/self-service/registration/flows",
                 self.public_url
             ))
             .query(&[("id", flow_id)])
-            .header("accept", "application/json")
-            .send()
-            .await
-            .map_err(|error| {
-                let kind = if error.is_timeout() {
-                    KernelError::Timeout
-                } else {
-                    KernelError::Internal
-                };
-                error_stack::Report::new(kind)
-            })?;
+            .header("accept", "application/json");
+        if let Some(cookie) = browser_cookie {
+            request = request.header("cookie", cookie);
+        }
+        let response = request.send().await.map_err(|error| {
+            let kind = if error.is_timeout() {
+                KernelError::Timeout
+            } else {
+                KernelError::Internal
+            };
+            error_stack::Report::new(kind)
+        })?;
         let status = response.status();
         let now = time::OffsetDateTime::now_utc();
         match status.as_u16() {
@@ -157,10 +159,8 @@ impl kernel::interfaces::repository::RegistrationFlowDirectory for KratosRegistr
                     RegistrationFlowStatus::NotUsable
                 })
             }
-            403 => Ok(RegistrationFlowStatus::Active {
-                expires_at: now + UNKNOWN_FLOW_EXPIRY,
-            }),
-            404 | 410 => Ok(RegistrationFlowStatus::NotUsable),
+            // CSRF cookie がない/不一致の browser flow は中身 (期限) を確認できないので使わない。
+            403 | 404 | 410 => Ok(RegistrationFlowStatus::NotUsable),
             _ => Err(error_stack::Report::new(KernelError::Internal)),
         }
     }

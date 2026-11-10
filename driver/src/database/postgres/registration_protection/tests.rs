@@ -1159,3 +1159,117 @@ async fn a_proof_never_verifies_a_different_challenge() {
         ProofVerification::Rejected(ProofRejection::FlowMismatch)
     );
 }
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_consumed_proof_is_not_replayed_after_its_expiry_even_inside_the_reuse_window() {
+    let fx = Fixture::new().await;
+    confirmed_proof(&fx, "c1", "a", "flow-1", "proof-1").await;
+    let expires = t0() + Duration::minutes(1) + policy().proof_ttl;
+    let b = binding("flow-1", "a", "g1");
+    // 期限の 30 秒前に初回消費 (再利用窓 60 秒は期限の 30 秒後まで続く)。
+    assert_eq!(
+        fx.consume("proof-1", b.clone(), expires - Duration::seconds(30))
+            .await,
+        ProofVerification::Verified { replayed: false }
+    );
+    // 期限の直前は窓内の retry として成功、ちょうど・直後は窓内でも期限切れ。
+    assert_eq!(
+        fx.consume("proof-1", b.clone(), expires - Duration::seconds(1))
+            .await,
+        ProofVerification::Verified { replayed: true }
+    );
+    for after in [Duration::ZERO, Duration::seconds(1), Duration::seconds(29)] {
+        assert_eq!(
+            fx.consume("proof-1", b.clone(), expires + after).await,
+            ProofVerification::Rejected(ProofRejection::Expired),
+            "{after:?}"
+        );
+    }
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn rate_limits_do_not_depend_on_the_order_in_which_requests_reserve() {
+    let fx = Fixture::new().await;
+    // 時刻の遅い要求が先に予約しても、時刻の早い要求は既存の予約を数える (同一 email の最小間隔)。
+    assert!(matches!(
+        fx.reserve(
+            new_challenge("r1", "x", "f-r1", "s-r1"),
+            t0() + Duration::seconds(30)
+        )
+        .await
+        .unwrap(),
+        ReserveOutcome::Reserved { .. }
+    ));
+    assert!(matches!(
+        fx.reserve(new_challenge("r2", "x", "f-r2", "s-r2"), t0())
+            .await
+            .unwrap(),
+        ReserveOutcome::Limited {
+            scope: SendLimitScope::EmailInterval,
+            ..
+        }
+    ));
+    assert_eq!(fx.count("registration_email_challenges").await, 1);
+
+    // flow 上限 (3 通/時間): 3 通を遅い時刻から先に予約し、最も早い時刻の 4 通目は拒否される。
+    for (index, minutes) in [30, 20, 10].into_iter().enumerate() {
+        assert!(matches!(
+            fx.reserve(
+                new_challenge(
+                    &format!("fl{index}"),
+                    &format!("fl{index}"),
+                    "flow-order",
+                    &format!("s-fl{index}")
+                ),
+                t0() + Duration::hours(2) + Duration::minutes(minutes)
+            )
+            .await
+            .unwrap(),
+            ReserveOutcome::Reserved { .. }
+        ));
+    }
+    assert!(matches!(
+        fx.reserve(
+            new_challenge("fl-over", "fl-over", "flow-order", "s-fl-over"),
+            t0() + Duration::hours(2)
+        )
+        .await
+        .unwrap(),
+        ReserveOutcome::Limited {
+            scope: SendLimitScope::FlowHourly,
+            ..
+        }
+    ));
+
+    // source 上限 (20 通/時間) も同様に、新しい時刻の予約を先に 20 件入れた後の古い時刻の要求を拒否する。
+    for index in 0..20 {
+        assert!(matches!(
+            fx.reserve(
+                new_challenge(
+                    &format!("so{index}"),
+                    &format!("so{index}"),
+                    &format!("f-so{index}"),
+                    "src-order"
+                ),
+                t0() + Duration::hours(5) + Duration::minutes(30)
+            )
+            .await
+            .unwrap(),
+            ReserveOutcome::Reserved { .. }
+        ));
+    }
+    assert!(matches!(
+        fx.reserve(
+            new_challenge("so-over", "so-over", "f-so-over", "src-order"),
+            t0() + Duration::hours(5)
+        )
+        .await
+        .unwrap(),
+        ReserveOutcome::Limited {
+            scope: SendLimitScope::SourceHourly,
+            ..
+        }
+    ));
+}
