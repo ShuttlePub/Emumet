@@ -1406,12 +1406,39 @@ async fn a_never_attempted_delivery_is_still_sent_after_a_long_outage() {
     fx.command(ACK).await;
     let event_id = fx.event_ids_and_kinds().await[0].0;
 
-    let report = fx
-        .cycle(&sender, "w", &policy, t0 + TimeDuration::days(3))
-        .await;
-    assert_eq!(report.delivered, 1);
+    // t0 で配送記録だけ取り込み、送信しないまま worker が停止した状態にする
+    {
+        let mut conn = fx.db.connection().await.unwrap();
+        let ingested = PostgresWebhookDeliveryRepository
+            .ingest_gate_events(&mut conn, t0, 100)
+            .await
+            .unwrap();
+        assert_eq!(ingested.ingested, 1);
+    }
+    let delivery = fx.delivery(event_id).await;
+    assert_eq!(delivery.status, WebhookDeliveryStatus::Pending);
+    assert_eq!(delivery.attempt_count, 0);
+    let cycle_started_at: OffsetDateTime = {
+        let mut conn = fx.db.connection().await.unwrap();
+        let con: &mut PgConnection = &mut conn;
+        sqlx::query_scalar(
+            "SELECT cycle_started_at FROM registration_gate_webhook_deliveries WHERE event_id = $1",
+        )
+        .bind(event_id)
+        .fetch_one(con)
+        .await
+        .unwrap()
+    };
+    assert_eq!(cycle_started_at, t0);
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    // 最大期間を超えてから再開しても、未試行 pending の初回送信は行われる
+    let resumed = t0 + policy.max_age + TimeDuration::days(2);
+    let report = fx.cycle(&sender, "w", &policy, resumed).await;
+    assert_eq!((report.attempted, report.delivered), (1, 1));
     assert_eq!(
         fx.delivery(event_id).await.status,
         WebhookDeliveryStatus::Delivered
     );
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
