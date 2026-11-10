@@ -3,6 +3,11 @@
 //! `put_domain_control` が mode=block を保存する **同じ transaction** で次を行う (どれか一つでも失敗
 //! すれば全体が rollback され、block だけ・解除だけが残らない):
 //!
+//! ロック順: Profile 行 `FOR SHARE` → advisory (`lock_profiles`) → block 保存 → Follow 行 (`end_active_between`) → job 行
+//! (取消・予約)。配送前ガード (`delivery`) は job → Follow の順で更新するが、同じ Profile の advisory ロックを
+//! 先に取るので、この解除とは直列化され、行ロックの循環は起きない (`unfollow` と同じ構造)。`renew_lease` /
+//! `record_attempt` は job 行だけを触るので Follow 行を待たない。
+//!
 //! 1. 所有 Profile (と、自 host の domain を block する場合は host が一致するローカル相手 Profile) の
 //!    関係ロックを昇順の単一 `lock_profiles` で取る ([`lock_for_block_write`])。
 //! 2. ロック下で、Profile の有効な Follow (pending 含む・following / followers 両方向) のうち相手の検証済み
@@ -31,6 +36,12 @@ use kernel::KernelError;
 use time::OffsetDateTime;
 
 const PAGE: i64 = 500;
+
+#[cfg(test)]
+thread_local! {
+    /// Number of abandoned attempts (`LockOutcome::Retry`) on this thread; lets a test observe the retry branch.
+    pub(crate) static RETRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// 解除する関係の相手 (block 対象 domain の actor)。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +168,8 @@ pub(crate) async fn lock_for_block_write<T: RelationshipDeps>(
         matches!(&counterpart.actor, ProfileGraphActor::Local(id) if !locked.contains(id))
     });
     if unlocked_local {
+        #[cfg(test)]
+        RETRIES.with(|retries| retries.set(retries.get() + 1));
         return Ok(LockOutcome::Retry);
     }
     Ok(LockOutcome::Locked { counterparts })

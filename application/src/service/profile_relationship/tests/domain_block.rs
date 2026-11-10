@@ -1057,3 +1057,265 @@ async fn concurrent_blocks_and_unfollows_leave_no_relation_and_never_deadlock() 
     let jobs = env.jobs_of(&alice.profile_id).await;
     assert_eq!(jobs_of_type(&jobs, DeliveryActivityType::Undo).len(), 4);
 }
+
+/// Holds the row lock of one delivery job in an open transaction (a worker that passed the pre-send
+/// guard and is renewing its lease), so that a cancel of that job queues behind it.
+async fn hold_job_row(env: &Env, job_id: i64) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut tx = env.iso.pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM profile_delivery_jobs WHERE id = $1 FOR UPDATE")
+        .bind(job_id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    tx
+}
+
+/// The clean-up must not become deliverable before the original activity (whose job a slow
+/// operation could only cancel late) can have landed: its start is counted from after the cancel,
+/// never from the time the operation began.
+async fn assert_cleanup_counts_from_after_the_cancel(
+    env: &Arc<Env>,
+    original_job_id: i64,
+    mut operation: tokio::task::JoinHandle<()>,
+    cleanup: DeliveryActivityType,
+    sender: &kernel::prelude::entity::ProfileId,
+) {
+    let tx = hold_job_row(env, original_job_id).await;
+    assert!(
+        tokio::time::timeout(StdDuration::from_millis(1500), &mut operation)
+            .await
+            .is_err(),
+        "the operation is stuck on the original job's row lock"
+    );
+    // The original job is released only now: everything before this instant is "old".
+    let released_at = OffsetDateTime::now_utc();
+    tx.commit().await.unwrap();
+    operation.await.unwrap();
+
+    let jobs = env.jobs_of(sender).await;
+    let cleanup_jobs = jobs_of_type(&jobs, cleanup);
+    assert_eq!(cleanup_jobs.len(), 1);
+    assert!(
+        cleanup_jobs[0].next_attempt_at >= released_at + Duration::seconds(120),
+        "the clean-up starts {:?}, earlier than 120s after the cancel could take effect ({released_at})",
+        cleanup_jobs[0].next_attempt_at
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_undo_after_a_slow_block_is_counted_from_after_the_cancel_not_from_the_start() {
+    let env = Arc::new(Env::new().await);
+    let alice = env.seed_user().await;
+    let bob = localhost_actor(&env, "/users/bob").await;
+    follow(&env, &alice, &alice.nanoid, &bob).await;
+    claim_one(&env, "slow-worker").await;
+    let job_id = *env.jobs_of(&alice.profile_id).await[0].id.as_ref();
+
+    let operation = tokio::spawn({
+        let env = env.clone();
+        let auth = alice.auth.clone();
+        let nanoid = alice.nanoid.clone();
+        async move {
+            env.module
+                .put_domain_control(
+                    &auth,
+                    None,
+                    &nanoid,
+                    BLOCKED_HOST,
+                    DomainControlMode::Block,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+    });
+    assert_cleanup_counts_from_after_the_cancel(
+        &env,
+        job_id,
+        operation,
+        DeliveryActivityType::Undo,
+        &alice.profile_id,
+    )
+    .await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_reject_after_a_slow_block_is_counted_from_after_the_cancel_not_from_the_start() {
+    let env = Arc::new(Env::new().await);
+    let alice = env.seed_user().await;
+    let dave = localhost_actor(&env, "/users/dave").await;
+    seed_incoming_follow(&env, &alice, &dave, &env.peer_url("/follows/1"), true).await;
+    claim_one(&env, "slow-worker").await;
+    let job_id = *env.jobs_of(&alice.profile_id).await[0].id.as_ref();
+
+    let operation = tokio::spawn({
+        let env = env.clone();
+        let auth = alice.auth.clone();
+        let nanoid = alice.nanoid.clone();
+        async move {
+            env.module
+                .put_domain_control(
+                    &auth,
+                    None,
+                    &nanoid,
+                    BLOCKED_HOST,
+                    DomainControlMode::Block,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+    });
+    assert_cleanup_counts_from_after_the_cancel(
+        &env,
+        job_id,
+        operation,
+        DeliveryActivityType::Reject,
+        &alice.profile_id,
+    )
+    .await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_undo_after_a_slow_unfollow_is_counted_from_after_the_cancel_not_from_the_start() {
+    let env = Arc::new(Env::new().await);
+    let alice = env.seed_user().await;
+    let bob = localhost_actor(&env, "/users/bob").await;
+    let follow_nanoid = follow(&env, &alice, &alice.nanoid, &bob).await;
+    claim_one(&env, "slow-worker").await;
+    let job_id = *env.jobs_of(&alice.profile_id).await[0].id.as_ref();
+
+    let operation = tokio::spawn({
+        let env = env.clone();
+        let auth = alice.auth.clone();
+        let nanoid = alice.nanoid.clone();
+        async move {
+            env.module
+                .unfollow_profile(&auth, None, &nanoid, &follow_nanoid)
+                .await
+                .unwrap();
+        }
+    });
+    assert_cleanup_counts_from_after_the_cancel(
+        &env,
+        job_id,
+        operation,
+        DeliveryActivityType::Undo,
+        &alice.profile_id,
+    )
+    .await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_local_relation_created_while_the_block_waits_for_the_lock_is_locked_retried_and_detached(
+) {
+    use super::super::domain_block::RETRIES;
+
+    let env = Arc::new(Env::new().await);
+    let alice = env.seed_user().await;
+    let bob = env.seed_user().await;
+    RETRIES.with(|retries| retries.set(0));
+
+    // A Follow transaction holds alice's lock and stores bob -> alice (a local relation the block
+    // could not see before taking the lock).
+    let (locked_tx, locked_rx) = tokio::sync::oneshot::channel::<()>();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let holder = tokio::spawn({
+        let module = env.module.clone();
+        let alice_id = alice.profile_id.clone();
+        let bob_id = bob.profile_id.clone();
+        async move {
+            let deps = module.clone();
+            let follow = ProfileFollow::new_accepted(
+                ProfileFollowId::new(kernel::generate_id()),
+                ProfileGraphActor::Local(bob_id),
+                ProfileGraphActor::Local(alice_id.clone()),
+                GraphActivityId::new(format!("{LOCAL_BASE}/follows/{}", kernel::generate_id()))
+                    .unwrap(),
+                OffsetDateTime::now_utc(),
+            )
+            .unwrap();
+            let id = follow.id().clone();
+            module
+                .transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        lock_profile_for_domain_control_write(&deps, executor, &alice_id).await?;
+                        deps.profile_follow_repository()
+                            .begin_generation(executor, &follow)
+                            .await?;
+                        locked_tx.send(()).ok();
+                        release_rx.await.ok();
+                        Ok(())
+                    })
+                })
+                .await
+                .unwrap();
+            id
+        }
+    });
+    locked_rx.await.unwrap();
+    let mut write = tokio::spawn({
+        let env = env.clone();
+        let auth = alice.auth.clone();
+        let nanoid = alice.nanoid.clone();
+        async move {
+            env.module
+                .put_domain_control(
+                    &auth,
+                    None,
+                    &nanoid,
+                    "local.example",
+                    DomainControlMode::Block,
+                    None,
+                )
+                .await
+                .map(|dto| dto.revision)
+        }
+    });
+    assert!(
+        tokio::time::timeout(StdDuration::from_millis(500), &mut write)
+            .await
+            .is_err(),
+        "the block waits for alice's lock after reading no relation"
+    );
+    assert_eq!(
+        env.count("SELECT count(*) FROM profile_domain_controls")
+            .await,
+        0
+    );
+
+    release_tx.send(()).unwrap();
+    let relation = holder.await.unwrap();
+    assert_eq!(
+        write.await.unwrap().unwrap(),
+        1,
+        "the abandoned attempt wrote nothing, so the revision is not consumed"
+    );
+    assert_eq!(
+        RETRIES.with(|retries| retries.get()),
+        1,
+        "the first attempt noticed the unlocked local counterpart and started over"
+    );
+    assert_eq!(
+        follow_state_by_id(&env, &relation).await,
+        ended_blocked(),
+        "the retry locked bob too and detached the relation"
+    );
+    assert_eq!(
+        env.count("SELECT count(*) FROM profile_domain_controls WHERE revision = 1")
+            .await,
+        1
+    );
+
+    // The final unblock restores nothing.
+    env.module
+        .delete_domain_control(&alice.auth, None, &alice.nanoid, "local.example", 1)
+        .await
+        .unwrap();
+    assert_eq!(follow_state_by_id(&env, &relation).await, ended_blocked());
+}

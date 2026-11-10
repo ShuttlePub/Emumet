@@ -122,7 +122,8 @@ Account 管理 API (作成・取得・更新・無効化・再有効化・組織
 - 相手の Follow を自分が作者であるかのように Undo しない。AP `Block` は送らない。外部配送の成否は block・解除のローカル適用に影響しない。
 - block を解除 (DELETE) しても関係は復元せず、何も配送しない。復元用の一覧も持たない。
 - 自 instance の host を block した場合は、同じ host のローカル Profile との関係も解除する (配送なし)。ロックはその相手 Profile も含めて昇順の単一呼び出しで取る。
-- ロック順: Profile 行 FOR SHARE → advisory (`lock_profiles`) → job → Follow 行。
+- ロック順: Profile 行 FOR SHARE → advisory (`lock_profiles`) → block 保存 → Follow 行 (`end_active_between`) → job 行 (取消・予約)。配送前ガードは job → Follow の順に更新するが、同じ Profile の advisory ロックを先に取るため、この解除 (と unfollow) とは直列化され行ロックは循環しない。`renew_lease` / `record_attempt` は job 行だけを触る。
+- 後始末 (Undo / Reject) の配送開始は、元 job の取消が済んだ後に取り直した時刻 + 120 秒 (lease の期限が分かればそれ以降)。解除バッチや transaction の開始時刻から数えない (取消までに時間が掛かると、元の送信より先に後始末が着地し得るため)。
 - CORS (`CORS_ALLOWED_ORIGINS` 指定時) は PUT / DELETE を許可する。
 
 ## 6. ロールバック・運用上の注意

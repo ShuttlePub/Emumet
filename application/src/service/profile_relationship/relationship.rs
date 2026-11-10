@@ -43,8 +43,9 @@ use kernel::interfaces::repository::{
 };
 use kernel::prelude::entity::{
     AuthAccountId, DeliveryActivityType, GraphActorUrl, Nanoid, NewProfileDeliveryJob,
-    ProfileBlock, ProfileBlockId, ProfileDeliveryJobState, ProfileFollow, ProfileFollowEndReason,
-    ProfileFollowId, ProfileGraphActor, ProfileId, ProfileMute, ProfileMuteId,
+    ProfileBlock, ProfileBlockId, ProfileDeliveryJob, ProfileDeliveryJobState, ProfileFollow,
+    ProfileFollowEndReason, ProfileFollowId, ProfileGraphActor, ProfileId, ProfileMute,
+    ProfileMuteId,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -62,6 +63,20 @@ pub(super) fn now() -> OffsetDateTime {
     let now = OffsetDateTime::now_utc();
     now.replace_nanosecond(now.nanosecond() / 1000 * 1000)
         .unwrap_or(now)
+}
+
+/// 後始末 (Undo / Reject) の配送開始時刻。元の activity (Follow / Accept) が相手に届き得る最後の時刻の後。
+///
+/// 起算は **元 job の取消が済んだ後に取り直した時刻** (呼び出し側が持つ transaction 開始時刻や、解除の
+/// バッチ開始時刻ではない)。取消の前に `renew_lease` を通過した worker は、取消が commit されるまでの間も
+/// 送信を続けられ、送信は取消より前の時刻から数えた budget の中で終わる。取消までに時間が掛かった
+/// (行ロック待ち・大きな解除バッチ) ときに古い時刻から数えると、後始末の開始が元の送信より先に来る。
+/// lease の期限が分かっていればそれより前にもならない。
+fn cleanup_not_before(before: &ProfileDeliveryJob, after: &ProfileDeliveryJob) -> OffsetDateTime {
+    [before.lease_expires_at, after.lease_expires_at]
+        .into_iter()
+        .flatten()
+        .fold(now() + IN_FLIGHT_GRACE, OffsetDateTime::max)
 }
 
 fn validation(message: &str) -> Report<KernelError> {
@@ -280,7 +295,7 @@ pub(super) async fn retract_outgoing_follow<T: RelationshipDeps>(
     )?
     .with_follow(follow.id().clone());
     if in_flight_possible {
-        undo = undo.not_before(now + IN_FLIGHT_GRACE);
+        undo = undo.not_before(cleanup_not_before(&before, &after));
     }
     deps.profile_delivery_enqueuer()
         .enqueue(executor, &undo)
@@ -353,7 +368,7 @@ pub(super) async fn reject_incoming_follow<T: RelationshipDeps>(
     )?
     .with_follow(follow.id().clone());
     if in_flight_possible {
-        reject = reject.not_before(now + IN_FLIGHT_GRACE);
+        reject = reject.not_before(cleanup_not_before(&accept, &accept_after));
     }
     deps.profile_delivery_enqueuer()
         .enqueue(executor, &reject)
