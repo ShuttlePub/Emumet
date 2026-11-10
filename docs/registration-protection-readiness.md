@@ -221,3 +221,13 @@ lettre の `AsyncSmtpConnection` (tokio + native-tls) で、接続 → STARTTLS 
 - 送信元単位の rate limit は接続元アドレスに基づく (proxy 配下の扱いは §4)。**proxy 配下では上限 (既定 20 通/時間) が全利用者の共有枠になる**ため、信頼済み proxy/edge 側での利用者別の制限は E15d/deployment で用意し試験すること (引き継ぎ事項)。
 - **公開応答を観測の判別器にしない設計**: 公開発行要求で宛先を提示した後 (RCPT コマンド送信以降) の失敗は、応答コードや段階だけでは宛先非依存と保証できないため、**すべて当該 attempt の失敗にとどめ** (challenge の内部失効のみ)、readiness・観測を更新しない。公開要求経路から readiness を更新するのは宛先提示前の段階 (接続・STARTTLS・認証・MAIL FROM) の失敗だけで、公開要求の連続失敗を readiness に積み上げることもしない。provider の一時障害/設定不正は **宛先を伴わない独立 probe (`run_registration_protection_probe`) と管理者の canary (固定の canary 宛先。RCPT・DATA・timeout を含む配送失敗を provider の障害として記録する。operational なメールが canary の DATA 452 などで非健全へ遷移することを実 DB で試験)** で検出する (運用では probe を `probe_max_age` より短い周期で回す。周期実行は E15d)。これにより、宛先 A への発行の後に別宛先 B へ発行しても、B の応答 (202/503) から A の受理/RCPT 550/450/421/DATA 失敗/timeout を区別できない (実際の SMTP 分類関数で作った結果による応答列テストと、mock SMTP の実送信で固定)。
 - 運用影響: provider が `temporarily_unavailable`/`configuration_invalid` になると、BOT が健全ならメール保護は一時的に必須から外れ (E15a の「健全な対策のみ必須」)、メール proof なしで BOT のみで登録が受け付けられる。メール障害の通知 (`protection_degraded` 等) を運用で確認すること。
+
+## E15d periodic maintenance refinement
+
+The initial generation bootstrap above is unchanged. After it succeeds, periodic
+fixed-canary SMTP DATA acceptance / interpreted Siteverify probe responses may
+renew readiness and recover even after business TTL expiry. MAIL FROM alone and
+public recipient attempts cannot do so. Successful exchange evidence uses its
+start time as a conservative lower bound. See
+[enforcement preparation](registration-enforcement-preparation.md) for the opt-in
+worker, persistent scheduling, proof enforcement and remaining production scope.

@@ -26,6 +26,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use time::Duration;
 
+mod enforcement;
+
 static DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn config(protection: Protection, generation: &str) -> ProtectionConfigSnapshot {
@@ -244,7 +246,8 @@ impl Fixture {
         sqlx::query(
             "TRUNCATE registration_protection_readiness, registration_email_challenges, \
              registration_email_send_log, registration_gate_event_reads, \
-             registration_gate_events, registration_gate_audit, registration_gate_state",
+             registration_gate_events, registration_gate_audit, registration_gate_state, \
+             registration_protection_schedule",
         )
         .execute(con)
         .await

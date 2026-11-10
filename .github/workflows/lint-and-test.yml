@@ -18,6 +18,35 @@ jobs:
     uses: ShuttlePub/workflows/.github/workflows/test-psql.yml@5be8e4cbb4f1f1616dc88316d469f3b13b059445
     with:
       workspace: driver
+  registration-enforcement-db:
+    name: Registration enforcement with PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: registration_test
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 2s --health-timeout 2s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run registration protection and enforcement against a real database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/registration_test
+        run: |
+          set -o pipefail
+          cargo test -p application registration_protection::tests -- --nocapture | tee registration-db.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' registration-db.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: registration-enforcement-db
+          path: registration-db.log
   openapi-check:
     name: Check openapi.json is up-to-date
     runs-on: ubuntu-latest

@@ -690,13 +690,15 @@ impl EmailTransport for SmtpEmailTransport {
             );
         };
         let body = message.formatted();
+        // A success cannot clear a failure observed after this exchange started.
+        let started_at = OffsetDateTime::now_utc();
         match session
             .send(message.envelope(), &body, self.settings.deadline)
             .await
         {
-            Ok(at) => ProviderResult::accepted(TransportClass::SmtpAccepted)
+            Ok(_) => ProviderResult::accepted(TransportClass::SmtpAccepted)
                 .at_stage(CheckStage::Data)
-                .observed(at),
+                .observed(started_at),
             Err(failure) => {
                 classify_smtp_failure(failure, purpose).observed(OffsetDateTime::now_utc())
             }
@@ -713,13 +715,14 @@ impl EmailTransport for SmtpEmailTransport {
                 TransportClass::None,
             );
         };
+        let started_at = OffsetDateTime::now_utc();
         match session
             .probe(from.email.clone(), self.settings.deadline)
             .await
         {
-            Ok(at) => ProviderResult::accepted(TransportClass::SmtpAccepted)
+            Ok(_) => ProviderResult::accepted(TransportClass::SmtpAccepted)
                 .at_stage(CheckStage::MailFrom)
-                .observed(at),
+                .observed(started_at),
             Err(failure) => classify_smtp_failure(failure, SendPurpose::Canary)
                 .observed(OffsetDateTime::now_utc()),
         }
