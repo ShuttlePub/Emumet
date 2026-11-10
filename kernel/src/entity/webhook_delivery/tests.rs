@@ -230,13 +230,15 @@ fn single_attempt_classification_matches_decision_classes() {
     );
 }
 
-const ALL_KINDS: [GateEventKind; 6] = [
+const ALL_KINDS: [GateEventKind; 8] = [
     GateEventKind::OutageStarted,
     GateEventKind::OutageRecovered,
     GateEventKind::ProtectionDegraded,
     GateEventKind::ProtectionLostStopped,
     GateEventKind::OverrideStarted,
     GateEventKind::OverrideRevoked,
+    GateEventKind::EnforcementLostStopped,
+    GateEventKind::EnforcementRestored,
 ];
 
 fn sample_event(kind: GateEventKind) -> RegistrationGateEvent {
@@ -258,6 +260,8 @@ fn sample_snapshot() -> GateControlSnapshot {
         admin: AdminState::Open,
         override_active: false,
         config_lost_latch: false,
+        enforcement_lost_latch: false,
+        enforcement_verified: true,
         episode: HealthEpisode::Outage,
         revision: 7,
     }

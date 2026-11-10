@@ -773,6 +773,7 @@ delegate_database_dependence! {
     kernel::interfaces::repository::DependOnProfileMuteRepository { ProfileMuteRepository, profile_mute_repository },
     kernel::interfaces::repository::DependOnProfileDeliveryJobRepository { ProfileDeliveryJobRepository, profile_delivery_job_repository },
     kernel::interfaces::repository::DependOnProfileSigningKeyRepository { ProfileSigningKeyRepository, profile_signing_key_repository },
+    kernel::interfaces::repository::DependOnRegistrationEnforcementProbeRepository { RegistrationEnforcementProbeRepository, registration_enforcement_probe_repository },
     kernel::interfaces::repository::DependOnRegistrationGateRepository { RegistrationGateRepository, registration_gate_repository },
     kernel::interfaces::repository::DependOnRegistrationEmailChallengeRepository { RegistrationEmailChallengeRepository, registration_email_challenge_repository },
     kernel::interfaces::repository::DependOnRegistrationProtectionRepository { RegistrationProtectionRepository, registration_protection_repository },

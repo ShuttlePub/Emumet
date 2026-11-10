@@ -1,6 +1,7 @@
 use super::resolve_auth_account_id;
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
+use application::service::registration_enforcement_probe::RegistrationEnforcementMonitorUseCase;
 use application::service::registration_gate::{
     ChangeRegistrationGateUseCase, GetRegistrationGateUseCase, RegistrationGateNotificationUseCase,
     RegistrationGateNotifications, RegistrationGateView,
@@ -31,7 +32,8 @@ impl AdminRegistrationGateApi {
         &self,
         admin: &AuthAccountId,
     ) -> error_stack::Result<RegistrationGateView, KernelError> {
-        self.module.get_registration_gate(admin).await
+        self.module.get_registration_gate(admin).await?;
+        self.module.refresh_registration_enforcement().await
     }
 
     pub async fn open_registration_gate(
@@ -39,6 +41,8 @@ impl AdminRegistrationGateApi {
         admin: &AuthAccountId,
         revision: i64,
     ) -> error_stack::Result<RegistrationGateView, KernelError> {
+        self.module.get_registration_gate(admin).await?;
+        self.module.refresh_registration_enforcement().await?;
         self.module.open_registration_gate(admin, revision).await
     }
 
@@ -56,6 +60,8 @@ impl AdminRegistrationGateApi {
         revision: i64,
         warning_acknowledged: bool,
     ) -> error_stack::Result<RegistrationGateView, KernelError> {
+        self.module.get_registration_gate(admin).await?;
+        self.module.refresh_registration_enforcement().await?;
         self.module
             .enable_registration_gate_override(admin, revision, warning_acknowledged)
             .await

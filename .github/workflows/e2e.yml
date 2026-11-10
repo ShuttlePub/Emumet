@@ -28,3 +28,29 @@ jobs:
 
       - name: Run E2E tests
         run: bash e2e/run-ap-e2e.sh
+
+  registration-enforcement:
+    name: Real Kratos registration enforcement (D15)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Validate production method coverage and renderer
+        run: python3 -m unittest discover -s tools -p test_registration_kratos.py -v
+      - name: Real Kratos + Emumet routers + PostgreSQL D15 scenarios
+        run: bash e2e/registration-enforcement/run.sh
+      - name: Dedicated stack logs
+        if: always()
+        run: docker compose -p emumet-registration-enforcement-e15d -f e2e/registration-enforcement/compose.yml logs > e2e/registration-enforcement/stack.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: registration-enforcement-real-kratos
+          path: |
+            e2e/registration-enforcement/result.log
+            e2e/registration-enforcement/stack.log
+      - name: Stop dedicated tmpfs stack
+        if: always()
+        run: docker compose -p emumet-registration-enforcement-e15d -f e2e/registration-enforcement/compose.yml down

@@ -1498,7 +1498,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Get the registration gate state. `override.active` is true while the override is in effect so the admin UI can keep showing the warning on every page. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "description": "Get the registration gate state. `override.active` is true while the override is in effect so the admin UI can keep showing the warning on every page. The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
         "operationId": "get_registration_gate",
         "responses": {
           "200": {
@@ -1530,7 +1530,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Manually close the registration gate. The closure is never lifted automatically. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "description": "Manually close the registration gate. The closure is never lifted automatically. The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
         "operationId": "close_registration_gate",
         "requestBody": {
           "content": {
@@ -1752,7 +1752,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Open (or manually resume after a config-loss stop) the registration gate. Succeeds only when at least one protection (email or bot) is verified; clears the stop latch. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "description": "Open (or manually resume after a config-loss stop) the registration gate. Succeeds only when at least one protection (email or bot) is verified; clears the stop latch. The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
         "operationId": "open_registration_gate",
         "requestBody": {
           "content": {
@@ -1803,7 +1803,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Open the registration gate with override: allowed even without a verified protection, but only after the warning is explicitly acknowledged. Stays in effect until explicitly revoked; automatic stop and outage rejection are not applied while it is active (verified protections are still enforced). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "description": "Open the registration gate with override: allowed even without a verified protection, but only after the warning is explicitly acknowledged. Stays in effect until explicitly revoked; automatic stop and outage rejection are not applied while it is active (verified protections are still enforced). The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
         "operationId": "enable_registration_gate_override",
         "requestBody": {
           "content": {
@@ -1854,7 +1854,7 @@
         "tags": [
           "RegistrationGate"
         ],
-        "description": "Revoke the override and return to normal judgement, re-evaluated against the current observation. Never closes the gate by itself. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+        "description": "Revoke the override and return to normal judgement, re-evaluated against the current observation. Never closes the gate by itself. The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
         "operationId": "revoke_registration_gate_override",
         "requestBody": {
           "content": {
@@ -5836,7 +5836,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`outage_started` / `outage_recovered` / `protection_degraded` /\n`protection_lost_stopped` / `override_started` / `override_revoked`"
+            "description": "`outage_started` / `outage_recovered` / `protection_degraded` /\n`protection_lost_stopped` / `override_started` / `override_revoked` /\n`enforcement_lost_stopped` / `enforcement_restored`"
           },
           "observation": {
             "$ref": "#/components/schemas/RegistrationObservationResponse"
@@ -5861,7 +5861,7 @@
       },
       "RegistrationGateResponse": {
         "type": "object",
-        "description": "E15a は control plane のみ。Kratos 遮断 (E15d) が接続されるまで、この状態は実際の登録を\n遮断も許可もしない (実登録はまだ守られない)。",
+        "description": "登録ゲート。`override.active` は enforcement 停止中も保持されるため、\n登録可否は必ず `accepting` / `decision` で判断する。",
         "required": [
           "revision",
           "admin_state",
@@ -5869,6 +5869,7 @@
           "accepting",
           "requires_manual_resume",
           "config_lost_latch",
+          "enforcement_lost_latch",
           "health_episode",
           "enforced_protections",
           "degraded_protections",
@@ -5904,6 +5905,10 @@
               "type": "string"
             },
             "description": "登録時に課す対策 (検証 API が実際に応答した対策のみ)"
+          },
+          "enforcement_lost_latch": {
+            "type": "boolean",
+            "description": "Deployment enforcement was lost; remains latched after restoration until manual resume."
           },
           "health_episode": {
             "type": "string",
@@ -5945,6 +5950,7 @@
       "RegistrationObservationResponse": {
         "type": "object",
         "required": [
+          "enforcement_verified",
           "email",
           "bot"
         ],
@@ -5954,6 +5960,10 @@
           },
           "email": {
             "$ref": "#/components/schemas/ProtectionObservationResponse"
+          },
+          "enforcement_verified": {
+            "type": "boolean",
+            "description": "Current trusted deployment attestation; provider success cannot set this."
           }
         }
       },
@@ -6591,7 +6601,7 @@
     },
     {
       "name": "RegistrationGate",
-      "description": "Registration readiness gate control plane (admin only). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet."
+      "description": "Registration readiness gate (admin only). The authenticated Kratos pre-persist hook enforces gate decisions. Enforcement attestation loss stops registration ahead of override; restoration requires manual resume. Emumet cannot physically block a Kratos deployment with the hook removed; finite canary sampling cannot cover unknown or unselected replicas. Physical containment is the deployment operator's responsibility."
     },
     {
       "name": "RegistrationGateWebhook",
@@ -6599,7 +6609,7 @@
     },
     {
       "name": "RegistrationProtection",
-      "description": "Registration protection readiness and pre-registration email proof (E15c). Unauthenticated: POST /api/v1/registration/email-challenges and /confirm (email ownership challenge: code by SMTP, proof only after the code is confirmed; rate limited; bound to flow, email and configuration generation). Admin only: GET /api/v1/admin/registration-gate/protections and POST /api/v1/admin/registration-gate/protections/{protection}/verify (readiness and real verification). Configuration is server-side only (REGISTRATION_TURNSTILE_*, REGISTRATION_SMTP_*, REGISTRATION_EMAIL_*). A protection is operational only while a real verification business success bound to the current configuration generation is fresh; health, HTTP 200 and SMTP 250 alone never make it operational. The production registration hook that consumes proofs and tokens is E15d and is not connected yet. Operations guide: docs/registration-protection-readiness.md."
+      "description": "Registration protection readiness and pre-registration email proof (E15c). Unauthenticated: POST /api/v1/registration/email-challenges and /confirm (email ownership challenge: code by SMTP, proof only after the code is confirmed; rate limited; bound to flow, email and configuration generation). Admin only: GET /api/v1/admin/registration-gate/protections and POST /api/v1/admin/registration-gate/protections/{protection}/verify (readiness and real verification). Configuration is server-side only (REGISTRATION_TURNSTILE_*, REGISTRATION_SMTP_*, REGISTRATION_EMAIL_*). A protection is operational only while a real verification business success bound to the current configuration generation is fresh; health, HTTP 200 and SMTP 250 alone never make it operational. The authenticated production Kratos pre-persist hook consumes these proofs and tokens; client readiness results never authorize registration by themselves. Operations guide: docs/registration-protection-readiness.md."
     }
   ]
 }

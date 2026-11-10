@@ -47,6 +47,8 @@ pub struct ProtectionObservationResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RegistrationObservationResponse {
+    /// Current trusted deployment attestation; provider success cannot set this.
+    pub enforcement_verified: bool,
     pub email: ProtectionObservationResponse,
     pub bot: ProtectionObservationResponse,
 }
@@ -60,8 +62,8 @@ pub struct OverrideResponse {
     pub activated_at: Option<OffsetDateTime>,
 }
 
-/// E15a は control plane のみ。Kratos 遮断 (E15d) が接続されるまで、この状態は実際の登録を
-/// 遮断も許可もしない (実登録はまだ守られない)。
+/// 登録ゲート。`override.active` は enforcement 停止中も保持されるため、
+/// 登録可否は必ず `accepting` / `decision` で判断する。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RegistrationGateResponse {
     pub revision: i64,
@@ -73,6 +75,8 @@ pub struct RegistrationGateResponse {
     /// `stopped` (設定喪失の停止ラッチ) のとき true。復旧しても自動再開せず手動再開が必要。
     pub requires_manual_resume: bool,
     pub config_lost_latch: bool,
+    /// Deployment enforcement was lost; remains latched after restoration until manual resume.
+    pub enforcement_lost_latch: bool,
     /// `none` / `outage` / `degraded`
     pub health_episode: String,
     /// 登録時に課す対策 (検証 API が実際に応答した対策のみ)
@@ -91,7 +95,8 @@ pub struct RegistrationGateNotificationResponse {
     /// 安定した通知イベント ID (外部 Webhook 配送の重複排除キーにもなる)。
     pub id: String,
     /// `outage_started` / `outage_recovered` / `protection_degraded` /
-    /// `protection_lost_stopped` / `override_started` / `override_revoked`
+    /// `protection_lost_stopped` / `override_started` / `override_revoked` /
+    /// `enforcement_lost_stopped` / `enforcement_restored`
     pub kind: String,
     /// このイベントを生んだ遷移後のゲート revision。
     pub revision: i64,
@@ -148,6 +153,7 @@ fn probe_value(probe: &ProbeStatus) -> String {
 impl From<&kernel::prelude::entity::RegistrationObservation> for RegistrationObservationResponse {
     fn from(value: &kernel::prelude::entity::RegistrationObservation) -> Self {
         Self {
+            enforcement_verified: value.enforcement_verified,
             email: (&value.email).into(),
             bot: (&value.bot).into(),
         }
@@ -172,6 +178,7 @@ impl From<&RegistrationGateView> for RegistrationGateResponse {
             accepting: view.decision.accepts(),
             requires_manual_resume: view.decision == RegistrationDecision::Stopped,
             config_lost_latch: state.config_lost_latch,
+            enforcement_lost_latch: state.enforcement_lost_latch,
             health_episode: episode_value(&state.episode),
             enforced_protections: protection_names(enforced),
             degraded_protections: protection_names(degraded),

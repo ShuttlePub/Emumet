@@ -50,7 +50,7 @@ fn request(secret: Option<&str>, peer: &str, body: String) -> Request<Body> {
         .uri("/registration/pre-persist")
         .extension(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
     if let Some(secret) = secret {
-        request = request.header("x-emumet-registration-key", secret);
+        request = request.header("authorization", format!("Bearer {secret}"));
     }
     request.body(Body::from(body)).unwrap()
 }

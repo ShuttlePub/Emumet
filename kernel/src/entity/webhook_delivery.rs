@@ -338,6 +338,8 @@ pub enum WebhookEventType {
     OutageRecovered,
     ProtectionDegraded,
     ProtectionLostStopped,
+    EnforcementLostStopped,
+    EnforcementRestored,
     OverrideStarted,
     OverrideRevoked,
     /// 管理者のテスト送信 (合成イベント。通知一覧・ゲート状態には現れない)。
@@ -351,6 +353,8 @@ impl WebhookEventType {
             WebhookEventType::OutageRecovered => "outage_recovered",
             WebhookEventType::ProtectionDegraded => "protection_degraded",
             WebhookEventType::ProtectionLostStopped => "protection_lost_stopped",
+            WebhookEventType::EnforcementLostStopped => "enforcement_lost_stopped",
+            WebhookEventType::EnforcementRestored => "enforcement_restored",
             WebhookEventType::OverrideStarted => "override_started",
             WebhookEventType::OverrideRevoked => "override_revoked",
             WebhookEventType::WebhookTest => "webhook_test",
@@ -365,6 +369,8 @@ impl From<GateEventKind> for WebhookEventType {
             GateEventKind::OutageRecovered => WebhookEventType::OutageRecovered,
             GateEventKind::ProtectionDegraded => WebhookEventType::ProtectionDegraded,
             GateEventKind::ProtectionLostStopped => WebhookEventType::ProtectionLostStopped,
+            GateEventKind::EnforcementLostStopped => WebhookEventType::EnforcementLostStopped,
+            GateEventKind::EnforcementRestored => WebhookEventType::EnforcementRestored,
             GateEventKind::OverrideStarted => WebhookEventType::OverrideStarted,
             GateEventKind::OverrideRevoked => WebhookEventType::OverrideRevoked,
         }
@@ -375,11 +381,17 @@ impl From<GateEventKind> for WebhookEventType {
 pub const WEBHOOK_PAYLOAD_VERSION: u8 = 1;
 
 /// ゲート状態の要約 (そのイベントを生んだ遷移の直後の制御状態)。
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebhookGateSummary {
     pub admin_state: AdminState,
     pub override_active: bool,
     pub config_lost_latch: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub enforcement_lost_latch: bool,
     pub episode: HealthEpisode,
     pub revision: i64,
 }
@@ -390,6 +402,7 @@ impl From<&GateControlSnapshot> for WebhookGateSummary {
             admin_state: snapshot.admin,
             override_active: snapshot.override_active,
             config_lost_latch: snapshot.config_lost_latch,
+            enforcement_lost_latch: snapshot.enforcement_lost_latch,
             episode: snapshot.episode,
             revision: snapshot.revision,
         }

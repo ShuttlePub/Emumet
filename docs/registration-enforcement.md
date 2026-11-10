@@ -1,0 +1,35 @@
+# Registration gate deployment (E15d)
+
+## Enable and bootstrap
+
+1. Run migrations and deploy the same Kratos v1.3.1/config/body/schema artifacts to every advertised replica. The repository enables **password registration only**. Code is verification-only (`passwordless_enabled: false`); OIDC/passkey/WebAuthn registration stays disabled. Adding a method requires equivalent pre-persist coverage and real-Kratos CI first.
+2. Generate a random >=32-visible-ASCII-byte hook secret in a restricted file. Render a **new**, restricted runtime config with `python3 tools/render_registration_kratos.py --secret-file /run/secrets/registration-hook --output /run/kratos/guarded.json --hook-url https://private-relay.example/registration/pre-persist`. Do not commit the rendered credential. Set `KRATOS_CONFIG_FILE` when using compose.
+3. Set `REGISTRATION_ENFORCEMENT_ENABLED=true` and exactly one of `REGISTRATION_HOOK_SECRET_FILE` / `REGISTRATION_HOOK_SECRET` on Emumet. Configure private listener/transport-peer allowlist and a TLS/mTLS-terminating private relay as necessary. The hook uses **Authorization: Bearer**, not a client-supplied override. It is never on the public router. Loopback HTTP is supported only when Kratos and Emumet share a network namespace; container loopback is not host loopback.
+4. Configure protection providers (see [readiness](registration-protection-readiness.md)), then complete each enabled generation's bootstrap through the administrator verification API: email canary code roundtrip, or a valid Turnstile token. Configuration files/health checks are not readiness evidence.
+5. Wait for a successful negative enforcement canary, inspect `observation.enforcement_verified`, and explicitly open/reopen the gate. Cold start with no current evidence fails closed. The canary monitor runs even when the hook listener is disabled, so a missing guard cannot look healthy.
+
+The production template is fail-closed without rendering/enabling the matching guard. Do not expect the development compose to accept new registrations with placeholder credentials. Keep the Kratos admin API private; it is deliberately outside self-service registration. There is no public invitation feature or invitation-token bypass.
+
+## Periodic evidence and failure handling
+
+- `REGISTRATION_PROTECTION_POLL_SECS` defaults to 30; it must be positive and less than half `REGISTRATION_PROTECTION_PROBE_MAX_AGE_SECS` (default 600). Fixed canary SMTP **DATA acceptance** and interpreted Siteverify business responses renew business TTL only after the current generation's initial bootstrap. MAIL FROM/health alone do not. SMTP success evidence uses dialogue **start time** as a conservative lower bound; failures use observation time. Code confirmation alone cannot clear a newer SMTP fault.
+- `REGISTRATION_ENFORCEMENT_PROBE_PERIOD_SECS` defaults to 30 (range 1..300). Negative evidence TTL is twice that period (default 60 s). A separate 5-second freshness check and checks at final submit/admin gate reads invalidate stale evidence. The bounded probe cycle has a 20-second deadline; each external request is bounded to 5 seconds.
+- Optional `REGISTRATION_ENFORCEMENT_PROBE_TARGETS` is JSON, 1..4 objects with `public_url` and `admin_url`. Otherwise `KRATOS_PUBLIC_URL` / `KRATOS_ADMIN_URL` are used. URLs describe paths to be **tested**, not proven replica inventory. Do not advertise unknown replicas.
+- Each API/browser canary has a random reserved address under `registration-canary.invalid`, an independently random password (must not trigger identifier-similarity rejection), and a DB-prepared nonce+flow. Ready requires the expected denial **and** authenticated hook receipt **and** admin API confirmation of non-creation. Other negative errors are not proof. Unexpected creation first persists Stopped/latch/notifications, then rechecks the reserved address before deleting it. Pending/timeout canaries are reobserved for ten minutes.
+- A transaction-owned schedule lock excludes concurrent probe/maintenance cycles. Crash cancellation releases the lock. Evidence, stop latches and notification delivery records survive restart; a restart does not grant permission.
+- Provider temporary outages: enforce the remaining working protection; if none works, temporarily reject and automatically resume after observed recovery. Both configurations lost: stop and require manual resume. Enforcement loss/staleness: stop **ahead of override**, preserve override metadata, notify loss/restoration, and require manual resume even after probes recover. Reopening without protection under a retained override requires warning acknowledgement again.
+- `override.active` is not `accepting`. Check `decision`, `enforcement_lost_latch` and `requires_manual_resume` as well. Prepared protections are still mandatory during override.
+
+## Network/proxy and residual risks
+
+Set `REGISTRATION_EMAIL_TRUSTED_PROXY_IPS` to exact transport-peer IPs only when those proxies append the observed peer to X-Forwarded-For. The trusted suffix is removed right-to-left; arbitrary client prefixes cannot choose a rate-limit bucket. Untrusted peers use their transport address; malformed trusted chains fail closed. Browser clients must forward Kratos CSRF cookies with credentials. Explicit CORS origins allow credentials; do not use a wildcard credential policy.
+
+Public email issuance has a four-second attempted-delivery response floor (SMTP total deadline: three seconds). This is not constant time: DB/network stalls and scheduler jitter remain a non-enumeration timing risk; asynchronous delivery can be considered if that risk is unacceptable.
+
+**Detection is not physical containment.** When a hook is removed, Emumet stopping its gate cannot physically prevent that Kratos from creating identities. The next periodic canary detects loss on the path it samples (default 30-second cycle), immediately persists the stop/notification, and cleans up reserved canaries only. A finite number of requests to one LB URL cannot deterministically cover unselected/unresponsive replicas or unadvertised extra methods. Enforcing immutable artifacts, excluding unknown replicas, withdrawing broken public routes and physically stopping registration are **operator deployment-layer responsibilities**. This change adds neither a Docker inspector nor a custom ingress and claims no stronger guarantee.
+
+Final gate re-evaluation covers closure/new protections during provider I/O, but is not atomic with Kratos persistence across two databases. Login/settings/recovery and authenticated `POST /api/v1/accounts` do not use the hook. External Webhook delivery is at-least-once and independent of gate decisions; see [Webhook operations](registration-gate-webhook.md).
+
+## Verification
+
+[Real-Kratos fixture and D15 mapping](../e2e/registration-enforcement/README.md). The E2E CI job runs the production routers/hook against real Kratos and both PostgreSQL databases. Provider endpoints alone are test-only substitutes, never production environment URL overrides.
