@@ -35,7 +35,7 @@ pub(crate) enum TargetMode {
 }
 
 impl TargetMode {
-    fn is_strict(self) -> bool {
+    pub(crate) fn is_strict(self) -> bool {
         matches!(self, TargetMode::Strict)
     }
 }
@@ -76,8 +76,14 @@ pub(crate) async fn resolve_target(
         Host::Ipv4(ip) => (None, vec![SocketAddr::new(IpAddr::V4(ip), port)]),
         Host::Ipv6(ip) => (None, vec![SocketAddr::new(IpAddr::V6(ip), port)]),
         Host::Domain(domain) => {
-            let domain = domain.trim_end_matches('.').to_ascii_lowercase();
-            if domain.is_empty() || (mode.is_strict() && is_forbidden_domain(&domain)) {
+            // 検査・名前解決・接続先の固定 (DNS override) は、URL がそのまま使う host 文字列と完全に
+            // 一致しなければならない。末尾ドット付き (`example.com.`) は、検査した名前と接続時の名前が
+            // ずれて DNS override が効かず、通常の DNS 解決で内部アドレスへ接続されうるので拒否する。
+            if domain.is_empty() || domain.ends_with('.') {
+                return Err(TargetError::Invalid);
+            }
+            let domain = domain.to_string();
+            if mode.is_strict() && is_forbidden_domain(&domain) {
                 return Err(TargetError::Invalid);
             }
             let resolved =

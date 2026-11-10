@@ -9,6 +9,10 @@
 //!   同じ job を二重に配送しない。lease を失った結果は記録しない (`lease_lost`)。
 //! - worker が送信中に止まると lease が切れ、次のサイクルが `LeaseExpired` として回収して再試行する
 //!   (再起動後の回収)。`max_attempts` に達した job は `failed(retries_exhausted)`。
+//! - claim から送信までに時間がかかる (鍵の取得・署名が詰まる) 場合に備え、**署名の後・送信の直前に
+//!   `renew_lease` で lease を再確認して延長する**。取消・期限切れ・他 worker による回収があれば送信しない。
+//!   送信自体も延長後の lease より短い時間 (残存 lease から安全マージンを引いた時間) に制限するので、
+//!   lease を失った worker が送信を続けることはない。
 //! - 取り消された job は取得されない。送信中に取り消された場合は履歴だけ残る (`cancelled`)。
 //! - 本文は job に保存されたバイト列そのもの。`Digest` と HTTP 署名はこのバイト列から作る。
 //!   署名は Profile 鍵 (`SignProfileRequestUseCase`) で、新しい汎用署名 API は作らない。
@@ -25,7 +29,8 @@ use kernel::interfaces::repository::{
 };
 use kernel::prelude::entity::{
     decide_profile_delivery, ClaimedProfileDeliveryJob, DeliveryAttemptOutcome,
-    DeliveryClaimPolicy, ProfileDeliveryPolicy, ProfileSendObservation, RecordAttemptOutcome,
+    DeliveryClaimPolicy, ProfileDeliveryJobState, ProfileDeliveryPolicy, ProfileSendObservation,
+    RecordAttemptOutcome,
 };
 use kernel::KernelError;
 use sha2::Digest;
@@ -34,6 +39,20 @@ use std::future::Future;
 use time::OffsetDateTime;
 
 const ACTIVITY_JSON: &str = "application/activity+json";
+
+/// lease を使い切る前に送信を打ち切るための安全マージン (これを引いた時間が送信の上限)。
+const LEASE_SAFETY_MARGIN: time::Duration = time::Duration::seconds(10);
+
+/// 署名・送信 1 件の結果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileDeliveryStep {
+    /// 送信した (または宛先検査・署名で送信に至らなかった) 結果の観測。
+    Observed(ProfileSendObservation),
+    /// 送信の直前に job が取り消されていた。送信していない。
+    Cancelled,
+    /// 送信の直前に lease を失っていた (期限切れ・他 worker による回収)。送信していない。
+    LeaseLost,
+}
 
 /// 時刻・乱数・停止判定の注入点。
 pub struct ProfileDeliveryEnv<'a> {
@@ -72,13 +91,20 @@ pub trait DeliverProfileActivitiesUseCase:
     fn send_claimed_profile_delivery<'a>(
         &'a self,
         claim: &'a ClaimedProfileDeliveryJob,
-    ) -> impl Future<Output = ProfileSendObservation> + Send + 'a {
+        policy: &'a ProfileDeliveryPolicy,
+        clock: &'a (dyn Fn() -> OffsetDateTime + Sync),
+    ) -> impl Future<Output = error_stack::Result<ProfileDeliveryStep, KernelError>> + Send + 'a
+    {
         async move {
             let Ok(url) = reqwest::Url::parse(claim.target_inbox.as_str()) else {
-                return ProfileSendObservation::InvalidTarget;
+                return Ok(ProfileDeliveryStep::Observed(
+                    ProfileSendObservation::InvalidTarget,
+                ));
             };
             let Some(host) = host_header(&url) else {
-                return ProfileSendObservation::InvalidTarget;
+                return Ok(ProfileDeliveryStep::Observed(
+                    ProfileSendObservation::InvalidTarget,
+                ));
             };
             let body = claim.payload.as_bytes().to_vec();
             let digest = format!(
@@ -106,7 +132,9 @@ pub trait DeliverProfileActivitiesUseCase:
                 Ok(signature) => signature,
                 Err(error) => {
                     tracing::warn!(error = ?error, "profile delivery signing failed");
-                    return ProfileSendObservation::SigningFailed;
+                    return Ok(ProfileDeliveryStep::Observed(
+                        ProfileSendObservation::SigningFailed,
+                    ));
                 }
             };
             let mut headers = vec![
@@ -121,13 +149,44 @@ pub trait DeliverProfileActivitiesUseCase:
                 }
                 headers.push((lower, value.clone()));
             }
-            self.profile_delivery_sender()
-                .send(&ProfileDeliveryRequest {
-                    url: claim.target_inbox.as_str(),
-                    headers: &headers,
-                    body: &body,
-                })
-                .await
+            // 署名までに時間が経っていても、送信の直前に lease を再確認して延長する。取消・期限切れ・
+            // 他 worker による回収があれば送信しない。
+            let renewed = {
+                let mut connection = self.database_connection().connection().await?;
+                self.profile_delivery_job_repository()
+                    .renew_lease(&mut connection, claim, clock(), policy.lease_duration)
+                    .await?
+            };
+            if !renewed {
+                let mut connection = self.database_connection().connection().await?;
+                let cancelled = self
+                    .profile_delivery_job_repository()
+                    .find_by_id(&mut connection, &claim.id)
+                    .await?
+                    .is_some_and(|job| job.state == ProfileDeliveryJobState::Cancelled);
+                return Ok(if cancelled {
+                    ProfileDeliveryStep::Cancelled
+                } else {
+                    ProfileDeliveryStep::LeaseLost
+                });
+            }
+            // 送信は延長後の lease を超えない時間に制限する (超えたら timeout として再試行)。
+            let margin = LEASE_SAFETY_MARGIN.min(policy.lease_duration / 2);
+            let budget = (policy.lease_duration - margin)
+                .try_into()
+                .unwrap_or(std::time::Duration::from_secs(1));
+            let request = ProfileDeliveryRequest {
+                url: claim.target_inbox.as_str(),
+                headers: &headers,
+                body: &body,
+            };
+            let send = self.profile_delivery_sender().send(&request);
+            Ok(ProfileDeliveryStep::Observed(
+                match tokio::time::timeout(budget, send).await {
+                    Ok(observation) => observation,
+                    Err(_) => ProfileSendObservation::Timeout,
+                },
+            ))
         }
     }
 
@@ -161,7 +220,22 @@ pub trait DeliverProfileActivitiesUseCase:
                 let Some(claim) = claim else {
                     break;
                 };
-                let observation = self.send_claimed_profile_delivery(&claim).await;
+                let observation = match self
+                    .send_claimed_profile_delivery(&claim, policy, env.clock)
+                    .await?
+                {
+                    ProfileDeliveryStep::Observed(observation) => observation,
+                    ProfileDeliveryStep::Cancelled => {
+                        report.attempted += 1;
+                        report.cancelled += 1;
+                        continue;
+                    }
+                    ProfileDeliveryStep::LeaseLost => {
+                        report.attempted += 1;
+                        report.lease_lost += 1;
+                        continue;
+                    }
+                };
                 let finished_at = (env.clock)();
                 let outcome = decide_profile_delivery(
                     &observation,

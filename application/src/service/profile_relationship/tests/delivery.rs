@@ -539,3 +539,158 @@ async fn a_missing_signing_key_delays_the_delivery_without_sending_anything() {
     assert_eq!(env.cycle("w").await.delivered, 1);
     assert_eq!(env.inbox_requests().await.len(), 1);
 }
+
+/// 署名鍵の読み取りを止める (`profile_signing_keys` を排他ロックした transaction を保持する)。
+async fn stall_key_reads(env: &Env) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut tx = env.iso.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE profile_signing_keys IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_worker_that_lost_its_lease_while_signing_does_not_send() {
+    let env = Env::new().await;
+    let setup = follow_setup(&env).await;
+    env.respond_inbox(ResponseTemplate::new(202)).await;
+    let key_lock = stall_key_reads(&env).await;
+
+    // worker-a は job を取得した後、鍵の取得で止まる。その間に lease が切れ、worker-b が回収する
+    // (worker-b も鍵の取得で止まる)。鍵の取得が再開すると、worker-a は lease を失っているので送信しない。
+    let worker_a = env.cycle("worker-a");
+    let worker_b = async {
+        tokio::time::sleep(StdDuration::from_millis(400)).await;
+        env.advance_clock(Duration::seconds(121));
+        env.cycle("worker-b").await
+    };
+    let release = async {
+        tokio::time::sleep(StdDuration::from_millis(1200)).await;
+        key_lock.commit().await.unwrap();
+    };
+    let (a, b, ()) = tokio::join!(worker_a, worker_b, release);
+
+    assert_eq!((a.lease_lost, a.delivered), (1, 0), "{a:?}");
+    assert_eq!(b.delivered, 1, "{b:?}");
+    assert_eq!(
+        env.inbox_requests().await.len(),
+        1,
+        "the activity reached the peer exactly once"
+    );
+    let job = &env.jobs_of(&setup.alice.profile_id).await[0];
+    assert_eq!(job.state, ProfileDeliveryJobState::Delivered);
+    assert_eq!(job.attempt_count, 2);
+    assert_eq!(
+        attempts(&env, &setup).await,
+        vec![
+            (1, DeliveryResultClass::LeaseExpired, None),
+            (2, DeliveryResultClass::Delivered, Some(202))
+        ]
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_job_cancelled_while_the_worker_was_signing_is_not_sent() {
+    let env = Env::new().await;
+    let setup = follow_setup(&env).await;
+    env.respond_inbox(ResponseTemplate::new(202)).await;
+    let job_id = env.jobs_of(&setup.alice.profile_id).await[0].id.clone();
+    let key_lock = stall_key_reads(&env).await;
+
+    let worker = env.cycle("worker-a");
+    let canceller = async {
+        tokio::time::sleep(StdDuration::from_millis(400)).await;
+        let mut executor = env.module.database_connection().connection().await.unwrap();
+        env.module
+            .profile_delivery_job_repository()
+            .cancel(
+                &mut executor,
+                &job_id,
+                "unfollowed",
+                OffsetDateTime::now_utc(),
+            )
+            .await
+            .unwrap()
+    };
+    let release = async {
+        tokio::time::sleep(StdDuration::from_millis(900)).await;
+        key_lock.commit().await.unwrap();
+    };
+    let (report, cancelled, ()) = tokio::join!(worker, canceller, release);
+
+    assert!(cancelled);
+    assert_eq!((report.cancelled, report.delivered), (1, 0), "{report:?}");
+    assert!(
+        env.inbox_requests().await.is_empty(),
+        "a cancelled job is never sent"
+    );
+    assert_eq!(
+        env.job(&job_id).await.state,
+        ProfileDeliveryJobState::Cancelled
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn renew_lease_extends_only_a_lease_that_is_still_held() {
+    let env = Env::new().await;
+    let setup = follow_setup(&env).await;
+    let repository = env.module.profile_delivery_job_repository();
+    let mut executor = env.module.database_connection().connection().await.unwrap();
+    let t0 = env.now();
+    let claim = repository
+        .claim_due(
+            &mut executor,
+            "worker-a",
+            t0,
+            &DeliveryClaimPolicy {
+                lease_duration: Duration::seconds(60),
+                limit: 1,
+                max_attempts: 12,
+            },
+        )
+        .await
+        .unwrap()
+        .remove(0);
+
+    let mut forged = claim.clone();
+    forged.lease_token = "someone-elses-token".to_string();
+    assert!(!repository
+        .renew_lease(
+            &mut executor,
+            &forged,
+            t0 + Duration::seconds(10),
+            Duration::seconds(60)
+        )
+        .await
+        .unwrap());
+    assert!(repository
+        .renew_lease(
+            &mut executor,
+            &claim,
+            t0 + Duration::seconds(30),
+            Duration::seconds(60)
+        )
+        .await
+        .unwrap());
+    let job = &env.jobs_of(&setup.alice.profile_id).await[0];
+    assert!(
+        job.lease_expires_at.unwrap() >= t0 + Duration::seconds(89),
+        "the lease now runs to about t0 + 90s"
+    );
+    assert!(
+        !repository
+            .renew_lease(
+                &mut executor,
+                &claim,
+                t0 + Duration::seconds(200),
+                Duration::seconds(60)
+            )
+            .await
+            .unwrap(),
+        "an expired lease cannot be revived"
+    );
+}

@@ -37,7 +37,7 @@ use sqlx::Executor;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use time::{Duration, OffsetDateTime};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 pub(super) const LOCAL_BASE: &str = "https://local.example";
@@ -163,9 +163,10 @@ impl Env {
     }
 
     /// peer の actor 文書 (`GET {path}`) を公開する。`id` は自身の URL、inbox は `/inbox`。
-    pub async fn mount_actor(&self, actor_path: &str) {
-        self.mount_actor_as(actor_path, &self.peer_url(actor_path))
-            .await;
+    pub async fn mount_actor(&self, actor_path: &str) -> String {
+        let id = self.peer_url(actor_path);
+        self.mount_actor_as(actor_path, &id).await;
+        id
     }
 
     /// `GET {actor_path}` が `id` として任意の URL を名乗る actor 文書を返す。
@@ -179,6 +180,32 @@ impl Env {
             })))
             .mount(&self.peer)
             .await;
+    }
+
+    /// peer の WebFinger (`name@{peer の host:port}`) が `actor_url` を ActivityPub の self link として返す。
+    pub async fn mount_webfinger(&self, name: &str, actor_url: &str) -> String {
+        let domain = self.peer.address().to_string();
+        let resource = format!("acct:{name}@{domain}");
+        Mock::given(method("GET"))
+            .and(path("/.well-known/webfinger"))
+            .and(query_param("resource", resource.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "subject": resource,
+                "links": [{"rel": "self", "type": "application/activity+json", "href": actor_url}],
+            })))
+            .mount(&self.peer)
+            .await;
+        format!("acct:{name}@{domain}")
+    }
+
+    pub async fn webfinger_requests(&self) -> usize {
+        self.peer
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|request| request.url.path() == "/.well-known/webfinger")
+            .count()
     }
 
     /// peer の inbox (`POST /inbox`) の応答を設定する。以前の設定と受信記録は消える。

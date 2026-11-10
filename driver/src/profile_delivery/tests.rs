@@ -1,16 +1,17 @@
 use super::{HttpProfileDeliverySender, HttpRemoteActorResolver, ProfileDeliveryNetworkSettings};
 use crate::webhook::HostResolver;
 use kernel::interfaces::repository::{
-    ProfileDeliveryRequest, ProfileDeliverySender, RemoteActorResolver,
+    AcctHandle, ProfileDeliveryRequest, ProfileDeliverySender, RemoteActorResolver,
 };
 use kernel::prelude::entity::{GraphActorUrl, ProfileSendObservation};
 use kernel::KernelError;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 struct FixedResolver(Vec<SocketAddr>);
@@ -284,5 +285,140 @@ async fn the_production_resolver_refuses_internal_destinations() {
             .await
             .unwrap_err();
         assert_eq!(error.current_context(), &KernelError::Rejected, "{target}");
+    }
+}
+
+/// 名前解決の回数を数え、常に公開アドレスを返す resolver (検査が名前解決の前に拒否することの確認用)。
+struct CountingResolver(Arc<AtomicUsize>);
+
+impl HostResolver for CountingResolver {
+    fn resolve<'a>(
+        &'a self,
+        _host: &'a str,
+        _port: u16,
+    ) -> Pin<Box<dyn Future<Output = std::io::Result<Vec<SocketAddr>>> + Send + 'a>> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(vec!["93.184.216.34:443".parse().unwrap()]) })
+    }
+}
+
+#[tokio::test]
+async fn hosts_with_a_trailing_dot_are_refused_by_the_sender_and_the_resolver() {
+    // 検査・DNS 固定の名前と送信 URL の host がずれると、固定が効かず通常 DNS へフォールバックして
+    // 内部アドレスへ接続されうる。末尾ドット付きの host は名前解決より前に拒否する。
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let sender =
+        HttpProfileDeliverySender::new().with_resolver(Arc::new(CountingResolver(lookups.clone())));
+    for url in [
+        "https://rebind.example./inbox",
+        "https://rebind.example.:443/inbox",
+        "https://a.b.example./inbox",
+    ] {
+        assert_eq!(
+            post(&sender, url, b"{}").await,
+            ProfileSendObservation::InvalidTarget,
+            "{url}"
+        );
+    }
+    let resolver =
+        HttpRemoteActorResolver::new().with_resolver(Arc::new(CountingResolver(lookups.clone())));
+    let error = resolver
+        .resolve(&url("https://rebind.example./users/a".to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(error.current_context(), &KernelError::Rejected);
+    assert_eq!(
+        lookups.load(Ordering::SeqCst),
+        0,
+        "rejected before any name resolution"
+    );
+
+    // 検証用 (http・loopback 許可) の構築でも末尾ドットは許さない。
+    let server = MockServer::start().await;
+    let port = server.address().port();
+    let loopback = HttpProfileDeliverySender::allowing_insecure_loopback();
+    assert_eq!(
+        post(&loopback, &format!("http://localhost.:{port}/inbox"), b"{}").await,
+        ProfileSendObservation::InvalidTarget
+    );
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+async fn webfinger(server: &MockServer, resource: &str, document: serde_json::Value) {
+    Mock::given(method("GET"))
+        .and(path("/.well-known/webfinger"))
+        .and(query_param("resource", resource))
+        .respond_with(ResponseTemplate::new(200).set_body_json(document))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn webfinger_resolves_an_acct_handle_to_the_activitypub_self_link() {
+    let server = MockServer::start().await;
+    let domain = server.address().to_string();
+    let resolver = HttpRemoteActorResolver::allowing_insecure_loopback();
+    webfinger(
+        &server,
+        &format!("acct:bob@{domain}"),
+        serde_json::json!({
+            "subject": format!("acct:bob@{domain}"),
+            "links": [
+                {"rel": "http://webfinger.net/rel/profile-page", "href": "https://x.example/@bob"},
+                {"rel": "self", "type": "application/activity+json", "href": "https://x.example/users/bob"}
+            ]
+        }),
+    )
+    .await;
+    webfinger(
+        &server,
+        &format!("acct:evil@{domain}"),
+        serde_json::json!({
+            "subject": "acct:someone-else@x.example",
+            "links": [{"rel": "self", "type": "application/activity+json", "href": "https://x.example/users/evil"}]
+        }),
+    )
+    .await;
+    webfinger(
+        &server,
+        &format!("acct:nolink@{domain}"),
+        serde_json::json!({"subject": format!("acct:nolink@{domain}"), "links": []}),
+    )
+    .await;
+
+    let url = resolver
+        .resolve_acct(&AcctHandle::parse(&format!("acct:bob@{domain}")).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(url.as_str(), "https://x.example/users/bob");
+
+    for (handle, expected) in [
+        (format!("evil@{domain}"), KernelError::Rejected),
+        (format!("nolink@{domain}"), KernelError::Rejected),
+        (format!("ghost@{domain}"), KernelError::NotFound),
+    ] {
+        let error = resolver
+            .resolve_acct(&AcctHandle::parse(&handle).unwrap())
+            .await
+            .unwrap_err();
+        assert_eq!(error.current_context(), &expected, "{handle}");
+    }
+}
+
+#[tokio::test]
+async fn the_production_resolver_refuses_internal_acct_domains() {
+    let resolver = HttpRemoteActorResolver::new();
+    for handle in [
+        "bob@127.0.0.1",
+        "bob@localhost",
+        "bob@10.0.0.7:8443",
+        "bob@[::1]",
+    ] {
+        let parsed = match AcctHandle::parse(handle) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        let error = resolver.resolve_acct(&parsed).await.unwrap_err();
+        assert_eq!(error.current_context(), &KernelError::Rejected, "{handle}");
     }
 }

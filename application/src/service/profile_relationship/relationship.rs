@@ -29,11 +29,12 @@ use kernel::interfaces::read_model::{
     DependOnAccountQuery, DependOnProfileReadModel, ProfileReadModel,
 };
 use kernel::interfaces::repository::{
-    BeginFollowOutcome, DependOnDomainControlRepository, DependOnProfileBlockRepository,
-    DependOnProfileDeliveryEnqueuer, DependOnProfileDeliveryJobRepository,
-    DependOnProfileFollowRepository, DependOnProfileMuteRepository, DependOnRemoteActorResolver,
+    AcctHandle, BeginFollowOutcome, DependOnDomainControlRepository,
+    DependOnProfileBlockRepository, DependOnProfileDeliveryEnqueuer,
+    DependOnProfileDeliveryJobRepository, DependOnProfileFollowRepository,
+    DependOnProfileMuteRepository, DependOnProfileRelationshipLock, DependOnRemoteActorResolver,
     ProfileBlockRepository, ProfileDeliveryEnqueuer, ProfileDeliveryJobRepository,
-    ProfileFollowRepository, ProfileMuteRepository, RemoteActorResolver,
+    ProfileFollowRepository, ProfileMuteRepository, ProfileRelationshipLock, RemoteActorResolver,
 };
 use kernel::prelude::entity::{
     AuthAccountId, DeliveryActivityType, GraphActorUrl, GraphInboxUrl, Nanoid,
@@ -85,6 +86,7 @@ pub trait RelationshipDeps:
     + DependOnProfileMuteRepository
     + DependOnProfileDeliveryEnqueuer
     + DependOnProfileDeliveryJobRepository
+    + DependOnProfileRelationshipLock
     + DependOnProfileReadModel
     + DependOnPublicBaseUrl
 {
@@ -103,6 +105,7 @@ impl<T> RelationshipDeps for T where
         + DependOnProfileMuteRepository
         + DependOnProfileDeliveryEnqueuer
         + DependOnProfileDeliveryJobRepository
+        + DependOnProfileRelationshipLock
         + DependOnProfileReadModel
         + DependOnPublicBaseUrl
 {
@@ -114,16 +117,23 @@ enum TargetKind {
     /// 同じ instance の Profile (`{PUBLIC_BASE_URL}/ap/profiles/{nanoid}`)。
     Local(String),
     Remote(GraphActorUrl),
+    /// `acct:name@domain`。transaction の外で WebFinger により actor URL へ解決する。
+    Acct(AcctHandle),
 }
 
 fn classify_target(
     public_base_url: &PublicBaseUrl,
     raw: &str,
 ) -> error_stack::Result<TargetKind, KernelError> {
-    // A value that is not a URL is a local Profile nanoid (the contract also names `acct:` handles,
-    // which would need WebFinger and are not accepted here).
-    if !raw.contains("://") && !raw.starts_with("acct:") && !raw.is_empty() {
-        return Ok(TargetKind::Local(raw.to_string()));
+    // A value that is not a URL is an `acct:name@domain` handle (resolved over WebFinger) or a local
+    // Profile nanoid.
+    if !raw.contains("://") {
+        if raw.starts_with("acct:") || raw.contains('@') {
+            return Ok(TargetKind::Acct(AcctHandle::parse(raw)?));
+        }
+        if !raw.is_empty() {
+            return Ok(TargetKind::Local(raw.to_string()));
+        }
     }
     let url = GraphActorUrl::new(raw)?;
     Ok(match local_profile_nanoid(public_base_url, url.as_str()) {
@@ -145,6 +155,8 @@ async fn resolve_target<T: RelationshipDeps>(
     kind: &TargetKind,
 ) -> error_stack::Result<ResolvedTarget, KernelError> {
     match kind {
+        TargetKind::Acct(_) => Err(Report::new(KernelError::Internal)
+            .attach_printable("an acct target must be resolved before the transaction")),
         TargetKind::Remote(url) => Ok(ResolvedTarget {
             actor: ProfileGraphActor::Remote(url.clone()),
             url: url.as_str().to_string(),
@@ -280,6 +292,16 @@ async fn reject_incoming_follow<T: RelationshipDeps>(
     now: OffsetDateTime,
 ) -> error_stack::Result<(), KernelError> {
     let jobs = deps.profile_delivery_job_repository();
+    // 相手がローカル Profile なら、その Follow がまだ未配送のまま残っていれば取り消す (リモートの相手には
+    // この Follow に紐づく自分の job はなく、何も取り消されない)。
+    jobs.cancel_undelivered_for_follow(
+        executor,
+        follow.id(),
+        DeliveryActivityType::Follow,
+        reason,
+        now,
+    )
+    .await?;
     let Some(accept) = jobs
         .find_by_follow(executor, follow.id(), DeliveryActivityType::Accept)
         .await?
@@ -346,6 +368,51 @@ async fn authorize<T: RelationshipDeps>(
         .await
 }
 
+/// 関係の判断・変更に関わるローカル Profile を、transaction の先頭で一度だけ昇順にロックする
+/// (`kernel::interfaces::repository::ProfileRelationshipLock` の規約)。block 判定と Follow 保存、
+/// block 保存と既存 Follow の終了が別 transaction で interleave しないようにする。
+async fn lock_relationship<T: RelationshipDeps>(
+    deps: &T,
+    executor: &mut Conn<T>,
+    me: &ProfileId,
+    target: &ProfileGraphActor,
+) -> error_stack::Result<(), KernelError> {
+    let mut profiles = vec![me.clone()];
+    if let ProfileGraphActor::Local(target_id) = target {
+        profiles.push(target_id.clone());
+    }
+    deps.profile_relationship_lock()
+        .lock_profiles(executor, &profiles)
+        .await
+}
+
+/// 要求された target の種別を確定する。`acct:` handle は、所有者を認可した後に transaction の外で
+/// WebFinger により canonical な actor URL へ解決する (解決できなければ 400)。
+async fn prepare_target<T: RelationshipDeps + DependOnRemoteActorResolver>(
+    deps: &T,
+    auth_account_id: &AuthAccountId,
+    org_context: Option<&OrganizationContext>,
+    profile_nanoid: &str,
+    raw: &str,
+) -> error_stack::Result<TargetKind, KernelError> {
+    let kind = classify_target(deps.public_base_url(), raw)?;
+    let TargetKind::Acct(handle) = kind else {
+        return Ok(kind);
+    };
+    authorize(deps, auth_account_id, org_context, profile_nanoid).await?;
+    let actor_url = deps
+        .remote_actor_resolver()
+        .resolve_acct(&handle)
+        .await
+        .map_err(|error| match error.current_context() {
+            KernelError::Rejected | KernelError::NotFound => error
+                .change_context(KernelError::Validation)
+                .attach_printable("acct could not be resolved to an actor".to_string()),
+            _ => error,
+        })?;
+    classify_target(deps.public_base_url(), actor_url.as_str())
+}
+
 pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorResolver {
     /// Profile が `target` を Follow する。Follow 世代 (Accept 待ち) の保存と `Follow` activity の配送 job
     /// 予約を同一 transaction で行う。target が自分・block 関係にある (どちらの向きでも) 場合は拒否 (422)、
@@ -359,7 +426,8 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
         target: &'a str,
     ) -> impl Future<Output = error_stack::Result<ProfileFollowDto, KernelError>> + Send + 'a {
         async move {
-            let kind = classify_target(self.public_base_url(), target)?;
+            let kind =
+                prepare_target(self, auth_account_id, org_context, profile_nanoid, target).await?;
             authorize(self, auth_account_id, org_context, profile_nanoid).await?;
             let remote_inbox = match &kind {
                 TargetKind::Remote(url) => Some(
@@ -375,7 +443,7 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                             _ => error,
                         })?,
                 ),
-                TargetKind::Local(_) => None,
+                TargetKind::Local(_) | TargetKind::Acct(_) => None,
             };
             let deps = self.clone();
             let auth_account_id = auth_account_id.clone();
@@ -398,6 +466,7 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                         if target.actor == me {
                             return Err(validation("a Profile cannot follow itself"));
                         }
+                        lock_relationship(&deps, executor, &profile_id, &target.actor).await?;
                         let blocks = deps.profile_block_repository();
                         let blocked = blocks
                             .is_blocked(executor, &profile_id, &target.actor)
@@ -602,7 +671,8 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
     ) -> impl Future<Output = error_stack::Result<ProfileRelationDto, KernelError>> + Send + 'a
     {
         async move {
-            let kind = classify_target(self.public_base_url(), target)?;
+            let kind =
+                prepare_target(self, auth_account_id, org_context, profile_nanoid, target).await?;
             let deps = self.clone();
             let auth_account_id = auth_account_id.clone();
             let org_context = org_context.cloned();
@@ -621,6 +691,7 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                         let now = now();
                         let me = ProfileGraphActor::Local(profile_id.clone());
                         let target = resolve_target(&deps, executor, &kind).await?;
+                        lock_relationship(&deps, executor, &profile_id, &target.actor).await?;
                         let block = ProfileBlock::new(
                             ProfileBlockId::new(kernel::generate_id()),
                             profile_id.clone(),
@@ -731,7 +802,8 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
     ) -> impl Future<Output = error_stack::Result<ProfileRelationDto, KernelError>> + Send + 'a
     {
         async move {
-            let kind = classify_target(self.public_base_url(), target)?;
+            let kind =
+                prepare_target(self, auth_account_id, org_context, profile_nanoid, target).await?;
             let deps = self.clone();
             let auth_account_id = auth_account_id.clone();
             let org_context = org_context.cloned();

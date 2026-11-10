@@ -70,6 +70,20 @@ pub trait ProfileDeliveryJobRepository: Sync + Send + 'static {
         outcome: &DeliveryAttemptOutcome,
     ) -> impl Future<Output = error_stack::Result<RecordAttemptOutcome, KernelError>> + Send;
 
+    /// 送信の直前に lease を確認して延長する (P3o が追加した操作。P2 の取得・記録の契約は変えない)。
+    ///
+    /// `claim` の lease をまだ保持している (job が `InFlight` で `lease_token` が一致し、試行番号が同じで、
+    /// `lease_expires_at > now`、取消されていない) ときだけ `lease_expires_at` を `now + extension` にして
+    /// true を返す。取消・期限切れ・他 worker による回収があれば何も変えず false (呼び出し側は送信しない)。
+    /// 鍵の取得・署名などで claim から時間が経った worker が、lease を失ったまま送信するのを防ぐ。
+    fn renew_lease(
+        &self,
+        executor: &mut Self::Connection,
+        claim: &ClaimedProfileDeliveryJob,
+        now: OffsetDateTime,
+        extension: time::Duration,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
+
     /// 未配送 (Pending / InFlight / Retrying) の job を取り消す。配送済み・失敗・取消済みなら false。
     /// InFlight の job を取り消しても、既に送信された activity は取り戻せない
     /// (worker は `record_attempt` で `Cancelled` を受け取る)。

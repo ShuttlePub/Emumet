@@ -773,6 +773,7 @@ delegate_database_dependence! {
     kernel::interfaces::repository::DependOnProfileFollowRepository { ProfileFollowRepository, profile_follow_repository },
     kernel::interfaces::repository::DependOnProfileBlockRepository { ProfileBlockRepository, profile_block_repository },
     kernel::interfaces::repository::DependOnProfileMuteRepository { ProfileMuteRepository, profile_mute_repository },
+    kernel::interfaces::repository::DependOnProfileRelationshipLock { ProfileRelationshipLock, profile_relationship_lock },
     kernel::interfaces::repository::DependOnProfileDeliveryEnqueuer { ProfileDeliveryEnqueuer, profile_delivery_enqueuer },
     kernel::interfaces::repository::DependOnProfileDeliveryJobRepository { ProfileDeliveryJobRepository, profile_delivery_job_repository },
     kernel::interfaces::repository::DependOnProfileSigningKeyRepository { ProfileSigningKeyRepository, profile_signing_key_repository },

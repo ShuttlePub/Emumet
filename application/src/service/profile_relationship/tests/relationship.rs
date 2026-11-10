@@ -66,6 +66,53 @@ async fn follow_row(env: &Env, nanoid: &str) -> (String, Option<String>) {
         .unwrap()
 }
 
+/// bob → alice の受理済み Follow を、P3i が保存し Accept を予約した状態として再現する。
+async fn seed_incoming_follow(
+    env: &Env,
+    alice: &User,
+    bob_url: &str,
+) -> (ProfileFollow, GraphActivityId) {
+    let incoming_activity = GraphActivityId::new(env.peer_url("/follows/9")).unwrap();
+    let incoming = ProfileFollow::new_accepted(
+        ProfileFollowId::new(kernel::generate_id()),
+        ProfileGraphActor::Remote(GraphActorUrl::new(bob_url).unwrap()),
+        ProfileGraphActor::Local(alice.profile_id.clone()),
+        incoming_activity.clone(),
+        OffsetDateTime::now_utc(),
+    )
+    .unwrap();
+    let accept_job = NewProfileDeliveryJob::new(
+        alice.profile_id.clone(),
+        DeliveryActivityType::Accept,
+        GraphActivityId::new(format!("{}/activities/accept-1", actor_url(alice))).unwrap(),
+        GraphInboxUrl::new(env.peer_url("/inbox")).unwrap(),
+        "{\"type\":\"Accept\"}",
+        OffsetDateTime::now_utc() + Duration::hours(1),
+    )
+    .unwrap()
+    .with_follow(incoming.id().clone());
+    {
+        let deps = env.module.clone();
+        let incoming = incoming.clone();
+        env.module
+            .transaction_manager()
+            .transaction(move |executor| {
+                Box::pin(async move {
+                    deps.profile_follow_repository()
+                        .begin_generation(executor, &incoming)
+                        .await?;
+                    deps.profile_delivery_enqueuer()
+                        .enqueue(executor, &accept_job)
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .await
+            .unwrap();
+    }
+    (incoming, incoming_activity)
+}
+
 /// 配送 job を全部 `Delivered` にする (peer が 202 を返す前提で worker を回す)。
 async fn deliver_all(env: &Env) {
     env.respond_inbox(ResponseTemplate::new(202)).await;
@@ -487,45 +534,7 @@ async fn blocking_ends_both_follow_directions_and_tells_the_peer_without_an_ap_b
     };
     accept(&env, &outgoing_id).await;
 
-    // bob → alice の受理済み Follow (P3i が保存し Accept を予約した状態を再現する)。
-    let incoming_activity = GraphActivityId::new(env.peer_url("/follows/9")).unwrap();
-    let incoming = ProfileFollow::new_accepted(
-        ProfileFollowId::new(kernel::generate_id()),
-        ProfileGraphActor::Remote(GraphActorUrl::new(&bob_url).unwrap()),
-        ProfileGraphActor::Local(alice.profile_id.clone()),
-        incoming_activity.clone(),
-        OffsetDateTime::now_utc(),
-    )
-    .unwrap();
-    let accept_job = NewProfileDeliveryJob::new(
-        alice.profile_id.clone(),
-        DeliveryActivityType::Accept,
-        GraphActivityId::new(format!("{}/activities/accept-1", actor_url(&alice))).unwrap(),
-        GraphInboxUrl::new(env.peer_url("/inbox")).unwrap(),
-        "{\"type\":\"Accept\"}",
-        OffsetDateTime::now_utc() + Duration::hours(1),
-    )
-    .unwrap()
-    .with_follow(incoming.id().clone());
-    {
-        let deps = env.module.clone();
-        let incoming = incoming.clone();
-        env.module
-            .transaction_manager()
-            .transaction(move |executor| {
-                Box::pin(async move {
-                    deps.profile_follow_repository()
-                        .begin_generation(executor, &incoming)
-                        .await?;
-                    deps.profile_delivery_enqueuer()
-                        .enqueue(executor, &accept_job)
-                        .await
-                        .map(|_| ())
-                })
-            })
-            .await
-            .unwrap();
-    }
+    let (incoming, incoming_activity) = seed_incoming_follow(&env, &alice, &bob_url).await;
 
     let block = env
         .module
@@ -824,6 +833,7 @@ async fn relationship_jobs_never_appear_in_the_public_outbox() {
     let dto = follow(&env, &alice, &bob_url).await.unwrap();
     deliver_all(&env).await;
     unfollow(&env, &alice, &dto.nanoid).await.unwrap();
+    seed_incoming_follow(&env, &alice, &bob_url).await;
     env.module
         .block_actor(&alice.auth, None, &alice.nanoid, &bob_url)
         .await
@@ -833,7 +843,17 @@ async fn relationship_jobs_never_appear_in_the_public_outbox() {
         .await
         .unwrap();
     deliver_all(&env).await;
-    assert!(env.jobs_of(&alice.profile_id).await.len() >= 2);
+    let kinds: Vec<DeliveryActivityType> = env
+        .jobs_of(&alice.profile_id)
+        .await
+        .iter()
+        .map(|job| job.activity_type)
+        .collect();
+    assert!(
+        kinds.contains(&DeliveryActivityType::Undo)
+            && kinds.contains(&DeliveryActivityType::Reject),
+        "the block produced both an Undo(Follow) and a Reject(Follow) delivery job: {kinds:?}"
+    );
 
     // 公開 outbox を読む経路 (GetOutboxUseCase) は outbox_activities だけを読む。配送 job は別の保存。
     let collection = env
@@ -884,4 +904,240 @@ async fn an_enqueued_activity_id_is_idempotent_across_duplicate_reservations() {
     assert!(outcomes.0.is_newly_enqueued());
     assert!(!outcomes.1.is_newly_enqueued());
     assert_eq!(env.jobs_of(&alice.profile_id).await.len(), 1);
+}
+
+fn pair_sql(a: &User, b: &User) -> (i64, i64) {
+    (*a.profile_id.as_ref(), *b.profile_id.as_ref())
+}
+
+/// block と有効な Follow (または未送信の配送 job) が共存していないこと。
+async fn assert_no_follow_survives_the_block(env: &Env, blocker: &User, other: &User) {
+    let (a, b) = pair_sql(blocker, other);
+    let blocks: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM profile_blocks WHERE owner_profile_id = $1 AND target_profile_id = $2",
+    )
+    .bind(a)
+    .bind(b)
+    .fetch_one(&env.iso.pool)
+    .await
+    .unwrap();
+    assert_eq!(blocks, 1, "the block is stored");
+    let active: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM profile_follows WHERE state <> 'ended' AND ((follower_profile_id = $1 AND followee_profile_id = $2) OR (follower_profile_id = $2 AND followee_profile_id = $1))",
+    )
+    .bind(a)
+    .bind(b)
+    .fetch_one(&env.iso.pool)
+    .await
+    .unwrap();
+    assert_eq!(active, 0, "no active follow coexists with the block");
+    let live_jobs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM profile_delivery_jobs WHERE sender_profile_id IN ($1, $2) AND state IN ('pending', 'in_flight', 'retrying') AND activity_type = 'Follow'",
+    )
+    .bind(a)
+    .bind(b)
+    .fetch_one(&env.iso.pool)
+    .await
+    .unwrap();
+    assert_eq!(live_jobs, 0, "no live Follow job coexists with the block");
+}
+
+const SLOW_INSERT: &str = "CREATE FUNCTION p3o_slow() RETURNS trigger AS $$ BEGIN PERFORM pg_sleep(0.6); RETURN NEW; END $$ LANGUAGE plpgsql;";
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_follow_racing_a_block_in_the_reverse_direction_never_coexists_with_it() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    let bob = env.seed_user().await;
+    env.execute(SLOW_INSERT).await;
+    env.execute("CREATE TRIGGER p3o_slow_follows BEFORE INSERT ON profile_follows FOR EACH ROW EXECUTE FUNCTION p3o_slow()")
+        .await;
+
+    // bob → alice の Follow が (block 判定の後) 保存に時間がかかっている間に、alice が bob を block する。
+    let (alice_url, bob_url) = (actor_url(&alice), actor_url(&bob));
+    let (follow_result, block_result) = tokio::join!(follow(&env, &bob, &alice_url), async {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        env.module
+            .block_actor(&alice.auth, None, &alice.nanoid, &bob_url)
+            .await
+    });
+
+    block_result.unwrap();
+    let _ = follow_result;
+    assert_no_follow_survives_the_block(&env, &alice, &bob).await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_follow_racing_a_block_by_the_same_profile_never_coexists_with_it() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    let bob = env.seed_user().await;
+    env.execute(SLOW_INSERT).await;
+    env.execute("CREATE TRIGGER p3o_slow_follows BEFORE INSERT ON profile_follows FOR EACH ROW EXECUTE FUNCTION p3o_slow()")
+        .await;
+
+    let bob_url = actor_url(&bob);
+    let (follow_result, block_result) = tokio::join!(follow(&env, &alice, &bob_url), async {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        env.module
+            .block_actor(&alice.auth, None, &alice.nanoid, &bob_url)
+            .await
+    });
+
+    block_result.unwrap();
+    let _ = follow_result;
+    assert_no_follow_survives_the_block(&env, &alice, &bob).await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_follow_racing_a_slow_block_is_refused_by_it() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    let bob = env.seed_user().await;
+    env.execute(SLOW_INSERT).await;
+    env.execute("CREATE TRIGGER p3o_slow_blocks BEFORE INSERT ON profile_blocks FOR EACH ROW EXECUTE FUNCTION p3o_slow()")
+        .await;
+
+    // alice の block の保存中 (未 commit) に bob → alice の Follow が判定を行う。
+    let (alice_url, bob_url) = (actor_url(&alice), actor_url(&bob));
+    let (block_result, follow_result) = tokio::join!(
+        env.module
+            .block_actor(&alice.auth, None, &alice.nanoid, &bob_url),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            follow(&env, &bob, &alice_url).await
+        }
+    );
+
+    block_result.unwrap();
+    assert_eq!(
+        context(follow_result),
+        KernelError::Rejected,
+        "the follow waits for the block and is refused by it"
+    );
+    assert_no_follow_survives_the_block(&env, &alice, &bob).await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn acct_targets_are_resolved_over_webfinger_for_follow_block_and_mute() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    let actor = env.mount_actor("/users/bob").await;
+    let acct = env.mount_webfinger("bob", &actor).await;
+
+    let dto = follow(&env, &alice, &acct).await.unwrap();
+    assert_eq!(
+        dto.target, actor,
+        "the stored target is the canonical actor URL"
+    );
+    let job = &env.jobs_of(&alice.profile_id).await[0];
+    assert_eq!(job.target_inbox.as_str(), env.peer_url("/inbox"));
+
+    let block = env
+        .module
+        .block_actor(&alice.auth, None, &alice.nanoid, &acct)
+        .await
+        .unwrap();
+    assert_eq!(block.target, actor);
+    let mute = env
+        .module
+        .mute_actor(
+            &alice.auth,
+            None,
+            &alice.nanoid,
+            &format!("@{}", &acct["acct:".len()..]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        mute.target, actor,
+        "the handle also works without the acct: prefix"
+    );
+    assert_eq!(
+        follow_row(&env, &dto.nanoid).await,
+        ("ended".to_string(), Some("blocked".to_string()))
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn unresolvable_acct_targets_and_unauthorized_callers_are_refused_before_any_effect() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    let mallory = env.seed_user().await;
+    let domain = env.peer.address().to_string();
+    // WebFinger が無い (404)・subject 不一致・ActivityPub の self link なし。
+    for handle in [
+        format!("acct:ghost@{domain}"),
+        "acct:@@".to_string(),
+        "bob@".to_string(),
+    ] {
+        assert_eq!(
+            context(follow(&env, &alice, &handle).await),
+            KernelError::Validation,
+            "{handle}"
+        );
+    }
+    let actor = env.mount_actor("/users/bob").await;
+    let acct = env.mount_webfinger("bob", &actor).await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/webfinger"))
+        .and(wiremock::matchers::query_param(
+            "resource",
+            format!("acct:other@{domain}").as_str(),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subject": format!("acct:someone-else@{domain}"),
+            "links": [{"rel": "self", "type": "application/activity+json", "href": actor}],
+        })))
+        .mount(&env.peer)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/webfinger"))
+        .and(wiremock::matchers::query_param("resource", format!("acct:nolink@{domain}").as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subject": format!("acct:nolink@{domain}"),
+            "links": [{"rel": "http://webfinger.net/rel/profile-page", "href": "https://x.example/"}],
+        })))
+        .mount(&env.peer)
+        .await;
+    for handle in [
+        format!("acct:other@{domain}"),
+        format!("acct:nolink@{domain}"),
+    ] {
+        assert_eq!(
+            context(follow(&env, &alice, &handle).await),
+            KernelError::Validation,
+            "{handle}"
+        );
+    }
+    assert_eq!(env.count("SELECT count(*) FROM profile_follows").await, 0);
+
+    // 所有者でない呼び出しは、WebFinger へ問い合わせる前に拒否される。
+    let before = env.webfinger_requests().await;
+    assert_eq!(
+        context(
+            env.module
+                .follow_profile(&mallory.auth, None, &alice.nanoid, &acct)
+                .await
+        ),
+        KernelError::PermissionDenied
+    );
+    assert_eq!(
+        context(
+            env.module
+                .block_actor(&mallory.auth, None, &alice.nanoid, &acct)
+                .await
+        ),
+        KernelError::PermissionDenied
+    );
+    assert_eq!(
+        env.webfinger_requests().await,
+        before,
+        "no outbound request for an unauthorized caller"
+    );
 }

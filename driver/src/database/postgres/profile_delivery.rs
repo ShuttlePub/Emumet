@@ -384,6 +384,33 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
         Ok(result)
     }
 
+    async fn renew_lease(
+        &self,
+        executor: &mut Self::Connection,
+        claim: &ClaimedProfileDeliveryJob,
+        now: OffsetDateTime,
+        extension: time::Duration,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            UPDATE profile_delivery_jobs SET lease_expires_at = $4, updated_at = $3
+            WHERE id = $1 AND lease_token = $2 AND state = 'in_flight'
+              AND attempt_count = $5 AND lease_expires_at > $3
+            "#,
+        )
+        .bind(claim.id.as_ref())
+        .bind(&claim.lease_token)
+        .bind(now)
+        .bind(now + extension)
+        .bind(claim.attempt_no)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn cancel(
         &self,
         executor: &mut Self::Connection,

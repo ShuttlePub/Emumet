@@ -4,7 +4,7 @@ use super::target::{
 };
 use crate::webhook::{HostResolver, SystemResolver};
 use error_stack::Report;
-use kernel::interfaces::repository::{RemoteActorInfo, RemoteActorResolver};
+use kernel::interfaces::repository::{AcctHandle, RemoteActorInfo, RemoteActorResolver};
 use kernel::prelude::entity::{GraphActorUrl, GraphInboxUrl};
 use kernel::KernelError;
 use reqwest::header::ACCEPT;
@@ -63,6 +63,80 @@ fn rejected(message: &str) -> Report<KernelError> {
 }
 
 impl RemoteActorResolver for HttpRemoteActorResolver {
+    async fn resolve_acct(
+        &self,
+        handle: &AcctHandle,
+    ) -> error_stack::Result<GraphActorUrl, KernelError> {
+        let scheme = if self.mode.is_strict() {
+            "https"
+        } else {
+            "http"
+        };
+        let mut url = reqwest::Url::parse(&format!(
+            "{scheme}://{}/.well-known/webfinger",
+            handle.domain()
+        ))
+        .map_err(|_| rejected("acct domain is not a valid host"))?;
+        let resource = handle.resource();
+        url.query_pairs_mut().append_pair("resource", &resource);
+        let target = resolve_target(url.as_str(), self.mode, &self.resolver, &self.settings)
+            .await
+            .map_err(|error| match error {
+                TargetError::Invalid => rejected("acct domain is not an allowed destination"),
+                TargetError::DnsFailed => Report::new(KernelError::Timeout)
+                    .attach_printable("acct domain could not be resolved"),
+            })?;
+        let client = build_client(&target, self.mode, &self.settings)
+            .ok_or_else(|| Report::new(KernelError::Internal))?;
+        let mut response = client
+            .get(target.url.clone())
+            .header(ACCEPT, "application/jrd+json, application/json")
+            .send()
+            .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    Report::new(KernelError::Timeout)
+                } else {
+                    rejected("webfinger request failed to connect")
+                }
+            })?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::GONE {
+            return Err(Report::new(KernelError::NotFound)
+                .attach_printable("webfinger does not know the account"));
+        }
+        if !status.is_success() {
+            return Err(rejected("webfinger returned an unsuccessful status"));
+        }
+        let body = read_limited(&mut response, self.settings.max_response_bytes).await;
+        let document: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|_| rejected("webfinger response is not JSON"))?;
+        if let Some(subject) = document.get("subject").and_then(|value| value.as_str()) {
+            let subject = subject.strip_prefix("acct:").unwrap_or(subject);
+            if !subject.eq_ignore_ascii_case(resource.strip_prefix("acct:").unwrap_or(&resource)) {
+                return Err(rejected(
+                    "webfinger subject does not match the requested account",
+                ));
+            }
+        }
+        let href = document
+            .get("links")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .find(|link| {
+                link.get("rel").and_then(|v| v.as_str()) == Some("self")
+                    && link.get("type").and_then(|v| v.as_str()).is_some_and(|t| {
+                        t.starts_with("application/activity+json")
+                            || t.starts_with("application/ld+json")
+                    })
+            })
+            .and_then(|link| link.get("href"))
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| rejected("webfinger has no ActivityPub self link"))?;
+        GraphActorUrl::new(href).map_err(|_| rejected("webfinger self link is not an actor URL"))
+    }
+
     async fn resolve(
         &self,
         actor_url: &GraphActorUrl,
