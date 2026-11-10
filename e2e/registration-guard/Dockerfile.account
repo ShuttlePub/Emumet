@@ -1,0 +1,16 @@
+FROM docker.io/rust:1.97.0-bookworm AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY kernel kernel
+COPY application application
+COPY driver driver
+COPY server server
+COPY migrations migrations
+RUN cargo build --locked --release -p server
+
+FROM docker.io/debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /src/target/release/server /usr/local/bin/emumet
+WORKDIR /app
+CMD ["/usr/local/bin/emumet"]

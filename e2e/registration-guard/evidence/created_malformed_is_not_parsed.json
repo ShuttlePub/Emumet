@@ -1,0 +1,383 @@
+{
+  "condition": "created_malformed",
+  "kind": "api",
+  "expected_created": true,
+  "response": {
+    "status": 200,
+    "seconds": 0.189,
+    "body": {
+      "session_token": "<redacted>",
+      "session": {
+        "id": "75c93c2f-e283-463d-8ed2-fbab6ec5e700",
+        "active": true,
+        "expires_at": "2026-11-11T07:18:06.753352693Z",
+        "authenticated_at": "2026-11-10T07:18:06.753394553Z",
+        "authenticator_assurance_level": "aal1",
+        "authentication_methods": [
+          {
+            "method": "password",
+            "aal": "aal1",
+            "completed_at": "2026-11-10T07:18:06.753352113Z"
+          }
+        ],
+        "issued_at": "2026-11-10T07:18:06.753352693Z",
+        "identity": {
+          "id": "9e986f9e-9148-4e27-ab97-c43abf58bc28",
+          "schema_id": "default",
+          "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
+          "state": "active",
+          "state_changed_at": "2026-11-10T07:18:06.75115904Z",
+          "traits": {
+            "email": "created-malformed-is-not-parsed@example.test"
+          },
+          "verifiable_addresses": [
+            {
+              "id": "2cc39353-de9e-4c9d-99ab-5eb60bcb93a6",
+              "value": "created-malformed-is-not-parsed@example.test",
+              "verified": false,
+              "via": "email",
+              "status": "sent",
+              "created_at": "2026-11-10T07:18:06.75222Z",
+              "updated_at": "2026-11-10T07:18:06.75222Z"
+            }
+          ],
+          "metadata_public": null,
+          "created_at": "2026-11-10T07:18:06.751886Z",
+          "updated_at": "2026-11-10T07:18:06.751886Z",
+          "organization_id": null
+        },
+        "devices": [
+          {
+            "id": "9f0bd717-24f2-4285-a052-42a646e2d3f6",
+            "ip_address": "10.89.2.62:34844",
+            "user_agent": "Python-urllib/3.11",
+            "location": ""
+          }
+        ]
+      },
+      "identity": {
+        "id": "9e986f9e-9148-4e27-ab97-c43abf58bc28",
+        "schema_id": "default",
+        "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
+        "state": "active",
+        "state_changed_at": "2026-11-10T07:18:06.75115904Z",
+        "traits": {
+          "email": "created-malformed-is-not-parsed@example.test"
+        },
+        "verifiable_addresses": [
+          {
+            "id": "2cc39353-de9e-4c9d-99ab-5eb60bcb93a6",
+            "value": "created-malformed-is-not-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:06.75222Z",
+            "updated_at": "2026-11-10T07:18:06.75222Z"
+          }
+        ],
+        "metadata_public": null,
+        "created_at": "2026-11-10T07:18:06.751886Z",
+        "updated_at": "2026-11-10T07:18:06.751886Z",
+        "organization_id": null
+      },
+      "continue_with": [
+        {
+          "action": "show_verification_ui",
+          "flow": {
+            "id": "912d06a1-9262-4b9e-bddd-49747aeca973",
+            "verifiable_address": "created-malformed-is-not-parsed@example.test"
+          }
+        },
+        {
+          "action": "set_ory_session_token",
+          "ory_session_token": "<redacted>"
+        }
+      ]
+    }
+  },
+  "before": {
+    "admin": [
+      {
+        "id": "2b3f0e86-3cdb-4054-b281-3c6ca84f6413",
+        "email": "false-json-is-not-denial@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "8b155069-e2c5-4482-a652-5fd44ac00593",
+            "value": "false-json-is-not-denial@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:05.476289Z",
+            "updated_at": "2026-11-10T07:18:05.476289Z"
+          }
+        ]
+      },
+      {
+        "id": "33e89d3c-afa7-47a1-85e6-29d7e4321363",
+        "email": "empty-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "eb17ea50-f6cb-4482-9a4e-639542116026",
+            "value": "empty-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:17:59.6723Z",
+            "updated_at": "2026-11-10T07:17:59.6723Z"
+          }
+        ]
+      },
+      {
+        "id": "422610f0-d6c2-44b4-8832-9ef3a324324f",
+        "email": "malformed-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "9664e848-068f-476c-a97e-9477b8ab58bc",
+            "value": "malformed-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:17:58.45731Z",
+            "updated_at": "2026-11-10T07:17:58.45731Z"
+          }
+        ]
+      },
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
+          }
+        ]
+      },
+      {
+        "id": "d01c464b-c2f2-4fb0-9b38-d24f370eed38",
+        "email": "empty-parsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "40978cfc-567e-4fa7-bff4-a217be2fbf58",
+            "value": "empty-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:04.598557Z",
+            "updated_at": "2026-11-10T07:18:04.598557Z"
+          }
+        ]
+      },
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test"
+      },
+      {
+        "id": "422610f0-d6c2-44b4-8832-9ef3a324324f",
+        "email": "malformed-unparsed@example.test"
+      },
+      {
+        "id": "33e89d3c-afa7-47a1-85e6-29d7e4321363",
+        "email": "empty-unparsed@example.test"
+      },
+      {
+        "id": "d01c464b-c2f2-4fb0-9b38-d24f370eed38",
+        "email": "empty-parsed@example.test"
+      },
+      {
+        "id": "2b3f0e86-3cdb-4054-b281-3c6ca84f6413",
+        "email": "false-json-is-not-denial@example.test"
+      }
+    ]
+  },
+  "after": {
+    "admin": [
+      {
+        "id": "2b3f0e86-3cdb-4054-b281-3c6ca84f6413",
+        "email": "false-json-is-not-denial@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "8b155069-e2c5-4482-a652-5fd44ac00593",
+            "value": "false-json-is-not-denial@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:05.476289Z",
+            "updated_at": "2026-11-10T07:18:05.476289Z"
+          }
+        ]
+      },
+      {
+        "id": "33e89d3c-afa7-47a1-85e6-29d7e4321363",
+        "email": "empty-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "eb17ea50-f6cb-4482-9a4e-639542116026",
+            "value": "empty-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:17:59.6723Z",
+            "updated_at": "2026-11-10T07:17:59.6723Z"
+          }
+        ]
+      },
+      {
+        "id": "422610f0-d6c2-44b4-8832-9ef3a324324f",
+        "email": "malformed-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "9664e848-068f-476c-a97e-9477b8ab58bc",
+            "value": "malformed-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:17:58.45731Z",
+            "updated_at": "2026-11-10T07:17:58.45731Z"
+          }
+        ]
+      },
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
+          }
+        ]
+      },
+      {
+        "id": "9e986f9e-9148-4e27-ab97-c43abf58bc28",
+        "email": "created-malformed-is-not-parsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "2cc39353-de9e-4c9d-99ab-5eb60bcb93a6",
+            "value": "created-malformed-is-not-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:06.75222Z",
+            "updated_at": "2026-11-10T07:18:06.75222Z"
+          }
+        ]
+      },
+      {
+        "id": "d01c464b-c2f2-4fb0-9b38-d24f370eed38",
+        "email": "empty-parsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "40978cfc-567e-4fa7-bff4-a217be2fbf58",
+            "value": "empty-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:04.598557Z",
+            "updated_at": "2026-11-10T07:18:04.598557Z"
+          }
+        ]
+      },
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test"
+      },
+      {
+        "id": "422610f0-d6c2-44b4-8832-9ef3a324324f",
+        "email": "malformed-unparsed@example.test"
+      },
+      {
+        "id": "33e89d3c-afa7-47a1-85e6-29d7e4321363",
+        "email": "empty-unparsed@example.test"
+      },
+      {
+        "id": "d01c464b-c2f2-4fb0-9b38-d24f370eed38",
+        "email": "empty-parsed@example.test"
+      },
+      {
+        "id": "2b3f0e86-3cdb-4054-b281-3c6ca84f6413",
+        "email": "false-json-is-not-denial@example.test"
+      },
+      {
+        "id": "9e986f9e-9148-4e27-ab97-c43abf58bc28",
+        "email": "created-malformed-is-not-parsed@example.test"
+      }
+    ]
+  },
+  "hook_calls": [
+    {
+      "context_keys": [
+        "flow",
+        "identity"
+      ],
+      "identity_id": "00000000-0000-0000-0000-000000000000",
+      "email": "created-malformed-is-not-parsed@example.test",
+      "verifiable_addresses": [
+        {
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-0000-0000-000000000000",
+          "status": "pending",
+          "updated_at": "0001-01-01T00:00:00Z",
+          "value": "created-malformed-is-not-parsed@example.test",
+          "verified": false,
+          "via": "email"
+        }
+      ],
+      "flow_id": "aba861ce-3ba5-4b16-8fb4-97384230af2d",
+      "flow_type": "api",
+      "transient_payload": {},
+      "mode": "created_malformed"
+    }
+  ],
+  "identity_created": true
+}

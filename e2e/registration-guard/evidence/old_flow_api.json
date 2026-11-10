@@ -1,0 +1,113 @@
+{
+  "condition": "deny",
+  "kind": "api",
+  "expected_created": false,
+  "response": {
+    "status": 400,
+    "seconds": 0.172,
+    "body": {
+      "id": "7f5395fb-e685-45ce-ab14-4262d5bae757",
+      "type": "api",
+      "expires_at": "2026-11-10T08:15:50.338931Z",
+      "issued_at": "2026-11-10T07:15:50.338931Z",
+      "request_url": "http://127.0.0.1:18433/self-service/registration/api",
+      "ui": {
+        "action": "http://127.0.0.1:18433/self-service/registration?flow=7f5395fb-e685-45ce-ab14-4262d5bae757",
+        "method": "POST",
+        "nodes": [
+          {
+            "type": "input",
+            "group": "default",
+            "attributes": {
+              "name": "traits.email",
+              "type": "email",
+              "value": "old-flow-api@example.test",
+              "required": true,
+              "autocomplete": "email",
+              "disabled": false,
+              "node_type": "input"
+            },
+            "messages": [],
+            "meta": {}
+          },
+          {
+            "type": "input",
+            "group": "default",
+            "attributes": {
+              "name": "csrf_token",
+              "type": "hidden",
+              "value": "<redacted>",
+              "required": true,
+              "disabled": false,
+              "node_type": "input"
+            },
+            "messages": [],
+            "meta": {}
+          },
+          {
+            "type": "input",
+            "group": "profile",
+            "attributes": {
+              "name": "method",
+              "type": "submit",
+              "value": "profile",
+              "disabled": false,
+              "node_type": "input"
+            },
+            "messages": [],
+            "meta": {
+              "label": {
+                "id": 1040001,
+                "text": "Sign up",
+                "type": "info"
+              }
+            }
+          }
+        ],
+        "messages": [
+          {
+            "id": 4000001,
+            "text": "fixture registration denied",
+            "type": "error"
+          }
+        ]
+      },
+      "organization_id": null,
+      "state": "choose_method"
+    }
+  },
+  "before": {
+    "admin": [],
+    "db": []
+  },
+  "after": {
+    "admin": [],
+    "db": []
+  },
+  "hook_calls": [
+    {
+      "context_keys": [
+        "flow",
+        "identity"
+      ],
+      "identity_id": "00000000-0000-0000-0000-000000000000",
+      "email": "old-flow-api@example.test",
+      "verifiable_addresses": [
+        {
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-0000-0000-000000000000",
+          "status": "pending",
+          "updated_at": "0001-01-01T00:00:00Z",
+          "value": "old-flow-api@example.test",
+          "verified": false,
+          "via": "email"
+        }
+      ],
+      "flow_id": "7f5395fb-e685-45ce-ab14-4262d5bae757",
+      "flow_type": "api",
+      "transient_payload": {},
+      "mode": "deny"
+    }
+  ],
+  "identity_created": false
+}

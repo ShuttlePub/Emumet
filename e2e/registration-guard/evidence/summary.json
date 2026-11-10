@@ -1,0 +1,227 @@
+[
+  {
+    "case": "deny_api",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 1,
+    "seconds": 0.203,
+    "evidence": "deny_api.json"
+  },
+  {
+    "case": "deny_browser",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 1,
+    "seconds": 0.174,
+    "evidence": "deny_browser.json"
+  },
+  {
+    "case": "deny_browser_form",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 1,
+    "seconds": 0.174,
+    "evidence": "deny_browser_form.json"
+  },
+  {
+    "case": "old_flow_api",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 1,
+    "seconds": 0.172,
+    "evidence": "old_flow_api.json"
+  },
+  {
+    "case": "old_flow_browser",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 1,
+    "seconds": 0.183,
+    "evidence": "old_flow_browser.json"
+  },
+  {
+    "case": "override_api",
+    "status": 200,
+    "identity_created": true,
+    "hook_calls": 1,
+    "seconds": 0.184,
+    "evidence": "override_api.json"
+  },
+  {
+    "case": "override_browser",
+    "status": 200,
+    "identity_created": true,
+    "hook_calls": 1,
+    "seconds": 0.175,
+    "evidence": "override_browser.json"
+  },
+  {
+    "case": "server_error_api",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 3,
+    "seconds": 3.174,
+    "evidence": "server_error_api.json"
+  },
+  {
+    "case": "rate_limit_api",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 3,
+    "seconds": 3.172,
+    "evidence": "rate_limit_api.json"
+  },
+  {
+    "case": "timeout_api",
+    "status": null,
+    "identity_created": false,
+    "hook_calls": 3,
+    "seconds": 93.18,
+    "evidence": "timeout_api.json"
+  },
+  {
+    "case": "disconnect_api",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 3,
+    "seconds": 3.171,
+    "evidence": "disconnect_api.json"
+  },
+  {
+    "case": "unreachable_api",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 0,
+    "seconds": 3.204,
+    "evidence": "unreachable_api.json"
+  },
+  {
+    "case": "malformed_unparsed",
+    "status": 200,
+    "identity_created": true,
+    "hook_calls": 1,
+    "seconds": 0.225,
+    "evidence": "malformed_unparsed.json"
+  },
+  {
+    "case": "empty_unparsed",
+    "status": 200,
+    "identity_created": true,
+    "hook_calls": 1,
+    "seconds": 0.198,
+    "evidence": "empty_unparsed.json"
+  },
+  {
+    "case": "malformed_parsed",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 1,
+    "seconds": 0.2,
+    "evidence": "malformed_parsed.json"
+  },
+  {
+    "case": "empty_parsed",
+    "status": 200,
+    "identity_created": true,
+    "hook_calls": 1,
+    "seconds": 0.18,
+    "evidence": "empty_parsed.json"
+  },
+  {
+    "case": "false_json_is_not_denial",
+    "status": 200,
+    "identity_created": true,
+    "hook_calls": 1,
+    "seconds": 0.174,
+    "evidence": "false_json_is_not_denial.json"
+  },
+  {
+    "case": "created_malformed_is_not_parsed",
+    "status": 200,
+    "identity_created": true,
+    "hook_calls": 1,
+    "seconds": 0.189,
+    "evidence": "created_malformed_is_not_parsed.json"
+  },
+  {
+    "case": "login",
+    "status": 200,
+    "hook_calls": 0
+  },
+  {
+    "case": "post_persist_deny",
+    "status": 502,
+    "identity_created": true,
+    "hook_calls": 1,
+    "seconds": 0.213,
+    "evidence": "post_persist_deny.json"
+  },
+  {
+    "case": "global_hook_not_pre_persist",
+    "status": 200,
+    "identity_created": true,
+    "hook_calls": 0,
+    "seconds": 0.18,
+    "evidence": "global_hook_not_pre_persist.json"
+  },
+  {
+    "case": "hook_removed_canary",
+    "status": 200,
+    "identity_created": true,
+    "hook_calls": 0,
+    "seconds": 0.178,
+    "evidence": "hook_removed_canary.json"
+  },
+  {
+    "case": "verification_removed_guard_remains",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 1,
+    "seconds": 0.249,
+    "evidence": "verification_removed_guard_remains.json"
+  },
+  {
+    "case": "untrusted_override_payload",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 1,
+    "seconds": 0.205,
+    "evidence": "untrusted_override_payload.json"
+  },
+  {
+    "case": "disabled_oidc",
+    "status": 404,
+    "identity_created": false,
+    "hook_calls": 0,
+    "seconds": 0.012,
+    "evidence": "disabled_oidc.json"
+  },
+  {
+    "case": "disabled_code",
+    "status": 400,
+    "identity_created": false,
+    "hook_calls": 0,
+    "seconds": 0.011,
+    "evidence": "disabled_code.json"
+  },
+  {
+    "case": "native_code_gate_denied",
+    "status": 400,
+    "identity_created": false
+  },
+  {
+    "case": "native_code_allowed",
+    "status": 200,
+    "identity_created": true,
+    "email_verified": true
+  },
+  {
+    "case": "account",
+    "statuses": [
+      201,
+      201,
+      401
+    ],
+    "hook_calls": 0
+  }
+]

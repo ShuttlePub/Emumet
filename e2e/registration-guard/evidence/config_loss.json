@@ -1,0 +1,20 @@
+{
+  "before_hash": {
+    "status": 200,
+    "seconds": 0.002,
+    "body": "999c86aae463a80a57985e8e7b665472b3bd47db885a233eafc74ddcf7059056"
+  },
+  "after_hash": {
+    "status": 200,
+    "seconds": 0.002,
+    "body": "6cfd1e660ac99aafaa0907cfe75b824cd5f6ac9a25731f314ab66eeaae164a14"
+  },
+  "health": {
+    "status": 200,
+    "seconds": 0.01,
+    "body": {
+      "status": "ok"
+    }
+  },
+  "different": true
+}

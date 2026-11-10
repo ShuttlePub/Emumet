@@ -1,0 +1,64 @@
+[
+  {
+    "name": "emumet-registration-guard-e15b_postgres_1",
+    "mounts": [],
+    "tmpfs": {
+      "/var/lib/postgresql/data": "rw,size=256m,mode=0700,rprivate,nosuid,nodev,tmpcopyup"
+    }
+  },
+  {
+    "name": "emumet-registration-guard-e15b_guard_1",
+    "mounts": [
+      {
+        "type": "bind",
+        "destination": "/fixture"
+      }
+    ],
+    "tmpfs": {}
+  },
+  {
+    "name": "emumet-registration-guard-e15b_kratos-migrate_1",
+    "mounts": [],
+    "tmpfs": {
+      "/home/ory": "rw,size=8m,mode=0777,rprivate,nosuid,nodev,tmpcopyup",
+      "/var/lib/sqlite": "rw,size=8m,mode=0777,rprivate,nosuid,nodev,tmpcopyup"
+    }
+  },
+  {
+    "name": "emumet-registration-guard-e15b_kratos_1",
+    "mounts": [
+      {
+        "type": "bind",
+        "destination": "/fixture"
+      },
+      {
+        "type": "bind",
+        "destination": "/runtime"
+      }
+    ],
+    "tmpfs": {
+      "/home/ory": "rw,size=8m,mode=0777,rprivate,nosuid,nodev,tmpcopyup",
+      "/var/lib/sqlite": "rw,size=8m,mode=0777,rprivate,nosuid,nodev,tmpcopyup"
+    }
+  },
+  {
+    "name": "emumet-registration-guard-e15b_app_1",
+    "mounts": [
+      {
+        "type": "bind",
+        "destination": "/nix/store"
+      },
+      {
+        "type": "bind",
+        "destination": "/fixture"
+      },
+      {
+        "type": "bind",
+        "destination": "/run/secrets/master-key-password"
+      }
+    ],
+    "tmpfs": {
+      "/app": "rw,size=32m,mode=0700,rprivate,nosuid,nodev,tmpcopyup"
+    }
+  }
+]

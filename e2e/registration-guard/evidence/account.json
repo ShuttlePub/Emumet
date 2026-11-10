@@ -1,0 +1,50 @@
+{
+  "authenticated": [
+    {
+      "gate_mode": "deny",
+      "response": {
+        "app_status": 201,
+        "body": {
+          "id": "_vl0wHhUjBwvgh3QyMll5",
+          "name": "guard-deny-25925637",
+          "display_name": "guard-deny-25925637",
+          "summary": null,
+          "icon_url": null,
+          "banner_url": null,
+          "is_bot": false,
+          "fields": [],
+          "created_at": "2026-11-10T07:18:59.77Z",
+          "moderation": null
+        }
+      }
+    },
+    {
+      "gate_mode": "server_error",
+      "response": {
+        "app_status": 201,
+        "body": {
+          "id": "9af0lbGwztXR7Xzk6O8bW",
+          "name": "guard-server-error-25925637",
+          "display_name": "guard-server-error-25925637",
+          "summary": null,
+          "icon_url": null,
+          "banner_url": null,
+          "is_bot": false,
+          "fields": [],
+          "created_at": "2026-11-10T07:19:05.78Z",
+          "moderation": null
+        }
+      }
+    }
+  ],
+  "unauthorized": {
+    "status": 200,
+    "seconds": 0.024,
+    "body": {
+      "app_status": 401,
+      "body": ""
+    }
+  },
+  "hook_call_delta": 0,
+  "identity_changes": false
+}

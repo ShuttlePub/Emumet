@@ -1,0 +1,106 @@
+{
+  "condition": "deny",
+  "kind": "api",
+  "expected_created": false,
+  "response": {
+    "status": 400,
+    "seconds": 3.204,
+    "body": {
+      "error": {
+        "code": 500,
+        "status": "Internal Server Error",
+        "message": "POST http://guard:1/guard giving up after 3 attempt(s): Post \"http://guard:1/guard\": dial tcp 10.89.2.56:1: connect: connection refused"
+      }
+    }
+  },
+  "before": {
+    "admin": [
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
+          }
+        ]
+      },
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test"
+      }
+    ]
+  },
+  "after": {
+    "admin": [
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
+          }
+        ]
+      },
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test"
+      }
+    ]
+  },
+  "hook_calls": [],
+  "identity_created": false
+}

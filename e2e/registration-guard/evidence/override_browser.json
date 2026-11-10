@@ -1,0 +1,193 @@
+{
+  "condition": "override",
+  "kind": "browser",
+  "expected_created": true,
+  "response": {
+    "status": 200,
+    "seconds": 0.175,
+    "body": {
+      "session": {
+        "id": "0014fa94-1a2b-4e05-a8b5-4c437ffd51e5",
+        "active": true,
+        "expires_at": "2026-11-11T07:15:56.452101586Z",
+        "authenticated_at": "2026-11-10T07:15:56.452123146Z",
+        "authenticator_assurance_level": "aal1",
+        "authentication_methods": [
+          {
+            "method": "password",
+            "aal": "aal1",
+            "completed_at": "2026-11-10T07:15:56.452101296Z"
+          }
+        ],
+        "issued_at": "2026-11-10T07:15:56.452101586Z",
+        "identity": {
+          "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+          "schema_id": "default",
+          "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
+          "state": "active",
+          "state_changed_at": "2026-11-10T07:15:56.450462531Z",
+          "traits": {
+            "email": "override-browser@example.test"
+          },
+          "verifiable_addresses": [
+            {
+              "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
+              "value": "override-browser@example.test",
+              "verified": false,
+              "via": "email",
+              "status": "sent",
+              "created_at": "2026-11-10T07:15:56.451279Z",
+              "updated_at": "2026-11-10T07:15:56.451279Z"
+            }
+          ],
+          "metadata_public": null,
+          "created_at": "2026-11-10T07:15:56.450994Z",
+          "updated_at": "2026-11-10T07:15:56.450994Z",
+          "organization_id": null
+        },
+        "devices": [
+          {
+            "id": "492e4bf1-954c-4948-8126-d3408f6aa586",
+            "ip_address": "10.89.2.58:52770",
+            "user_agent": "Python-urllib/3.11",
+            "location": ""
+          }
+        ]
+      },
+      "identity": {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "schema_id": "default",
+        "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
+        "state": "active",
+        "state_changed_at": "2026-11-10T07:15:56.450462531Z",
+        "traits": {
+          "email": "override-browser@example.test"
+        },
+        "verifiable_addresses": [
+          {
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
+          }
+        ],
+        "metadata_public": null,
+        "created_at": "2026-11-10T07:15:56.450994Z",
+        "updated_at": "2026-11-10T07:15:56.450994Z",
+        "organization_id": null
+      },
+      "continue_with": [
+        {
+          "action": "redirect_browser_to",
+          "redirect_browser_to": "http://127.0.0.1:18445/return"
+        },
+        {
+          "action": "show_verification_ui",
+          "flow": {
+            "id": "f5ea7324-504b-4167-9bb6-c36ff5b09d18",
+            "verifiable_address": "override-browser@example.test",
+            "url": "http://127.0.0.1:18445/verification?flow=f5ea7324-504b-4167-9bb6-c36ff5b09d18"
+          }
+        }
+      ]
+    }
+  },
+  "before": {
+    "admin": [
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test"
+      }
+    ]
+  },
+  "after": {
+    "admin": [
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
+          }
+        ]
+      },
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test"
+      }
+    ]
+  },
+  "hook_calls": [
+    {
+      "context_keys": [
+        "flow",
+        "identity"
+      ],
+      "identity_id": "00000000-0000-0000-0000-000000000000",
+      "email": "override-browser@example.test",
+      "verifiable_addresses": [
+        {
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-0000-0000-000000000000",
+          "status": "pending",
+          "updated_at": "0001-01-01T00:00:00Z",
+          "value": "override-browser@example.test",
+          "verified": false,
+          "via": "email"
+        }
+      ],
+      "flow_id": "d8dd5dc7-32a5-4fff-8ce4-97f384c05ced",
+      "flow_type": "browser",
+      "transient_payload": {},
+      "mode": "override"
+    }
+  ],
+  "identity_created": true
+}
