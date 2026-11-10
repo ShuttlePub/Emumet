@@ -302,6 +302,37 @@
         }
       }
     },
+    "/ap/profiles/{profile_nanoid}": {
+      "get": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Future Profile ActivityPub actor document (1 Profile = 1 actor, ADR 0002). NOT MOUNTED in production (contract only, mounted in P4 at the earliest); the skeleton answers 501. The final actor URL shape and the WebFinger acct (username@domain) are fixed by P1; this entry only reserves the Profile-scoped actor concept so that follow/block/domain-control contracts can refer to it.",
+        "operationId": "get_profile_actor",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid (external ID)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ActivityPub actor document (application/activity+json)"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        }
+      }
+    },
     "/api/v1/accounts": {
       "get": {
         "tags": [
@@ -377,7 +408,7 @@
         "tags": [
           "Account"
         ],
-        "description": "Create a new account with a generated signing key pair.",
+        "description": "Create a new account with a generated signing key pair. `profile_username` is optional; a well-formed value is rejected with 501 before any side effect because username storage is not implemented yet.",
         "operationId": "create_account",
         "requestBody": {
           "content": {
@@ -401,7 +432,10 @@
             }
           },
           "400": {
-            "description": "Invalid request"
+            "description": "Invalid request (including a malformed or reserved profile_username)"
+          },
+          "501": {
+            "description": "profile_username was supplied but username storage is not implemented yet; nothing was created"
           }
         },
         "security": [
@@ -2613,6 +2647,7 @@
         "tags": [
           "Account"
         ],
+        "description": "Create an organization-owned Profile. `username` is optional; a well-formed value is rejected with 501 before the Profile is created because username storage is not implemented yet.",
         "operationId": "create_profile",
         "parameters": [
           {
@@ -2646,6 +2681,9 @@
               }
             }
           },
+          "400": {
+            "description": "Missing organization header or malformed/reserved username"
+          },
           "403": {
             "description": "Authenticated person is not an active organization member"
           },
@@ -2654,6 +2692,932 @@
           },
           "422": {
             "description": "Organization profile already exists"
+          },
+          "501": {
+            "description": "username was supplied but username storage is not implemented yet; nothing was created"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}": {
+      "get": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Profile identity read. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner (the owning personal Account, or an active member of the owning organization via X-Organization-Id). `username` is null while the Profile has no username (legacy Profiles; username is set once in P1 and is immutable afterwards). There is deliberately no username update API.",
+        "operationId": "get_profile_identity",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid (external ID)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/blocks": {
+      "get": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Individual blocks owned by the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "operationId": "list_profile_blocks",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Pagination limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Pagination cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Block list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRelationListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Block one target (individual actor) as the Profile. NOT MOUNTED in production (contract only; block writes stay unmounted until D8R); the skeleton answers 501. Semantics: display suppression, detaches existing follow relations in both directions and rejects new follows/interactions in both directions. No ActivityPub Block is sent. Removing the block never restores detached relations. Authorization: only the Profile's current owner. Settings never propagate to other Profiles or Accounts.",
+        "operationId": "create_profile_block",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Blocking Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProfileRelationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Block recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRelationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid target"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "409": {
+            "description": "Target is already blocked"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/blocks/{block_id}": {
+      "delete": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Remove an individual block. Detached follow relations are NOT restored and no restore list is kept. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "operationId": "delete_profile_block",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Blocking Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "block_id",
+            "in": "path",
+            "description": "Block setting nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Block removed"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile or block not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/domain-controls": {
+      "get": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "List the Profile's domain mute/block controls. NOT MOUNTED in production (contract only); the skeleton answers 501. Domains match exactly (`example.com` does not cover `sub.example.com`). Controls are per Profile: they never apply to other Profiles of the same Account or to other Accounts, and are unrelated to server-wide HostModeration. Authorization: only the Profile's current owner.",
+        "operationId": "list_domain_controls",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Domain controls",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainControlListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}": {
+      "get": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Read the control for one exact domain. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "operationId": "get_domain_control",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "domain",
+            "in": "path",
+            "description": "Exact host name (lowercase ASCII / IDNA A-label; no scheme, port, path or wildcard). Final normalization rules are fixed by D8P.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Domain control",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainControlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed domain"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile or domain control not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Create or replace the mute/block control for one exact domain. NOT MOUNTED in production (contract only; block writes stay unmounted until D8R); the skeleton answers 501. Revision: `expected_revision` omitted creates (409 if the control already exists); `expected_revision` = current revision replaces (409 on mismatch, including a control deleted meanwhile). The response carries the new revision. mute = display suppression only. block = display suppression, bidirectional follow detachment and rejection of new follows; no ActivityPub Block is sent and removing the block does not restore relations. Authorization: only the Profile's current owner.",
+        "operationId": "put_domain_control",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "domain",
+            "in": "path",
+            "description": "Exact host name (lowercase ASCII / IDNA A-label; no scheme, port, path or wildcard). Final normalization rules are fixed by D8P.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDomainControlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Domain control created or replaced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainControlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed domain"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "409": {
+            "description": "Revision conflict (expected_revision does not match the current state)"
+          },
+          "422": {
+            "description": "Request body is invalid (for example an unknown mode)"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Remove the control for one exact domain. Detached follow relations are NOT restored and no restore list is kept. NOT MOUNTED in production (contract only); the skeleton answers 501. `expected_revision` is required: 409 if it does not match the current revision. Authorization: only the Profile's current owner.",
+        "operationId": "delete_domain_control",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "domain",
+            "in": "path",
+            "description": "Exact host name (lowercase ASCII / IDNA A-label; no scheme, port, path or wildcard). Final normalization rules are fixed by D8P.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the control being removed",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Domain control removed"
+          },
+          "400": {
+            "description": "Malformed domain or missing expected_revision"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile or domain control not found"
+          },
+          "409": {
+            "description": "Revision conflict"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/followers": {
+      "get": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Profiles/actors following the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "operationId": "list_profile_followers",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Pagination limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Pagination cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Followers list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileFollowListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/following": {
+      "get": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Profiles/actors followed by the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "operationId": "list_profile_following",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Pagination limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Pagination cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Following list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileFollowListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/follows": {
+      "post": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Follow a target as the Profile (the Profile, not the Account, is the follower). NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner. A new follow is rejected (422) when the target or its domain is blocked by the Profile or blocks the Profile. Mute does not reject follows.",
+        "operationId": "create_profile_follow",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Follower Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProfileFollowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Follow recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileFollowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid target"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "409": {
+            "description": "Follow already exists"
+          },
+          "422": {
+            "description": "Follow refused by a block (individual or domain)"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/follows/{follow_id}": {
+      "delete": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Unfollow: remove a follow owned by the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "operationId": "delete_profile_follow",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Follower Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "follow_id",
+            "in": "path",
+            "description": "Follow relation nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Follow removed"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile or follow not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/mutes": {
+      "get": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Individual mutes owned by the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "operationId": "list_profile_mutes",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Pagination limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Pagination cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mute list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRelationListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Mute one target (individual actor) as the Profile. NOT MOUNTED in production (contract only); the skeleton answers 501. Semantics: display suppression only; follow relations are kept and nothing is rejected. Authorization: only the Profile's current owner.",
+        "operationId": "create_profile_mute",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Muting Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProfileRelationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Mute recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRelationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid target"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "409": {
+            "description": "Target is already muted"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/mutes/{mute_id}": {
+      "delete": {
+        "tags": [
+          "ProfilePolicy"
+        ],
+        "description": "Remove an individual mute. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "operationId": "delete_profile_mute",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Muting Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mute_id",
+            "in": "path",
+            "description": "Mute setting nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Mute removed"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile or mute not found"
+          },
+          "501": {
+            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -3326,6 +4290,16 @@
           },
           "name": {
             "type": "string"
+          },
+          "profile_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional Profile username (staged migration: optional until P4, then required).\nNever derived from `name`. Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word\nlist without trimming or case folding (400 on violation). Username storage is not implemented yet,\nso a well-formed value is rejected with 501 before any Account/Profile/event is created.\nOmit the field to keep the legacy behaviour.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
           }
         }
       },
@@ -3337,6 +4311,32 @@
         "properties": {
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "CreateProfileFollowRequest": {
+        "type": "object",
+        "description": "Request to follow a target from a Profile.",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Remote actor URL (e.g. https://remote.example/users/bob), `acct:name@domain`,\nor a local Profile nanoid."
+          }
+        }
+      },
+      "CreateProfileRelationRequest": {
+        "type": "object",
+        "description": "Request to block or mute one target (individual actor) from a Profile.",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Remote actor URL, `acct:name@domain`, or a local Profile nanoid."
           }
         }
       },
@@ -3354,6 +4354,16 @@
               "string",
               "null"
             ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional Profile username (staged migration: optional until P4, then required).\nValidated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without trimming or\ncase folding (400 on violation). Username storage is not implemented yet, so a well-formed value\nis rejected with 501 before the Profile is created. Usernames cannot be changed through an update API.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
           }
         }
       },
@@ -3386,6 +4396,67 @@
           },
           "target": {
             "type": "string"
+          }
+        }
+      },
+      "DomainControlListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DomainControlResponse"
+            }
+          }
+        }
+      },
+      "DomainControlMode": {
+        "type": "string",
+        "description": "Treatment applied to every actor whose canonical actor-ID host equals the domain.",
+        "enum": [
+          "mute",
+          "block"
+        ]
+      },
+      "DomainControlResponse": {
+        "type": "object",
+        "description": "A Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
+        "required": [
+          "profile_id",
+          "domain",
+          "mode",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "domain": {
+            "type": "string",
+            "description": "Normalized domain (lowercase ASCII / IDNA A-label host, no scheme, port or wildcard)."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/DomainControlMode"
+          },
+          "profile_id": {
+            "type": "string",
+            "description": "Owning Profile nanoid."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Monotonic revision starting at 1, incremented on every change.\nSend it back as `expected_revision` to update or delete safely.",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -3832,6 +4903,129 @@
           }
         }
       },
+      "ProfileFollowListResponse": {
+        "type": "object",
+        "description": "Profile-scoped follow list (following or followers of a Profile).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileFollowResponse"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor for the next page; absent on the last page."
+          }
+        }
+      },
+      "ProfileFollowResponse": {
+        "type": "object",
+        "description": "A Profile-scoped follow relationship (the Profile is the follower).",
+        "required": [
+          "id",
+          "profile_id",
+          "target",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "description": "Follow relation nanoid."
+          },
+          "profile_id": {
+            "type": "string",
+            "description": "Follower Profile nanoid."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProfileFollowState"
+          },
+          "target": {
+            "type": "string",
+            "description": "Canonical actor URL of the followed target."
+          }
+        }
+      },
+      "ProfileFollowState": {
+        "type": "string",
+        "description": "Lifecycle state of a Profile follow.",
+        "enum": [
+          "pending",
+          "accepted"
+        ]
+      },
+      "ProfileRelationKind": {
+        "type": "string",
+        "description": "Kind of individual (non-domain) relation setting.",
+        "enum": [
+          "mute",
+          "block"
+        ]
+      },
+      "ProfileRelationListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileRelationResponse"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor for the next page; absent on the last page."
+          }
+        }
+      },
+      "ProfileRelationResponse": {
+        "type": "object",
+        "description": "An individual block or mute setting owned by one Profile.",
+        "required": [
+          "id",
+          "profile_id",
+          "kind",
+          "target",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "description": "Relation setting nanoid."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProfileRelationKind"
+          },
+          "profile_id": {
+            "type": "string",
+            "description": "Owning Profile nanoid."
+          },
+          "target": {
+            "type": "string",
+            "description": "Canonical actor URL of the target."
+          }
+        }
+      },
       "ProfileResponse": {
         "type": "object",
         "required": [
@@ -3868,6 +5062,13 @@
               "string",
               "null"
             ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Profile username; null while unset (every Profile until username storage lands in P1)."
           }
         }
       },
@@ -3946,6 +5147,27 @@
           },
           "publicKeyPem": {
             "type": "string"
+          }
+        }
+      },
+      "PutDomainControlRequest": {
+        "type": "object",
+        "description": "Create or replace the control for one domain.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Optimistic concurrency token.\nOmit (or null) to create: 409 if a control for the domain already exists.\nSet to the current `revision` to replace: 409 if it no longer matches\n(including when the control was deleted meanwhile).",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/DomainControlMode"
           }
         }
       },
@@ -4663,6 +5885,10 @@
     {
       "name": "Report",
       "description": "Account moderation reports"
+    },
+    {
+      "name": "ProfilePolicy",
+      "description": "CONTRACT ONLY, not mounted on the production router (mounted in P4 at the earliest): Profile identity, Profile-scoped follow, individual block/mute and domain-controls. Handlers answer 501 until P1/P2/P3o/P3i/D8P/D8G/D8R implement them. Owner-only authorization, revision conflicts (409) and errors are the contract."
     },
     {
       "name": "ProfileTransfer",

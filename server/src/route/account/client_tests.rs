@@ -416,6 +416,13 @@ async fn keto_with_writes() -> MockServer {
         .respond_with(ResponseTemplate::new(201))
         .mount(&keto)
         .await;
+    Mock::given(method("POST"))
+        .and(path("/relation-tuples/check"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"allowed": true})),
+        )
+        .mount(&keto)
+        .await;
     keto
 }
 

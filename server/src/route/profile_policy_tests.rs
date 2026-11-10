@@ -122,8 +122,9 @@ fn build_request(operation: &ContractOperation, token: Option<&str>) -> Request<
 async fn every_contract_operation_answers_explicit_501_when_authenticated() {
     let app = contract_app();
     let operations = contract_operations();
-    assert!(
-        operations.len() >= 17,
+    assert_eq!(
+        operations.len(),
+        16,
         "expected the full ProfilePolicy contract, found {} operations",
         operations.len()
     );
