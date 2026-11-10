@@ -31,10 +31,11 @@ kernel = { path = "../kernel" }
 
 [dev-dependencies]
 kernel = { path = "../kernel", features = ["test-utils"] }
-tokio = { workspace = true, features = ["macros", "test-util", "sync", "io-util"] }
+tokio = { workspace = true, features = ["macros", "test-util", "sync", "io-util", "rt-multi-thread", "time"] }
 tempfile = "3"
 zeroize = "1.7"
 test-with.workspace = true
 
-driver.path = "../driver"
+driver = { path = "../driver", features = ["test-mode"] }
+wiremock = "0.6"
 sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls"] }

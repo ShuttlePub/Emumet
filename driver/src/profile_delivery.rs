@@ -11,3 +11,6 @@ mod target;
 pub use resolver::HttpRemoteActorResolver;
 pub use sender::HttpProfileDeliverySender;
 pub use target::ProfileDeliveryNetworkSettings;
+
+#[cfg(test)]
+mod tests;
