@@ -44,7 +44,7 @@ def validate_contract(config):
 def validate_url(value):
     url = urlsplit(value)
     if (not url.hostname or url.username or url.password or url.query or url.fragment
-            or url.path != "/registration/check"):
+            or url.path != "/registration/pre-persist"):
         raise ValueError("hook URL must name the private registration check endpoint")
     loopback = False
     try:
@@ -70,7 +70,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--secret-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--hook-url", default="http://127.0.0.1:8081/registration/check")
+    parser.add_argument("--hook-url", default="http://127.0.0.1:8081/registration/pre-persist")
     args = parser.parse_args()
     try:
         if args.secret_file.stat().st_mode & 0o077:

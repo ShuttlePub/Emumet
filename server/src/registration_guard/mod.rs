@@ -1,12 +1,14 @@
 //! Dedicated internal listener: never mounted into the public router or OpenAPI.
 mod config;
+#[cfg(test)]
+mod kratos_e2e;
 mod probe;
 #[cfg(test)]
 mod tests;
 mod worker;
 
 use application::service::registration_enforcement::{
-    EnforceRegistrationUseCase, RegistrationAttempt, RegistrationVerdict,
+    CheckedRegistration, EnforceRegistrationUseCase, RegistrationAttempt, RegistrationVerdict,
 };
 use application::service::registration_enforcement_probe::RegistrationEnforcementMonitorUseCase;
 use axum::{
@@ -68,26 +70,28 @@ impl GuardService for GuardApi {
         {
             return RegistrationVerdict::TemporarilyUnavailable;
         }
-        let verdict = self
+        let checked = self
             .0
-            .enforce_registration(RegistrationAttempt {
+            .enforce_registration_checked(RegistrationAttempt {
                 flow_id: &context.flow_id,
                 email: &context.email,
                 email_proof: context.email_proof.as_deref(),
                 bot_token: context.bot_token.as_deref(),
             })
             .await
-            .unwrap_or(RegistrationVerdict::TemporarilyUnavailable);
-        if verdict == RegistrationVerdict::Accept
+            .unwrap_or_else(|_| {
+                CheckedRegistration::from(RegistrationVerdict::TemporarilyUnavailable)
+            });
+        if checked.verdict == RegistrationVerdict::Accept
             && !self
                 .0
                 .refresh_registration_enforcement()
                 .await
-                .is_ok_and(|view| view.decision.accepts())
+                .is_ok_and(|view| checked.covers(&view.decision))
         {
             return RegistrationVerdict::TemporarilyUnavailable;
         }
-        verdict
+        checked.verdict
     }
 }
 

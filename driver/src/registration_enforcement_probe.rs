@@ -238,7 +238,9 @@ impl RegistrationEnforcementProbeClient for HttpKratosEnforcementProbe {
         url.query_pairs_mut().append_pair("flow", &flow.flow_id);
         let mut body = json!({
             "method": "password",
-            "password": format!("Canary-only-{}-x9!Z", probe_id.as_str()),
+            // Independent entropy: reusing the email nonce here triggers Kratos'
+            // identifier-similarity password policy before the pre-persist hook.
+            "password": format!("Canary-only-{:032x}-x9!Z", rand::random::<u128>()),
             "traits": {"email": probe_id.email()},
             "transient_payload": {"registration_probe_id": probe_id.as_str()}
         });
@@ -249,8 +251,11 @@ impl RegistrationEnforcementProbeClient for HttpKratosEnforcementProbe {
             .client
             .post(url)
             .header(header::ACCEPT, "application/json")
-            .header(header::ORIGIN, target.public.origin().ascii_serialization())
             .json(&body);
+        // Native API flows must not acquire browser CSRF semantics via Origin.
+        if flow.mode == EnforcementProbeMode::Browser {
+            request = request.header(header::ORIGIN, target.public.origin().ascii_serialization());
+        }
         if let Some(cookie) = &flow.csrf_cookie {
             request = request.header(header::COOKIE, cookie);
         }

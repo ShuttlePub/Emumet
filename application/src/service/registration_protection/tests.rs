@@ -41,12 +41,15 @@ fn config(protection: Protection, generation: &str) -> ProtectionConfigSnapshot 
     }
 }
 
+type VerificationBarrier = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
+
 #[derive(Clone)]
 struct FakeTurnstile {
     snapshot: Arc<Mutex<ProtectionConfigSnapshot>>,
     verify: Arc<Mutex<ProviderResult>>,
     probe: Arc<Mutex<ProviderResult>>,
     verify_calls: Arc<AtomicUsize>,
+    verify_barrier: Arc<Mutex<Option<VerificationBarrier>>>,
 }
 
 impl TurnstileVerifier for FakeTurnstile {
@@ -56,6 +59,11 @@ impl TurnstileVerifier for FakeTurnstile {
 
     async fn verify(&self, _check: &BotTokenCheck<'_>) -> ProviderResult {
         self.verify_calls.fetch_add(1, Ordering::SeqCst);
+        let barrier = self.verify_barrier.lock().unwrap().clone();
+        if let Some((entered, release)) = barrier {
+            entered.notify_one();
+            release.notified().await;
+        }
         *self.verify.lock().unwrap()
     }
 
@@ -260,6 +268,7 @@ impl Fixture {
                 verify: Arc::new(Mutex::new(http_success())),
                 probe: Arc::new(Mutex::new(http_accepted())),
                 verify_calls: Arc::new(AtomicUsize::new(0)),
+                verify_barrier: Default::default(),
             },
             email: FakeEmail {
                 snapshot: Arc::new(Mutex::new(config(Protection::Email, "e1"))),

@@ -9,3 +9,6 @@ master-key-password
 /tools/__pycache__/
 e2e/certs/*.pem
 e2e/certs/*.key
+
+/e2e/registration-enforcement/runtime/
+/e2e/registration-enforcement/result.log

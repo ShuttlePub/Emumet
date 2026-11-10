@@ -72,6 +72,7 @@ pub(crate) async fn create_email_challenge(
             return Ok((StatusCode::BAD_REQUEST, INVALID_REQUEST).into_response());
         }
     };
+    let started = tokio::time::Instant::now();
     let outcome = api
         .issue_challenge(
             &request.email,
@@ -81,6 +82,7 @@ pub(crate) async fn create_email_challenge(
         )
         .await
         .map_err(ErrorStatus::from)?;
+    pad_email_issue_response(started, matches!(outcome, IssueOutcome::Issued { .. })).await;
     Ok(match outcome {
         IssueOutcome::Issued {
             challenge_id,
@@ -104,6 +106,14 @@ pub(crate) async fn create_email_challenge(
             .into_response(),
         IssueOutcome::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE).into_response(),
     })
+}
+
+async fn pad_email_issue_response(started: tokio::time::Instant, attempted_send: bool) {
+    // SMTP's total deadline is 3s. Pad every attempted delivery (accepted or not) to
+    // a 4s floor; do not pretend to hide unbounded DB/network stalls or scheduler jitter.
+    if attempted_send {
+        tokio::time::sleep_until(started + std::time::Duration::from_secs(4)).await;
+    }
 }
 
 #[utoipa::path(
@@ -140,7 +150,7 @@ pub(crate) async fn confirm_email_challenge(
 
 #[cfg(test)]
 mod tests {
-    use super::kratos_csrf_cookie;
+    use super::{kratos_csrf_cookie, pad_email_issue_response};
     use axum::http::{header, HeaderMap, HeaderValue};
 
     fn headers(values: &[&str]) -> HeaderMap {
@@ -170,5 +180,17 @@ mod tests {
             kratos_csrf_cookie(&headers(&["csrf_token_x; xcsrf_token_y=1"])),
             None
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn attempted_email_delivery_has_a_fixed_response_floor_without_holding_a_db_connection() {
+        let started = tokio::time::Instant::now();
+        pad_email_issue_response(started, true).await;
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(4));
+        pad_email_issue_response(started, true).await;
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(4));
+        let rejected_before_smtp = tokio::time::Instant::now();
+        pad_email_issue_response(rejected_before_smtp, false).await;
+        assert!(rejected_before_smtp.elapsed().is_zero());
     }
 }

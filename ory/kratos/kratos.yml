@@ -19,7 +19,7 @@
               {
                 "hook": "web_hook",
                 "config": {
-                  "url": "http://127.0.0.1:8081/registration/check",
+                  "url": "http://127.0.0.1:8081/registration/pre-persist",
                   "method": "POST",
                   "auth": {
                     "type": "api_key",

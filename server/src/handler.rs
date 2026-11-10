@@ -205,6 +205,28 @@ impl AppModule {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_registration_fixture(
+        mut self,
+        source: &driver::registration_protection::EnvSource,
+        siteverify: &str,
+    ) -> Self {
+        self.turnstile_verifier = HttpTurnstileVerifier::new(
+            driver::registration_protection::turnstile::TurnstileSettings::from_source(source),
+        )
+        .with_test_base_url(siteverify);
+        self.email_transport =
+            SmtpEmailTransport::new(SmtpSettings::from_source_allowing_plaintext(source));
+        self.enforcement_probe =
+            driver::registration_enforcement_probe::HttpKratosEnforcementProbe::new(vec![
+                driver::registration_enforcement_probe::ProbeTargetSettings {
+                    public_url: "http://127.0.0.1:19433/".into(),
+                    admin_url: "http://127.0.0.1:19434/".into(),
+                },
+            ]);
+        self
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_webhook_sender(mut self, webhook_sender: HttpWebhookSender) -> Self {
         self.webhook_sender = webhook_sender;
         self

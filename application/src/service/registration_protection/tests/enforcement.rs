@@ -477,3 +477,40 @@ async fn aborted_cycle_rolls_back_due_reservation_and_releases_the_database_lock
         .await
         .unwrap());
 }
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn provider_io_barrier_rechecks_closure_and_newly_effective_protection() {
+    for closes in [true, false] {
+        let f = Fixture::new().await;
+        f.bootstrap_bot().await;
+        f.set_gate_admin_state(AdminState::Open).await;
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *f.module.turnstile.verify_barrier.lock().unwrap() =
+            Some((entered.clone(), release.clone()));
+        let module = f.module.clone();
+        let attempt = tokio::spawn(async move {
+            module
+                .enforce_registration(super::enforcement::attempt(None, Some("valid")))
+                .await
+                .unwrap()
+        });
+        entered.notified().await;
+        if closes {
+            f.set_gate_admin_state(AdminState::Closed).await;
+        } else {
+            // This protection becomes effective while the registration is waiting on BOT I/O.
+            f.bootstrap_email().await;
+        }
+        release.notify_one();
+        assert_eq!(
+            attempt.await.unwrap(),
+            if closes {
+                RegistrationVerdict::Reject
+            } else {
+                RegistrationVerdict::TemporarilyUnavailable
+            }
+        );
+    }
+}

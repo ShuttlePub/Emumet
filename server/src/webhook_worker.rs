@@ -1,6 +1,10 @@
 use crate::handler::AppModule;
 use application::service::registration_gate_webhook::DeliverRegistrationGateWebhooksUseCase;
-use kernel::interfaces::repository::{DependOnWebhookSender, WebhookSender};
+use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::repository::{
+    DependOnWebhookDeliveryRepository, DependOnWebhookSender, WebhookDeliveryRepository,
+    WebhookSender,
+};
 use kernel::prelude::entity::{WebhookConfigStatus, WebhookDeliveryPolicy};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +30,22 @@ fn poll_interval_from_env() -> Duration {
         .filter(|millis| *millis > 0)
         .unwrap_or(2000);
     Duration::from_millis(millis)
+}
+
+/// Establish the enable-time baseline before startup producers can emit new gate events.
+/// This performs no external delivery; a spawned worker alone has no scheduling-order guarantee.
+pub async fn prepare_baseline(module: &AppModule) -> error_stack::Result<(), kernel::KernelError> {
+    if matches!(
+        module.webhook_sender().status(),
+        WebhookConfigStatus::Enabled { .. }
+    ) {
+        let mut connection = module.database_connection().connection().await?;
+        module
+            .webhook_delivery_repository()
+            .ingest_gate_events(&mut connection, time::OffsetDateTime::now_utc(), 0)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Starts the delivery worker when the webhook is configured. Nothing runs (and nothing is logged

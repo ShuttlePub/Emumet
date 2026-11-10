@@ -1,5 +1,7 @@
 # Registration enforcement preparation (E15d, part 1)
 
+> Historical preparation scope. Part 2 supersedes deployment details: see [current runbook](registration-enforcement.md).
+
 **Not production enforcement yet.** This preparatory change does not modify
 `ory/kratos/kratos.yml`, compose, the public router or OpenAPI. Existing Kratos
 registrations remain unchanged. Issue #81 and D15 remain incomplete until the
@@ -16,7 +18,7 @@ attestation/ingress/production-wiring and real-Kratos acceptance slice lands.
 | `REGISTRATION_PROTECTION_POLL_SECS` | 30 seconds; positive, strictly less than half `REGISTRATION_PROTECTION_PROBE_MAX_AGE_SECS` (default 600 seconds) |
 
 The private `POST /registration/pre-persist` expects
-`X-Emumet-Registration-Key` and this allowlisted JSON context:
+`Authorization: Bearer <secret>` and this allowlisted JSON context:
 
 ```json
 {

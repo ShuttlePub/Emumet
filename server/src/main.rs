@@ -72,6 +72,9 @@ async fn main() -> Result<(), StackTrace> {
     let (_projection_handle, projection_shutdown) =
         ProjectionWorker::spawn(Arc::new(app.clone()), projection_poll_interval_from_env());
 
+    if webhook_worker::prepare_baseline(&app).await.is_err() {
+        tracing::warn!("registration webhook baseline could not be prepared; worker will retry");
+    }
     let webhook_shutdown = webhook_worker::spawn_if_enabled(Arc::new(app.clone()));
     // Invalid hook configuration must not take login/Account APIs down with registration.
     let registration_shutdown =

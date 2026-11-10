@@ -41,7 +41,7 @@ async fn resolve_admin(
 #[utoipa::path(
     get,
     path = "/api/v1/admin/registration-gate",
-    description = "Get the registration gate state. `override.active` is true while the override is in effect so the admin UI can keep showing the warning on every page. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+    description = "Get the registration gate state. `override.active` is true while the override is in effect so the admin UI can keep showing the warning on every page. The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
     responses(
         (status = 200, description = "Registration gate state", body = RegistrationGateResponse),
         (status = 401, description = "Missing or invalid bearer token"),
@@ -65,7 +65,7 @@ pub(crate) async fn get_registration_gate(
 #[utoipa::path(
     post,
     path = "/api/v1/admin/registration-gate/open",
-    description = "Open (or manually resume after a config-loss stop) the registration gate. Succeeds only when at least one protection (email or bot) is verified; clears the stop latch. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+    description = "Open (or manually resume after a config-loss stop) the registration gate. Succeeds only when at least one protection (email or bot) is verified; clears the stop latch. The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
     request_body = RegistrationGateRevisionRequest,
     responses(
         (status = 200, description = "Gate opened", body = RegistrationGateResponse),
@@ -95,7 +95,7 @@ pub(crate) async fn open_registration_gate(
 #[utoipa::path(
     post,
     path = "/api/v1/admin/registration-gate/close",
-    description = "Manually close the registration gate. The closure is never lifted automatically. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+    description = "Manually close the registration gate. The closure is never lifted automatically. The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
     request_body = RegistrationGateRevisionRequest,
     responses(
         (status = 200, description = "Gate closed", body = RegistrationGateResponse),
@@ -125,7 +125,7 @@ pub(crate) async fn close_registration_gate(
 #[utoipa::path(
     post,
     path = "/api/v1/admin/registration-gate/override",
-    description = "Open the registration gate with override: allowed even without a verified protection, but only after the warning is explicitly acknowledged. Stays in effect until explicitly revoked; automatic stop and outage rejection are not applied while it is active (verified protections are still enforced). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+    description = "Open the registration gate with override: allowed even without a verified protection, but only after the warning is explicitly acknowledged. Stays in effect until explicitly revoked; automatic stop and outage rejection are not applied while it is active (verified protections are still enforced). The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
     request_body = EnableOverrideRequest,
     responses(
         (status = 200, description = "Override enabled and gate opened", body = RegistrationGateResponse),
@@ -155,7 +155,7 @@ pub(crate) async fn enable_registration_gate_override(
 #[utoipa::path(
     post,
     path = "/api/v1/admin/registration-gate/override/revoke",
-    description = "Revoke the override and return to normal judgement, re-evaluated against the current observation. Never closes the gate by itself. NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet.",
+    description = "Revoke the override and return to normal judgement, re-evaluated against the current observation. Never closes the gate by itself. The authenticated Kratos pre-persist hook enforces this decision on self-service registration. Enforcement attestation loss stops registration ahead of override and requires manual resume after restoration.",
     request_body = RegistrationGateRevisionRequest,
     responses(
         (status = 200, description = "Override revoked", body = RegistrationGateResponse),

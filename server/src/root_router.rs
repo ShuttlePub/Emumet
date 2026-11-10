@@ -89,6 +89,7 @@ fn build_cors_layer() -> CorsLayer {
                 .collect();
             CorsLayer::new()
                 .allow_origin(origins)
+                .allow_credentials(true)
                 .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
                 .allow_headers([
                     header::AUTHORIZATION,

@@ -43,20 +43,20 @@ class RegistrationKratosConfigTests(unittest.TestCase):
 
     def test_secret_is_rendered_only_in_copy_and_transport_is_restricted(self):
         key = "test-only-" * 6
-        for url in ["http://127.0.0.1:8081/registration/check", "https://guard.internal/registration/check"]:
+        for url in ["http://127.0.0.1:8081/registration/pre-persist", "https://guard.internal/registration/pre-persist"]:
             config = render(self.config, key, url)
             hook = config["selfservice"]["flows"]["registration"]["after"]["password"]["hooks"][0]["config"]
             self.assertEqual(hook["auth"]["config"]["value"], "Bearer " + key)
             self.assertEqual(hook["url"], url)
         self.assertEqual(validate_contract(self.config)["auth"]["config"]["value"], PLACEHOLDER)
-        for url in ["http://guard.internal/registration/check", "http://localhost/registration/check",
-                    "https://user:password@guard.internal/registration/check",
-                    "https://guard.internal/registration/check?key=secret", "file:///registration/check"]:
+        for url in ["http://guard.internal/registration/pre-persist", "http://localhost/registration/pre-persist",
+                    "https://user:password@guard.internal/registration/pre-persist",
+                    "https://guard.internal/registration/pre-persist?key=secret", "file:///registration/pre-persist"]:
             with self.subTest(url=url), self.assertRaises(ValueError):
                 render(self.config, key, url)
         for key in ["short", "with a space" * 10, "a" * 40 + "\n", "é" * 40]:
             with self.subTest(key_type="invalid"), self.assertRaises(ValueError):
-                render(self.config, key, "http://127.0.0.1:8081/registration/check")
+                render(self.config, key, "http://127.0.0.1:8081/registration/pre-persist")
 
     def test_runtime_output_is_private_never_overwritten_and_key_is_not_logged(self):
         with tempfile.TemporaryDirectory() as temp:
