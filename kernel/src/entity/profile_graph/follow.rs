@@ -301,6 +301,24 @@ mod tests {
     }
 
     #[test]
+    fn serde_round_trip_keeps_the_generation() {
+        let follow = ProfileFollow::new_accepted(
+            ProfileFollowId::new(7),
+            remote("bob"),
+            local(1),
+            activity(9),
+            now(),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&follow).unwrap();
+        let restored: ProfileFollow = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.activity_id(), follow.activity_id());
+        assert_eq!(restored.follower(), follow.follower());
+        assert_eq!(restored.followee(), follow.followee());
+        assert_eq!(restored.state(), follow.state());
+    }
+
+    #[test]
     fn enum_text_round_trip() {
         for state in [
             ProfileFollowState::Pending,

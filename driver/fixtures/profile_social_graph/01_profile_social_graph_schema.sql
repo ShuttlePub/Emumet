@@ -4,6 +4,9 @@
 -- P4 (profile-federation-in-place-cutover) が所有する。適用の前提は、本番 migrations/ を全て適用した DB
 -- (profiles テーブルが存在すること)。旧 Account 単位のテーブルには触れない。
 --
+-- URL 系の列 (actor_url / activity_id / target_inbox) は 1024 バイト以下に制限する (kernel の検証と同じ上限)。
+-- 複合 B-tree 索引 (URL 2 列 + 数値列) の 1 エントリが PostgreSQL の上限 (約 2.7KB) を超えないようにするため。
+--
 -- 設計:
 --   * 関係の主体はローカル Profile (profiles.id)。リモート側は canonical actor URL だけを持つ。
 --   * ローカル側の外部キーは profiles への ON DELETE CASCADE のみ。旧テーブル (remote_accounts 等) を
@@ -23,6 +26,9 @@ CREATE TABLE "profile_follows" (
   "ended_at" TIMESTAMPTZ,
   "created_at" TIMESTAMPTZ NOT NULL,
   "updated_at" TIMESTAMPTZ NOT NULL,
+  CONSTRAINT chk_profile_follows_url_length
+    CHECK (octet_length(follower_actor_url) <= 1024 AND octet_length(followee_actor_url) <= 1024
+       AND octet_length(activity_id) <= 1024),
   CONSTRAINT chk_profile_follows_follower_exclusive
     CHECK ((follower_profile_id IS NOT NULL) <> (follower_actor_url IS NOT NULL)),
   CONSTRAINT chk_profile_follows_followee_exclusive
@@ -77,6 +83,7 @@ CREATE TABLE "profile_blocks" (
   "target_profile_id" BIGINT REFERENCES "profiles" ("id") ON DELETE CASCADE,
   "target_actor_url" TEXT,
   "created_at" TIMESTAMPTZ NOT NULL,
+  CONSTRAINT chk_profile_blocks_url_length CHECK (octet_length(target_actor_url) <= 1024),
   CONSTRAINT chk_profile_blocks_target_exclusive
     CHECK ((target_profile_id IS NOT NULL) <> (target_actor_url IS NOT NULL)),
   CONSTRAINT chk_profile_blocks_not_self
@@ -94,6 +101,7 @@ CREATE TABLE "profile_mutes" (
   "target_profile_id" BIGINT REFERENCES "profiles" ("id") ON DELETE CASCADE,
   "target_actor_url" TEXT,
   "created_at" TIMESTAMPTZ NOT NULL,
+  CONSTRAINT chk_profile_mutes_url_length CHECK (octet_length(target_actor_url) <= 1024),
   CONSTRAINT chk_profile_mutes_target_exclusive
     CHECK ((target_profile_id IS NOT NULL) <> (target_actor_url IS NOT NULL)),
   CONSTRAINT chk_profile_mutes_not_self
@@ -113,7 +121,9 @@ CREATE TABLE "profile_inbound_activities" (
   "receive_count" INTEGER NOT NULL DEFAULT 1 CHECK ("receive_count" > 0),
   "first_received_at" TIMESTAMPTZ NOT NULL,
   "last_received_at" TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY ("receiver_profile_id", "actor_url", "activity_id")
+  PRIMARY KEY ("receiver_profile_id", "actor_url", "activity_id"),
+  CONSTRAINT chk_profile_inbound_activities_url_length
+    CHECK (octet_length(actor_url) <= 1024 AND octet_length(activity_id) <= 1024)
 );
 CREATE INDEX idx_profile_inbound_activities_first_received
   ON profile_inbound_activities (first_received_at);
@@ -142,6 +152,8 @@ CREATE TABLE "profile_delivery_jobs" (
   "cancel_reason" TEXT,
   "created_at" TIMESTAMPTZ NOT NULL,
   "updated_at" TIMESTAMPTZ NOT NULL,
+  CONSTRAINT chk_profile_delivery_jobs_url_length
+    CHECK (octet_length(activity_id) <= 1024 AND octet_length(target_inbox) <= 1024),
   CONSTRAINT uq_profile_delivery_jobs_key UNIQUE ("sender_profile_id", "activity_id", "target_inbox"),
   CONSTRAINT chk_profile_delivery_jobs_activity_type
     CHECK (activity_type IN ('Follow', 'Accept', 'Reject', 'Undo')),

@@ -1441,3 +1441,140 @@ mod delivery {
         assert_eq!(unique.len(), JOBS, "no job is claimed twice");
     }
 }
+
+mod url_limits {
+    use super::*;
+
+    /// 1024 バイトちょうどの URL。
+    fn max_url(prefix: &str) -> String {
+        let head = format!("https://remote.example/{prefix}/");
+        format!("{head}{}", "a".repeat(1024 - head.len()))
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn maximum_length_urls_fit_in_every_composite_index() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let (_, p2) = seed_personal_profile(db).await;
+        let long_actor =
+            |p: &str| ProfileGraphActor::Remote(GraphActorUrl::new(max_url(p)).unwrap());
+        let long_activity = |p: &str| GraphActivityId::new(max_url(p)).unwrap();
+        assert_eq!(max_url("x").len(), 1024);
+
+        // 世代の一意索引 (follower_actor_url, activity_id) と有効な世代の索引。
+        let inbound = ProfileFollow::new_pending(
+            ProfileFollowId::new(kernel::generate_id()),
+            long_actor("follower"),
+            local(&p1),
+            long_activity("follow"),
+            now(),
+        )
+        .unwrap();
+        assert_eq!(begin(db, &inbound).await, BeginFollowOutcome::Created);
+        let outbound = ProfileFollow::new_pending(
+            ProfileFollowId::new(kernel::generate_id()),
+            local(&p1),
+            long_actor("followee"),
+            long_activity("follow-out"),
+            now(),
+        )
+        .unwrap();
+        assert_eq!(begin(db, &outbound).await, BeginFollowOutcome::Created);
+        assert!(matches!(
+            begin(db, &inbound).await,
+            BeginFollowOutcome::ReplayedActivity(_)
+        ));
+
+        // block / mute の索引。
+        let mut conn = db.connection().await.unwrap();
+        let block = ProfileBlock::new(
+            ProfileBlockId::new(kernel::generate_id()),
+            p1.clone(),
+            long_actor("blocked"),
+            now(),
+        )
+        .unwrap();
+        assert!(db
+            .profile_block_repository()
+            .insert_if_absent(&mut conn, &block)
+            .await
+            .unwrap());
+        let mute = ProfileMute::new(
+            ProfileMuteId::new(kernel::generate_id()),
+            p1.clone(),
+            long_actor("muted"),
+            now(),
+        )
+        .unwrap();
+        assert!(db
+            .profile_mute_repository()
+            .insert_if_absent(&mut conn, &mute)
+            .await
+            .unwrap());
+
+        // 重複受信記録の主キー (receiver, actor_url, activity_id)。
+        let received = NewInboundActivity::new(
+            p2.clone(),
+            GraphActorUrl::new(max_url("actor")).unwrap(),
+            long_activity("received"),
+            "Follow",
+            now(),
+        )
+        .unwrap();
+        let repo = db.inbound_activity_repository();
+        assert!(repo.record(&mut conn, &received).await.unwrap().first_seen);
+        assert!(!repo.record(&mut conn, &received).await.unwrap().first_seen);
+        drop(conn);
+
+        // 配送 job の冪等性キー (sender, activity_id, target_inbox)。
+        let long_job = NewProfileDeliveryJob::new(
+            p1.clone(),
+            DeliveryActivityType::Follow,
+            long_activity("job"),
+            GraphInboxUrl::new(max_url("inbox")).unwrap(),
+            "{\"type\":\"Follow\"}",
+            now(),
+        )
+        .unwrap();
+        assert!(enqueue(db, &long_job).await.is_newly_enqueued());
+        assert!(!enqueue(db, &long_job).await.is_newly_enqueued());
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn urls_over_the_limit_are_rejected_by_kernel_and_schema() {
+        kernel::ensure_generator_initialized();
+        let too_long = format!("{}a", max_url("x"));
+        assert_eq!(too_long.len(), 1025);
+        assert!(GraphActorUrl::new(too_long.clone()).is_err());
+        assert!(GraphActivityId::new(too_long.clone()).is_err());
+        assert!(GraphInboxUrl::new(too_long.clone()).is_err());
+
+        let iso = IsolatedDatabase::create().await;
+        let (_, p1) = seed_personal_profile(&iso.database).await;
+        let blocked = sqlx::query(
+            "INSERT INTO profile_blocks (id, nanoid, owner_profile_id, target_actor_url, created_at) \
+             VALUES ($1, 'n1', $2, $3, now())",
+        )
+        .bind(kernel::generate_id())
+        .bind(*p1.as_ref())
+        .bind(&too_long)
+        .execute(&iso.pool)
+        .await;
+        assert!(blocked.is_err());
+        let job = sqlx::query(
+            "INSERT INTO profile_delivery_jobs (id, sender_profile_id, activity_type, activity_id, \
+             target_inbox, payload, state, next_attempt_at, created_at, updated_at) \
+             VALUES ($1, $2, 'Follow', $3, 'https://r.example/inbox', '{}', 'pending', now(), now(), now())",
+        )
+        .bind(kernel::generate_id())
+        .bind(*p1.as_ref())
+        .bind(&too_long)
+        .execute(&iso.pool)
+        .await;
+        assert!(job.is_err());
+    }
+}

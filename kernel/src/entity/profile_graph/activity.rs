@@ -3,7 +3,7 @@ use error_stack::Report;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
-const MAX_URL_LEN: usize = 2048;
+const MAX_URL_LEN: usize = 1024;
 
 /// ActivityPub が URL として扱う識別子の最低限の検査。正規化 (大文字小文字・末尾 `/`・fragment 等) は
 /// しない。canonical 形は呼び出し側 (P1 の URL 規則) が決める。保存層は **渡された文字列と完全一致**で扱う。
