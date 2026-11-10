@@ -151,10 +151,11 @@ pub trait DeliverProfileActivitiesUseCase:
             }
             // 署名までに時間が経っていても、送信の直前に lease を再確認して延長する。取消・期限切れ・
             // 他 worker による回収があれば送信しない。
+            let renewed_at = clock();
             let renewed = {
                 let mut connection = self.database_connection().connection().await?;
                 self.profile_delivery_job_repository()
-                    .renew_lease(&mut connection, claim, clock(), policy.lease_duration)
+                    .renew_lease(&mut connection, claim, renewed_at, policy.lease_duration)
                     .await?
             };
             if !renewed {
@@ -170,11 +171,18 @@ pub trait DeliverProfileActivitiesUseCase:
                     ProfileDeliveryStep::LeaseLost
                 });
             }
-            // 送信は延長後の lease を超えない時間に制限する (超えたら timeout として再試行)。
+            // 送信は、更新に使った時刻から決まる絶対期限 (延長後の lease の終わりから安全マージンを引いた
+            // 時刻) までに制限する。更新の SQL がロック待ちなどで遅れて期限・マージンを使い切っていたら
+            // 送信しない。送信が期限を超えたら timeout として再試行する。
             let margin = LEASE_SAFETY_MARGIN.min(policy.lease_duration / 2);
-            let budget = (policy.lease_duration - margin)
-                .try_into()
-                .unwrap_or(std::time::Duration::from_secs(1));
+            let deadline = renewed_at + policy.lease_duration - margin;
+            let remaining = deadline - clock();
+            let Ok(budget) = std::time::Duration::try_from(remaining) else {
+                return Ok(ProfileDeliveryStep::LeaseLost);
+            };
+            if budget.is_zero() {
+                return Ok(ProfileDeliveryStep::LeaseLost);
+            }
             let request = ProfileDeliveryRequest {
                 url: claim.target_inbox.as_str(),
                 headers: &headers,

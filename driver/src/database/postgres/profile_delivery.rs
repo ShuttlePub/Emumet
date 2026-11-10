@@ -395,15 +395,17 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
         let result = sqlx::query(
             //language=postgresql
             r#"
-            UPDATE profile_delivery_jobs SET lease_expires_at = $4, updated_at = $3
+            UPDATE profile_delivery_jobs
+            SET lease_expires_at = GREATEST($3, clock_timestamp()) + make_interval(secs => $4),
+                updated_at = $3
             WHERE id = $1 AND lease_token = $2 AND state = 'in_flight'
-              AND attempt_count = $5 AND lease_expires_at > $3
+              AND attempt_count = $5 AND lease_expires_at > GREATEST($3, clock_timestamp())
             "#,
         )
         .bind(claim.id.as_ref())
         .bind(&claim.lease_token)
         .bind(now)
-        .bind(now + extension)
+        .bind(extension.as_seconds_f64())
         .bind(claim.attempt_no)
         .execute(con)
         .await

@@ -694,3 +694,64 @@ async fn renew_lease_extends_only_a_lease_that_is_still_held() {
         "an expired lease cannot be revived"
     );
 }
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_lease_renewal_that_stalls_past_the_lease_does_not_lead_to_a_send() {
+    let env = Env::new().await;
+    let setup = follow_setup(&env).await;
+    env.respond_inbox(ResponseTemplate::new(202)).await;
+    // lease の更新 (in_flight のまま同じ token を更新する UPDATE) だけを待たせる。
+    env.execute(
+        "CREATE FUNCTION p3o_slow_renew() RETURNS trigger AS $$ BEGIN
+           IF OLD.state = 'in_flight' AND NEW.state = 'in_flight' AND OLD.lease_token = NEW.lease_token THEN
+             PERFORM pg_sleep(0.6);
+           END IF;
+           RETURN NEW;
+         END $$ LANGUAGE plpgsql;
+         CREATE TRIGGER p3o_slow_renew BEFORE UPDATE ON profile_delivery_jobs
+           FOR EACH ROW EXECUTE FUNCTION p3o_slow_renew();",
+    )
+    .await;
+    let policy = ProfileDeliveryPolicy {
+        lease_duration: Duration::seconds(60),
+        batch_size: 1,
+        ..ProfileDeliveryPolicy::default()
+    };
+    // 時計の読み取りは (1) claim (2) 更新に使う時刻 (3) 更新が戻った直後。更新の待機が lease の長さを
+    // 使い切ったことを、(3) 以降の時刻が 100 秒進むことで表す。
+    let calls = std::sync::atomic::AtomicUsize::new(0);
+    let base = env.now();
+    let clock = || {
+        let call = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        base + if call >= 2 {
+            Duration::seconds(100)
+        } else {
+            Duration::ZERO
+        }
+    };
+
+    let report = env.cycle_with_clock("worker-a", &policy, &clock).await;
+
+    assert_eq!((report.lease_lost, report.delivered), (1, 0), "{report:?}");
+    assert!(
+        env.inbox_requests().await.is_empty(),
+        "the old worker must not send once its lease ran out while renewing"
+    );
+    let job = &env.jobs_of(&setup.alice.profile_id).await[0];
+    assert_eq!(job.state, ProfileDeliveryJobState::InFlight);
+    assert_eq!(job.attempt_count, 1);
+
+    // lease が切れたあと、別の worker が回収して 1 回だけ配送する。
+    env.advance_clock(Duration::seconds(70));
+    let report = env.cycle_with("worker-b", &policy).await;
+    assert_eq!(report.delivered, 1, "{report:?}");
+    assert_eq!(env.inbox_requests().await.len(), 1);
+    assert_eq!(
+        attempts(&env, &setup).await,
+        vec![
+            (1, DeliveryResultClass::LeaseExpired, None),
+            (2, DeliveryResultClass::Delivered, Some(202))
+        ]
+    );
+}

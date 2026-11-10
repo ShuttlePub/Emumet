@@ -392,7 +392,26 @@ async fn webfinger_resolves_an_acct_handle_to_the_activitypub_self_link() {
         .unwrap();
     assert_eq!(url.as_str(), "https://x.example/users/bob");
 
+    for name in ["nosubject", "nullsubject", "numsubject", "emptysubject"] {
+        let subject = match name {
+            "nullsubject" => Some(serde_json::Value::Null),
+            "numsubject" => Some(serde_json::json!(42)),
+            "emptysubject" => Some(serde_json::json!("")),
+            _ => None,
+        };
+        let mut document = serde_json::json!({
+            "links": [{"rel": "self", "type": "application/activity+json", "href": "https://x.example/users/x"}]
+        });
+        if let Some(subject) = subject {
+            document["subject"] = subject;
+        }
+        webfinger(&server, &format!("acct:{name}@{domain}"), document).await;
+    }
     for (handle, expected) in [
+        (format!("nosubject@{domain}"), KernelError::Rejected),
+        (format!("nullsubject@{domain}"), KernelError::Rejected),
+        (format!("numsubject@{domain}"), KernelError::Rejected),
+        (format!("emptysubject@{domain}"), KernelError::Rejected),
         (format!("evil@{domain}"), KernelError::Rejected),
         (format!("nolink@{domain}"), KernelError::Rejected),
         (format!("ghost@{domain}"), KernelError::NotFound),

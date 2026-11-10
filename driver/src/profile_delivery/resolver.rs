@@ -111,13 +111,16 @@ impl RemoteActorResolver for HttpRemoteActorResolver {
         let body = read_limited(&mut response, self.settings.max_response_bytes).await;
         let document: serde_json::Value = serde_json::from_slice(&body)
             .map_err(|_| rejected("webfinger response is not JSON"))?;
-        if let Some(subject) = document.get("subject").and_then(|value| value.as_str()) {
-            let subject = subject.strip_prefix("acct:").unwrap_or(subject);
-            if !subject.eq_ignore_ascii_case(resource.strip_prefix("acct:").unwrap_or(&resource)) {
-                return Err(rejected(
-                    "webfinger subject does not match the requested account",
-                ));
-            }
+        let subject = document
+            .get("subject")
+            .and_then(|value| value.as_str())
+            .filter(|subject| !subject.is_empty())
+            .ok_or_else(|| rejected("webfinger response has no subject"))?;
+        let subject = subject.strip_prefix("acct:").unwrap_or(subject);
+        if !subject.eq_ignore_ascii_case(resource.strip_prefix("acct:").unwrap_or(&resource)) {
+            return Err(rejected(
+                "webfinger subject does not match the requested account",
+            ));
         }
         let href = document
             .get("links")

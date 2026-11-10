@@ -253,6 +253,16 @@ impl Env {
         policy: &ProfileDeliveryPolicy,
     ) -> ProfileDeliveryCycleReport {
         let clock = || self.now();
+        self.cycle_with_clock(worker_id, policy, &clock).await
+    }
+
+    /// 任意の時計 (呼び出し回数に応じて飛ぶ時計など) で 1 サイクル回す。
+    pub async fn cycle_with_clock(
+        &self,
+        worker_id: &str,
+        policy: &ProfileDeliveryPolicy,
+        clock: &(dyn Fn() -> OffsetDateTime + Sync),
+    ) -> ProfileDeliveryCycleReport {
         let jitter = || 1.0;
         let stop = || false;
         self.module
@@ -260,7 +270,7 @@ impl Env {
                 worker_id,
                 policy,
                 &ProfileDeliveryEnv {
-                    clock: &clock,
+                    clock,
                     jitter: &jitter,
                     should_stop: &stop,
                 },
