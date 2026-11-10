@@ -5,6 +5,8 @@ use kernel::prelude::entity::FieldAction;
 pub struct CreateProfileDto {
     pub display_name: Option<String>,
     pub summary: Option<String>,
+    /// Optional one-time username (validated by the use case, never derived from other fields).
+    pub username: Option<String>,
 }
 
 #[derive(Debug)]
@@ -20,6 +22,7 @@ pub struct UpdateProfileDto {
 pub struct ProfileDto {
     pub account_nanoid: String,
     pub nanoid: String,
+    pub username: Option<String>,
     pub display_name: Option<String>,
     pub summary: Option<String>,
     pub icon_url: Option<String>,
@@ -36,6 +39,7 @@ impl ProfileDto {
         Self {
             account_nanoid,
             nanoid: profile.nanoid().as_ref().to_string(),
+            username: profile.username().as_ref().map(|u| u.as_ref().to_string()),
             display_name: profile
                 .display_name()
                 .as_ref()

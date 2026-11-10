@@ -46,10 +46,8 @@ fn contract_app() -> ContractApp {
             (oidc_config, jwks_cache),
             auth_middleware,
         ));
-    let public =
-        axum::Router::new().nest("/ap", axum::Router::new().route_profile_actor_contract());
     ContractApp {
-        router: authed.merge(public),
+        router: authed,
         token,
     }
 }
@@ -125,7 +123,7 @@ async fn every_contract_operation_answers_explicit_501_when_authenticated() {
     let operations = contract_operations();
     assert_eq!(
         operations.len(),
-        12,
+        11,
         "expected the full ProfilePolicy contract, found {} operations",
         operations.len()
     );
@@ -179,17 +177,24 @@ async fn authenticated_contract_operations_reject_missing_token() {
 
 #[test]
 fn production_entrypoint_does_not_mount_contract_routes() {
-    let main_rs = include_str!("../main.rs");
-    for needle in [
-        "profile_policy",
-        "ProfilePolicyContractRouter",
-        "route_profile_policy_contract",
-        "route_profile_actor_contract",
-        "profile_domain_control",
+    for (file, source) in [
+        ("main.rs", include_str!("../main.rs")),
+        ("root_router.rs", include_str!("../root_router.rs")),
     ] {
-        assert!(
-            !main_rs.contains(needle),
-            "main.rs must not reference {needle}: contract routes are mounted in P4 at the earliest"
-        );
+        for needle in [
+            "profile_policy",
+            "ProfilePolicyContractRouter",
+            "route_profile_policy_contract",
+            "ProfileActorRouter",
+            "route_profile_actor",
+            "route_profile_webfinger",
+            "profile_actor",
+            "profile_domain_control",
+        ] {
+            assert!(
+                !source.contains(needle),
+                "{file} must not reference {needle}: Profile routes are mounted in P4 at the earliest"
+            );
+        }
     }
 }

@@ -1,7 +1,7 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::{
     AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
-    ProfileSummary,
+    ProfileSummary, ProfileUsername,
 };
 use crate::KernelError;
 use std::future::Future;
@@ -17,6 +17,7 @@ pub struct ProfileProjection {
     banner: Option<ImageId>,
     version: EventVersion<Profile>,
     nanoid: Nanoid<Profile>,
+    username: Option<ProfileUsername>,
 }
 
 impl ProfileProjection {
@@ -30,6 +31,7 @@ impl ProfileProjection {
         banner: Option<ImageId>,
         version: EventVersion<Profile>,
         nanoid: Nanoid<Profile>,
+        username: Option<ProfileUsername>,
     ) -> Self {
         Self {
             id,
@@ -40,6 +42,7 @@ impl ProfileProjection {
             banner,
             version,
             nanoid,
+            username,
         }
     }
 
@@ -74,6 +77,10 @@ impl ProfileProjection {
     pub fn nanoid(&self) -> &Nanoid<Profile> {
         &self.nanoid
     }
+
+    pub fn username(&self) -> &Option<ProfileUsername> {
+        &self.username
+    }
 }
 
 impl From<Profile> for ProfileProjection {
@@ -88,6 +95,7 @@ impl From<Profile> for ProfileProjection {
             destruct.banner,
             destruct.version,
             destruct.nanoid,
+            destruct.username,
         )
     }
 }
@@ -103,6 +111,7 @@ impl From<ProfileProjection> for Profile {
             value.banner().clone(),
             value.version().clone(),
             value.nanoid().clone(),
+            value.username().clone(),
         )
     }
 }
@@ -139,6 +148,32 @@ pub trait ProfileReadModel: Sync + Send + 'static {
         executor: &mut Self::Connection,
         nanoid: &Nanoid<Profile>,
     ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
+
+    fn find_by_username(
+        &self,
+        executor: &mut Self::Connection,
+        username: &ProfileUsername,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
+
+    /// Row-locks the Profile (`FOR NO KEY UPDATE`, the lock any projection `UPDATE` takes, which
+    /// also conflicts with `FOR SHARE`) and returns its latest committed state. Used to make
+    /// "current owner check -> write" atomic against a concurrent Profile transfer.
+    fn lock_by_id_for_update(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
+
+    /// Monotonic projection write for the one-time username: only `NULL -> value`, and the row
+    /// version never moves backwards. Fails with `Concurrency` when the row already has a
+    /// username (or no longer exists).
+    fn set_username(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileId,
+        username: &ProfileUsername,
+        version: &EventVersion<Profile>,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
     fn create(
         &self,
@@ -197,6 +232,12 @@ pub trait ProfileQuery: Send + Sync + 'static {
         executor: &mut Self::Connection,
         nanoid: &Nanoid<Profile>,
     ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
+
+    fn find_by_username(
+        &self,
+        executor: &mut Self::Connection,
+        username: &ProfileUsername,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileProjection>, KernelError>> + Send;
 }
 
 impl<T> ProfileQuery for T
@@ -241,6 +282,16 @@ where
     ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
         self.profile_read_model()
             .find_by_nanoid(executor, nanoid)
+            .await
+    }
+
+    async fn find_by_username(
+        &self,
+        executor: &mut Self::Connection,
+        username: &ProfileUsername,
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
+        self.profile_read_model()
+            .find_by_username(executor, username)
             .await
     }
 }

@@ -568,31 +568,6 @@ async fn create_account_with_null_username_behaves_like_omitted() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn create_account_with_valid_username_returns_501_before_any_side_effect() {
-    let keto = keto_with_writes().await;
-    let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
-    let name = format!("unstored-username-{}", uuid::Uuid::new_v4());
-    let response = fixture
-        .router
-        .clone()
-        .oneshot(request(
-            "POST",
-            "/api/v1/accounts",
-            &fixture.fresh_token,
-            None,
-            Body::from(format!(
-                r#"{{"name":"{name}","is_bot":false,"profile_username":"alice"}}"#
-            )),
-        ))
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-    assert_no_account_side_effects(&fixture, &name, "valid username").await;
-}
-
-#[test_with::env(DATABASE_URL)]
-#[tokio::test]
 async fn create_account_with_invalid_username_returns_400_before_any_side_effect() {
     let keto = keto_with_writes().await;
     let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
@@ -639,67 +614,5 @@ async fn create_account_with_invalid_username_returns_400_before_any_side_effect
     }
 }
 
-#[test_with::env(DATABASE_URL)]
-#[tokio::test]
-async fn create_profile_with_username_returns_501_without_creating_profile() {
-    let keto = empty_keto().await;
-    let fixture = fixture(&keto.uri(), Some(OrgRole::Member)).await;
-    let organization_nanoid = fixture.organization.nanoid().as_ref().to_string();
-
-    for (username, expected) in [
-        ("alice", StatusCode::NOT_IMPLEMENTED),
-        ("Alice", StatusCode::BAD_REQUEST),
-        ("root", StatusCode::BAD_REQUEST),
-    ] {
-        let response = fixture
-            .router
-            .clone()
-            .oneshot(request(
-                "POST",
-                "/api/v1/profiles",
-                &fixture.token,
-                Some(&organization_nanoid),
-                Body::from(serde_json::json!({"username": username}).to_string()),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), expected, "username {username:?}");
-    }
-
-    let mut executor = fixture
-        .module
-        .database_connection()
-        .connection()
-        .await
-        .unwrap();
-    assert!(
-        fixture
-            .module
-            .profile_read_model()
-            .find_by_account_id(&mut executor, fixture.organization.id())
-            .await
-            .unwrap()
-            .is_none(),
-        "rejected username must not create a Profile"
-    );
-    drop(executor);
-
-    let response = fixture
-        .router
-        .clone()
-        .oneshot(request(
-            "POST",
-            "/api/v1/profiles",
-            &fixture.token,
-            Some(&organization_nanoid),
-            Body::from(r#"{"display_name":"Legacy payload"}"#),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let json = response_json(response).await;
-    assert!(
-        json.get("username").is_some_and(serde_json::Value::is_null),
-        "an unset username must be readable as null, got {json}"
-    );
-}
+#[path = "client_username_tests.rs"]
+mod username;

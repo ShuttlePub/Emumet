@@ -10,7 +10,7 @@ use kernel::interfaces::projection::{
 use kernel::prelude::entity::{
     Account, AccountEvent, AccountKind, AccountStatus, EventEnvelope, EventId, EventVersion,
     ImageId, Metadata, MetadataEvent, MetadataId, Profile, ProfileDisplayName, ProfileEvent,
-    ProfileId, ProfileSummary,
+    ProfileId, ProfileSummary, ProfileUsername,
 };
 use kernel::KernelError;
 use serde_json;
@@ -289,8 +289,8 @@ impl ProfileProjectionWriter for PostgresProfileProjectionWriter {
         sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO profiles (id, account_id, owner_kind, display, summary, icon_id, banner_id, version, nanoid)
-            VALUES ($1, $2, (SELECT kind FROM accounts WHERE id = $2), $3, $4, $5, $6, $7, $8)
+            INSERT INTO profiles (id, account_id, owner_kind, display, summary, icon_id, banner_id, version, nanoid, username)
+            VALUES ($1, $2, (SELECT kind FROM accounts WHERE id = $2), $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (id) DO UPDATE SET
                 account_id = EXCLUDED.account_id,
                 owner_kind = EXCLUDED.owner_kind,
@@ -299,7 +299,9 @@ impl ProfileProjectionWriter for PostgresProfileProjectionWriter {
                 icon_id = EXCLUDED.icon_id,
                 banner_id = EXCLUDED.banner_id,
                 version = EXCLUDED.version,
-                nanoid = EXCLUDED.nanoid
+                nanoid = EXCLUDED.nanoid,
+                -- NULL -> value only; a stale fold must not erase a stored one-time username.
+                username = COALESCE(profiles.username, EXCLUDED.username)
             WHERE profiles.version < EXCLUDED.version
             "#,
         )
@@ -311,6 +313,7 @@ impl ProfileProjectionWriter for PostgresProfileProjectionWriter {
         .bind(profile.banner().as_ref().map(ImageId::as_ref))
         .bind(profile.version().as_ref())
         .bind(profile.nanoid().as_ref())
+        .bind(profile.username().as_ref().map(ProfileUsername::as_ref))
         .execute(con)
         .await
         .convert_error()?;

@@ -616,6 +616,271 @@ mod profile {
         assert_eq!(state_1.display_name(), expected.display_name());
         assert_eq!(state_2.display_name(), expected.display_name());
     }
+    async fn project_until_caught_up(projector: &ProfileProjectorTest) {
+        let mut previous = -1;
+        for _ in 0..500 {
+            let checkpoint = projector.project_profile_batch().await.unwrap();
+            if checkpoint == previous {
+                return;
+            }
+            previous = checkpoint;
+        }
+        panic!("profile projector did not catch up");
+    }
+
+    async fn seed_profile_with_events(
+        db: &PostgresDatabase,
+        username: Option<&str>,
+    ) -> (ProfileId, Nanoid<Profile>) {
+        let mut conn = db.connection().await.unwrap();
+        let profile_id = ProfileId::new(kernel::generate_id());
+        let account_id = AccountId::new(kernel::generate_id());
+        sqlx::query(
+            //language=postgresql
+            "INSERT INTO accounts (id, name, is_bot, version, nanoid, created_at) \
+             VALUES ($1, $2, false, 1, $3, NOW())",
+        )
+        .bind(account_id.as_ref())
+        .bind(format!("test-{}", account_id.as_ref()))
+        .bind(format!("nanoid-{}", account_id.as_ref()))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let nanoid = Nanoid::<Profile>::default();
+        let command = Profile::create_with_username(
+            profile_id.clone(),
+            account_id,
+            None,
+            None,
+            None,
+            None,
+            nanoid.clone(),
+            username.map(kernel::prelude::entity::ProfileUsername::new),
+        );
+        db.profile_event_store()
+            .persist(&mut conn, &command)
+            .await
+            .unwrap();
+        (profile_id, nanoid)
+    }
+
+    /// Acceptance 5: the stored username is restored when the projection is rebuilt from the
+    /// event history (creation-time username and one-time `UsernameSet` alike).
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn profile_projector_restores_usernames_from_event_history() {
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = ProfileProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        clear_checkpoint(&projector.db).await;
+        let at_creation = format!("u{}", kernel::generate_id());
+        let set_later = format!("u{}", kernel::generate_id());
+        let (created_with, _) = seed_profile_with_events(&projector.db, Some(&at_creation)).await;
+        let (created_without, _) = seed_profile_with_events(&projector.db, None).await;
+        let (legacy, _) = seed_profile_with_events(&projector.db, None).await;
+        {
+            let mut conn = projector.db.connection().await.unwrap();
+            projector
+                .db
+                .profile_event_store()
+                .persist(
+                    &mut conn,
+                    &Profile::set_username(
+                        created_without.clone(),
+                        kernel::prelude::entity::ProfileUsername::new(set_later.clone()),
+                    ),
+                )
+                .await
+                .unwrap();
+        }
+
+        let read = |id: ProfileId| {
+            let db = projector.db.clone();
+            async move {
+                db.profile_read_model()
+                    .find_by_id(&mut db.connection().await.unwrap(), &id)
+                    .await
+                    .unwrap()
+                    .expect("profile must be materialized")
+            }
+        };
+        project_until_caught_up(&projector).await;
+        assert_eq!(
+            read(created_with.clone())
+                .await
+                .username()
+                .as_ref()
+                .map(|u| u.as_ref().as_str()),
+            Some(at_creation.as_str())
+        );
+        assert_eq!(
+            read(created_without.clone())
+                .await
+                .username()
+                .as_ref()
+                .map(|u| u.as_ref().as_str()),
+            Some(set_later.as_str())
+        );
+        assert!(read(legacy.clone()).await.username().is_none());
+
+        // Rebuild: drop the projection rows and the checkpoint, replay the whole history.
+        {
+            let mut conn = projector.db.connection().await.unwrap();
+            for id in [&created_with, &created_without, &legacy] {
+                projector
+                    .db
+                    .profile_read_model()
+                    .delete(&mut conn, id)
+                    .await
+                    .unwrap();
+            }
+        }
+        clear_checkpoint(&projector.db).await;
+        project_until_caught_up(&projector).await;
+        assert_eq!(
+            read(created_with)
+                .await
+                .username()
+                .as_ref()
+                .map(|u| u.as_ref().as_str()),
+            Some(at_creation.as_str())
+        );
+        assert_eq!(
+            read(created_without)
+                .await
+                .username()
+                .as_ref()
+                .map(|u| u.as_ref().as_str()),
+            Some(set_later.as_str())
+        );
+        assert!(read(legacy).await.username().is_none());
+    }
+
+    /// R2: a Profile edit whose event stream was read before a concurrent one-time username
+    /// commit writes a projection without the username. The stored username must survive that
+    /// stale write, the projector run and a full rebuild.
+    ///
+    /// Interleaving (all on real connections): username event saved (uncommitted) -> edit saves its
+    /// event and rehydrates (username invisible) -> username projection committed -> edit's stale
+    /// projection write committed.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn stored_username_survives_a_concurrent_profile_edit_and_the_projector() {
+        use kernel::interfaces::database::{Transaction, TransactionalDatabaseConnection};
+        use kernel::interfaces::repository::{AggregateRepository, DependOnProfileRepository};
+        use kernel::prelude::entity::{FieldAction, ProfileUsername};
+
+        let _guard = super::PROJECTOR_TEST_LOCK.lock().await;
+        kernel::ensure_generator_initialized();
+        let projector = ProfileProjectorTest {
+            db: PostgresDatabase::new().await.unwrap(),
+        };
+        let db = projector.db.clone();
+        clear_checkpoint(&db).await;
+        let (profile_id, _nanoid) = seed_profile_with_events(&db, None).await;
+        project_until_caught_up(&projector).await;
+        let username_value = format!("u{}", kernel::generate_id());
+        let username = ProfileUsername::new(username_value.clone());
+        let stored = || async {
+            db.profile_read_model()
+                .find_by_id(&mut db.connection().await.unwrap(), &profile_id)
+                .await
+                .unwrap()
+                .expect("projection row")
+                .username()
+                .as_ref()
+                .map(|u| u.as_ref().to_string())
+        };
+        assert_eq!(stored().await, None);
+
+        let mut username_tx = db.get_transaction().await.unwrap();
+        let mut edit_tx = db.get_transaction().await.unwrap();
+
+        // 1. the one-time username event is saved, not yet committed
+        let username_event = db
+            .profile_repository()
+            .save(
+                username_tx.connection(),
+                Profile::set_username(profile_id.clone(), username.clone()),
+            )
+            .await
+            .unwrap();
+
+        // 2. the edit saves its event and rehydrates: it cannot see the username
+        db.profile_repository()
+            .save(
+                edit_tx.connection(),
+                Profile::update(
+                    profile_id.clone(),
+                    FieldAction::Set(ProfileDisplayName::new("edited".to_string())),
+                    FieldAction::Unchanged,
+                    FieldAction::Unchanged,
+                    FieldAction::Unchanged,
+                ),
+            )
+            .await
+            .unwrap();
+        let stale = db
+            .profile_repository()
+            .load(edit_tx.connection(), &profile_id)
+            .await
+            .unwrap();
+        assert!(stale.aggregate().username().is_none());
+
+        // 3. the username projection is written and committed
+        db.profile_read_model()
+            .set_username(
+                username_tx.connection(),
+                &profile_id,
+                &username,
+                &username_event.version,
+            )
+            .await
+            .unwrap();
+        username_tx.commit().await.unwrap();
+        assert_eq!(stored().await.as_deref(), Some(username_value.as_str()));
+
+        // 4. the edit's stale projection (username None, newer version) is written and committed
+        db.profile_read_model()
+            .update(edit_tx.connection(), stale.aggregate())
+            .await
+            .unwrap();
+        edit_tx.commit().await.unwrap();
+        assert_eq!(
+            stored().await.as_deref(),
+            Some(username_value.as_str()),
+            "a stale Profile edit must not erase the stored username"
+        );
+
+        // The projector (stale folds included) keeps it ...
+        {
+            use kernel::interfaces::projection::{
+                DependOnProfileProjectionWriter, ProfileProjectionWriter,
+            };
+            let mut conn = db.connection().await.unwrap();
+            db.profile_projection_writer()
+                .upsert(&mut conn, stale.aggregate())
+                .await
+                .unwrap();
+        }
+        project_until_caught_up(&projector).await;
+        assert_eq!(stored().await.as_deref(), Some(username_value.as_str()));
+
+        // ... and a rebuild from the event history restores it.
+        {
+            let mut conn = db.connection().await.unwrap();
+            db.profile_read_model()
+                .delete(&mut conn, &profile_id)
+                .await
+                .unwrap();
+        }
+        clear_checkpoint(&db).await;
+        project_until_caught_up(&projector).await;
+        assert_eq!(stored().await.as_deref(), Some(username_value.as_str()));
+    }
+
     #[test_with::env(DATABASE_URL)]
     #[tokio::test]
     async fn profile_projector_applies_out_of_window_update_onto_existing_projection() {

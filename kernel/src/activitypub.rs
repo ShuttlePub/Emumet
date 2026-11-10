@@ -35,6 +35,13 @@ pub enum Context {
 /// this constant is the single place to change.
 const ACTORS_PATH: &str = "ap/accounts";
 
+/// Federation path segment of Profile actors (final form fixed by P1, ADR profile-actor-identity).
+///
+/// The Profile nanoid, not the username, is the path component: the actor URI is derived from the
+/// immutable Profile identity and therefore never changes on Profile transfer. Production does not
+/// mount this path until the P4 cutover.
+const PROFILE_ACTORS_PATH: &str = "ap/profiles";
+
 /// Centralized builder for every ActivityPub URL of a local actor.
 ///
 /// Constructed from the public base URL and the account nanoid. All
@@ -43,6 +50,7 @@ const ACTORS_PATH: &str = "ap/accounts";
 #[derive(Debug, Clone)]
 pub struct ActorUrlBuilder {
     base_url: String,
+    actors_path: &'static str,
     account_nanoid: String,
 }
 
@@ -51,14 +59,30 @@ impl ActorUrlBuilder {
     pub fn new(base_url: &str, account_nanoid: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
+            actors_path: ACTORS_PATH,
             account_nanoid: account_nanoid.to_string(),
+        }
+    }
+
+    /// Create a builder for a **Profile** actor (`{base}/ap/profiles/{profile_nanoid}`).
+    ///
+    /// Every derived URL (inbox, outbox, collections, key id) uses the Profile path; the
+    /// `account_nanoid` naming of the fields is historical and holds the Profile nanoid here.
+    pub fn for_profile(base_url: &str, profile_nanoid: &str) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            actors_path: PROFILE_ACTORS_PATH,
+            account_nanoid: profile_nanoid.to_string(),
         }
     }
 
     /// Canonical actor URL (`{base}/ap/accounts/{nanoid}`). Also used as the
     /// actor document `url`, `publicKey.owner`, and WebFinger href/aliases.
     pub fn actor_id(&self) -> String {
-        format!("{}/{}/{}", self.base_url, ACTORS_PATH, self.account_nanoid)
+        format!(
+            "{}/{}/{}",
+            self.base_url, self.actors_path, self.account_nanoid
+        )
     }
 
     /// Actor inbox URL.
@@ -385,6 +409,35 @@ mod tests {
     // -----------------------------------------------------------------------
     // ActorUrlBuilder
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn profile_actor_url_builder_uses_the_profile_path() {
+        let urls = ActorUrlBuilder::for_profile("https://example.com/", "p1nano");
+
+        assert_eq!(urls.actor_id(), "https://example.com/ap/profiles/p1nano");
+        assert_eq!(urls.inbox(), "https://example.com/ap/profiles/p1nano/inbox");
+        assert_eq!(
+            urls.outbox(),
+            "https://example.com/ap/profiles/p1nano/outbox"
+        );
+        assert_eq!(
+            urls.followers(),
+            "https://example.com/ap/profiles/p1nano/followers"
+        );
+        assert_eq!(
+            urls.following(),
+            "https://example.com/ap/profiles/p1nano/following"
+        );
+        assert_eq!(
+            urls.key_id(),
+            "https://example.com/ap/profiles/p1nano#main-key"
+        );
+        // The Account based builder is unchanged.
+        assert_eq!(
+            ActorUrlBuilder::new("https://example.com", "p1nano").actor_id(),
+            "https://example.com/ap/accounts/p1nano"
+        );
+    }
 
     #[test]
     fn actor_url_builder_derives_all_endpoints() {

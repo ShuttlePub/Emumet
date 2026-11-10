@@ -2,6 +2,7 @@ mod actor;
 mod collections;
 mod discovery;
 mod inbox;
+pub(crate) mod profile_actor;
 
 pub(crate) use actor::{__path_get_actor, get_actor};
 pub(crate) use collections::{
@@ -10,6 +11,7 @@ pub(crate) use collections::{
 };
 pub(crate) use discovery::{__path_webfinger, webfinger};
 pub(crate) use inbox::{__path_post_inbox, post_inbox};
+pub(crate) use profile_actor::__path_get_profile_actor;
 
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;

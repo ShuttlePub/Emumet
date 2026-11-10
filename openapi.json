@@ -305,9 +305,9 @@
     "/ap/profiles/{profile_nanoid}": {
       "get": {
         "tags": [
-          "ProfilePolicy"
+          "ProfileActor"
         ],
-        "description": "Future Profile ActivityPub actor document (1 Profile = 1 actor, ADR 0002). NOT MOUNTED in production (contract only, mounted in P4 at the earliest); the skeleton answers 501. The final actor URL shape and the WebFinger acct (username@domain) are fixed by P1; this entry only reserves the Profile-scoped actor concept so that follow/block/domain-control contracts can refer to it.",
+        "description": "Profile ActivityPub actor document (1 Profile = 1 actor, ADR 0002). Actor id: {PUBLIC_BASE_URL}/ap/profiles/{profile_nanoid}; inbox/outbox/followers/following are that URL plus /inbox, /outbox, /followers, /following; the key id is that URL plus #main-key; preferredUsername is the Profile username. A Profile is only an actor once it has a username and a Profile signing key (404 otherwise). NOT MOUNTED on the production router: the production mount is owned by the P4 cutover; P1 only provides the generation logic.",
         "operationId": "get_profile_actor",
         "parameters": [
           {
@@ -322,13 +322,17 @@
         ],
         "responses": {
           "200": {
-            "description": "ActivityPub actor document (application/activity+json)"
+            "description": "ActivityPub actor document",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Actor"
+                }
+              }
+            }
           },
           "404": {
-            "description": "Profile not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
+            "description": "Profile not found, or it has no username / signing key yet"
           }
         }
       }
@@ -408,7 +412,7 @@
         "tags": [
           "Account"
         ],
-        "description": "Create a new account with a generated signing key pair. `profile_username` is optional; a well-formed value is rejected with 501 before any Account/Profile/event is created because username storage is not implemented yet.",
+        "description": "Create a new account with a generated signing key pair. `profile_username` is optional: a valid value is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards); omit it to keep the legacy behaviour.",
         "operationId": "create_account",
         "requestBody": {
           "content": {
@@ -434,8 +438,8 @@
           "400": {
             "description": "Invalid request (including a malformed or reserved profile_username)"
           },
-          "501": {
-            "description": "profile_username was supplied but username storage is not implemented yet; nothing was created"
+          "409": {
+            "description": "profile_username is already taken; nothing was created"
           }
         },
         "security": [
@@ -2647,7 +2651,7 @@
         "tags": [
           "Account"
         ],
-        "description": "Create an organization-owned Profile. `username` is optional; a well-formed value is rejected with 501 before the Profile is created because username storage is not implemented yet.",
+        "description": "Create an organization-owned Profile. `username` is optional: a valid value is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards).",
         "operationId": "create_profile",
         "parameters": [
           {
@@ -2690,11 +2694,11 @@
           "404": {
             "description": "Organization not found"
           },
+          "409": {
+            "description": "username is already taken; nothing was created"
+          },
           "422": {
             "description": "Organization profile already exists"
-          },
-          "501": {
-            "description": "username was supplied but username storage is not implemented yet; nothing was created"
           }
         },
         "security": [
@@ -3679,6 +3683,83 @@
         ]
       }
     },
+    "/api/v1/profiles/{profile_nanoid}/username": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Set the username of a Profile that has none, exactly once. This is the only way to set a username after creation: there is no update API, a Profile that already has a username is refused with 409, and the username is unique across all Profiles (also deleted ones). Authorization: only the Profile's current owner (the owning personal Account, or an active member of the owning organization via X-Organization-Id). The username becomes the acct name of the Profile's future ActivityPub actor; the actor itself is not published before the P4 cutover.",
+        "operationId": "set_profile_username",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "description": "Profile nanoid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Organization-Id",
+            "in": "header",
+            "description": "Organization account nanoid when the Profile is organization-owned",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetProfileUsernameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Username set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed or reserved username"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Caller is not the current owner of the Profile"
+          },
+          "404": {
+            "description": "Profile not found"
+          },
+          "409": {
+            "description": "The Profile already has a username, or the username is already taken"
+          },
+          "422": {
+            "description": "The owning Account is suspended or banned"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/reports": {
       "post": {
         "tags": [
@@ -4287,7 +4368,7 @@
               "string",
               "null"
             ],
-            "description": "Optional Profile username (staged migration: optional until P4, then required).\nNever derived from `name`. Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word\nlist without trimming or case folding (400 on violation). Username storage is not implemented yet,\nso a well-formed value is rejected with 501 before any Account/Profile/event is created.\nOmit the field to keep the legacy behaviour.",
+            "description": "Optional Profile username (staged migration: optional until P4, then required).\nNever derived from `name`. Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word\nlist without trimming or case folding (400 on violation). A valid value is stored on the\ncreated Profile in the same transaction; it is unique across all Profiles (also deleted ones)\nand immutable afterwards (409 if already taken, nothing is created). Omit the field to keep\nthe legacy behaviour.",
             "maxLength": 64,
             "minLength": 1,
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
@@ -4351,7 +4432,7 @@
               "string",
               "null"
             ],
-            "description": "Optional Profile username (staged migration: optional until P4, then required).\nValidated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without trimming or\ncase folding (400 on violation). Username storage is not implemented yet, so a well-formed value\nis rejected with 501 before the Profile is created. Usernames cannot be changed through an update API.",
+            "description": "Optional Profile username (staged migration: optional until P4, then required).\nValidated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without trimming or\ncase folding (400 on violation). A valid value is stored on the created Profile; it is unique\nacross all Profiles (also deleted ones) and immutable afterwards (409 if already taken, nothing\nis created). Usernames cannot be changed through an update API.",
             "maxLength": 64,
             "minLength": 1,
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
@@ -5147,7 +5228,7 @@
               "string",
               "null"
             ],
-            "description": "Profile username; null while unset (every Profile until username storage lands in P1)."
+            "description": "Profile username; null while the Profile has none (legacy Profiles). Set once, immutable."
           }
         }
       },
@@ -5484,6 +5565,22 @@
                 "$ref": "#/components/schemas/OrganizationContextResponse"
               }
             ]
+          }
+        }
+      },
+      "SetProfileUsernameRequest": {
+        "type": "object",
+        "description": "One-time username assignment for an existing Profile that has no username yet.",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "`^[a-z0-9][a-z0-9._-]{0,63}$`, not a reserved word, no trimming or case folding.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
           }
         }
       },
@@ -5964,6 +6061,10 @@
     {
       "name": "Report",
       "description": "Account moderation reports"
+    },
+    {
+      "name": "ProfileActor",
+      "description": "Profile ActivityPub actor document (1 Profile = 1 actor). The generation logic exists (P1) but the route is NOT MOUNTED on the production router before the P4 cutover."
     },
     {
       "name": "ProfilePolicy",

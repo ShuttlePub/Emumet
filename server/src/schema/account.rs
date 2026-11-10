@@ -21,9 +21,10 @@ pub struct CreateAccountRequest {
     pub is_bot: bool,
     /// Optional Profile username (staged migration: optional until P4, then required).
     /// Never derived from `name`. Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word
-    /// list without trimming or case folding (400 on violation). Username storage is not implemented yet,
-    /// so a well-formed value is rejected with 501 before any Account/Profile/event is created.
-    /// Omit the field to keep the legacy behaviour.
+    /// list without trimming or case folding (400 on violation). A valid value is stored on the
+    /// created Profile in the same transaction; it is unique across all Profiles (also deleted ones)
+    /// and immutable afterwards (409 if already taken, nothing is created). Omit the field to keep
+    /// the legacy behaviour.
     #[serde(default)]
     #[schema(
         pattern = "^[a-z0-9][a-z0-9._-]{0,63}$",
@@ -39,8 +40,9 @@ pub struct CreateProfileRequest {
     pub summary: Option<String>,
     /// Optional Profile username (staged migration: optional until P4, then required).
     /// Validated against `^[a-z0-9][a-z0-9._-]{0,63}$` and the reserved-word list without trimming or
-    /// case folding (400 on violation). Username storage is not implemented yet, so a well-formed value
-    /// is rejected with 501 before the Profile is created. Usernames cannot be changed through an update API.
+    /// case folding (400 on violation). A valid value is stored on the created Profile; it is unique
+    /// across all Profiles (also deleted ones) and immutable afterwards (409 if already taken, nothing
+    /// is created). Usernames cannot be changed through an update API.
     #[serde(default)]
     #[schema(
         pattern = "^[a-z0-9][a-z0-9._-]{0,63}$",
@@ -55,15 +57,28 @@ impl CreateProfileRequest {
         CreateProfileDto {
             display_name: self.display_name,
             summary: self.summary,
+            username: self.username,
         }
     }
+}
+
+/// One-time username assignment for an existing Profile that has no username yet.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SetProfileUsernameRequest {
+    /// `^[a-z0-9][a-z0-9._-]{0,63}$`, not a reserved word, no trimming or case folding.
+    #[schema(
+        pattern = "^[a-z0-9][a-z0-9._-]{0,63}$",
+        min_length = 1,
+        max_length = 64
+    )]
+    pub username: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileResponse {
     pub account_id: String,
     pub id: String,
-    /// Profile username; null while unset (every Profile until username storage lands in P1).
+    /// Profile username; null while the Profile has none (legacy Profiles). Set once, immutable.
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub summary: Option<String>,
@@ -76,7 +91,7 @@ impl From<application::dto::profile::ProfileDto> for ProfileResponse {
         Self {
             account_id: value.account_nanoid,
             id: value.nanoid,
-            username: None,
+            username: value.username,
             display_name: value.display_name,
             summary: value.summary,
             icon_url: value.icon_url,

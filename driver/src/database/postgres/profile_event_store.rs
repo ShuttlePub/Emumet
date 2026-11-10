@@ -32,6 +32,33 @@ impl TryFrom<EventRow> for EventEnvelope<ProfileEvent, Profile> {
 
 pub struct PostgresProfileEventStore;
 
+/// Unique indexes created by `20261105000001_profile_username_and_actor_keys.sql`.
+const USERNAME_UNIQUE_INDEX: &str = "profile_events_username_unique";
+const USERNAME_ONCE_INDEX: &str = "profile_events_username_once_per_profile";
+
+/// Username uniqueness (also against deleted Profiles) and the once-per-Profile rule are
+/// enforced by unique indexes over the append-only `profile_events` table, so concurrent
+/// assignments race on the database instead of on application-level checks.
+fn map_insert_error(error: sqlx::Error) -> Report<KernelError> {
+    if let sqlx::Error::Database(db_error) = &error {
+        match db_error.constraint() {
+            Some(USERNAME_UNIQUE_INDEX) => {
+                return Report::new(KernelError::Concurrency)
+                    .attach_printable("Profile username is already taken");
+            }
+            Some(USERNAME_ONCE_INDEX) => {
+                return Report::new(KernelError::Concurrency)
+                    .attach_printable("Profile already has a username; it is set only once");
+            }
+            _ => {}
+        }
+    }
+    match error {
+        sqlx::Error::PoolTimedOut => Report::from(error).change_context(KernelError::Timeout),
+        _ => Report::from(error).change_context(KernelError::Internal),
+    }
+}
+
 impl ProfileEventStore for PostgresProfileEventStore {
     type Connection = PostgresConnection;
 
@@ -132,7 +159,7 @@ impl PostgresProfileEventStore {
                 .bind(&data)
                 .execute(&mut *con)
                 .await
-                .convert_error()?
+                .map_err(map_insert_error)?
             }
             Some(ExpectedVersion::At(prev)) => {
                 sqlx::query(
@@ -150,7 +177,7 @@ impl PostgresProfileEventStore {
                 .bind(prev.as_ref())
                 .execute(&mut *con)
                 .await
-                .convert_error()?
+                .map_err(map_insert_error)?
             }
             None => {
                 sqlx::query(
@@ -166,7 +193,7 @@ impl PostgresProfileEventStore {
                 .bind(&data)
                 .execute(con)
                 .await
-                .convert_error()?
+                .map_err(map_insert_error)?
             }
         };
 
@@ -383,5 +410,186 @@ mod test {
                 .await;
             assert!(result.is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod username_constraint_tests {
+    use crate::database::PostgresDatabase;
+    use kernel::interfaces::database::DatabaseConnection;
+    use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
+    use kernel::prelude::entity::{
+        AccountId, EventId, Nanoid, Profile, ProfileId, ProfileUsername,
+    };
+    use kernel::KernelError;
+
+    fn unique_username() -> ProfileUsername {
+        ProfileUsername::new(format!("u{}", kernel::generate_id()))
+    }
+
+    async fn create(db: &PostgresDatabase, username: Option<&ProfileUsername>) -> ProfileId {
+        let id = ProfileId::new(kernel::generate_id());
+        let mut conn = db.connection().await.unwrap();
+        db.profile_event_store()
+            .persist(
+                &mut conn,
+                &Profile::create_with_username(
+                    id.clone(),
+                    AccountId::default(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Nanoid::default(),
+                    username.cloned(),
+                ),
+            )
+            .await
+            .unwrap();
+        id
+    }
+
+    async fn set(
+        db: &PostgresDatabase,
+        id: &ProfileId,
+        username: &ProfileUsername,
+    ) -> error_stack::Result<(), KernelError> {
+        let mut conn = db.connection().await.unwrap();
+        db.profile_event_store()
+            .persist(
+                &mut conn,
+                &Profile::set_username(id.clone(), username.clone()),
+            )
+            .await
+    }
+
+    fn is_conflict(result: error_stack::Result<(), KernelError>) -> bool {
+        matches!(result, Err(e) if e.current_context() == &KernelError::Concurrency)
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn username_is_unique_across_profiles() {
+        kernel::ensure_generator_initialized();
+        let db = PostgresDatabase::new().await.unwrap();
+        let taken = unique_username();
+        let first = create(&db, Some(&taken)).await;
+
+        let second = create(&db, None).await;
+        assert!(is_conflict(set(&db, &second, &taken).await));
+
+        let mut conn = db.connection().await.unwrap();
+        let duplicate_at_creation = db
+            .profile_event_store()
+            .persist(
+                &mut conn,
+                &Profile::create_with_username(
+                    ProfileId::new(kernel::generate_id()),
+                    AccountId::default(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Nanoid::default(),
+                    Some(taken.clone()),
+                ),
+            )
+            .await;
+        assert!(is_conflict(duplicate_at_creation));
+
+        // A rejected duplicate leaves no event behind, and another value is still accepted.
+        let events = db
+            .profile_event_store()
+            .find_by_id(&mut conn, &EventId::from(second.clone()), None)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(set(&db, &second, &unique_username()).await.is_ok());
+        assert_eq!(
+            db.profile_event_store()
+                .find_by_id(&mut conn, &EventId::from(first), None)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn a_profile_gets_a_username_event_at_most_once() {
+        kernel::ensure_generator_initialized();
+        let db = PostgresDatabase::new().await.unwrap();
+
+        let unnamed = create(&db, None).await;
+        assert!(set(&db, &unnamed, &unique_username()).await.is_ok());
+        assert!(is_conflict(set(&db, &unnamed, &unique_username()).await));
+
+        let named_at_creation = create(&db, Some(&unique_username())).await;
+        assert!(is_conflict(
+            set(&db, &named_at_creation, &unique_username()).await
+        ));
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn legacy_created_events_without_a_username_key_still_load() {
+        kernel::ensure_generator_initialized();
+        let db = PostgresDatabase::new().await.unwrap();
+        let id = ProfileId::new(kernel::generate_id());
+        let mut conn = db.connection().await.unwrap();
+        let con: &mut sqlx::PgConnection = &mut conn;
+        sqlx::query(
+            "INSERT INTO profile_events (version, id, event_name, data) VALUES ($1, $2, 'profile_created', $3)",
+        )
+        .bind(kernel::generate_id())
+        .bind(id.as_ref())
+        .bind(serde_json::json!({
+            "type": "created",
+            "account_id": kernel::generate_id(),
+            "display_name": null,
+            "summary": null,
+            "icon": null,
+            "banner": null,
+            "nanoid": "legacy-nanoid",
+        }))
+        .execute(con)
+        .await
+        .unwrap();
+        let events = db
+            .profile_event_store()
+            .find_by_id(&mut conn, &EventId::from(id), None)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].event,
+            kernel::prelude::entity::ProfileEvent::Created { username: None, .. }
+        ));
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn concurrent_assignments_of_one_username_let_exactly_one_win() {
+        kernel::ensure_generator_initialized();
+        let db = PostgresDatabase::new().await.unwrap();
+        let shared = unique_username();
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let db = db.clone();
+            let shared = shared.clone();
+            handles.push(tokio::spawn(async move {
+                let id = create(&db, None).await;
+                set(&db, &id, &shared).await
+            }));
+        }
+        let mut winners = 0;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(()) => winners += 1,
+                Err(error) => assert_eq!(error.current_context(), &KernelError::Concurrency),
+            }
+        }
+        assert_eq!(winners, 1);
     }
 }

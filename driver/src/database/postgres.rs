@@ -31,6 +31,7 @@ mod profile_graph_tests;
 mod profile_inbound_activity;
 mod profile_mute;
 mod profile_repository;
+mod profile_signing_key;
 mod profile_transfer_request;
 mod profile_transfer_request_event_store;
 mod profile_transfer_request_repository;

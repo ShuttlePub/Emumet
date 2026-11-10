@@ -47,23 +47,6 @@ pub(crate) async fn get_profile_identity() -> ErrorStatus {
 }
 
 #[utoipa::path(
-    get,
-    path = "/ap/profiles/{profile_nanoid}",
-    description = "Future Profile ActivityPub actor document (1 Profile = 1 actor, ADR 0002). NOT MOUNTED in production (contract only, mounted in P4 at the earliest); the skeleton answers 501. \
-The final actor URL shape and the WebFinger acct (username@domain) are fixed by P1; this entry only reserves the Profile-scoped actor concept so that follow/block/domain-control contracts can refer to it.",
-    params(("profile_nanoid" = String, Path, description = "Profile nanoid (external ID)")),
-    responses(
-        (status = 200, description = "ActivityPub actor document (application/activity+json)"),
-        (status = 404, description = "Profile not found"),
-        (status = 501, description = "Contract only: not implemented and not mounted on the production router"),
-    ),
-    tag = "ProfilePolicy",
-)]
-pub(crate) async fn get_profile_actor() -> ErrorStatus {
-    not_implemented("GET /ap/profiles/{profile_nanoid}")
-}
-
-#[utoipa::path(
     post,
     path = "/api/v1/profiles/{profile_nanoid}/follows",
     description = "Follow a target as the Profile (the Profile, not the Account, is the follower). NOT MOUNTED in production (contract only); the skeleton answers 501. \
@@ -298,8 +281,6 @@ pub(crate) async fn list_profile_mutes() -> ErrorStatus {
 pub trait ProfilePolicyContractRouter {
     /// Routes relative to `/api/v1`.
     fn route_profile_policy_contract(self) -> Self;
-    /// Routes relative to `/ap`.
-    fn route_profile_actor_contract(self) -> Self;
 }
 
 impl<S> ProfilePolicyContractRouter for Router<S>
@@ -340,10 +321,6 @@ where
                 "/profiles/{profile_nanoid}/mutes/{mute_id}",
                 delete(delete_profile_mute),
             )
-    }
-
-    fn route_profile_actor_contract(self) -> Self {
-        self.route("/profiles/{profile_nanoid}", get(get_profile_actor))
     }
 }
 
