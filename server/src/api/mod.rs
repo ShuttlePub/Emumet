@@ -6,6 +6,7 @@
 pub(crate) mod account;
 pub(crate) mod activitypub;
 pub(crate) mod admin_account;
+pub(crate) mod domain_control;
 pub(crate) mod me;
 pub(crate) mod media;
 pub(crate) mod oauth2;

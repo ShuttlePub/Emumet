@@ -2941,7 +2941,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "List the Profile's domain mute/block controls. NOT MOUNTED in production (contract only); the skeleton answers 501. Domains match exactly (`example.com` does not cover `sub.example.com`). Controls are per Profile: they never apply to other Profiles of the same Account or to other Accounts, and are unrelated to server-wide HostModeration. Authorization: only the Profile's current owner.",
+        "description": "List the Profile's domain mute/block controls (ordered by domain). NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R). Domains match exactly (`example.com` does not cover `sub.example.com`). Controls are per Profile: they never apply to other Profiles of the same Account or to other Accounts, and are unrelated to server-wide HostModeration. Authorization: only the Profile's current owner (after a Profile transfer, the new owner; the controls stay attached to the Profile).",
         "operationId": "list_domain_controls",
         "parameters": [
           {
@@ -2973,9 +2973,6 @@
           },
           "404": {
             "description": "Profile not found"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
           }
         },
         "security": [
@@ -2990,7 +2987,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Read the control for one exact domain. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
+        "description": "Read the control for one exact domain. NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R). The `domain` is normalized before lookup (case, trailing dot, IDNA): `Example.COM.` and `example.com` address the same control. Authorization: only the Profile's current owner.",
         "operationId": "get_domain_control",
         "parameters": [
           {
@@ -3005,7 +3002,7 @@
           {
             "name": "domain",
             "in": "path",
-            "description": "Exact host name (lowercase ASCII / IDNA A-label; no scheme, port, path or wildcard). Final normalization rules are fixed by D8P.",
+            "description": "Exact host name. Normalized: lowercase, one trailing dot removed, IDNA A-label (Punycode). No scheme, port, userinfo, path, wildcard or IP address (422).",
             "required": true,
             "schema": {
               "type": "string"
@@ -3023,9 +3020,6 @@
               }
             }
           },
-          "400": {
-            "description": "Malformed domain"
-          },
           "401": {
             "description": "Missing or invalid bearer token"
           },
@@ -3035,8 +3029,8 @@
           "404": {
             "description": "Profile or domain control not found"
           },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
+          "422": {
+            "description": "Malformed domain"
           }
         },
         "security": [
@@ -3049,7 +3043,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Create or replace the mute/block control for one exact domain. NOT MOUNTED in production (contract only; block writes stay unmounted until D8R); the skeleton answers 501. Revision: `expected_revision` omitted creates (409 if the control already exists); `expected_revision` = current revision replaces (409 on mismatch, including a control deleted meanwhile). The response carries the new revision. mute = display suppression only. block = display suppression, bidirectional follow detachment and rejection of new follows; no ActivityPub Block is sent and removing the block does not restore relations. Authorization: only the Profile's current owner.",
+        "description": "Create or replace the mute/block control for one exact domain. NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R, block writes stay unmounted until D8R). Revision: `expected_revision` omitted creates (409 if the control already exists); `expected_revision` = current revision replaces (409 on mismatch, including a control deleted meanwhile). Every successful write increments the revision, which never repeats for a Profile x domain even across delete and re-create. Concurrent writers: exactly one succeeds, the others get 409. mute = display suppression only. block = display suppression, bidirectional follow detachment and rejection of new follows; no ActivityPub Block is sent and removing the block does not restore relations (D8P only stores the setting; applying it is D8G/D8R). Authorization: only the Profile's current owner.",
         "operationId": "put_domain_control",
         "parameters": [
           {
@@ -3064,7 +3058,7 @@
           {
             "name": "domain",
             "in": "path",
-            "description": "Exact host name (lowercase ASCII / IDNA A-label; no scheme, port, path or wildcard). Final normalization rules are fixed by D8P.",
+            "description": "Exact host name. Normalized: lowercase, one trailing dot removed, IDNA A-label (Punycode). No scheme, port, userinfo, path, wildcard or IP address (422).",
             "required": true,
             "schema": {
               "type": "string"
@@ -3093,7 +3087,7 @@
             }
           },
           "400": {
-            "description": "Malformed domain"
+            "description": "Malformed JSON body"
           },
           "401": {
             "description": "Missing or invalid bearer token"
@@ -3108,10 +3102,7 @@
             "description": "Revision conflict (expected_revision does not match the current state)"
           },
           "422": {
-            "description": "Request body is invalid (for example an unknown mode)"
-          },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
+            "description": "Malformed domain, or request body is invalid (for example an unknown mode)"
           }
         },
         "security": [
@@ -3124,7 +3115,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Remove the control for one exact domain. Detached follow relations are NOT restored and no restore list is kept. NOT MOUNTED in production (contract only); the skeleton answers 501. `expected_revision` is required: 409 if it does not match the current revision. Authorization: only the Profile's current owner.",
+        "description": "Remove the control for one exact domain. Detached follow relations are NOT restored and no restore list is kept. NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R). `expected_revision` is required: 409 if it does not match the current revision. Authorization: only the Profile's current owner.",
         "operationId": "delete_domain_control",
         "parameters": [
           {
@@ -3139,7 +3130,7 @@
           {
             "name": "domain",
             "in": "path",
-            "description": "Exact host name (lowercase ASCII / IDNA A-label; no scheme, port, path or wildcard). Final normalization rules are fixed by D8P.",
+            "description": "Exact host name. Normalized: lowercase, one trailing dot removed, IDNA A-label (Punycode). No scheme, port, userinfo, path, wildcard or IP address (422).",
             "required": true,
             "schema": {
               "type": "string"
@@ -3148,7 +3139,7 @@
           {
             "name": "expected_revision",
             "in": "query",
-            "description": "Current revision of the control being removed",
+            "description": "Current revision of the control being removed (required).",
             "required": true,
             "schema": {
               "type": "integer",
@@ -3162,7 +3153,7 @@
             "description": "Domain control removed"
           },
           "400": {
-            "description": "Malformed domain or missing expected_revision"
+            "description": "Missing or invalid expected_revision"
           },
           "401": {
             "description": "Missing or invalid bearer token"
@@ -3176,8 +3167,8 @@
           "409": {
             "description": "Revision conflict"
           },
-          "501": {
-            "description": "Contract only: not implemented and not mounted on the production router"
+          "422": {
+            "description": "Malformed domain"
           }
         },
         "security": [
@@ -4401,7 +4392,7 @@
       },
       "DomainControlListResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).",
         "required": [
           "items"
         ],
@@ -4416,7 +4407,7 @@
       },
       "DomainControlMode": {
         "type": "string",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nTreatment applied to every actor whose canonical actor-ID host equals the domain.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).\n\nTreatment applied to every actor whose canonical actor-ID host equals the domain.",
         "enum": [
           "mute",
           "block"
@@ -4424,7 +4415,7 @@
       },
       "DomainControlResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nA Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).\n\nA Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
         "required": [
           "profile_id",
           "domain",
@@ -5240,7 +5231,7 @@
       },
       "PutDomainControlRequest": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nCreate or replace the control for one domain.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).\n\nCreate or replace the control for one domain.",
         "required": [
           "mode"
         ],
@@ -5976,7 +5967,7 @@
     },
     {
       "name": "ProfilePolicy",
-      "description": "CONTRACT ONLY, not mounted on the production router (mounted in P4 at the earliest): Profile identity, Profile-scoped follow, individual block/mute and domain-controls. Handlers answer 501 until P1/P2/P3o/P3i/D8P/D8G/D8R implement them. Owner-only authorization, revision conflicts (409) and errors are the contract."
+      "description": "CONTRACT ONLY, not mounted on the production router (mounted in P4 at the earliest): Profile identity, Profile-scoped follow, individual block/mute and domain-controls. Handlers answer 501 until P1/P2/P3o/P3i/D8G/D8R implement them, except domain-controls, which D8P implemented (stored, revision-controlled, owner-only) but which stay unmounted on the production router until P4/D8R. Owner-only authorization, revision conflicts (409) and errors are the contract."
     },
     {
       "name": "ProfileTransfer",

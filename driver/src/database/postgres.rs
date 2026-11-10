@@ -7,6 +7,7 @@ mod account_repository;
 mod auth_account;
 mod auth_host;
 mod block;
+mod domain_control;
 mod follow;
 mod image;
 mod metadata;

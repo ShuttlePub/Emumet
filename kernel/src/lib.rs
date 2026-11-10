@@ -344,6 +344,13 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnDomainControlRepository for $impl_type {
+            type DomainControlRepository = <$db_type as $crate::interfaces::repository::DependOnDomainControlRepository>::DomainControlRepository;
+            fn domain_control_repository(&self) -> &Self::DomainControlRepository {
+                $crate::interfaces::repository::DependOnDomainControlRepository::domain_control_repository(&self.$field)
+            }
+        }
+
         impl $crate::interfaces::repository::DependOnRegistrationGateRepository for $impl_type {
             type RegistrationGateRepository = <$db_type as $crate::interfaces::repository::DependOnRegistrationGateRepository>::RegistrationGateRepository;
             fn registration_gate_repository(&self) -> &Self::RegistrationGateRepository {

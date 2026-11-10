@@ -1,18 +1,18 @@
-//! Contract-only Profile identity / relationship / domain-controls routes (E8).
+//! Contract-only Profile identity / relationship routes (E8).
 //!
 //! These handlers exist so that the OpenAPI document (`openapi.json`) can describe the future
 //! contract. They are intentionally NOT part of the production root router (see
 //! `ProfilePolicyContractRouter`, which only tests use) and every handler answers an explicit
-//! `501 Not Implemented`. Real behaviour arrives in P1/P2/P3o/P3i/D8P/D8G/D8R and the
-//! production mount in P4.
+//! `501 Not Implemented`. Real behaviour arrives in P1/P2/P3o/P3i/D8G/D8R and the
+//! production mount in P4. The domain-controls routes were implemented by D8P and live in
+//! `route::profile_domain_control`.
 
 use crate::error::ErrorStatus;
 use crate::schema::account::ProfileResponse;
 use crate::schema::profile_policy::{
-    CreateProfileFollowRequest, CreateProfileRelationRequest, DomainControlListResponse,
-    DomainControlResponse, ProfileFollowListResponse, ProfileFollowResponse,
-    ProfileFollowerListResponse, ProfileRelationListResponse, ProfileRelationResponse,
-    PutDomainControlRequest,
+    CreateProfileFollowRequest, CreateProfileRelationRequest, ProfileFollowListResponse,
+    ProfileFollowResponse, ProfileFollowerListResponse, ProfileRelationListResponse,
+    ProfileRelationResponse,
 };
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
@@ -292,105 +292,6 @@ pub(crate) async fn list_profile_mutes() -> ErrorStatus {
     not_implemented("GET /api/v1/profiles/{profile_nanoid}/mutes")
 }
 
-#[utoipa::path(
-    get,
-    path = "/api/v1/profiles/{profile_nanoid}/domain-controls",
-    description = "List the Profile's domain mute/block controls. NOT MOUNTED in production (contract only); the skeleton answers 501. \
-Domains match exactly (`example.com` does not cover `sub.example.com`). Controls are per Profile: they never apply to other Profiles of the same Account or to other Accounts, and are unrelated to server-wide HostModeration. \
-Authorization: only the Profile's current owner.",
-    params(("profile_nanoid" = String, Path, description = "Profile nanoid")),
-    responses(
-        (status = 200, description = "Domain controls", body = DomainControlListResponse),
-        (status = 401, description = "Missing or invalid bearer token"),
-        (status = 403, description = "Caller is not the current owner of the Profile"),
-        (status = 404, description = "Profile not found"),
-        (status = 501, description = "Contract only: not implemented and not mounted on the production router"),
-    ),
-    security(("bearer_auth" = [])),
-    tag = "ProfilePolicy",
-)]
-pub(crate) async fn list_domain_controls() -> ErrorStatus {
-    not_implemented("GET /api/v1/profiles/{profile_nanoid}/domain-controls")
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
-    description = "Read the control for one exact domain. NOT MOUNTED in production (contract only); the skeleton answers 501. Authorization: only the Profile's current owner.",
-    params(
-        ("profile_nanoid" = String, Path, description = "Profile nanoid"),
-        ("domain" = String, Path, description = "Exact host name (lowercase ASCII / IDNA A-label; no scheme, port, path or wildcard). Final normalization rules are fixed by D8P."),
-    ),
-    responses(
-        (status = 200, description = "Domain control", body = DomainControlResponse),
-        (status = 400, description = "Malformed domain"),
-        (status = 401, description = "Missing or invalid bearer token"),
-        (status = 403, description = "Caller is not the current owner of the Profile"),
-        (status = 404, description = "Profile or domain control not found"),
-        (status = 501, description = "Contract only: not implemented and not mounted on the production router"),
-    ),
-    security(("bearer_auth" = [])),
-    tag = "ProfilePolicy",
-)]
-pub(crate) async fn get_domain_control() -> ErrorStatus {
-    not_implemented("GET /api/v1/profiles/{profile_nanoid}/domain-controls/{domain}")
-}
-
-#[utoipa::path(
-    put,
-    path = "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
-    description = "Create or replace the mute/block control for one exact domain. NOT MOUNTED in production (contract only; block writes stay unmounted until D8R); the skeleton answers 501. \
-Revision: `expected_revision` omitted creates (409 if the control already exists); `expected_revision` = current revision replaces (409 on mismatch, including a control deleted meanwhile). The response carries the new revision. \
-mute = display suppression only. block = display suppression, bidirectional follow detachment and rejection of new follows; no ActivityPub Block is sent and removing the block does not restore relations. \
-Authorization: only the Profile's current owner.",
-    params(
-        ("profile_nanoid" = String, Path, description = "Profile nanoid"),
-        ("domain" = String, Path, description = "Exact host name (lowercase ASCII / IDNA A-label; no scheme, port, path or wildcard). Final normalization rules are fixed by D8P."),
-    ),
-    request_body = PutDomainControlRequest,
-    responses(
-        (status = 200, description = "Domain control created or replaced", body = DomainControlResponse),
-        (status = 400, description = "Malformed domain"),
-        (status = 401, description = "Missing or invalid bearer token"),
-        (status = 403, description = "Caller is not the current owner of the Profile"),
-        (status = 404, description = "Profile not found"),
-        (status = 409, description = "Revision conflict (expected_revision does not match the current state)"),
-        (status = 422, description = "Request body is invalid (for example an unknown mode)"),
-        (status = 501, description = "Contract only: not implemented and not mounted on the production router"),
-    ),
-    security(("bearer_auth" = [])),
-    tag = "ProfilePolicy",
-)]
-pub(crate) async fn put_domain_control() -> ErrorStatus {
-    not_implemented("PUT /api/v1/profiles/{profile_nanoid}/domain-controls/{domain}")
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
-    description = "Remove the control for one exact domain. Detached follow relations are NOT restored and no restore list is kept. NOT MOUNTED in production (contract only); the skeleton answers 501. \
-`expected_revision` is required: 409 if it does not match the current revision. Authorization: only the Profile's current owner.",
-    params(
-        ("profile_nanoid" = String, Path, description = "Profile nanoid"),
-        ("domain" = String, Path, description = "Exact host name (lowercase ASCII / IDNA A-label; no scheme, port, path or wildcard). Final normalization rules are fixed by D8P."),
-        ("expected_revision" = u64, Query, description = "Current revision of the control being removed"),
-    ),
-    responses(
-        (status = 204, description = "Domain control removed"),
-        (status = 400, description = "Malformed domain or missing expected_revision"),
-        (status = 401, description = "Missing or invalid bearer token"),
-        (status = 403, description = "Caller is not the current owner of the Profile"),
-        (status = 404, description = "Profile or domain control not found"),
-        (status = 409, description = "Revision conflict"),
-        (status = 501, description = "Contract only: not implemented and not mounted on the production router"),
-    ),
-    security(("bearer_auth" = [])),
-    tag = "ProfilePolicy",
-)]
-pub(crate) async fn delete_domain_control() -> ErrorStatus {
-    not_implemented("DELETE /api/v1/profiles/{profile_nanoid}/domain-controls/{domain}")
-}
-
 /// Mounts the contract skeleton handlers. Production code must NOT call this; the production
 /// mount is owned by P4. It exists so tests can pin the 501 behaviour.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -438,16 +339,6 @@ where
             .route(
                 "/profiles/{profile_nanoid}/mutes/{mute_id}",
                 delete(delete_profile_mute),
-            )
-            .route(
-                "/profiles/{profile_nanoid}/domain-controls",
-                get(list_domain_controls),
-            )
-            .route(
-                "/profiles/{profile_nanoid}/domain-controls/{domain}",
-                get(get_domain_control)
-                    .put(put_domain_control)
-                    .delete(delete_domain_control),
             )
     }
 
