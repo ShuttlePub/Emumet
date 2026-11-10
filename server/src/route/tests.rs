@@ -62,7 +62,7 @@ fn is_contract_only_operation(operation: &serde_json::Value) -> bool {
         .and_then(|tags| tags.as_array())
         .into_iter()
         .flatten()
-        .any(|tag| tag.as_str() == Some("ProfilePolicy"))
+        .any(|tag| matches!(tag.as_str(), Some("ProfilePolicy" | "ProfileActor")))
 }
 
 fn is_activitypub_operation(operation: &serde_json::Value) -> bool {
@@ -191,4 +191,181 @@ async fn nonexistent_route_returns_404() {
         .unwrap();
     let response = router.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+/// The production root router (built by the same function the server binary uses) must not serve
+/// any Profile actor / relationship / domain-control route before the P4 cutover. Every operation
+/// of the not-yet-mounted OpenAPI tags, plus the actor sub-resources, must be a plain 404 even for
+/// an authenticated caller, and the Account based actor routes must still be there.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn profile_actor_and_contract_routes_are_absent_from_the_root_router() {
+    use crate::auth::{
+        encode_test_jwt, generate_test_keys, AuthClaims, JwksCache, OidcConfig, OneOrMany,
+    };
+    use crate::route::build_test_router_with_auth;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let issuer = format!("https://issuer.example/{}", uuid::Uuid::new_v4());
+    let keys = generate_test_keys();
+    let token = encode_test_jwt(
+        &AuthClaims {
+            iss: issuer.clone(),
+            sub: "absence-subject".to_string(),
+            aud: OneOrMany::One("emumet".to_string()),
+            exp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 3600,
+        },
+        &keys.encoding_key,
+        &keys.kid,
+    );
+    let module = AppModule::new_for_oauth2_test(
+        "http://localhost:65535".into(),
+        "http://localhost:65535".into(),
+    )
+    .await
+    .expect("AppModule init failed (is DATABASE_URL set?)");
+    let router = build_test_router_with_auth(
+        module,
+        Arc::new(OidcConfig {
+            issuer_url: issuer.clone(),
+            expected_audience: "emumet".to_string(),
+            jwks_refetch_interval_secs: 0,
+        }),
+        Arc::new(JwksCache::new_with_jwks(issuer, keys.jwk_set)),
+    );
+
+    let spec: serde_json::Value =
+        serde_json::from_str(&crate::openapi::generate_openapi_json()).unwrap();
+    let mut probes: Vec<(String, String)> = Vec::new();
+    for (template, item) in spec["paths"].as_object().unwrap() {
+        for (method, operation) in item.as_object().unwrap() {
+            let unmounted = operation["tags"].as_array().is_some_and(|tags| {
+                tags.iter()
+                    .any(|tag| tag == "ProfilePolicy" || tag == "ProfileActor")
+            });
+            if unmounted && HTTP_METHODS.contains(&method.as_str()) {
+                probes.push((method.to_uppercase(), replace_path_params(template)));
+            }
+        }
+    }
+    assert!(
+        probes.len() >= 16,
+        "expected the ProfilePolicy contract and the Profile actor, found {} operations",
+        probes.len()
+    );
+    for suffix in ["/inbox", "/outbox", "/followers", "/following"] {
+        for method in ["GET", "POST"] {
+            probes.push((
+                method.to_string(),
+                format!("/ap/profiles/test-nanoid{suffix}"),
+            ));
+        }
+    }
+    for path in ["/ap/profiles", "/ap/profiles/test-nanoid"] {
+        probes.push(("POST".to_string(), path.to_string()));
+    }
+
+    for (method, uri) in &probes {
+        for authenticated in [true, false] {
+            let mut builder = Request::builder()
+                .method(method.as_str())
+                .uri(uri)
+                .header("content-type", "application/json");
+            if authenticated {
+                builder = builder.header("authorization", format!("Bearer {token}"));
+            }
+            let response = router
+                .clone()
+                .oneshot(builder.body(Body::from("{}")).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            assert!(
+                status == StatusCode::NOT_FOUND
+                    || (!authenticated && status == StatusCode::UNAUTHORIZED),
+                "{method} {uri} (authenticated: {authenticated}) must not be served by the root router, got {status}"
+            );
+            if authenticated {
+                assert_eq!(
+                    status,
+                    StatusCode::NOT_FOUND,
+                    "{method} {uri} must be absent for an authenticated caller too"
+                );
+            }
+        }
+    }
+
+    // Positive control: the Account based federation routes of the same router are served.
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/ap/accounts/does-not-exist")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "unknown Account actor"
+    );
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/profiles/test-nanoid/username")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "the one-time username setter is mounted (and authenticated)"
+    );
+}
+
+/// The production entrypoint starts exactly the projection worker and the Registration Gate
+/// webhook worker. A new (Profile relationship) delivery worker must not be started from `main`
+/// before P4 owns the cutover; whoever adds one has to update this list deliberately.
+#[test]
+fn main_starts_no_profile_delivery_worker() {
+    let main_rs = include_str!("../main.rs");
+    let spawns: Vec<&str> = main_rs
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("//") && line.contains("spawn"))
+        .collect();
+    assert_eq!(
+        spawns.len(),
+        2,
+        "unexpected worker start in main.rs: {spawns:?}"
+    );
+    assert!(spawns[0].contains("ProjectionWorker::spawn"), "{spawns:?}");
+    assert!(
+        spawns[1].contains("webhook_worker::spawn_if_enabled"),
+        "{spawns:?}"
+    );
+    for forbidden in [
+        "tokio::spawn",
+        "profile_delivery",
+        "ProfileDelivery",
+        "profile_relationship",
+    ] {
+        assert!(
+            !main_rs.contains(forbidden),
+            "main.rs must not contain {forbidden}"
+        );
+    }
 }

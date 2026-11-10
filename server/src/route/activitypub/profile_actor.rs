@@ -105,3 +105,7 @@ impl ProfileActorRouter for Router<AppModule> {
         self.route("/.well-known/webfinger", get(profile_webfinger))
     }
 }
+
+#[cfg(test)]
+#[path = "profile_actor_tests.rs"]
+mod tests;

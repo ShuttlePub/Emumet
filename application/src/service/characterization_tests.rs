@@ -1778,3 +1778,6 @@ async fn inbox_undo_block_is_idempotent_and_transactional() {
     .unwrap();
     assert_eq!(remaining.0, 0);
 }
+
+#[path = "profile_identity_tests.rs"]
+mod profile_identity;

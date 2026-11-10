@@ -211,3 +211,227 @@ impl DependOnProfileSigningKeyRepository for PostgresDatabase {
         &PostgresProfileSigningKeyRepository
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::crypto::{Argon2Encryptor, Rsa2048RawGenerator};
+    use crate::database::PostgresDatabase;
+    use crate::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
+    use base64::{engine::general_purpose, Engine as _};
+    use kernel::activitypub::ActorUrlBuilder;
+    use kernel::interfaces::crypto::{
+        EncryptedPrivateKey, KeyEncryptor, RawKeyGenerator, SigningAlgorithm,
+    };
+    use kernel::interfaces::database::DatabaseConnection;
+    use kernel::interfaces::http_signing::{
+        HttpSignatureVerificationInput, HttpSignatureVerifier, HttpSigner, HttpSigningRequest,
+        SignatureVerificationResult,
+    };
+    use kernel::interfaces::read_model::{
+        AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
+    };
+    use kernel::interfaces::repository::{
+        DependOnProfileSigningKeyRepository, ProfileSigningKeyRepository,
+    };
+    use kernel::prelude::entity::{AccountId, ProfileId, ProfileSigningKey, SigningKeyId};
+    use kernel::test_utils::{AccountBuilder, ProfileBuilder};
+    use kernel::KernelError;
+    use sha2::Digest;
+    use std::collections::HashMap;
+    use time::OffsetDateTime;
+
+    async fn seed_profile(db: &PostgresDatabase) -> (ProfileId, String) {
+        kernel::ensure_generator_initialized();
+        let mut conn = db.connection().await.unwrap();
+        let account_id = AccountId::default();
+        let account = AccountBuilder::new()
+            .id(account_id.clone())
+            .name(format!("profile-key-test-{}", account_id.as_ref()))
+            .build();
+        db.account_read_model()
+            .create(&mut conn, &account)
+            .await
+            .unwrap();
+        let profile = ProfileBuilder::new().account_id(account_id).build();
+        db.profile_read_model()
+            .create(&mut conn, &profile)
+            .await
+            .unwrap();
+        (profile.id().clone(), profile.nanoid().as_ref().to_string())
+    }
+
+    fn key_for(profile_id: &ProfileId, nanoid: &str) -> ProfileSigningKey {
+        ProfileSigningKey::new(
+            SigningKeyId::default(),
+            profile_id.clone(),
+            SigningAlgorithm::Rsa2048,
+            EncryptedPrivateKey {
+                ciphertext: "c".to_string(),
+                nonce: "n".to_string(),
+                salt: "s".to_string(),
+                algorithm: SigningAlgorithm::Rsa2048,
+            },
+            "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----".to_string(),
+            ActorUrlBuilder::for_profile("https://example.com", nanoid).key_id(),
+            OffsetDateTime::now_utc(),
+            None,
+        )
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn one_active_key_per_profile_and_revocation_allows_rotation() {
+        let db = PostgresDatabase::new().await.unwrap();
+        let mut conn = db.connection().await.unwrap();
+        let repository = db.profile_signing_key_repository();
+        let (profile_id, nanoid) = seed_profile(&db).await;
+
+        let first = key_for(&profile_id, &nanoid);
+        repository.create(&mut conn, &first).await.unwrap();
+        let loaded = repository.find_by_id(&mut conn, first.id()).await.unwrap();
+        assert_eq!(loaded.profile_id(), &profile_id);
+        assert_eq!(loaded.key_id_uri, first.key_id_uri);
+        assert_eq!(loaded.public_key_pem, first.public_key_pem);
+        assert_eq!(
+            repository
+                .find_active_by_profile_id(&mut conn, &profile_id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let second = key_for(&profile_id, &nanoid);
+        let error = repository.create(&mut conn, &second).await.unwrap_err();
+        assert_eq!(error.current_context(), &KernelError::Concurrency);
+
+        repository.revoke(&mut conn, first.id()).await.unwrap();
+        assert!(repository
+            .find_active_by_profile_id(&mut conn, &profile_id)
+            .await
+            .unwrap()
+            .is_empty());
+        repository.create(&mut conn, &second).await.unwrap();
+        assert_eq!(
+            repository
+                .find_by_profile_id(&mut conn, &profile_id)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        let error = repository.revoke(&mut conn, first.id()).await.unwrap_err();
+        assert_eq!(error.current_context(), &KernelError::NotFound);
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn keys_are_removed_together_with_the_profile_row() {
+        let db = PostgresDatabase::new().await.unwrap();
+        let mut conn = db.connection().await.unwrap();
+        let repository = db.profile_signing_key_repository();
+        let (profile_id, nanoid) = seed_profile(&db).await;
+        repository
+            .create(&mut conn, &key_for(&profile_id, &nanoid))
+            .await
+            .unwrap();
+        db.profile_read_model()
+            .delete(&mut conn, &profile_id)
+            .await
+            .unwrap();
+        assert!(repository
+            .find_by_profile_id(&mut conn, &profile_id)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn a_signature_made_with_the_stored_profile_key_verifies() {
+        let db = PostgresDatabase::new().await.unwrap();
+        let mut conn = db.connection().await.unwrap();
+        let repository = db.profile_signing_key_repository();
+        let (profile_id, nanoid) = seed_profile(&db).await;
+
+        // Generate and store exactly like the Profile key use case does.
+        let password = b"profile-key-test-password";
+        let raw = Rsa2048RawGenerator.generate_raw().unwrap();
+        let encrypted = Argon2Encryptor::default()
+            .encrypt(&raw.private_key_pem, password, raw.algorithm)
+            .unwrap();
+        let key = ProfileSigningKey::new(
+            SigningKeyId::default(),
+            profile_id.clone(),
+            raw.algorithm,
+            encrypted,
+            raw.public_key_pem.clone(),
+            ActorUrlBuilder::for_profile("https://example.com", &nanoid).key_id(),
+            OffsetDateTime::now_utc(),
+            None,
+        );
+        repository.create(&mut conn, &key).await.unwrap();
+
+        // Load, decrypt and sign with the stored key.
+        let stored = repository
+            .find_active_by_profile_id(&mut conn, &profile_id)
+            .await
+            .unwrap()
+            .remove(0);
+        let private_key_pem = Argon2Encryptor::default()
+            .decrypt(stored.encrypted_private_key(), password)
+            .unwrap();
+        let body = b"{\"type\":\"Follow\"}";
+        let mut headers = HashMap::new();
+        headers.insert("host".to_string(), "remote.example".to_string());
+        headers.insert(
+            "date".to_string(),
+            httpdate::fmt_http_date(std::time::SystemTime::now()),
+        );
+        headers.insert(
+            "digest".to_string(),
+            format!(
+                "SHA-256={}",
+                general_purpose::STANDARD.encode(sha2::Sha256::digest(body))
+            ),
+        );
+        let request = HttpSigningRequest {
+            method: "POST".to_string(),
+            url: "https://remote.example/inbox".to_string(),
+            headers,
+            body: Some(body.to_vec()),
+        };
+        let signed = HttpSignerImpl
+            .sign(
+                &request,
+                &private_key_pem,
+                &stored.key_id_uri,
+                stored.algorithm(),
+            )
+            .await
+            .unwrap();
+
+        let mut verifier = HttpSignatureVerifierImpl::new().unwrap();
+        verifier.cache_actor_key(&stored.key_id_uri, stored.public_key_pem.clone());
+        let input = HttpSignatureVerificationInput {
+            method: request.method.clone(),
+            url: request.url.clone(),
+            headers: signed.cavage_headers.clone(),
+            body: request.body.clone(),
+        };
+        assert_eq!(
+            verifier.verify(&input).await.unwrap(),
+            SignatureVerificationResult::Valid {
+                key_id: stored.key_id_uri.clone()
+            }
+        );
+
+        // A tampered body no longer verifies.
+        let mut tampered = input;
+        tampered.body = Some(b"{\"type\":\"Undo\"}".to_vec());
+        assert!(matches!(
+            verifier.verify(&tampered).await.unwrap(),
+            SignatureVerificationResult::Invalid(_)
+        ));
+    }
+}

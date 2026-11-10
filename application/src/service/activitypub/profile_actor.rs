@@ -27,13 +27,13 @@ fn not_an_actor(profile: &ProfileProjection, reason: &str) -> Report<KernelError
     ))
 }
 
-async fn active_key<T: ?Sized>(
+async fn active_key<T>(
     deps: &T,
     executor: &mut <<T as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     profile: &ProfileProjection,
 ) -> error_stack::Result<ProfileSigningKey, KernelError>
 where
-    T: DependOnProfileSigningKeyRepository,
+    T: ?Sized + DependOnProfileSigningKeyRepository,
 {
     deps.profile_signing_key_repository()
         .find_active_by_profile_id(executor, profile.id())

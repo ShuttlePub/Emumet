@@ -411,6 +411,35 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn profile_actor_url_builder_uses_the_profile_path() {
+        let urls = ActorUrlBuilder::for_profile("https://example.com/", "p1nano");
+
+        assert_eq!(urls.actor_id(), "https://example.com/ap/profiles/p1nano");
+        assert_eq!(urls.inbox(), "https://example.com/ap/profiles/p1nano/inbox");
+        assert_eq!(
+            urls.outbox(),
+            "https://example.com/ap/profiles/p1nano/outbox"
+        );
+        assert_eq!(
+            urls.followers(),
+            "https://example.com/ap/profiles/p1nano/followers"
+        );
+        assert_eq!(
+            urls.following(),
+            "https://example.com/ap/profiles/p1nano/following"
+        );
+        assert_eq!(
+            urls.key_id(),
+            "https://example.com/ap/profiles/p1nano#main-key"
+        );
+        // The Account based builder is unchanged.
+        assert_eq!(
+            ActorUrlBuilder::new("https://example.com", "p1nano").actor_id(),
+            "https://example.com/ap/accounts/p1nano"
+        );
+    }
+
+    #[test]
     fn actor_url_builder_derives_all_endpoints() {
         let urls = ActorUrlBuilder::new("https://example.com", "abc123");
 
