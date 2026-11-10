@@ -469,10 +469,45 @@ async fn assert_no_account_side_effects(fixture: &Fixture, account_name: &str, c
     );
 }
 
-/// Requires `./master-key-password` (account creation encrypts the signing key with it).
+/// Account creation encrypts the signing key with `./master-key-password` (cwd = `server/`).
+/// Provision a development password when none exists, as `e2e/run-ap-e2e.sh` and the e2e
+/// workflow do. The hard link makes creation atomic so parallel tests never read a partial file.
+fn ensure_master_key_password_file() {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let target = std::path::Path::new("./master-key-password");
+    if target.exists() {
+        return;
+    }
+    let temporary = std::path::PathBuf::from(format!(
+        "./master-key-password.{}.tmp",
+        uuid::Uuid::new_v4()
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)
+        .expect("create temporary master key password file");
+    file.write_all(b"develop\n")
+        .expect("write master key password");
+    drop(file);
+    let linked = std::fs::hard_link(&temporary, target);
+    std::fs::remove_file(&temporary).expect("remove temporary master key password file");
+    if let Err(error) = linked {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::AlreadyExists,
+            "provision master key password: {error}"
+        );
+    }
+}
+
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
 async fn create_account_legacy_payload_without_username_still_succeeds() {
+    ensure_master_key_password_file();
     let keto = keto_with_writes().await;
     let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
     let name = format!("legacy-{}", uuid::Uuid::new_v4());
@@ -503,10 +538,10 @@ async fn create_account_legacy_payload_without_username_still_succeeds() {
     );
 }
 
-/// Requires `./master-key-password`; an explicit `null` is treated as omitted.
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
 async fn create_account_with_null_username_behaves_like_omitted() {
+    ensure_master_key_password_file();
     let keto = keto_with_writes().await;
     let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
     let name = format!("null-username-{}", uuid::Uuid::new_v4());
