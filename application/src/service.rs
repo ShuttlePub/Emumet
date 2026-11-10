@@ -8,6 +8,7 @@ pub mod media;
 pub mod organization;
 pub mod profile;
 pub mod profile_follow_list;
+pub(crate) mod profile_owner_status;
 pub mod profile_relation_list;
 pub mod profile_relationship;
 pub mod profile_transfer;

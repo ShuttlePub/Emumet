@@ -6,11 +6,14 @@
 //! P4 cutover, and a Profile only becomes an actor once it has both a username and a key.
 
 use crate::dto::activitypub::{GetProfileActorDto, GetProfileWebFingerDto};
+use crate::service::profile_owner_status::owner_account_is_active;
 use error_stack::Report;
 use kernel::activitypub::{Actor, ActorImages, ActorUrlBuilder, WebFingerLink, WebFingerResponse};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::database::DatabaseConnection;
-use kernel::interfaces::read_model::{DependOnProfileQuery, ProfileProjection, ProfileQuery};
+use kernel::interfaces::read_model::{
+    DependOnAccountQuery, DependOnProfileQuery, ProfileProjection, ProfileQuery,
+};
 use kernel::interfaces::repository::{
     DependOnImageRepository, DependOnProfileSigningKeyRepository, ImageRepository,
 };
@@ -48,6 +51,7 @@ pub trait GetProfileActorUseCase:
     + Sync
     + Send
     + DependOnProfileQuery
+    + DependOnAccountQuery
     + DependOnProfileSigningKeyRepository
     + DependOnImageRepository
     + DependOnPublicBaseUrl
@@ -71,6 +75,9 @@ pub trait GetProfileActorUseCase:
                 .username()
                 .as_ref()
                 .ok_or_else(|| not_an_actor(&profile, "no username"))?;
+            if !owner_account_is_active(self, &mut executor, profile.account_id()).await? {
+                return Err(not_an_actor(&profile, "owner account is not active"));
+            }
             let signing_key = active_key(self, &mut executor, &profile).await?;
 
             let image_ids: Vec<ImageId> = profile
@@ -118,6 +125,7 @@ impl<T> GetProfileActorUseCase for T where
         + Sync
         + Send
         + DependOnProfileQuery
+        + DependOnAccountQuery
         + DependOnProfileSigningKeyRepository
         + DependOnImageRepository
         + DependOnPublicBaseUrl
@@ -129,6 +137,7 @@ pub trait GetProfileWebFingerUseCase:
     + Sync
     + Send
     + DependOnProfileQuery
+    + DependOnAccountQuery
     + DependOnProfileSigningKeyRepository
     + DependOnPublicBaseUrl
 {
@@ -155,6 +164,9 @@ pub trait GetProfileWebFingerUseCase:
                         username.as_ref()
                     ))
                 })?;
+            if !owner_account_is_active(self, &mut executor, profile.account_id()).await? {
+                return Err(not_an_actor(&profile, "owner account is not active"));
+            }
             active_key(self, &mut executor, &profile).await?;
             let actor_url = ActorUrlBuilder::for_profile(
                 self.public_base_url().as_str(),
@@ -184,6 +196,7 @@ impl<T> GetProfileWebFingerUseCase for T where
         + Sync
         + Send
         + DependOnProfileQuery
+        + DependOnAccountQuery
         + DependOnProfileSigningKeyRepository
         + DependOnPublicBaseUrl
 {

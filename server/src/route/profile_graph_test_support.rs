@@ -275,6 +275,15 @@ impl GraphWorld {
         )
     }
 
+    /// The production root router on a module whose outgoing fetches may reach loopback fake peers.
+    pub fn loopback_root_router(&self) -> axum::Router {
+        crate::root_router::build_root_router(
+            self.module.clone().with_loopback_profile_delivery(),
+            self.oidc_config.clone(),
+            self.jwks_cache.clone(),
+        )
+    }
+
     pub async fn new_user(&self) -> User {
         let auth_account_id = AuthAccountId::default();
         let client_id = format!("client-{}", uuid::Uuid::new_v4());
@@ -563,6 +572,44 @@ impl RemotePeer {
         signing: Option<(&[u8], &str)>,
         tampered_body: Option<Vec<u8>>,
     ) -> StatusCode {
+        self.post_raw_via(
+            world.inbox_router(),
+            world,
+            profile_nanoid,
+            body,
+            signing,
+            tampered_body,
+        )
+        .await
+    }
+
+    /// Signed Follow (or any activity) sent through the **production** root router.
+    pub async fn post_via_root(
+        &self,
+        world: &GraphWorld,
+        profile_nanoid: &str,
+        body: &Value,
+    ) -> StatusCode {
+        self.post_raw_via(
+            world.root_router(),
+            world,
+            profile_nanoid,
+            serde_json::to_vec(body).unwrap(),
+            Some((&PEER_KEYS.private_pem, &self.key_id)),
+            None,
+        )
+        .await
+    }
+
+    async fn post_raw_via(
+        &self,
+        router: axum::Router,
+        world: &GraphWorld,
+        profile_nanoid: &str,
+        body: Vec<u8>,
+        signing: Option<(&[u8], &str)>,
+        tampered_body: Option<Vec<u8>>,
+    ) -> StatusCode {
         let base = world.base_url.clone();
         let host_header = world.host_header.clone();
         let path = format!("/ap/profiles/{profile_nanoid}/inbox");
@@ -615,8 +662,7 @@ impl RemotePeer {
         for (name, value) in &headers {
             builder = builder.header(name, value);
         }
-        let response = world
-            .inbox_router()
+        let response = router
             .oneshot(
                 builder
                     .body(Body::from(tampered_body.unwrap_or(body)))

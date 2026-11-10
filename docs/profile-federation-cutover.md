@@ -15,8 +15,16 @@
 |---|---|---|---|
 | 1 | `20261120000001_profile_social_graph.sql`: Profile 単位の関係・配送テーブル (`profile_follows` `profile_blocks` `profile_mutes` `profile_inbound_activities` `profile_delivery_jobs` `profile_delivery_attempts`) を追加 (非破壊) | migration | 起動失敗。DB は変わらない (transaction) |
 | 2 | `20261120000002_reset_legacy_federation.sql`: **前提検査** (username 未設定の Profile が 1 件でもあれば `RAISE EXCEPTION`) → 旧連合データの `TRUNCATE` → 台帳 `profile_federation_resets` に `legacy-account-federation-v1` を記録。全て 1 transaction | migration | 起動失敗。**何も消えず台帳も残らない** (切替拒否) |
+| 2b | `20261121000001_profile_signing_keys_survive_deactivation.sql`: `profile_signing_keys.profile_id` の外部キー (ON DELETE CASCADE) を外す (非破壊)。Account 無効化の projection が `profiles` 行を消しても Profile 鍵は保持され、再有効化で行が再 materialize されると同じ鍵で復帰する (下記「Account の状態と Profile」) | migration | 起動失敗。DB は変わらない |
 | 3 | Profile 鍵の一回限り生成 (`server/src/cutover.rs` → `EnsureProfileSigningKeysUseCase`): **有効な鍵を持たない Profile にだけ**鍵を作る。1 transaction・advisory lock で直列化 | 起動処理 (`main`、root router / worker より前) | 起動失敗 (鍵のない Profile を actor として公開しない) |
 | 4 | projection worker・webhook worker・**Profile 配送 worker** を起動し、root router を serve | `main` | — |
+
+### Account の状態と Profile (切替後の挙動)
+
+- **停止 (suspend)・BAN・無効化中**の Account の Profile は actor ではない: actor 文書・WebFinger は 404、inbox は 404 (相手には「存在しない」と見える)、その Profile からの新規 Follow は 403、停止中の Profile を対象にした Follow は 400。**配送 worker はその Profile の job を取得しない** (キューに残り、試行回数も消費しない)。ルールは `AccountQuery::find_by_id` と同じ (期限付き停止は期限が切れれば自動で解除)。
+- 解除 (unsuspend / unban / 期限切れ / 再有効化) すると、**同じ actor URL・同じ鍵**で復帰し、残っていた job が送られる。
+- **無効化→再有効化**: 無効化で Account の projection が `profiles` 行を削除する。再有効化の projection (Account projector) が、その Account が所有する Profile を**全 event 履歴から再 materialize** する (tailing の窓 (直近 100 件) に依存しない)。Profile の id・nanoid・username と鍵は変わらない。
+- Profile 鍵は `profiles` 行の有無と独立に保持される。将来 Profile を恒久削除する経路を作る場合は鍵の**明示的な削除**が必要で、「projection の行がない＝不要な鍵」として掃除してはならない (再有効化で復帰できなくなる)。
 
 ### 初期化の対象 (`TRUNCATE TABLE` で明示列挙。`CASCADE` なし)
 

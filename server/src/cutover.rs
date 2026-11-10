@@ -39,3 +39,7 @@ mod tests;
 #[cfg(test)]
 #[path = "profile_lifecycle_tests.rs"]
 mod lifecycle_tests;
+
+#[cfg(test)]
+#[path = "profile_moderation_tests.rs"]
+mod moderation_tests;

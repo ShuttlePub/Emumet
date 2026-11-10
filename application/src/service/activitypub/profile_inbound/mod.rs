@@ -44,7 +44,7 @@ use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
 };
-use kernel::interfaces::read_model::{DependOnProfileQuery, ProfileQuery};
+use kernel::interfaces::read_model::{DependOnAccountQuery, DependOnProfileQuery, ProfileQuery};
 use kernel::interfaces::repository::{
     BeginFollowOutcome, DependOnDomainControlRepository, DependOnInboundActivityRepository,
     DependOnProfileBlockRepository, DependOnProfileDeliveryEnqueuer,
@@ -69,6 +69,7 @@ pub trait ProfileInboxUseCase:
     + Send
     + Clone
     + DependOnProfileQuery
+    + DependOnAccountQuery
     + DependOnProfileSigningKeyRepository
     + DependOnProfileFollowRepository
     + DependOnInboundActivityRepository
@@ -93,6 +94,7 @@ impl<T> ProfileInboxUseCase for T where
         + Send
         + Clone
         + DependOnProfileQuery
+        + DependOnAccountQuery
         + DependOnProfileSigningKeyRepository
         + DependOnProfileFollowRepository
         + DependOnInboundActivityRepository
@@ -208,6 +210,16 @@ where
     };
     if profile.username().is_none() {
         return Err(not_an_actor("no username"));
+    }
+    // A suspended / banned / deactivated owner Account has no inbox (as the legacy Account actor).
+    if !crate::service::profile_owner_status::owner_account_is_active(
+        module,
+        &mut executor,
+        profile.account_id(),
+    )
+    .await?
+    {
+        return Err(not_an_actor("owner account is not active"));
     }
     if module
         .profile_signing_key_repository()

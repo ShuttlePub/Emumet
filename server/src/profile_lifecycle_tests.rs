@@ -25,9 +25,12 @@ use kernel::interfaces::read_model::{
     AccountQuery, AccountReadModel, DependOnAccountQuery, DependOnAccountReadModel,
     DependOnProfileReadModel, ProfileReadModel,
 };
-use kernel::interfaces::repository::{AggregateRepository, DependOnProfileRepository};
+use kernel::interfaces::repository::{
+    AggregateRepository, DependOnAccountRepository, DependOnProfileRepository,
+};
 use kernel::prelude::entity::{
-    Account, AccountKind, FieldAction, Nanoid, Profile, ProfileDeliveryPolicy,
+    Account, AccountId, AccountIsBot, AccountKind, FieldAction, Nanoid, Profile,
+    ProfileDeliveryPolicy, ProfileDisplayName,
 };
 use kernel::test_utils::{unique_account_name, AccountBuilder};
 use kernel::KernelError;
@@ -79,6 +82,22 @@ async fn get_actor(world: &GraphWorld, nanoid: &str) -> (StatusCode, Value) {
         status,
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     )
+}
+
+/// Seq of the newest event of a Profile stream and the checkpoint of the Profile projector.
+async fn newest_seq_and_checkpoint(world: &GraphWorld, profile_id: i64) -> (i64, i64) {
+    let newest: i64 = sqlx::query_scalar("SELECT max(seq) FROM profile_events WHERE id = $1")
+        .bind(profile_id)
+        .fetch_one(world.pool())
+        .await
+        .unwrap();
+    let checkpoint: i64 = sqlx::query_scalar(
+        "SELECT last_seq FROM projection_checkpoints WHERE projector_name = 'profile_projector'",
+    )
+    .fetch_one(world.pool())
+    .await
+    .unwrap();
+    (newest, checkpoint)
 }
 
 /// Runs the tailing projectors (as the server's projection worker does) a few rounds.
@@ -340,6 +359,25 @@ async fn reactivation_brings_the_actor_back_with_the_same_key_and_without_a_rest
         "a restart would not generate anything either"
     );
 
+    deliver_follow_and_verify(
+        &world,
+        &user,
+        &profile,
+        &keys_before[0].1,
+        &keys_before[0].2,
+    )
+    .await;
+}
+
+/// The Profile signs a Follow (queued through the real use case, sent by the real delivery worker
+/// to a fake peer) that verifies against the key the actor document publishes.
+async fn deliver_follow_and_verify(
+    world: &GraphWorld,
+    user: &crate::route::profile_graph_test_support::User,
+    profile: &crate::route::profile_graph_test_support::LocalProfile,
+    key_id: &str,
+    public_key_pem: &str,
+) {
     // And the reactivated Profile signs a Follow that verifies against the published key.
     let peer = MockServer::start().await;
     let remote_actor = format!("{}/users/bob", peer.uri());
@@ -396,7 +434,7 @@ async fn reactivation_brings_the_actor_back_with_the_same_key_and_without_a_rest
         .collect();
     assert_eq!(requests.len(), 1);
     let mut verifier = HttpSignatureVerifierImpl::new().unwrap();
-    verifier.cache_actor_key(&keys_before[0].1, keys_before[0].2.clone());
+    verifier.cache_actor_key(key_id, public_key_pem.to_string());
     let headers: HashMap<String, String> = requests[0]
         .headers
         .iter()
@@ -419,7 +457,169 @@ async fn reactivation_brings_the_actor_back_with_the_same_key_and_without_a_rest
     assert_eq!(
         verified,
         SignatureVerificationResult::Valid {
-            key_id: keys_before[0].1.clone()
+            key_id: key_id.to_string()
         }
     );
+}
+
+/// The Profile projector only looks at a window (100) of recent events. A Profile whose events
+/// are far older than that window must still come back when its Account is reactivated, with the
+/// same actor URL, key and a working signed Follow.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_old_profile_is_restored_on_reactivation_whatever_the_tailing_window() {
+    let world = GraphWorld::new().await;
+    world.allow_all_permissions().await;
+    let user = world.new_user().await;
+    let profile = world.create_profile(&user, true).await;
+    let account_nanoid = account_nanoid_of(&world, &profile.nanoid).await;
+    let keys: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT id, key_id_uri, public_key_pem FROM profile_signing_keys WHERE profile_id = $1",
+    )
+    .bind(profile.id.as_ref())
+    .fetch_all(world.pool())
+    .await
+    .unwrap();
+    assert_eq!(keys.len(), 1);
+
+    // Other Profiles make far more than a window of newer events, and the projector moves on.
+    let noisy_user = world.new_user().await;
+    let noisy = world.create_profile(&noisy_user, true).await;
+    {
+        let deps = world.module.clone();
+        let noisy_id = noisy.id.clone();
+        world
+            .module
+            .transaction_manager()
+            .transaction(move |executor| {
+                Box::pin(async move {
+                    for n in 0..150 {
+                        deps.profile_repository()
+                            .save(
+                                executor,
+                                Profile::update(
+                                    noisy_id.clone(),
+                                    FieldAction::Set(ProfileDisplayName::new(format!("n{n}"))),
+                                    FieldAction::Unchanged,
+                                    FieldAction::Unchanged,
+                                    FieldAction::Unchanged,
+                                ),
+                            )
+                            .await?;
+                    }
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+    }
+    // Account events of another Account do the same to the Account projector's window.
+    {
+        let deps = world.module.clone();
+        let noisy_account = AccountId::new(
+            sqlx::query_scalar::<_, i64>("SELECT account_id FROM profiles WHERE id = $1")
+                .bind(noisy.id.as_ref())
+                .fetch_one(world.pool())
+                .await
+                .unwrap(),
+        );
+        world
+            .module
+            .transaction_manager()
+            .transaction(move |executor| {
+                Box::pin(async move {
+                    for n in 0..150 {
+                        let (_, version) = deps
+                            .account_repository()
+                            .load(executor, &noisy_account)
+                            .await?
+                            .into_parts();
+                        deps.account_repository()
+                            .save(
+                                executor,
+                                Account::update(
+                                    noisy_account.clone(),
+                                    AccountIsBot::new(n % 2 == 0),
+                                    version,
+                                ),
+                            )
+                            .await?;
+                    }
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+    }
+    project(&world).await;
+    let account_checkpoint: i64 = sqlx::query_scalar(
+        "SELECT last_seq FROM projection_checkpoints WHERE projector_name = 'account_projector'",
+    )
+    .fetch_one(world.pool())
+    .await
+    .unwrap();
+    let account_newest: i64 = sqlx::query_scalar(
+        "SELECT max(e.seq) FROM account_events e JOIN accounts a ON a.id = e.id WHERE a.nanoid = $1",
+    )
+    .bind(&account_nanoid)
+    .fetch_one(world.pool())
+    .await
+    .unwrap();
+    assert!(
+        account_checkpoint - 100 > account_newest,
+        "the Account's events must be outside the Account projector's window too"
+    );
+    let (newest, checkpoint) = newest_seq_and_checkpoint(&world, *profile.id.as_ref()).await;
+    assert!(
+        checkpoint - 100 > newest,
+        "the Profile's events must be outside the tailing window (newest {newest}, checkpoint {checkpoint})"
+    );
+    // The edit that reaches the row is read model state; an old Profile with an edit history of
+    // its own (a username-less stream would not matter here) keeps its username through all this.
+    let username_before: Option<String> =
+        sqlx::query_scalar("SELECT username FROM profiles WHERE id = $1")
+            .bind(profile.id.as_ref())
+            .fetch_one(world.pool())
+            .await
+            .unwrap();
+    assert!(username_before.is_some());
+
+    world
+        .module
+        .deactivate_account(&user.auth_account_id, account_nanoid.clone())
+        .await
+        .unwrap();
+    project(&world).await;
+    assert!(profile_row(&world, &profile.nanoid).await.is_none());
+    assert_eq!(
+        get_actor(&world, &profile.nanoid).await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    world
+        .module
+        .reactivate_account(&user.auth_account_id, account_nanoid.clone())
+        .await
+        .unwrap();
+    project(&world).await;
+    assert!(
+        profile_row(&world, &profile.nanoid).await.is_some(),
+        "the Profile must be restored although its events are outside the tailing window"
+    );
+    let username_after: Option<String> =
+        sqlx::query_scalar("SELECT username FROM profiles WHERE id = $1")
+            .bind(profile.id.as_ref())
+            .fetch_one(world.pool())
+            .await
+            .unwrap();
+    assert_eq!(username_after, username_before, "the identity is the same");
+    let (status, actor) = get_actor(&world, &profile.nanoid).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(actor["id"], profile.actor_url.as_str());
+    assert_eq!(actor["publicKey"]["id"], keys[0].1.as_str());
+    assert_eq!(actor["publicKey"]["publicKeyPem"], keys[0].2.as_str());
+    // The other Profile was never touched.
+    assert!(profile_row(&world, &noisy.nanoid).await.is_some());
+
+    deliver_follow_and_verify(&world, &user, &profile, &keys[0].1, &keys[0].2).await;
 }
