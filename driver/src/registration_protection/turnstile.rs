@@ -298,7 +298,11 @@ pub fn classify_siteverify(
 fn probe_outcome(result: ProviderResult) -> ProviderResult {
     use kernel::prelude::entity::ProviderOutcome::*;
     match result.outcome {
-        BusinessSuccess | AttemptRejected | Accepted => ProviderResult::accepted(result.transport),
+        BusinessSuccess | AttemptRejected | Accepted => {
+            let mut accepted = ProviderResult::accepted(result.transport);
+            accepted.observed_at = result.observed_at;
+            accepted
+        }
         ConfigurationInvalid | TemporarilyUnavailable => result,
     }
 }
@@ -375,6 +379,17 @@ impl HttpTurnstileVerifier {
     }
 
     async fn call(&self, token: &str, remote_ip: Option<&str>) -> ProviderResult {
+        let started_at = OffsetDateTime::now_utc();
+        let result = self.call_inner(token, remote_ip).await;
+        let at = match result.outcome {
+            kernel::prelude::entity::ProviderOutcome::BusinessSuccess
+            | kernel::prelude::entity::ProviderOutcome::Accepted => started_at,
+            _ => OffsetDateTime::now_utc(),
+        };
+        result.observed(at)
+    }
+
+    async fn call_inner(&self, token: &str, remote_ip: Option<&str>) -> ProviderResult {
         let snapshot = &self.settings.snapshot;
         if !snapshot.is_usable() {
             return ProviderResult::configuration_invalid(
@@ -473,6 +488,12 @@ impl TurnstileVerifier for HttpTurnstileVerifier {
     }
 
     async fn probe_secret(&self) -> ProviderResult {
-        probe_outcome(self.call(PROBE_TOKEN, None).await)
+        let started_at = OffsetDateTime::now_utc();
+        let result = probe_outcome(self.call(PROBE_TOKEN, None).await);
+        if result.outcome == kernel::prelude::entity::ProviderOutcome::Accepted {
+            result.observed(started_at)
+        } else {
+            result
+        }
     }
 }

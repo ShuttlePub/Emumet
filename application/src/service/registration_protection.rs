@@ -266,6 +266,35 @@ where
     deps.record_registration_observation(observation).await
 }
 
+/// Periodic successful API evidence renews a generation that has completed initial bootstrap.
+/// SMTP requires DATA (MAIL FROM is insufficient); Turnstile requires an interpreted business
+/// response. This never converts a failure or a public recipient attempt into provider health.
+async fn renew_bootstrapped_readiness<T: RegistrationProtectionDeps>(
+    deps: &T,
+    protection: Protection,
+    mut result: ProviderResult,
+) -> error_stack::Result<ProviderResult, KernelError> {
+    if result.outcome != ProviderOutcome::Accepted
+        || result.stage != Some(kernel::prelude::entity::CheckStage::Data)
+    {
+        return Ok(result);
+    }
+    let snapshot = deps.protection_snapshot(protection);
+    let mut connection = deps.database_connection().connection().await?;
+    if deps
+        .registration_protection_repository()
+        .find(&mut connection, protection)
+        .await?
+        .is_some_and(|record| {
+            record.generation == snapshot.generation && record.last_success_at.is_some()
+        })
+    {
+        result.outcome = ProviderOutcome::BusinessSuccess;
+        result.reason = ReasonCode::BusinessSuccess;
+    }
+    Ok(result)
+}
+
 pub trait RegistrationProtectionReadinessUseCase: RegistrationProtectionDeps {
     /// 現在の readiness (評価のみ。何も書き込まない)。
     fn registration_protection_readiness_at(
@@ -328,6 +357,74 @@ pub trait RegistrationProtectionReadinessUseCase: RegistrationProtectionDeps {
     ) -> impl Future<Output = error_stack::Result<ProviderResult, KernelError>> + Send {
         async move {
             self.run_registration_protection_probe_at(protection, now())
+                .await
+        }
+    }
+
+    /// Fixed approved mailbox only. DATA acceptance clears covered delivery faults and renews
+    /// business freshness after initial generation bootstrap; it cannot bootstrap a new generation.
+    fn revalidate_registration_email_delivery(
+        &self,
+    ) -> impl Future<Output = error_stack::Result<ProviderResult, KernelError>> + Send {
+        async move {
+            let transport = self.email_transport();
+            let result = match transport.canary_address() {
+                Some(address) if NormalizedEmail::parse(&address).is_ok() => {
+                    transport
+                        .send_code(&address, &random_code(), SendPurpose::Canary)
+                        .await
+                }
+                _ => return Ok(ProviderResult::accepted(TransportClass::None).without_evidence()),
+            };
+            let result = renew_bootstrapped_readiness(self, Protection::Email, result).await?;
+            let at = now();
+            if record_result(self, Protection::Email, result, at).await? {
+                sync_observation(self, at).await?;
+            }
+            Ok(result)
+        }
+    }
+
+    /// Global persistent due time plus transaction-scoped exclusion. The outer transaction owns
+    /// only the schedule lock; short readiness/gate transactions are separate. Cancellation or
+    /// process death releases the lock and rolls back the reservation. No provider verdict is cached.
+    fn run_registration_protection_maintenance(
+        &self,
+        interval: time::Duration,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send {
+        async move {
+            if interval <= time::Duration::ZERO
+                || interval >= self.readiness_policy().probe_max_age / 2
+            {
+                return Err(Report::new(KernelError::Validation).attach_printable(
+                    "Maintenance interval must be positive and less than half probe_max_age",
+                ));
+            }
+            let deps = self.clone();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        if !deps
+                            .registration_protection_repository()
+                            .begin_maintenance_cycle(executor, now(), interval)
+                            .await?
+                        {
+                            return Ok(false);
+                        }
+                        deps.run_registration_protection_probe(Protection::Email)
+                            .await?;
+                        let bot_result = deps.turnstile_verifier().probe_secret().await;
+                        let bot_result =
+                            renew_bootstrapped_readiness(&deps, Protection::Bot, bot_result)
+                                .await?;
+                        record_result(&deps, Protection::Bot, bot_result, now()).await?;
+                        deps.revalidate_registration_email_delivery().await?;
+                        // Always sync, even when no provider result was recorded: expired business
+                        // evidence and generation changes must be visible without an incoming request.
+                        deps.sync_registration_observation().await?;
+                        Ok(true)
+                    })
+                })
                 .await
         }
     }

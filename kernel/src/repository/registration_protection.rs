@@ -14,6 +14,15 @@ use time::OffsetDateTime;
 pub trait RegistrationProtectionRepository: Sync + Send + 'static {
     type Connection: Connection;
 
+    /// Reserve a due maintenance cycle and hold its exclusive lock until this transaction ends.
+    /// A false result must not perform any provider calls.
+    fn begin_maintenance_cycle(
+        &self,
+        executor: &mut Self::Connection,
+        at: OffsetDateTime,
+        interval: time::Duration,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
+
     fn find(
         &self,
         executor: &mut Self::Connection,

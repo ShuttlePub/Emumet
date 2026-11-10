@@ -52,6 +52,78 @@ fn failure_body(codes: &[&str]) -> String {
     serde_json::json!({"success": false, "error-codes": codes}).to_string()
 }
 
+// Evidence timestamps are asserted separately; these compare outcome, reason, transport and stage.
+macro_rules! assert_provider_class {
+    ($actual:expr, $expected:expr $(, $message:expr)? $(,)?) => {{
+        let mut actual = $actual;
+        let mut expected = $expected;
+        actual.observed_at = None;
+        expected.observed_at = None;
+        assert_eq!(actual, expected $(, $message)?);
+    }};
+}
+
+#[tokio::test]
+async fn siteverify_success_and_negative_probe_use_exchange_start_but_faults_use_observation_time()
+{
+    for (probe, status) in [(false, 200), (true, 200), (false, 503)] {
+        let server = MockServer::start().await;
+        let body = if probe {
+            failure_body(&["invalid-input-response"])
+        } else {
+            success_body(HOSTNAME, None, &now_ts())
+        };
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .set_body_string(body)
+                    .set_delay(Duration::from_millis(150)),
+            )
+            .mount(&server)
+            .await;
+        let verifier = HttpTurnstileVerifier::new(TurnstileSettings::from_source(&turnstile_env()))
+            .with_test_base_url(&server.uri());
+        let before = OffsetDateTime::now_utc();
+        let task = tokio::spawn(async move {
+            if probe {
+                verifier.probe_secret().await
+            } else {
+                verifier
+                    .verify(&BotTokenCheck {
+                        token: "test",
+                        remote_ip: None,
+                    })
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while server.received_requests().await.unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let during = OffsetDateTime::now_utc();
+        let result = task.await.unwrap();
+        let evidence = result.observed_at.unwrap();
+        assert!(evidence >= before);
+        if status == 200 {
+            assert!(evidence <= during);
+            assert_eq!(
+                result.outcome,
+                if probe {
+                    ProviderOutcome::Accepted
+                } else {
+                    ProviderOutcome::BusinessSuccess
+                }
+            );
+        } else {
+            assert!(evidence >= during);
+            assert_eq!(result.outcome, ProviderOutcome::TemporarilyUnavailable);
+        }
+    }
+}
+
 // ---- 設定・generation -----------------------------------------------------------------------
 
 fn turnstile_env() -> EnvSource {
@@ -608,7 +680,7 @@ async fn verify_sends_the_secret_and_token_and_succeeds_only_on_a_business_succe
             remote_ip: Some("203.0.113.9"),
         })
         .await;
-    assert_eq!(
+    assert_provider_class!(
         result,
         ProviderResult::business_success(TransportClass::Http2xx)
     );
@@ -625,7 +697,7 @@ async fn http_200_with_success_false_is_a_failure_and_an_invalid_token_does_not_
         .mount(&server)
         .await;
     let result = verifier(&server).verify(&check("bad-token")).await;
-    assert_eq!(
+    assert_provider_class!(
         result,
         ProviderResult::attempt_rejected(ReasonCode::TokenRejected, TransportClass::Http2xx)
     );
@@ -675,7 +747,7 @@ async fn provider_http_failures_are_classified_over_the_wire() {
             .respond_with(ResponseTemplate::new(status).set_body_string("slow down"))
             .mount(&server)
             .await;
-        assert_eq!(
+        assert_provider_class!(
             verifier(&server).verify(&check("token")).await,
             ProviderResult::temporarily_unavailable(reason, transport),
             "{status}"
@@ -689,7 +761,7 @@ async fn provider_http_failures_are_classified_over_the_wire() {
         )
         .mount(&server)
         .await;
-    assert_eq!(
+    assert_provider_class!(
         verifier(&server).verify(&check("token")).await,
         ProviderResult::configuration_invalid(ReasonCode::InvalidSecret, TransportClass::Http4xx)
     );
@@ -708,7 +780,7 @@ async fn slow_unreachable_oversized_and_redirected_responses_are_temporarily_una
         .mount(&server)
         .await;
     let started = std::time::Instant::now();
-    assert_eq!(
+    assert_provider_class!(
         verifier(&server).verify(&check("token")).await,
         ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
     );
@@ -724,7 +796,7 @@ async fn slow_unreachable_oversized_and_redirected_responses_are_temporarily_una
     };
     let unreachable = HttpTurnstileVerifier::new(TurnstileSettings::from_source(&turnstile_env()))
         .with_test_base_url(&format!("http://127.0.0.1:{closed}/siteverify"));
-    assert_eq!(
+    assert_provider_class!(
         unreachable.verify(&check("token")).await,
         ProviderResult::temporarily_unavailable(
             ReasonCode::ConnectFailed,
@@ -738,7 +810,7 @@ async fn slow_unreachable_oversized_and_redirected_responses_are_temporarily_una
         .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(4096)))
         .mount(&server)
         .await;
-    assert_eq!(
+    assert_provider_class!(
         verifier(&server).verify(&check("token")).await,
         ProviderResult::temporarily_unavailable(
             ReasonCode::MalformedResponse,
@@ -781,11 +853,11 @@ async fn unusable_configuration_never_calls_the_provider() {
     let unconfigured =
         HttpTurnstileVerifier::new(TurnstileSettings::from_source(&EnvSource::new()))
             .with_test_base_url(&format!("{}/siteverify", server.uri()));
-    assert_eq!(
+    assert_provider_class!(
         unconfigured.verify(&check("token")).await,
         ProviderResult::configuration_invalid(ReasonCode::NotConfigured, TransportClass::None)
     );
-    assert_eq!(
+    assert_provider_class!(
         unconfigured.probe_secret().await,
         ProviderResult::configuration_invalid(ReasonCode::NotConfigured, TransportClass::None)
     );
@@ -810,7 +882,7 @@ async fn negative_probe_confirms_the_secret_but_is_never_a_business_success() {
         )
         .mount(&server)
         .await;
-    assert_eq!(
+    assert_provider_class!(
         verifier(&server).probe_secret().await,
         ProviderResult::accepted(TransportClass::Http2xx)
     );
@@ -871,23 +943,23 @@ async fn live_turnstile_official_test_keys() {
             total_timeout: Duration::from_secs(10),
             max_response_bytes: 16 * 1024,
         });
-    assert_eq!(
+    assert_provider_class!(
         pass.verify(&check(dummy)).await,
         ProviderResult::business_success(TransportClass::Http2xx)
     );
     assert_eq!(pass.probe_secret().await.outcome, ProviderOutcome::Accepted);
     let reject = HttpTurnstileVerifier::new(settings("2x0000000000000000000000000000000AA"));
-    assert_eq!(
+    assert_provider_class!(
         reject.verify(&check(dummy)).await,
         ProviderResult::attempt_rejected(ReasonCode::TokenRejected, TransportClass::Http2xx)
     );
     let duplicate = HttpTurnstileVerifier::new(settings("3x0000000000000000000000000000000AA"));
-    assert_eq!(
+    assert_provider_class!(
         duplicate.verify(&check(dummy)).await,
         ProviderResult::attempt_rejected(ReasonCode::TokenDuplicate, TransportClass::Http2xx)
     );
     let invalid = HttpTurnstileVerifier::new(settings("not-a-real-secret-fixture"));
-    assert_eq!(
+    assert_provider_class!(
         invalid.verify(&check(dummy)).await,
         ProviderResult::configuration_invalid(ReasonCode::InvalidSecret, TransportClass::Http4xx)
     );

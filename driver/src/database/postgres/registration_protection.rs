@@ -141,6 +141,32 @@ pub struct PostgresRegistrationProtectionRepository;
 impl RegistrationProtectionRepository for PostgresRegistrationProtectionRepository {
     type Connection = PostgresConnection;
 
+    async fn begin_maintenance_cycle(
+        &self,
+        executor: &mut Self::Connection,
+        at: OffsetDateTime,
+        interval: time::Duration,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let locked: bool = sqlx::query_scalar(
+            "SELECT pg_try_advisory_xact_lock(hashtextextended('registration_protection_maintenance', 0))",
+        ).fetch_one(&mut *con).await.convert_error()?;
+        if !locked {
+            return Ok(false);
+        }
+        let reserved = sqlx::query(
+            "INSERT INTO registration_protection_schedule (id, next_run_at) VALUES (1, $1) \
+             ON CONFLICT (id) DO UPDATE SET next_run_at = $1 \
+             WHERE registration_protection_schedule.next_run_at <= $2",
+        )
+        .bind(at + interval)
+        .bind(at)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(reserved.rows_affected() == 1)
+    }
+
     async fn find(
         &self,
         executor: &mut Self::Connection,

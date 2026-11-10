@@ -539,8 +539,8 @@ fn main_serves_only_the_root_router() {
     }
 }
 
-/// The production entrypoint starts exactly the projection worker and the Registration Gate
-/// webhook worker. A new (Profile relationship) delivery worker must not be started from `main`
+/// The production entrypoint starts projection, Registration Gate webhook, and opt-in registration
+/// maintenance. A new (Profile relationship) delivery worker must not be started from `main`
 /// before P4 owns the cutover; whoever adds one has to update this list deliberately.
 #[test]
 fn main_starts_no_profile_delivery_worker() {
@@ -552,12 +552,16 @@ fn main_starts_no_profile_delivery_worker() {
         .collect();
     assert_eq!(
         spawns.len(),
-        2,
+        3,
         "unexpected worker start in main.rs: {spawns:?}"
     );
     assert!(spawns[0].contains("ProjectionWorker::spawn"), "{spawns:?}");
     assert!(
         spawns[1].contains("webhook_worker::spawn_if_enabled"),
+        "{spawns:?}"
+    );
+    assert!(
+        spawns[2].contains("registration_guard::spawn_if_enabled"),
         "{spawns:?}"
     );
     for forbidden in [
