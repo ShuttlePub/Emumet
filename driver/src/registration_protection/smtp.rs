@@ -581,10 +581,6 @@ impl SmtpSession {
                 SmtpStage::MailFrom,
             );
             let at = OffsetDateTime::now_utc();
-            if accepted.is_ok() {
-                // 取引は破棄する (メールは送らない)。RSET の成否は結果に影響しない。
-                let _ = tokio::time::timeout(QUIT_TIMEOUT, connection.command(Rset)).await;
-            }
             Ok::<_, SmtpFailure>((accepted.map(|_| at), connection))
         };
         let (accepted, mut connection) = match tokio::time::timeout(deadline, work).await {
@@ -598,6 +594,11 @@ impl SmtpSession {
             Ok(Err(result)) => return Err(result),
             Ok(Ok(done)) => done,
         };
+        // 確定済みの結果 (MAIL FROM の受理) は、RSET・QUIT の成否や遅延に影響されない。
+        // どちらも全体の期限の外で、それぞれ QUIT_TIMEOUT までの best effort。
+        if accepted.is_ok() {
+            let _ = tokio::time::timeout(QUIT_TIMEOUT, connection.command(Rset)).await;
+        }
         let _ = tokio::time::timeout(QUIT_TIMEOUT, connection.quit()).await;
         accepted
     }

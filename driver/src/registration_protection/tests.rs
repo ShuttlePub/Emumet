@@ -1781,3 +1781,20 @@ async fn failures_over_real_smtp_record_the_stage_they_failed_at() {
     assert_eq!(result.outcome, ProviderOutcome::ConfigurationInvalid);
     assert_eq!(result.stage, Some(CheckStage::StartTls));
 }
+
+#[tokio::test]
+async fn a_silent_rset_does_not_turn_an_accepted_mail_from_into_a_timeout() {
+    // MAIL FROM は期限内に受理されたが、その後の RSET に応答がない。確定済みの受理は
+    // 全体の期限 (ここでは 400ms) の外で待つ RSET・QUIT に影響されない。
+    let (transport, _server) = transport_with(
+        SmtpScript {
+            silent_on: Some("RSET".to_string()),
+            ..script_with_auth()
+        },
+        Duration::from_millis(400),
+    )
+    .await;
+    let result = transport.probe_connection().await;
+    assert_eq!(result.outcome, ProviderOutcome::Accepted, "{result:?}");
+    assert_eq!(result.stage, Some(CheckStage::MailFrom));
+}

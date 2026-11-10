@@ -201,6 +201,7 @@ lettre の `AsyncSmtpConnection` (tokio + native-tls) で、接続 → STARTTLS 
 
 - 観測入力の反映: `RegistrationProtectionReadinessUseCase::sync_registration_observation(_at)` (`RecordRegistrationObservationUseCase` 経由のみ)。probe: `run_registration_protection_probe(_at)`。時刻を引数にした評価: `registration_protection_readiness_at` / `registration_observation_at`。
 - hook から: `verify_registration_email_proof` (proof の照合・消費)、`verify_registration_bot_token`。いずれも内部 use case で HTTP の書込口ではない。
+- 既知の未対応 (E15d での判断): (1) 成功対話の開始時刻を解除の下限にしない (並行する前段障害と後段成功の順序の保守化)、(2) Turnstile の `observed_at` は呼出経路で HTTP の前後に揺れる (adapter での保守的な対話時刻の明示)。いずれも fail-closed 側ではなく解除側の精緻化。
 - E15d が実装するもの: 認証付き pre-persist hook、継続 probe と **canary 配送再検証** の周期実行 (`probe_max_age` より短く。配送範囲の障害の自動復旧の前提)、hook 時の gate 最新評価、全 method/全到達経路、設定喪失/latch の統合試験、config attestation。
 
 ## 9. 試験
