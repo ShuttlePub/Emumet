@@ -2,7 +2,7 @@ mod actor_key;
 mod cavage;
 mod fetch;
 mod signer;
-mod ssrf;
+pub(crate) mod ssrf;
 #[cfg(test)]
 mod tests;
 mod verifier;

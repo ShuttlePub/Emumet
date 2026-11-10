@@ -8,6 +8,7 @@ mod openapi;
 mod projection_worker;
 mod route;
 mod schema;
+mod webhook_worker;
 
 use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
@@ -20,6 +21,7 @@ use crate::route::media::MediaRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile_transfer::ProfileTransferRouter;
 use crate::route::registration_gate::AdminRegistrationGateRouter;
+use crate::route::registration_gate_webhook::AdminRegistrationGateWebhookRouter;
 use crate::route::report::{AdminReportRouter, ReportRouter};
 use crate::route::signing::SigningRouter;
 #[cfg(feature = "test-mode")]
@@ -82,6 +84,8 @@ async fn main() -> Result<(), StackTrace> {
     let (_projection_handle, projection_shutdown) =
         ProjectionWorker::spawn(Arc::new(app.clone()), projection_poll_interval_from_env());
 
+    let webhook_shutdown = webhook_worker::spawn_if_enabled(Arc::new(app.clone()));
+
     #[cfg(feature = "test-mode")]
     {
         let token = std::env::var("EMUMET_TEST_MODE_TOKEN");
@@ -107,7 +111,8 @@ async fn main() -> Result<(), StackTrace> {
             axum::Router::new()
                 .route_admin_account()
                 .route_admin_reports()
-                .route_admin_registration_gate(),
+                .route_admin_registration_gate()
+                .route_admin_registration_gate_webhook(),
         );
 
     let authed_routes = axum::Router::new()
@@ -151,6 +156,9 @@ async fn main() -> Result<(), StackTrace> {
         .change_context_lazy(|| KernelError::Internal)?;
 
     projection_shutdown.trigger();
+    if let Some(shutdown) = webhook_shutdown {
+        shutdown.trigger();
+    }
 
     Ok(())
 }

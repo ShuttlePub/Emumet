@@ -767,6 +767,7 @@ delegate_database_dependence! {
     kernel::interfaces::repository::DependOnRegistrationGateRepository { RegistrationGateRepository, registration_gate_repository },
     kernel::interfaces::repository::DependOnRemoteAccountRepository { RemoteAccountRepository, remote_account_repository },
     kernel::interfaces::repository::DependOnSigningKeyRepository { SigningKeyRepository, signing_key_repository },
+    kernel::interfaces::repository::DependOnWebhookDeliveryRepository { WebhookDeliveryRepository, webhook_delivery_repository },
     kernel::interfaces::projection::DependOnAccountEventLog { AccountEventLog, account_event_log },
     kernel::interfaces::projection::DependOnAccountReportEventLog { AccountReportEventLog, account_report_event_log },
     kernel::interfaces::projection::DependOnAccountProjectionWriter { AccountProjectionWriter, account_projection_writer },

@@ -92,6 +92,9 @@ impl Modify for SecurityAddon {
         crate::route::registration_gate::unread_registration_gate_notifications,
         crate::route::registration_gate::mark_registration_gate_notifications_read,
         crate::route::registration_gate::mark_all_registration_gate_notifications_read,
+        crate::route::registration_gate_webhook::get_registration_gate_webhook_status,
+        crate::route::registration_gate_webhook::send_registration_gate_webhook_test,
+        crate::route::registration_gate_webhook::retry_registration_gate_webhooks,
     ),
     components(schemas(
         crate::schema::account::CreateAccountRequest,
@@ -153,6 +156,12 @@ impl Modify for SecurityAddon {
         crate::schema::registration_gate::RegistrationGateNotificationResponse,
         crate::schema::registration_gate::RegistrationGateNotificationListResponse,
         crate::schema::registration_gate::UnreadCountResponse,
+        crate::schema::registration_gate_webhook::WebhookRetryRequest,
+        crate::schema::registration_gate_webhook::WebhookRetryResponse,
+        crate::schema::registration_gate_webhook::WebhookDeliveryCountsResponse,
+        crate::schema::registration_gate_webhook::WebhookDeliveryResponse,
+        crate::schema::registration_gate_webhook::WebhookStatusResponse,
+        crate::schema::registration_gate_webhook::WebhookTestResponse,
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -166,6 +175,7 @@ impl Modify for SecurityAddon {
         (name = "ProfileTransfer", description = "Profile ownership transfer requests"),
         (name = "Organization", description = "Organization account and membership management"),
         (name = "RegistrationGate", description = "Registration readiness gate control plane (admin only). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet."),
+        (name = "RegistrationGateWebhook", description = "External Webhook delivery of registration gate notification events (admin only; E15w). The endpoint URL and the HMAC-SHA256 signing secret are server configuration only (REGISTRATION_WEBHOOK_URL, REGISTRATION_WEBHOOK_SECRET or REGISTRATION_WEBHOOK_SECRET_FILE). When they are unset the Webhook is disabled: nothing is delivered, the status endpoint reports `not_configured`, and the gate is unaffected (this is not an error). Delivery guarantees: at-least-once, so the same event can be delivered more than once (retries, crash recovery, admin retry) and receivers must de-duplicate by the stable event ID (`X-Emumet-Event-Id`); ordering is not guaranteed (order by `occurred_at` if needed). Retries: 408/429/5xx/timeouts/connection failures are retried with exponential backoff and jitter (Retry-After is honored up to a cap) until the attempt or age limit, then the delivery is `failed`; redirects, other 4xx responses and destination-check (SSRF) rejections fail immediately. Failed deliveries are resent only when an admin requests a retry. Webhook trouble never changes the gate state and never creates a new notification event. HTTPS only, no redirects, destinations are checked at connect time and pinned. Receiver documentation: docs/registration-gate-webhook.md."),
     )
 )]
 #[allow(dead_code)] // utoipa OpenApiマクロ内部で使用される

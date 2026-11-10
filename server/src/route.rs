@@ -9,6 +9,7 @@ pub mod media;
 pub mod oauth2;
 pub mod profile_transfer;
 pub mod registration_gate;
+pub mod registration_gate_webhook;
 pub mod report;
 pub mod signing;
 
@@ -83,6 +84,7 @@ pub(crate) fn build_test_router_with_auth(
     use crate::route::oauth2::OAuth2Router;
     use crate::route::profile_transfer::ProfileTransferRouter;
     use crate::route::registration_gate::AdminRegistrationGateRouter;
+    use crate::route::registration_gate_webhook::AdminRegistrationGateWebhookRouter;
     use crate::route::report::{AdminReportRouter, ReportRouter};
     use crate::route::signing::SigningRouter;
 
@@ -98,7 +100,8 @@ pub(crate) fn build_test_router_with_auth(
             axum::Router::new()
                 .route_admin_account()
                 .route_admin_reports()
-                .route_admin_registration_gate(),
+                .route_admin_registration_gate()
+                .route_admin_registration_gate_webhook(),
         );
 
     let authed_routes = axum::Router::new()

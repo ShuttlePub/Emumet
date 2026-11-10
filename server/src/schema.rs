@@ -5,4 +5,5 @@ pub mod oauth2;
 pub mod organization;
 pub mod profile_transfer;
 pub mod registration_gate;
+pub mod registration_gate_webhook;
 pub mod report;

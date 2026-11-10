@@ -89,6 +89,7 @@ Copy `.env.example` to `.env`:
 - `KRATOS_PUBLIC_URL` — Kratos public URL for session verification (default: http://localhost:4433/)
 - `EXPECTED_AUDIENCE` — Expected JWT audience claim (default: account)
 - `REDIS_URL` or `REDIS_HOST` — Redis connection for message queue
+- `REGISTRATION_WEBHOOK_URL` / `REGISTRATION_WEBHOOK_SECRET` (or `REGISTRATION_WEBHOOK_SECRET_FILE`) — registration gate notification Webhook endpoint (HTTPS only) and HMAC-SHA256 signing secret. Both unset = Webhook disabled (not an error). See `docs/registration-gate-webhook.md`
 
 ### Master Key Password
 
