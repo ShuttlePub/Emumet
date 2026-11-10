@@ -1,0 +1,26 @@
+{
+  "/health/config": {
+    "status": 200,
+    "seconds": 0.004,
+    "body": "ec069f0d4455c33fb3bc63d4a33c6959d2393da4550edd0bd442ef900cb331fe"
+  },
+  "/admin/config": {
+    "status": 404,
+    "seconds": 0.001,
+    "body": "404 page not found\n"
+  },
+  "/health/ready": {
+    "status": 200,
+    "seconds": 0.002,
+    "body": {
+      "status": "ok"
+    }
+  },
+  "/version": {
+    "status": 200,
+    "seconds": 0.002,
+    "body": {
+      "version": "v1.3.1"
+    }
+  }
+}

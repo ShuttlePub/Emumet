@@ -1,0 +1,307 @@
+{
+  "condition": "empty",
+  "kind": "api",
+  "expected_created": true,
+  "response": {
+    "status": 200,
+    "seconds": 0.193,
+    "body": {
+      "session_token": "<redacted>",
+      "session": {
+        "id": "dd52ba29-cb1f-4194-b2cf-4d8125c3d47c",
+        "active": true,
+        "expires_at": "2026-11-11T06:26:00.121758814Z",
+        "authenticated_at": "2026-11-10T06:26:00.121790544Z",
+        "authenticator_assurance_level": "aal1",
+        "authentication_methods": [
+          {
+            "method": "password",
+            "aal": "aal1",
+            "completed_at": "2026-11-10T06:26:00.121758474Z"
+          }
+        ],
+        "issued_at": "2026-11-10T06:26:00.121758814Z",
+        "identity": {
+          "id": "13d8f9f7-684a-4519-b1d2-3e035dc0f8e3",
+          "schema_id": "default",
+          "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
+          "state": "active",
+          "state_changed_at": "2026-11-10T06:26:00.117846993Z",
+          "traits": {
+            "email": "empty-parsed@example.test"
+          },
+          "verifiable_addresses": [
+            {
+              "id": "4e37a10f-f028-40f6-b3a7-e39ca44d3601",
+              "value": "empty-parsed@example.test",
+              "verified": false,
+              "via": "email",
+              "status": "sent",
+              "created_at": "2026-11-10T06:26:00.11948Z",
+              "updated_at": "2026-11-10T06:26:00.11948Z"
+            }
+          ],
+          "metadata_public": null,
+          "created_at": "2026-11-10T06:26:00.119007Z",
+          "updated_at": "2026-11-10T06:26:00.119007Z",
+          "organization_id": null
+        },
+        "devices": [
+          {
+            "id": "63992a95-2c66-4782-a6af-a496f474f822",
+            "ip_address": "10.89.2.44:54398",
+            "user_agent": "Python-urllib/3.11",
+            "location": ""
+          }
+        ]
+      },
+      "identity": {
+        "id": "13d8f9f7-684a-4519-b1d2-3e035dc0f8e3",
+        "schema_id": "default",
+        "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
+        "state": "active",
+        "state_changed_at": "2026-11-10T06:26:00.117846993Z",
+        "traits": {
+          "email": "empty-parsed@example.test"
+        },
+        "verifiable_addresses": [
+          {
+            "id": "4e37a10f-f028-40f6-b3a7-e39ca44d3601",
+            "value": "empty-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:26:00.11948Z",
+            "updated_at": "2026-11-10T06:26:00.11948Z"
+          }
+        ],
+        "metadata_public": null,
+        "created_at": "2026-11-10T06:26:00.119007Z",
+        "updated_at": "2026-11-10T06:26:00.119007Z",
+        "organization_id": null
+      },
+      "continue_with": [
+        {
+          "action": "show_verification_ui",
+          "flow": {
+            "id": "4914e970-5124-420f-862c-fd9eb75d29c4",
+            "verifiable_address": "empty-parsed@example.test"
+          }
+        },
+        {
+          "action": "set_ory_session_token",
+          "ory_session_token": "ory_st_qb3hGut44ApDey9HUxYXSbwlhocOXBRL"
+        }
+      ]
+    }
+  },
+  "before": {
+    "admin": [
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.988684Z",
+            "updated_at": "2026-11-10T06:23:39.988684Z"
+          }
+        ]
+      },
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.121433Z",
+            "updated_at": "2026-11-10T06:23:39.121433Z"
+          }
+        ]
+      },
+      {
+        "id": "aff60ccb-1be8-47ac-9f42-7b0cf172e87f",
+        "email": "malformed-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "32ae1217-c968-4b88-a6f0-212833379f17",
+            "value": "malformed-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:25:49.054067Z",
+            "updated_at": "2026-11-10T06:25:49.054067Z"
+          }
+        ]
+      },
+      {
+        "id": "ce08a656-a485-475f-83ba-43c127eaaee4",
+        "email": "empty-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "dc9d4020-b7b9-4029-b9df-2debc59f53ed",
+            "value": "empty-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:25:50.250948Z",
+            "updated_at": "2026-11-10T06:25:50.250948Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test"
+      },
+      {
+        "id": "aff60ccb-1be8-47ac-9f42-7b0cf172e87f",
+        "email": "malformed-unparsed@example.test"
+      },
+      {
+        "id": "ce08a656-a485-475f-83ba-43c127eaaee4",
+        "email": "empty-unparsed@example.test"
+      }
+    ]
+  },
+  "after": {
+    "admin": [
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.988684Z",
+            "updated_at": "2026-11-10T06:23:39.988684Z"
+          }
+        ]
+      },
+      {
+        "id": "13d8f9f7-684a-4519-b1d2-3e035dc0f8e3",
+        "email": "empty-parsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "4e37a10f-f028-40f6-b3a7-e39ca44d3601",
+            "value": "empty-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:26:00.11948Z",
+            "updated_at": "2026-11-10T06:26:00.11948Z"
+          }
+        ]
+      },
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.121433Z",
+            "updated_at": "2026-11-10T06:23:39.121433Z"
+          }
+        ]
+      },
+      {
+        "id": "aff60ccb-1be8-47ac-9f42-7b0cf172e87f",
+        "email": "malformed-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "32ae1217-c968-4b88-a6f0-212833379f17",
+            "value": "malformed-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:25:49.054067Z",
+            "updated_at": "2026-11-10T06:25:49.054067Z"
+          }
+        ]
+      },
+      {
+        "id": "ce08a656-a485-475f-83ba-43c127eaaee4",
+        "email": "empty-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "dc9d4020-b7b9-4029-b9df-2debc59f53ed",
+            "value": "empty-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:25:50.250948Z",
+            "updated_at": "2026-11-10T06:25:50.250948Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test"
+      },
+      {
+        "id": "aff60ccb-1be8-47ac-9f42-7b0cf172e87f",
+        "email": "malformed-unparsed@example.test"
+      },
+      {
+        "id": "ce08a656-a485-475f-83ba-43c127eaaee4",
+        "email": "empty-unparsed@example.test"
+      },
+      {
+        "id": "13d8f9f7-684a-4519-b1d2-3e035dc0f8e3",
+        "email": "empty-parsed@example.test"
+      }
+    ]
+  },
+  "hook_calls": [
+    {
+      "context_keys": [
+        "flow",
+        "identity"
+      ],
+      "identity_id": "00000000-0000-0000-0000-000000000000",
+      "email": "empty-parsed@example.test",
+      "verifiable_addresses": [
+        {
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-0000-0000-000000000000",
+          "status": "pending",
+          "updated_at": "0001-01-01T00:00:00Z",
+          "value": "empty-parsed@example.test",
+          "verified": false,
+          "via": "email"
+        }
+      ],
+      "flow_id": "fb2d723b-613f-46d9-ac7f-69cbd6c207c2",
+      "flow_type": "api",
+      "transient_payload": {},
+      "mode": "empty"
+    }
+  ],
+  "identity_created": true
+}

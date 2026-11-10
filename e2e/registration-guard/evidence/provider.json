@@ -1,0 +1,74 @@
+{
+  "test_only": true,
+  "endpoint": "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+  "results": {
+    "test_pass": {
+      "http_status": 200,
+      "body": {
+        "challenge_ts": "2026-11-10T06:27:37.271Z",
+        "error-codes": [],
+        "hostname": "example.com",
+        "metadata": {
+          "result_with_testing_key": true
+        },
+        "success": true
+      }
+    },
+    "test_reject": {
+      "http_status": 200,
+      "body": {
+        "error-codes": [
+          "invalid-input-response"
+        ],
+        "success": false,
+        "messages": [],
+        "metadata": {
+          "result_with_testing_key": true
+        }
+      }
+    },
+    "test_duplicate": {
+      "http_status": 200,
+      "body": {
+        "error-codes": [
+          "timeout-or-duplicate"
+        ],
+        "success": false,
+        "messages": [],
+        "metadata": {
+          "result_with_testing_key": true
+        }
+      }
+    },
+    "empty_secret": {
+      "http_status": 400,
+      "body": {
+        "error-codes": [
+          "missing-input-secret"
+        ],
+        "success": false,
+        "messages": []
+      }
+    },
+    "invalid_secret": {
+      "http_status": 400,
+      "body": {
+        "error-codes": [
+          "invalid-input-secret"
+        ],
+        "success": false,
+        "messages": []
+      }
+    },
+    "empty_response": {
+      "http_status": 200,
+      "body": {
+        "error-codes": [
+          "missing-input-response"
+        ],
+        "success": false,
+        "messages": []
+      }
+    }
+  }
+}

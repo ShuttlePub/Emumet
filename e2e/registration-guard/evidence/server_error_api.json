@@ -1,0 +1,176 @@
+{
+  "condition": "server_error",
+  "kind": "api",
+  "expected_created": false,
+  "response": {
+    "status": 400,
+    "seconds": 3.174,
+    "body": {
+      "error": {
+        "code": 500,
+        "status": "Internal Server Error",
+        "message": "POST http://guard:8080/guard giving up after 3 attempt(s)"
+      }
+    }
+  },
+  "before": {
+    "admin": [
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.988684Z",
+            "updated_at": "2026-11-10T06:23:39.988684Z"
+          }
+        ]
+      },
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.121433Z",
+            "updated_at": "2026-11-10T06:23:39.121433Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test"
+      }
+    ]
+  },
+  "after": {
+    "admin": [
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.988684Z",
+            "updated_at": "2026-11-10T06:23:39.988684Z"
+          }
+        ]
+      },
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.121433Z",
+            "updated_at": "2026-11-10T06:23:39.121433Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test"
+      }
+    ]
+  },
+  "hook_calls": [
+    {
+      "context_keys": [
+        "flow",
+        "identity"
+      ],
+      "identity_id": "00000000-0000-0000-0000-000000000000",
+      "email": "server-error-api@example.test",
+      "verifiable_addresses": [
+        {
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-0000-0000-000000000000",
+          "status": "pending",
+          "updated_at": "0001-01-01T00:00:00Z",
+          "value": "server-error-api@example.test",
+          "verified": false,
+          "via": "email"
+        }
+      ],
+      "flow_id": "728b0cbe-93d6-4463-9da6-e7c1842b49be",
+      "flow_type": "api",
+      "transient_payload": {},
+      "mode": "server_error"
+    },
+    {
+      "context_keys": [
+        "flow",
+        "identity"
+      ],
+      "identity_id": "00000000-0000-0000-0000-000000000000",
+      "email": "server-error-api@example.test",
+      "verifiable_addresses": [
+        {
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-0000-0000-000000000000",
+          "status": "pending",
+          "updated_at": "0001-01-01T00:00:00Z",
+          "value": "server-error-api@example.test",
+          "verified": false,
+          "via": "email"
+        }
+      ],
+      "flow_id": "728b0cbe-93d6-4463-9da6-e7c1842b49be",
+      "flow_type": "api",
+      "transient_payload": {},
+      "mode": "server_error"
+    },
+    {
+      "context_keys": [
+        "flow",
+        "identity"
+      ],
+      "identity_id": "00000000-0000-0000-0000-000000000000",
+      "email": "server-error-api@example.test",
+      "verifiable_addresses": [
+        {
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-0000-0000-000000000000",
+          "status": "pending",
+          "updated_at": "0001-01-01T00:00:00Z",
+          "value": "server-error-api@example.test",
+          "verified": false,
+          "via": "email"
+        }
+      ],
+      "flow_id": "728b0cbe-93d6-4463-9da6-e7c1842b49be",
+      "flow_type": "api",
+      "transient_payload": {},
+      "mode": "server_error"
+    }
+  ],
+  "identity_created": false
+}

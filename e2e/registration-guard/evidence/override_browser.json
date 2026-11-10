@@ -1,0 +1,193 @@
+{
+  "condition": "override",
+  "kind": "browser",
+  "expected_created": true,
+  "response": {
+    "status": 200,
+    "seconds": 0.175,
+    "body": {
+      "session": {
+        "id": "8b7c5729-91b0-4625-a53e-463cddffaf8b",
+        "active": true,
+        "expires_at": "2026-11-11T06:23:39.9894697Z",
+        "authenticated_at": "2026-11-10T06:23:39.98949256Z",
+        "authenticator_assurance_level": "aal1",
+        "authentication_methods": [
+          {
+            "method": "password",
+            "aal": "aal1",
+            "completed_at": "2026-11-10T06:23:39.98946946Z"
+          }
+        ],
+        "issued_at": "2026-11-10T06:23:39.9894697Z",
+        "identity": {
+          "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+          "schema_id": "default",
+          "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
+          "state": "active",
+          "state_changed_at": "2026-11-10T06:23:39.987890778Z",
+          "traits": {
+            "email": "override-browser@example.test"
+          },
+          "verifiable_addresses": [
+            {
+              "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+              "value": "override-browser@example.test",
+              "verified": false,
+              "via": "email",
+              "status": "sent",
+              "created_at": "2026-11-10T06:23:39.988684Z",
+              "updated_at": "2026-11-10T06:23:39.988684Z"
+            }
+          ],
+          "metadata_public": null,
+          "created_at": "2026-11-10T06:23:39.988394Z",
+          "updated_at": "2026-11-10T06:23:39.988394Z",
+          "organization_id": null
+        },
+        "devices": [
+          {
+            "id": "2aa3d8c0-0999-4457-823d-a5d9b39d0cfc",
+            "ip_address": "10.89.2.40:57858",
+            "user_agent": "Python-urllib/3.11",
+            "location": ""
+          }
+        ]
+      },
+      "identity": {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "schema_id": "default",
+        "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
+        "state": "active",
+        "state_changed_at": "2026-11-10T06:23:39.987890778Z",
+        "traits": {
+          "email": "override-browser@example.test"
+        },
+        "verifiable_addresses": [
+          {
+            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.988684Z",
+            "updated_at": "2026-11-10T06:23:39.988684Z"
+          }
+        ],
+        "metadata_public": null,
+        "created_at": "2026-11-10T06:23:39.988394Z",
+        "updated_at": "2026-11-10T06:23:39.988394Z",
+        "organization_id": null
+      },
+      "continue_with": [
+        {
+          "action": "redirect_browser_to",
+          "redirect_browser_to": "http://127.0.0.1:18445/return"
+        },
+        {
+          "action": "show_verification_ui",
+          "flow": {
+            "id": "817013be-8c4c-4f98-bf66-20f066a1543e",
+            "verifiable_address": "override-browser@example.test",
+            "url": "http://127.0.0.1:18445/verification?flow=817013be-8c4c-4f98-bf66-20f066a1543e"
+          }
+        }
+      ]
+    }
+  },
+  "before": {
+    "admin": [
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.121433Z",
+            "updated_at": "2026-11-10T06:23:39.121433Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test"
+      }
+    ]
+  },
+  "after": {
+    "admin": [
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.988684Z",
+            "updated_at": "2026-11-10T06:23:39.988684Z"
+          }
+        ]
+      },
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T06:23:39.121433Z",
+            "updated_at": "2026-11-10T06:23:39.121433Z"
+          }
+        ]
+      }
+    ],
+    "db": [
+      {
+        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "email": "override-api@example.test"
+      },
+      {
+        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "email": "override-browser@example.test"
+      }
+    ]
+  },
+  "hook_calls": [
+    {
+      "context_keys": [
+        "flow",
+        "identity"
+      ],
+      "identity_id": "00000000-0000-0000-0000-000000000000",
+      "email": "override-browser@example.test",
+      "verifiable_addresses": [
+        {
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-0000-0000-000000000000",
+          "status": "pending",
+          "updated_at": "0001-01-01T00:00:00Z",
+          "value": "override-browser@example.test",
+          "verified": false,
+          "via": "email"
+        }
+      ],
+      "flow_id": "a689cabd-985a-4fc8-aa5c-b9b0d6c37ff8",
+      "flow_type": "browser",
+      "transient_payload": {},
+      "mode": "override"
+    }
+  ],
+  "identity_created": true
+}

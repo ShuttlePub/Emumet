@@ -1,0 +1,18 @@
+[
+  {
+    "time": "2026-11-10T06:25:24.450973106Z",
+    "path": "/self-service/registration",
+    "method": "POST",
+    "http_response": {
+      "headers": {
+        "cache-control": "private, no-cache, no-store, must-revalidate",
+        "content-type": "application/json",
+        "vary": "Cookie"
+      },
+      "size": 319,
+      "status": 504,
+      "text_status": "Gateway Timeout",
+      "took": 93172913422
+    }
+  }
+]

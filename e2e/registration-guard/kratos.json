@@ -1,0 +1,77 @@
+{
+  "serve": {
+    "public": {
+      "base_url": "http://127.0.0.1:18433/"
+    },
+    "admin": {
+      "base_url": "http://127.0.0.1:18434/"
+    }
+  },
+  "selfservice": {
+    "default_browser_return_url": "http://127.0.0.1:18445/return",
+    "flows": {
+      "registration": {
+        "enabled": true,
+        "ui_url": "http://127.0.0.1:18445/registration",
+        "after": {
+          "password": {
+            "hooks": [
+              {
+                "hook": "web_hook",
+                "config": {
+                  "url": "http://guard:8080/guard",
+                  "method": "POST",
+                  "body": "file:///fixture/hook.jsonnet",
+                  "response": {
+                    "ignore": false,
+                    "parse": true
+                  },
+                  "emit_analytics_event": false
+                }
+              },
+              {
+                "hook": "session"
+              }
+            ]
+          }
+        }
+      },
+      "login": {
+        "ui_url": "http://127.0.0.1:18445/login"
+      },
+      "verification": {
+        "enabled": true,
+        "ui_url": "http://127.0.0.1:18445/verification",
+        "use": "code"
+      }
+    },
+    "methods": {
+      "password": {
+        "enabled": true,
+        "config": {"haveibeenpwned_enabled": false}
+      },
+      "code": {
+        "enabled": true,
+        "passwordless_enabled": false
+      }
+    }
+  },
+  "identity": {
+    "default_schema_id": "default",
+    "schemas": [
+      {
+        "id": "default",
+        "url": "file:///fixture/identity.schema.json"
+      }
+    ]
+  },
+  "log": {
+    "level": "debug",
+    "format": "json"
+  },
+  "courier": {
+    "smtp": {
+      "connection_uri": "smtp://guard:1025/?disable_starttls=true"
+    }
+  }
+}
