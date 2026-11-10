@@ -16,7 +16,19 @@ mod mute;
 mod organization_membership;
 mod outbox_activity;
 mod profile;
+mod profile_block;
+mod profile_delivery;
 mod profile_event_store;
+mod profile_follow;
+mod profile_graph;
+#[cfg(test)]
+mod profile_graph_reset_tests;
+#[cfg(test)]
+mod profile_graph_test_support;
+#[cfg(test)]
+mod profile_graph_tests;
+mod profile_inbound_activity;
+mod profile_mute;
 mod profile_repository;
 mod profile_transfer_request;
 mod profile_transfer_request_event_store;
@@ -80,6 +92,11 @@ impl PostgresDatabase {
             .await
             .change_context_lazy(|| KernelError::Internal)?;
         Ok(Self { pool })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_pool(pool: Pool<Postgres>) -> Self {
+        Self { pool }
     }
 }
 
