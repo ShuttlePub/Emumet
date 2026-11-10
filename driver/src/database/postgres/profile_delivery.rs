@@ -384,6 +384,35 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
         Ok(result)
     }
 
+    async fn renew_lease(
+        &self,
+        executor: &mut Self::Connection,
+        claim: &ClaimedProfileDeliveryJob,
+        now: OffsetDateTime,
+        extension: time::Duration,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let result = sqlx::query(
+            //language=postgresql
+            r#"
+            UPDATE profile_delivery_jobs
+            SET lease_expires_at = GREATEST($3, clock_timestamp()) + make_interval(secs => $4),
+                updated_at = $3
+            WHERE id = $1 AND lease_token = $2 AND state = 'in_flight'
+              AND attempt_count = $5 AND lease_expires_at > GREATEST($3, clock_timestamp())
+            "#,
+        )
+        .bind(claim.id.as_ref())
+        .bind(&claim.lease_token)
+        .bind(now)
+        .bind(extension.as_seconds_f64())
+        .bind(claim.attempt_no)
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn cancel(
         &self,
         executor: &mut Self::Connection,
@@ -476,6 +505,27 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
         .convert_error()?
         .map(ProfileDeliveryJob::try_from)
         .transpose()
+    }
+
+    async fn find_by_follow(
+        &self,
+        executor: &mut Self::Connection,
+        follow_id: &ProfileFollowId,
+        activity_type: DeliveryActivityType,
+    ) -> error_stack::Result<Vec<ProfileDeliveryJob>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, JobRow>(&format!(
+            "SELECT {COLUMNS} FROM profile_delivery_jobs \
+             WHERE follow_id = $1 AND activity_type = $2 ORDER BY id ASC"
+        ))
+        .bind(follow_id.as_ref())
+        .bind(activity_type.as_str())
+        .fetch_all(con)
+        .await
+        .convert_error()?
+        .into_iter()
+        .map(ProfileDeliveryJob::try_from)
+        .collect()
     }
 
     async fn list_attempts(

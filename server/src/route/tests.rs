@@ -416,7 +416,50 @@ async fn profile_routes_stay_absent_from_the_root_router_for_a_real_profile_and_
         .unwrap();
     assert_eq!(served.status(), StatusCode::UNAUTHORIZED);
 
-    let mut probes: Vec<(&str, String)> = Vec::new();
+    // Real relationships owned by the caller: a DELETE with their ids would visibly remove them if
+    // the relationship routes were mounted by mistake (they are mounted only in test routers).
+    let other_owner = world.new_user().await;
+    let other = world.create_profile(&other_owner, true).await;
+    let block_target = world.create_profile(&other_owner, true).await;
+    let (follow_id, block_id, mute_id) = {
+        use application::service::profile_relationship::ProfileRelationshipUseCase;
+        let follow = world
+            .module
+            .follow_profile(&owner.auth_account_id, None, nanoid, &other.actor_url)
+            .await
+            .unwrap();
+        let block = world
+            .module
+            .block_actor(
+                &owner.auth_account_id,
+                None,
+                nanoid,
+                &block_target.actor_url,
+            )
+            .await
+            .unwrap();
+        let mute = world
+            .module
+            .mute_actor(&owner.auth_account_id, None, nanoid, &other.actor_url)
+            .await
+            .unwrap();
+        (follow.nanoid, block.nanoid, mute.nanoid)
+    };
+
+    let mut probes: Vec<(&str, String)> = vec![
+        (
+            "DELETE",
+            format!("/api/v1/profiles/{nanoid}/follows/{follow_id}"),
+        ),
+        (
+            "DELETE",
+            format!("/api/v1/profiles/{nanoid}/blocks/{block_id}"),
+        ),
+        (
+            "DELETE",
+            format!("/api/v1/profiles/{nanoid}/mutes/{mute_id}"),
+        ),
+    ];
     for suffix in [
         "",
         "/follows",
@@ -461,6 +504,24 @@ async fn profile_routes_stay_absent_from_the_root_router_for_a_real_profile_and_
                 token.is_some()
             );
         }
+    }
+
+    // The relationships the DELETE probes named are all still there.
+    for (table, id) in [
+        ("profile_follows", &follow_id),
+        ("profile_blocks", &block_id),
+        ("profile_mutes", &mute_id),
+    ] {
+        let remaining: i64 =
+            sqlx::query_scalar(&format!("SELECT count(*) FROM {table} WHERE nanoid = $1"))
+                .bind(id)
+                .fetch_one(world.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            remaining, 1,
+            "{table} {id} must not be touched by an unmounted route"
+        );
     }
 }
 

@@ -70,6 +70,21 @@ pub trait ProfileDeliveryJobRepository: Sync + Send + 'static {
         outcome: &DeliveryAttemptOutcome,
     ) -> impl Future<Output = error_stack::Result<RecordAttemptOutcome, KernelError>> + Send;
 
+    /// 送信の直前に lease を確認して延長する (P3o が追加した操作。P2 の取得・記録の契約は変えない)。
+    ///
+    /// `claim` の lease をまだ保持している (job が `InFlight` で `lease_token` が一致し、試行番号が同じで、
+    /// 期限が `max(now, DB の現在時刻)` より後、取消されていない) ときだけ `lease_expires_at` を
+    /// `max(now, DB の現在時刻) + extension` にして true を返す (行ロックの待機で `now` が古くなっても、期限判定と
+    /// 延長は更新を実行した時刻を基準にする)。取消・期限切れ・他 worker による回収があれば何も変えず false (呼び出し側は送信しない)。
+    /// 鍵の取得・署名などで claim から時間が経った worker が、lease を失ったまま送信するのを防ぐ。
+    fn renew_lease(
+        &self,
+        executor: &mut Self::Connection,
+        claim: &ClaimedProfileDeliveryJob,
+        now: OffsetDateTime,
+        extension: time::Duration,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
+
     /// 未配送 (Pending / InFlight / Retrying) の job を取り消す。配送済み・失敗・取消済みなら false。
     /// InFlight の job を取り消しても、既に送信された activity は取り戻せない
     /// (worker は `record_attempt` で `Cancelled` を受け取る)。
@@ -105,6 +120,16 @@ pub trait ProfileDeliveryJobRepository: Sync + Send + 'static {
         activity_id: &GraphActivityId,
         target_inbox: &GraphInboxUrl,
     ) -> impl Future<Output = error_stack::Result<Option<ProfileDeliveryJob>, KernelError>> + Send;
+
+    /// `follow_id` に紐づく `activity_type` の job を古い順に返す (状態は問わない。終端状態を含む)。
+    /// 関係の終了時に、既に予約済みの Follow / Accept job の宛先 inbox と状態を知るために使う
+    /// (P3o が追加した読み取り専用の参照。P2 の保存・予約の契約は変えない)。
+    fn find_by_follow(
+        &self,
+        executor: &mut Self::Connection,
+        follow_id: &ProfileFollowId,
+        activity_type: DeliveryActivityType,
+    ) -> impl Future<Output = error_stack::Result<Vec<ProfileDeliveryJob>, KernelError>> + Send;
 
     /// 試行履歴 (古い順)。
     fn list_attempts(

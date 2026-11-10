@@ -19,7 +19,7 @@ tracing = { workspace = true }
 
 serde_json = "1"
 reqwest = { version = "0.12", features = ["json"] }
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["net", "time"] }
 base64 = "0.22"
 sha2 = "0.10"
 rand = "0.8"
@@ -31,10 +31,11 @@ kernel = { path = "../kernel" }
 
 [dev-dependencies]
 kernel = { path = "../kernel", features = ["test-utils"] }
-tokio = { workspace = true, features = ["macros", "test-util", "sync", "io-util"] }
+tokio = { workspace = true, features = ["macros", "test-util", "sync", "io-util", "rt-multi-thread", "time"] }
 tempfile = "3"
 zeroize = "1.7"
 test-with.workspace = true
 
-driver.path = "../driver"
+driver = { path = "../driver", features = ["test-mode"] }
+wiremock = "0.6"
 sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls"] }

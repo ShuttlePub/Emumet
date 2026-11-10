@@ -12,6 +12,7 @@
 mod activity;
 mod actor;
 mod delivery_job;
+mod delivery_policy;
 mod follow;
 mod inbound_activity;
 mod relation;
@@ -19,6 +20,7 @@ mod relation;
 pub use self::activity::*;
 pub use self::actor::*;
 pub use self::delivery_job::*;
+pub use self::delivery_policy::*;
 pub use self::follow::*;
 pub use self::inbound_activity::*;
 pub use self::relation::*;

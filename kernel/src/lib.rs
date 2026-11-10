@@ -425,5 +425,19 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnProfileMuteRepository for $impl_type {
+            type ProfileMuteRepository = <$db_type as $crate::interfaces::repository::DependOnProfileMuteRepository>::ProfileMuteRepository;
+            fn profile_mute_repository(&self) -> &Self::ProfileMuteRepository {
+                $crate::interfaces::repository::DependOnProfileMuteRepository::profile_mute_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnProfileDeliveryJobRepository for $impl_type {
+            type ProfileDeliveryJobRepository = <$db_type as $crate::interfaces::repository::DependOnProfileDeliveryJobRepository>::ProfileDeliveryJobRepository;
+            fn profile_delivery_job_repository(&self) -> &Self::ProfileDeliveryJobRepository {
+                $crate::interfaces::repository::DependOnProfileDeliveryJobRepository::profile_delivery_job_repository(&self.$field)
+            }
+        }
+
     };
 }
