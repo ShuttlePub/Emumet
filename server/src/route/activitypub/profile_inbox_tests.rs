@@ -4,13 +4,26 @@
 //! and mounts the inbox on a test-only router, exactly the way P4 will mount it. Remote peers are
 //! fake actors whose keys / actor documents come from the test-mode caches.
 
+use crate::handler::AppModule;
 use crate::route::profile_graph_test_support::{
     peer_private_pem, GraphWorld, LocalProfile, RemotePeer,
 };
 use axum::http::StatusCode;
-use kernel::prelude::entity::{GraphActorUrl, ProfileGraphActor};
+use kernel::interfaces::database::{
+    DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
+};
+use kernel::interfaces::repository::{
+    DependOnProfileBlockRepository, DependOnProfileFollowRepository,
+    DependOnProfileRelationshipLock, ProfileBlockRepository, ProfileFollowRepository,
+    ProfileRelationshipLock,
+};
+use kernel::prelude::entity::{
+    GraphActivityId, GraphActorUrl, ProfileBlock, ProfileBlockId, ProfileFollow, ProfileFollowId,
+    ProfileGraphActor,
+};
 use serde_json::{json, Value};
 use sqlx::Executor;
+use time::OffsetDateTime;
 
 const ACCEPTED: StatusCode = StatusCode::ACCEPTED;
 
@@ -872,4 +885,353 @@ async fn a_failing_relation_commit_leaves_no_accept_job() {
     assert_eq!(count(&world, "profile_follows").await, 0);
     assert_eq!(count(&world, "profile_delivery_jobs").await, 0);
     assert_eq!(count(&world, "profile_inbound_activities").await, 0);
+}
+
+fn peer_block(profile: &LocalProfile, peer: &RemotePeer) -> ProfileBlock {
+    ProfileBlock::new(
+        ProfileBlockId::new(kernel::generate_id()),
+        profile.id.clone(),
+        remote_actor(peer),
+        OffsetDateTime::now_utc(),
+    )
+    .unwrap()
+}
+
+fn remote_actor(peer: &RemotePeer) -> ProfileGraphActor {
+    ProfileGraphActor::Remote(GraphActorUrl::new(peer.actor_url.clone()).unwrap())
+}
+
+async fn store_block(world: &GraphWorld, block: &ProfileBlock) {
+    let mut conn = world
+        .module
+        .database_connection()
+        .connection()
+        .await
+        .unwrap();
+    assert!(world
+        .module
+        .profile_block_repository()
+        .insert_if_absent(&mut conn, block)
+        .await
+        .unwrap());
+}
+
+/// A transaction that takes the Profile relationship lock, runs `work`, announces that it holds the
+/// lock, and keeps it until `release` is fired — a stand-in for a block write (P3o / D8R) in flight.
+fn hold_profile_lock<F>(
+    world: &GraphWorld,
+    profile: &LocalProfile,
+    work: F,
+) -> (
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+)
+where
+    F: for<'c> FnOnce(
+            &'c mut <<AppModule as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = error_stack::Result<(), kernel::KernelError>> + Send + 'c>,
+        > + Send
+        + 'static,
+{
+    let (locked_tx, locked_rx) = tokio::sync::oneshot::channel::<()>();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let module = world.module.clone();
+    let profile_id = profile.id.clone();
+    let holder = tokio::spawn(async move {
+        let deps = module.clone();
+        module
+            .transaction_manager()
+            .transaction(move |executor| {
+                Box::pin(async move {
+                    deps.profile_relationship_lock()
+                        .lock_profiles(executor, &[profile_id])
+                        .await?;
+                    work(executor).await?;
+                    locked_tx.send(()).ok();
+                    release_rx.await.ok();
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+    });
+    (locked_rx, release_tx, holder)
+}
+
+/// True while `handle` has not finished within a short grace period (it is waiting on a lock).
+async fn still_waiting<T>(handle: &mut tokio::task::JoinHandle<T>) -> bool {
+    tokio::time::timeout(std::time::Duration::from_millis(400), handle)
+        .await
+        .is_err()
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn follow_from_a_blocked_actor_is_refused_with_a_reject_and_never_revived() {
+    let world = GraphWorld::new().await;
+    let profile = world.actor_profile().await;
+    let other_profile = world.actor_profile().await;
+    let peer = RemotePeer::new();
+    let friend = RemotePeer::new();
+    store_block(&world, &peer_block(&profile, &peer)).await;
+    let blocked_follow = peer.activity_id("follow-1");
+    let body = peer.follow(&blocked_follow, &profile.actor_url);
+
+    assert_eq!(peer.post(&world, &profile.nanoid, &body).await, ACCEPTED);
+    assert_eq!(state_of(&world, &blocked_follow).await, "ended:blocked");
+    assert!(
+        jobs(&world, "Accept").await.is_empty(),
+        "nothing is accepted"
+    );
+    let rejects = jobs(&world, "Reject").await;
+    assert_eq!(rejects.len(), 1);
+    assert_eq!(rejects[0].0, peer.inbox_url);
+    let payload: Value = serde_json::from_str(&rejects[0].1).unwrap();
+    assert_eq!(payload["type"], "Reject");
+    assert_eq!(payload["actor"], profile.actor_url.as_str());
+    assert_eq!(payload["to"][0], peer.actor_url.as_str());
+    assert_eq!(payload["object"]["id"], blocked_follow.as_str());
+    assert_eq!(payload["object"]["type"], "Follow");
+    assert_eq!(payload["object"]["actor"], peer.actor_url.as_str());
+    assert!(rejects[0].2.is_some(), "linked to the refused generation");
+
+    // Replays do not reserve a second Reject.
+    assert_eq!(peer.post(&world, &profile.nanoid, &body).await, ACCEPTED);
+    assert_eq!(jobs(&world, "Reject").await.len(), 1);
+
+    // The block is per Profile and per actor.
+    let friend_follow = friend.activity_id("follow-1");
+    assert_eq!(
+        friend
+            .post(
+                &world,
+                &profile.nanoid,
+                &friend.follow(&friend_follow, &profile.actor_url)
+            )
+            .await,
+        ACCEPTED
+    );
+    assert_eq!(state_of(&world, &friend_follow).await, "accepted");
+    let sibling_follow = peer.activity_id("follow-2");
+    assert_eq!(
+        peer.post(
+            &world,
+            &other_profile.nanoid,
+            &peer.follow(&sibling_follow, &other_profile.actor_url)
+        )
+        .await,
+        ACCEPTED
+    );
+    assert_eq!(state_of(&world, &sibling_follow).await, "accepted");
+
+    // Removing the block restores nothing: the old Follow stays refused, a new one works.
+    world
+        .pool()
+        .execute("DELETE FROM profile_blocks")
+        .await
+        .unwrap();
+    assert_eq!(peer.post(&world, &profile.nanoid, &body).await, ACCEPTED);
+    assert_eq!(state_of(&world, &blocked_follow).await, "ended:blocked");
+    let later = peer.activity_id("follow-3");
+    assert_eq!(
+        peer.post(
+            &world,
+            &profile.nanoid,
+            &peer.follow(&later, &profile.actor_url)
+        )
+        .await,
+        ACCEPTED
+    );
+    assert_eq!(state_of(&world, &later).await, "accepted");
+
+    // Clean-up activities stay allowed while a block exists.
+    store_block(&world, &peer_block(&profile, &peer)).await;
+    let undo = peer.undo(
+        &peer.activity_id("undo-3"),
+        embedded_follow(&peer.actor_url, &later, &profile.actor_url),
+    );
+    assert_eq!(peer.post(&world, &profile.nanoid, &undo).await, ACCEPTED);
+    assert_eq!(state_of(&world, &later).await, "ended:undone");
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn follow_waits_for_an_in_flight_block_write_and_is_then_refused() {
+    let world = std::sync::Arc::new(GraphWorld::new().await);
+    let profile = world.actor_profile().await;
+    let peer = RemotePeer::new();
+    let follow_id = peer.activity_id("follow-1");
+    let block = peer_block(&profile, &peer);
+
+    // The block write has taken the Profile lock and stored the block, but not committed yet.
+    let (locked, release, holder) = hold_profile_lock(&world, &profile, {
+        let deps = world.module.clone();
+        move |executor| {
+            Box::pin(async move {
+                deps.profile_block_repository()
+                    .insert_if_absent(executor, &block)
+                    .await
+                    .map(|_| ())
+            })
+        }
+    });
+    locked.await.unwrap();
+
+    let mut follow = tokio::spawn({
+        let world = world.clone();
+        let peer = peer.clone();
+        let body = peer.follow(&follow_id, &profile.actor_url);
+        let nanoid = profile.nanoid.clone();
+        async move { peer.post(&world, &nanoid, &body).await }
+    });
+    assert!(
+        still_waiting(&mut follow).await,
+        "the Follow must wait for the block write instead of racing it"
+    );
+    assert_eq!(count(&world, "profile_follows").await, 0);
+
+    release.send(()).unwrap();
+    holder.await.unwrap();
+    assert_eq!(follow.await.unwrap(), ACCEPTED);
+    assert_eq!(state_of(&world, &follow_id).await, "ended:blocked");
+    assert!(jobs(&world, "Accept").await.is_empty());
+    assert_eq!(jobs(&world, "Reject").await.len(), 1);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn undo_waits_for_the_profile_lock_and_ends_a_follow_stored_in_the_meantime() {
+    let world = std::sync::Arc::new(GraphWorld::new().await);
+    let profile = world.actor_profile().await;
+    let peer = RemotePeer::new();
+    let follow_id = peer.activity_id("follow-1");
+
+    // A Follow generation is being committed (as the Follow handler would) while the Undo that
+    // refers to it arrives: the Undo must not conclude "Follow unknown".
+    let (locked, release, holder) = hold_profile_lock(&world, &profile, {
+        let deps = world.module.clone();
+        let follow = ProfileFollow::new_accepted(
+            ProfileFollowId::new(kernel::generate_id()),
+            remote_actor(&peer),
+            ProfileGraphActor::Local(profile.id.clone()),
+            GraphActivityId::new(follow_id.clone()).unwrap(),
+            OffsetDateTime::now_utc(),
+        )
+        .unwrap();
+        move |executor| {
+            Box::pin(async move {
+                deps.profile_follow_repository()
+                    .begin_generation(executor, &follow)
+                    .await
+                    .map(|_| ())
+            })
+        }
+    });
+    locked.await.unwrap();
+    let mut undo = tokio::spawn({
+        let world = world.clone();
+        let peer = peer.clone();
+        let nanoid = profile.nanoid.clone();
+        let body = peer.undo(
+            &peer.activity_id("undo-1"),
+            embedded_follow(&peer.actor_url, &follow_id, &profile.actor_url),
+        );
+        async move { peer.post(&world, &nanoid, &body).await }
+    });
+    assert!(still_waiting(&mut undo).await);
+
+    release.send(()).unwrap();
+    holder.await.unwrap();
+    assert_eq!(undo.await.unwrap(), ACCEPTED);
+    assert_eq!(state_of(&world, &follow_id).await, "ended:undone");
+    assert_eq!(count(&world, "profile_follows").await, 1);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_undo_that_loses_the_race_inside_its_transaction_still_ends_the_follow() {
+    let world = GraphWorld::new().await;
+    let profile = world.actor_profile().await;
+    let peer = RemotePeer::new();
+    let follow_id = peer.activity_id("follow-1");
+
+    // Deterministic stand-in for "the Follow was stored between the Undo's lookup and its
+    // tombstone insert": a trigger stores the accepted generation right before the tombstone.
+    world
+        .pool()
+        .execute(
+            r#"
+            CREATE FUNCTION p3i_race() RETURNS trigger AS $$
+            BEGIN
+              IF NEW.state = 'ended' AND NEW.end_reason = 'undone' THEN
+                INSERT INTO profile_follows (
+                  id, nanoid, follower_profile_id, follower_actor_url, followee_profile_id,
+                  followee_actor_url, activity_id, state, accepted_at, created_at, updated_at)
+                VALUES (
+                  NEW.id + 1, 'race-' || NEW.nanoid, NEW.follower_profile_id, NEW.follower_actor_url,
+                  NEW.followee_profile_id, NEW.followee_actor_url, NEW.activity_id, 'accepted',
+                  now(), now(), now());
+              END IF;
+              RETURN NEW;
+            END; $$ LANGUAGE plpgsql;
+            CREATE TRIGGER p3i_race BEFORE INSERT ON profile_follows
+              FOR EACH ROW EXECUTE FUNCTION p3i_race();
+            "#,
+        )
+        .await
+        .unwrap();
+    let undo = peer.undo(
+        &peer.activity_id("undo-1"),
+        embedded_follow(&peer.actor_url, &follow_id, &profile.actor_url),
+    );
+    assert_eq!(peer.post(&world, &profile.nanoid, &undo).await, ACCEPTED);
+    assert_eq!(
+        state_of(&world, &follow_id).await,
+        "ended:undone",
+        "the Follow stored concurrently is the one the Undo cancels"
+    );
+    assert_eq!(count(&world, "profile_follows").await, 1);
+
+    // Redelivery of the Undo does not change the outcome.
+    assert_eq!(peer.post(&world, &profile.nanoid, &undo).await, ACCEPTED);
+    assert_eq!(state_of(&world, &follow_id).await, "ended:undone");
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_misdelivered_bare_undo_cannot_swallow_the_follow_addressed_to_another_profile() {
+    let world = GraphWorld::new().await;
+    let profile = world.actor_profile().await;
+    let target = world.actor_profile().await;
+    let peer = RemotePeer::new();
+    let follow_id = peer.activity_id("follow-1");
+
+    // The Undo (bare Follow ID) reaches `profile`, but the Follow was addressed to `target`.
+    let undo = peer.undo(
+        &peer.activity_id("undo-1"),
+        Value::String(follow_id.clone()),
+    );
+    assert_eq!(peer.post(&world, &profile.nanoid, &undo).await, ACCEPTED);
+    assert_eq!(
+        count(&world, "profile_follows").await,
+        0,
+        "no generation (keyed by follower + Follow ID for every Profile) is reserved"
+    );
+
+    // The genuine Follow reaches its real target afterwards and is processed normally.
+    let follow = peer.follow(&follow_id, &target.actor_url);
+    assert_eq!(peer.post(&world, &target.nanoid, &follow).await, ACCEPTED);
+    assert_eq!(state_of(&world, &follow_id).await, "accepted");
+    assert_eq!(jobs(&world, "Accept").await.len(), 1);
+
+    // For the receiver of the early Undo, the same Follow is a cancelled duplicate.
+    let to_profile = peer.follow(&follow_id, &profile.actor_url);
+    assert_eq!(
+        peer.post(&world, &profile.nanoid, &to_profile).await,
+        ACCEPTED
+    );
+    assert_eq!(count(&world, "profile_follows").await, 1);
+    assert_eq!(jobs(&world, "Accept").await.len(), 1);
 }

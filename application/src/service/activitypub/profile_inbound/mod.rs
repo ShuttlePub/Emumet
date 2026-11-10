@@ -7,10 +7,10 @@
 //!
 //! | activity | effect |
 //! |---|---|
-//! | `Follow` (object = this Profile) | stores an accepted generation and reserves an `Accept` job, in one transaction |
+//! | `Follow` (object = this Profile) | stores an accepted generation and reserves an `Accept` job, in one transaction. If this Profile blocks the signer: stores an ended(blocked) generation and reserves a `Reject(Follow)` instead |
 //! | `Accept` (object = Follow sent by this Profile) | pending generation -> accepted |
 //! | `Reject` (object = Follow sent by this Profile) | active generation -> ended(rejected) |
-//! | `Undo` (object = Follow of the signer) | active generation -> ended(undone); stored as an ended generation when the Follow never arrived |
+//! | `Undo` (object = Follow of the signer) | active generation -> ended(undone); when the Follow never arrived: an embedded Follow aimed at this Profile is stored as an ended generation, a bare Follow ID only as an inbound record scoped to this receiver |
 //!
 //! Verification order (nothing is written before every check passed):
 //! 1. the HTTP Signature was verified by the route; its key owner is the signer actor and must be
@@ -20,6 +20,10 @@
 //!    their actor (`Undo`) and this Profile as the target;
 //! 4. `Accept` / `Reject` / `Undo` are matched to a stored generation by the **original Follow
 //!    activity ID** (P2 generation identifier) and by both parties of that generation.
+//!
+//! Every transaction takes the Profile relationship lock first (`ProfileRelationshipLock`, the
+//! convention shared with the sending side and block writes), so block checks, Follow storage and
+//! Undo / Accept / Reject cannot interleave with a concurrent block write or with each other.
 //!
 //! Duplicates are detected with the P2 inbound activity record, written in the same transaction as
 //! the relation change: a failure rolls the record back, so a redelivery is processed again.
@@ -35,13 +39,15 @@ use error_stack::Report;
 use kernel::activitypub::{Activity, ActorUrlBuilder};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::database::{
-    DatabaseConnection, DependOnTransactionManager, TransactionManager,
+    DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
 };
 use kernel::interfaces::read_model::{DependOnProfileQuery, ProfileQuery};
 use kernel::interfaces::repository::{
-    BeginFollowOutcome, DependOnInboundActivityRepository, DependOnProfileDeliveryEnqueuer,
-    DependOnProfileFollowRepository, DependOnProfileSigningKeyRepository,
-    InboundActivityRepository, ProfileDeliveryEnqueuer, ProfileFollowRepository,
+    BeginFollowOutcome, DependOnInboundActivityRepository, DependOnProfileBlockRepository,
+    DependOnProfileDeliveryEnqueuer, DependOnProfileFollowRepository,
+    DependOnProfileRelationshipLock, DependOnProfileSigningKeyRepository,
+    InboundActivityRepository, ProfileBlockRepository, ProfileDeliveryEnqueuer,
+    ProfileFollowRepository, ProfileRelationshipLock,
 };
 use kernel::prelude::entity::{
     DeliveryActivityType, GraphActivityId, GraphActorUrl, GraphInboxUrl, Nanoid,
@@ -64,6 +70,8 @@ pub trait ProfileInboxUseCase:
     + DependOnProfileFollowRepository
     + DependOnInboundActivityRepository
     + DependOnProfileDeliveryEnqueuer
+    + DependOnProfileBlockRepository
+    + DependOnProfileRelationshipLock
     + DependOnTransactionManager
     + DependOnPublicBaseUrl
 {
@@ -85,6 +93,10 @@ impl<T> ProfileInboxUseCase for T where
         + DependOnProfileFollowRepository
         + DependOnInboundActivityRepository
         + DependOnProfileDeliveryEnqueuer
+        + DependOnProfileBlockRepository
+        + DependOnProfileRelationshipLock
+        + DependOnProfileBlockRepository
+        + DependOnProfileRelationshipLock
         + DependOnTransactionManager
         + DependOnPublicBaseUrl
 {
@@ -318,6 +330,11 @@ where
         .transaction_manager()
         .transaction(move |executor| {
             Box::pin(async move {
+                // Same lock convention as the sending side and block writes: every transaction that
+                // decides on blocks or changes a Follow of this Profile takes the Profile lock first.
+                deps.profile_relationship_lock()
+                    .lock_profiles(executor, std::slice::from_ref(&context.receiver))
+                    .await?;
                 let now = OffsetDateTime::now_utc();
                 let receipt = deps
                     .inbound_activity_repository()
@@ -333,6 +350,26 @@ where
                     Report::new(KernelError::Internal)
                         .attach_printable("first Follow reception without a resolved inbox")
                 })?;
+                // An individual block of the signer by this Profile refuses the Follow. The
+                // check runs under the Profile lock, so a concurrent block write either
+                // commits first (the Follow is refused here) or waits for this transaction
+                // and then ends the relation created below.
+                let signer_actor = ProfileGraphActor::Remote(context.signer.clone());
+                if deps
+                    .profile_block_repository()
+                    .is_blocked(executor, &context.receiver, &signer_actor)
+                    .await?
+                {
+                    return refuse_blocked_follow(
+                        &deps,
+                        executor,
+                        &context,
+                        &activity_id,
+                        inbox,
+                        now,
+                    )
+                    .await;
+                }
                 let follow = ProfileFollow::new_accepted(
                     ProfileFollowId::new(kernel::generate_id()),
                     ProfileGraphActor::Remote(context.signer.clone()),
@@ -445,6 +482,11 @@ where
         .transaction_manager()
         .transaction(move |executor| {
             Box::pin(async move {
+                // Same lock convention as the sending side and block writes: every transaction that
+                // decides on blocks or changes a Follow of this Profile takes the Profile lock first.
+                deps.profile_relationship_lock()
+                    .lock_profiles(executor, std::slice::from_ref(&context.receiver))
+                    .await?;
                 let now = OffsetDateTime::now_utc();
                 let receipt = deps
                     .inbound_activity_repository()
@@ -503,6 +545,118 @@ where
         .await
 }
 
+type Conn<T> =
+    <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection;
+
+/// A Follow refused because this Profile blocks the signer. The refusal is stored as an ended
+/// (blocked) generation under the Follow's activity ID, so a replay of the same Follow (also
+/// after the block is removed) can never create a relation, and a `Reject(Follow)` is reserved in
+/// the same transaction ("a Follow of the other side is answered with Reject", never an AP Block).
+async fn refuse_blocked_follow<T>(
+    deps: &T,
+    executor: &mut Conn<T>,
+    context: &Context,
+    activity_id: &GraphActivityId,
+    inbox: GraphInboxUrl,
+    now: OffsetDateTime,
+) -> error_stack::Result<ProfileInboxOutcome, KernelError>
+where
+    T: ProfileInboxUseCase,
+{
+    let refused = ProfileFollow::from_parts(ProfileFollowParts {
+        id: ProfileFollowId::new(kernel::generate_id()),
+        nanoid: Nanoid::default(),
+        follower: ProfileGraphActor::Remote(context.signer.clone()),
+        followee: ProfileGraphActor::Local(context.receiver.clone()),
+        activity_id: activity_id.clone(),
+        state: ProfileFollowState::Ended,
+        end_reason: Some(ProfileFollowEndReason::Blocked),
+        accepted_at: None,
+        ended_at: Some(now),
+        created_at: now,
+        updated_at: now,
+    })?;
+    match deps
+        .profile_follow_repository()
+        .begin_generation(executor, &refused)
+        .await?
+    {
+        BeginFollowOutcome::Created => {}
+        _ => return Ok(ignored(ProfileInboxIgnored::AlreadyApplied)),
+    }
+    let reject_id = GraphActivityId::new(format!(
+        "{}/activities/{}/reject",
+        context.local_actor_url,
+        refused.id().as_ref()
+    ))?;
+    let payload = serde_json::json!({
+        "@context": ACTIVITYSTREAMS_CONTEXT,
+        "id": reject_id.as_str(),
+        "type": "Reject",
+        "actor": context.local_actor_url,
+        "object": {
+            "id": activity_id.as_str(),
+            "type": "Follow",
+            "actor": context.signer.as_str(),
+            "object": context.local_actor_url,
+        },
+        "to": [context.signer.as_str()],
+    });
+    let payload = serde_json::to_string(&payload).map_err(|e| {
+        Report::from(e)
+            .change_context(KernelError::Internal)
+            .attach_printable("Failed to serialize the Reject activity")
+    })?;
+    let job = NewProfileDeliveryJob::new(
+        context.receiver.clone(),
+        DeliveryActivityType::Reject,
+        reject_id,
+        inbox,
+        payload,
+        now,
+    )?
+    .with_follow(refused.id().clone());
+    deps.profile_delivery_enqueuer()
+        .enqueue(executor, &job)
+        .await?;
+    Ok(ProfileInboxOutcome::FollowRefusedByBlock)
+}
+
+/// Ends `generation` for an Undo of the signer, after re-checking both parties.
+async fn undo_generation<T>(
+    deps: &T,
+    executor: &mut Conn<T>,
+    context: &Context,
+    generation: &ProfileFollow,
+    now: OffsetDateTime,
+) -> error_stack::Result<ProfileInboxOutcome, KernelError>
+where
+    T: ProfileInboxUseCase,
+{
+    if generation.follower() != &ProfileGraphActor::Remote(context.signer.clone())
+        || generation.followee() != &ProfileGraphActor::Local(context.receiver.clone())
+    {
+        return Ok(ignored(ProfileInboxIgnored::ForeignFollow));
+    }
+    if !generation.is_active() {
+        return Ok(ignored(ProfileInboxIgnored::AlreadyApplied));
+    }
+    if deps
+        .profile_follow_repository()
+        .end(
+            executor,
+            generation.id(),
+            ProfileFollowEndReason::Undone,
+            now,
+        )
+        .await?
+    {
+        Ok(ProfileInboxOutcome::FollowUndone)
+    } else {
+        Ok(ignored(ProfileInboxIgnored::AlreadyApplied))
+    }
+}
+
 /// Undo of a Follow the signer sent to this Profile.
 async fn handle_undo<T>(
     module: &T,
@@ -512,11 +666,13 @@ async fn handle_undo<T>(
 where
     T: ProfileInboxUseCase,
 {
-    let follow_id = match follow_object(activity.object.as_ref()) {
+    // `verified_target` = the Undo embeds the Follow and that Follow targets this Profile. A bare
+    // Follow ID does not prove which Profile the Follow was aimed at.
+    let (follow_id, verified_target) = match follow_object(activity.object.as_ref()) {
         FollowObject::Missing => return Err(rejected("Undo object must be a Follow or its id")),
         // Undo(Block) and every other Undo is outside the Profile inbox table.
         FollowObject::Other => return Ok(ignored(ProfileInboxIgnored::UnsupportedActivity)),
-        FollowObject::Id(id) => id,
+        FollowObject::Id(id) => (id, false),
         FollowObject::Embedded { id, actor, object } => {
             // Undoing somebody else's Follow, or a Follow aimed at another Profile, is a
             // protocol violation by the signer: refuse it as a whole.
@@ -534,7 +690,10 @@ where
                     "embedded Follow does not target the inbox Profile",
                 ));
             }
-            id.ok_or_else(|| rejected("embedded Follow has no id"))?
+            (
+                id.ok_or_else(|| rejected("embedded Follow has no id"))?,
+                true,
+            )
         }
     };
     let activity_id = GraphActivityId::new(activity.id.clone())?;
@@ -545,6 +704,9 @@ where
         .transaction_manager()
         .transaction(move |executor| {
             Box::pin(async move {
+                deps.profile_relationship_lock()
+                    .lock_profiles(executor, std::slice::from_ref(&context.receiver))
+                    .await?;
                 let now = OffsetDateTime::now_utc();
                 let receipt = deps
                     .inbound_activity_repository()
@@ -559,53 +721,59 @@ where
                 let follows = deps.profile_follow_repository();
                 let follower = ProfileGraphActor::Remote(context.signer.clone());
                 let followee = ProfileGraphActor::Local(context.receiver.clone());
-                match follows
+                if let Some(generation) = follows
                     .find_by_follower_activity(executor, &follower, &follow_activity_id)
                     .await?
                 {
-                    Some(generation) if generation.followee() != &followee => {
-                        Ok(ignored(ProfileInboxIgnored::ForeignFollow))
+                    return undo_generation(&deps, executor, &context, &generation, now).await;
+                }
+                if !verified_target {
+                    // The Undo overtook a Follow whose target Profile is unknown. A generation
+                    // would be keyed by (follower, Follow ID) for every Profile, so it could
+                    // swallow the genuine Follow addressed to another Profile. Remember the
+                    // cancellation for this receiver only, as an inbound record under the
+                    // Follow's ID: the same Follow delivered to this Profile later is a
+                    // duplicate, a Follow delivered to any other Profile is unaffected.
+                    let remembered = deps
+                        .inbound_activity_repository()
+                        .record(
+                            executor,
+                            &inbound_record(&context, &follow_activity_id, "UndoFollow", now)?,
+                        )
+                        .await?;
+                    return Ok(if remembered.first_seen {
+                        ProfileInboxOutcome::UndoRecordedBeforeFollow
+                    } else {
+                        ignored(ProfileInboxIgnored::AlreadyApplied)
+                    });
+                }
+                // The Undo overtook its Follow and the target is proven to be this Profile:
+                // remember the generation as ended so the late Follow (same activity ID) is a
+                // replay and creates no relation.
+                let tombstone = ProfileFollow::from_parts(ProfileFollowParts {
+                    id: ProfileFollowId::new(kernel::generate_id()),
+                    nanoid: Nanoid::default(),
+                    follower,
+                    followee,
+                    activity_id: follow_activity_id,
+                    state: ProfileFollowState::Ended,
+                    end_reason: Some(ProfileFollowEndReason::Undone),
+                    accepted_at: None,
+                    ended_at: Some(now),
+                    created_at: now,
+                    updated_at: now,
+                })?;
+                match follows.begin_generation(executor, &tombstone).await? {
+                    BeginFollowOutcome::Created => {
+                        Ok(ProfileInboxOutcome::UndoRecordedBeforeFollow)
                     }
-                    Some(generation) if !generation.is_active() => {
+                    // The Follow was stored between the lookup and the insert: it is the
+                    // generation this Undo is about, so end it (after re-checking the parties).
+                    BeginFollowOutcome::ReplayedActivity(existing) => {
+                        undo_generation(&deps, executor, &context, &existing, now).await
+                    }
+                    BeginFollowOutcome::ActiveGenerationExists(_) => {
                         Ok(ignored(ProfileInboxIgnored::AlreadyApplied))
-                    }
-                    Some(generation) => {
-                        if follows
-                            .end(
-                                executor,
-                                generation.id(),
-                                ProfileFollowEndReason::Undone,
-                                now,
-                            )
-                            .await?
-                        {
-                            Ok(ProfileInboxOutcome::FollowUndone)
-                        } else {
-                            Ok(ignored(ProfileInboxIgnored::AlreadyApplied))
-                        }
-                    }
-                    None => {
-                        // The Undo overtook its Follow. Remember the generation as ended so the
-                        // late Follow (same activity ID) is a replay and creates no relation.
-                        let tombstone = ProfileFollow::from_parts(ProfileFollowParts {
-                            id: ProfileFollowId::new(kernel::generate_id()),
-                            nanoid: Nanoid::default(),
-                            follower,
-                            followee,
-                            activity_id: follow_activity_id,
-                            state: ProfileFollowState::Ended,
-                            end_reason: Some(ProfileFollowEndReason::Undone),
-                            accepted_at: None,
-                            ended_at: Some(now),
-                            created_at: now,
-                            updated_at: now,
-                        })?;
-                        match follows.begin_generation(executor, &tombstone).await? {
-                            BeginFollowOutcome::Created => {
-                                Ok(ProfileInboxOutcome::UndoRecordedBeforeFollow)
-                            }
-                            _ => Ok(ignored(ProfileInboxIgnored::AlreadyApplied)),
-                        }
                     }
                 }
             })

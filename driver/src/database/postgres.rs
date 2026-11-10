@@ -30,6 +30,7 @@ mod profile_graph_test_support;
 mod profile_graph_tests;
 mod profile_inbound_activity;
 mod profile_mute;
+mod profile_relationship_lock;
 mod profile_repository;
 mod profile_signing_key;
 mod profile_transfer_request;

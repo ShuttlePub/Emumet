@@ -32,7 +32,7 @@ use kernel::interfaces::http_signing::{
     path = "/ap/profiles/{profile_nanoid}/inbox",
     description = "ActivityPub inbox of one Profile actor. NOT MOUNTED on the production router (the production mount is owned by the P4 cutover). \
 Requires a valid HTTP Signature whose key owner is `activity.actor`. \
-Received activity table: Follow (object = this Profile; stored as an accepted generation and an Accept delivery job is reserved in the same transaction), \
+Received activity table: Follow (object = this Profile; stored as an accepted generation and an Accept delivery job is reserved in the same transaction; when the Profile blocks the signer the Follow is refused instead: an ended generation is stored and a Reject(Follow) delivery job is reserved), \
 Accept / Reject (object = a Follow this Profile sent, matched by the original Follow activity ID and by both parties), \
 Undo (object = a Follow of the signer; an Undo that overtakes its Follow is remembered so the late Follow creates nothing). \
 Every other activity (post activities such as Create / Like / EmojiReact / Announce, Block, Undo of a non-Follow, ...) is acknowledged with 202 and changes nothing: post authorization belongs to ShuttlePub and domain policy to D8G. \

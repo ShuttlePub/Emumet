@@ -260,6 +260,15 @@ impl GraphWorld {
             .with_state(self.module.clone())
     }
 
+    /// The production root router (the function `main` uses) on this world.
+    pub fn root_router(&self) -> axum::Router {
+        crate::root_router::build_root_router(
+            self.module.clone(),
+            self.oidc_config.clone(),
+            self.jwks_cache.clone(),
+        )
+    }
+
     pub async fn new_user(&self) -> User {
         let auth_account_id = AuthAccountId::default();
         let client_id = format!("client-{}", uuid::Uuid::new_v4());

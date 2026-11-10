@@ -50,6 +50,9 @@ pub enum ProfileInboxOutcome {
     /// Undo(Follow) arrived before the Follow: the generation was stored as ended so the late
     /// Follow cannot create a relation.
     UndoRecordedBeforeFollow,
+    /// The Profile blocks the follower: the Follow was refused (stored as an ended generation) and a
+    /// `Reject(Follow)` was reserved in the same transaction. Nothing is accepted.
+    FollowRefusedByBlock,
     /// Already received (P2 inbound activity record): nothing was processed again.
     Duplicate,
     Ignored(ProfileInboxIgnored),

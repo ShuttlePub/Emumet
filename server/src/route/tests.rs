@@ -372,6 +372,98 @@ async fn profile_actor_and_contract_routes_are_absent_from_the_root_router() {
     );
 }
 
+/// The same absence check against a world where the routes would visibly work: a real Profile
+/// (username, key, owner with a valid token) on a database that has the P2 graph tables. If one of
+/// these routes were mounted by mistake it would answer 200 / 401 / 422 instead of 404.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn profile_routes_stay_absent_from_the_root_router_for_a_real_profile_and_owner() {
+    use crate::route::profile_graph_test_support::GraphWorld;
+
+    let world = GraphWorld::new().await;
+    let owner = world.new_user().await;
+    let profile = world.create_profile(&owner, true).await;
+    let router = world.root_router();
+    let nanoid = &profile.nanoid;
+
+    // Positive controls: the very same requests ARE served when the routes are mounted (test-only
+    // routers), so a 404 below really means "not mounted".
+    let served = world
+        .follow_list_router()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/profiles/{nanoid}/followers"))
+                .header("authorization", format!("Bearer {}", owner.token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(served.status(), StatusCode::OK);
+    let served = world
+        .inbox_router()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/ap/profiles/{nanoid}/inbox"))
+                .header("content-type", "application/activity+json")
+                .header("host", world.host_header.clone())
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(served.status(), StatusCode::UNAUTHORIZED);
+
+    let mut probes: Vec<(&str, String)> = Vec::new();
+    for suffix in [
+        "",
+        "/follows",
+        "/following",
+        "/followers",
+        "/blocks",
+        "/mutes",
+        "/domain-controls",
+        "/domain-controls/example.com",
+    ] {
+        for method in ["GET", "POST", "PUT", "DELETE"] {
+            probes.push((method, format!("/api/v1/profiles/{nanoid}{suffix}")));
+        }
+    }
+    for suffix in ["", "/inbox", "/outbox", "/followers", "/following"] {
+        for method in ["GET", "POST"] {
+            probes.push((method, format!("/ap/profiles/{nanoid}{suffix}")));
+        }
+    }
+    for (method, uri) in &probes {
+        for token in [Some(owner.token.as_str()), None] {
+            let mut builder = Request::builder()
+                .method(*method)
+                .uri(uri)
+                .header("content-type", "application/activity+json");
+            if let Some(token) = token {
+                builder = builder.header("authorization", format!("Bearer {token}"));
+            }
+            let response = router
+                .clone()
+                .oneshot(builder.body(Body::from("{}")).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            // The authentication layer of the /api/v1 subtree answers before routing.
+            if status == StatusCode::UNAUTHORIZED && token.is_none() && uri.starts_with("/api/v1") {
+                continue;
+            }
+            assert!(
+                status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
+                "{method} {uri} (authenticated: {}) must not be served, got {status}",
+                token.is_some()
+            );
+        }
+    }
+}
+
 /// Production serves exactly what `build_root_router` builds (the router the absence test above
 /// probes): `main` must not add routes of its own on top of it.
 #[test]
