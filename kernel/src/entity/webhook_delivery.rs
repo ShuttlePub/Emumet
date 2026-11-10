@@ -86,9 +86,10 @@ pub struct WebhookDeliveryPolicy {
     pub retry_after_cap: Duration,
     /// サイクル開始からこの期間を超えて再試行しない。
     pub max_age: Duration,
-    /// 送信中 lease の長さ。sender の全体 timeout より十分長くすること。
+    /// 送信中 lease の長さ。lease は送信の直前に 1 件ずつ取るので、sender の名前解決 + 全体 timeout
+    /// より長ければ送信中に切れない。
     pub lease_duration: Duration,
-    /// 1 回の claim で取得する最大件数。
+    /// 1 回の配送サイクルで処理する最大件数 (lease は 1 件ずつ取る)。
     pub batch_size: i64,
 }
 

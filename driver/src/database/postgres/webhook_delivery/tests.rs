@@ -1223,3 +1223,195 @@ async fn nothing_secret_or_personal_is_persisted() {
     }
     let _ = GateEventKind::OutageStarted;
 }
+
+fn sender_at(server: &MockServer, path: &str) -> HttpWebhookSender {
+    HttpWebhookSender::from_values_allowing_insecure_loopback(
+        &format!("{}{path}", server.uri()),
+        SECRET,
+    )
+    .with_settings(WebhookNetworkSettings {
+        total_timeout: Duration::from_secs(5),
+        ..fast_settings()
+    })
+}
+
+/// 送信に (仮想的に) 40 秒かかる fake receiver。`advance` のときだけ共有の仮想時計を進める。
+struct SlowSend {
+    advance: bool,
+    offset_seconds: Arc<std::sync::atomic::AtomicI64>,
+    hits: Arc<std::sync::Mutex<BTreeMap<String, usize>>>,
+}
+
+impl Respond for SlowSend {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        let event_id = request
+            .headers
+            .get(HEADER_EVENT_ID)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        *self.hits.lock().unwrap().entry(event_id).or_default() += 1;
+        if self.advance {
+            self.offset_seconds
+                .fetch_add(40, std::sync::atomic::Ordering::SeqCst);
+        }
+        ResponseTemplate::new(204).set_delay(Duration::from_millis(50))
+    }
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_batch_that_outlasts_the_lease_is_never_sent_twice_by_another_worker() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let fx = Fixture::new().await;
+    let server = MockServer::start().await;
+    let offset_seconds = Arc::new(AtomicI64::new(0));
+    let hits = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    for (path, advance) in [("/hook-a", true), ("/hook-b", false)] {
+        Mock::given(wiremock::matchers::path(path))
+            .respond_with(SlowSend {
+                advance,
+                offset_seconds: offset_seconds.clone(),
+                hits: hits.clone(),
+            })
+            .mount(&server)
+            .await;
+    }
+    let sender_a = sender_at(&server, "/hook-a");
+    let sender_b = sender_at(&server, "/hook-b");
+    // 10 件のバッチに対して lease は 60 秒。worker A の送信 1 件ごとに仮想時刻が 40 秒進むので、
+    // バッチ全体を最初に claim する実装では後ろの配送の lease が A の送信中に切れる。
+    let policy = WebhookDeliveryPolicy {
+        lease_duration: TimeDuration::seconds(60),
+        batch_size: 10,
+        ..default_policy()
+    };
+    let t0 = now();
+    let clock_offset = offset_seconds.clone();
+    let clock = move || t0 + TimeDuration::seconds(clock_offset.load(Ordering::SeqCst));
+    run_with(&fx, &sender_a, "worker-a", &policy, &clock).await;
+    fx.emit_all_kinds().await;
+    let events = fx.event_ids_and_kinds().await;
+    assert!(events.len() >= 6);
+
+    let worker_a = run_with(&fx, &sender_a, "worker-a", &policy, &clock);
+    let worker_b = async {
+        for _ in 0..12 {
+            run_with(&fx, &sender_b, "worker-b", &policy, &clock).await;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    };
+    let (report_a, ()) = tokio::join!(worker_a, worker_b);
+    assert_eq!(report_a.lease_lost, 0);
+    run_with(&fx, &sender_a, "worker-a", &policy, &clock).await;
+
+    let hits = hits.lock().unwrap().clone();
+    assert_eq!(hits.len(), events.len());
+    assert!(
+        hits.values().all(|count| *count == 1),
+        "each event must be sent exactly once: {hits:?}"
+    );
+    for (id, _) in &events {
+        assert_eq!(
+            fx.delivery(*id).await.status,
+            WebhookDeliveryStatus::Delivered
+        );
+    }
+}
+
+async fn run_with(
+    fx: &Fixture,
+    sender: &HttpWebhookSender,
+    worker: &str,
+    policy: &WebhookDeliveryPolicy,
+    clock: &(dyn Fn() -> OffsetDateTime + Sync),
+) -> WebhookCycleReport {
+    let jitter = || 1.0;
+    let stop = || false;
+    run_webhook_delivery_cycle(
+        &fx.db,
+        &PostgresWebhookDeliveryRepository,
+        sender,
+        worker,
+        policy,
+        &WebhookCycleEnv {
+            clock,
+            jitter: &jitter,
+            should_stop: &stop,
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn retrying_deliveries_past_the_max_age_are_failed_not_resent_after_a_long_stop() {
+    let fx = Fixture::new().await;
+    let server = MockServer::start().await;
+    mount_status(&server, 503).await;
+    let sender = fx.sender(&server);
+    let policy = default_policy();
+    let t0 = now();
+    fx.cycle(&sender, "w", &policy, t0).await;
+    fx.command(ACK).await;
+    let event_id = fx.event_ids_and_kinds().await[0].0;
+
+    fx.cycle(&sender, "w", &policy, t0).await;
+    let delivery = fx.delivery(event_id).await;
+    assert_eq!(delivery.status, WebhookDeliveryStatus::Retrying);
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+    // worker が 25 時間止まり、最大期間 (24 時間) を超えてから再開する。受信側が復旧していても再送しない。
+    server.reset().await;
+    mount_status(&server, 204).await;
+    let resumed = t0 + policy.max_age + TimeDuration::hours(1);
+    let report = fx.cycle(&sender, "w", &policy, resumed).await;
+    assert_eq!(report.attempted, 0);
+    let delivery = fx.delivery(event_id).await;
+    assert_eq!(delivery.status, WebhookDeliveryStatus::Failed);
+    assert_eq!(
+        delivery.failure_reason,
+        Some(WebhookFailureReason::RetriesExhausted)
+    );
+    assert_eq!(
+        delivery.last_result,
+        Some(WebhookResultClass::HttpServerError)
+    );
+    fx.cycle(&sender, "w", &policy, resumed + TimeDuration::hours(5))
+        .await;
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    // 管理者の再試行なら (新しいサイクルとして) 送られる
+    assert_eq!(fx.retry_failed(Some(event_id), resumed).await, 1);
+    fx.cycle(&sender, "w", &policy, resumed).await;
+    assert_eq!(
+        fx.delivery(event_id).await.status,
+        WebhookDeliveryStatus::Delivered
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_never_attempted_delivery_is_still_sent_after_a_long_outage() {
+    let fx = Fixture::new().await;
+    let server = MockServer::start().await;
+    mount_status(&server, 204).await;
+    let sender = fx.sender(&server);
+    let policy = default_policy();
+    let t0 = now();
+    fx.cycle(&sender, "w", &policy, t0).await;
+    fx.command(ACK).await;
+    let event_id = fx.event_ids_and_kinds().await[0].0;
+
+    let report = fx
+        .cycle(&sender, "w", &policy, t0 + TimeDuration::days(3))
+        .await;
+    assert_eq!(report.delivered, 1);
+    assert_eq!(
+        fx.delivery(event_id).await.status,
+        WebhookDeliveryStatus::Delivered
+    );
+}

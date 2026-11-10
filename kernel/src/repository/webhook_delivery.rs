@@ -147,7 +147,8 @@ pub struct WebhookCycleEnv<'a> {
 
 const INGEST_LIMIT: i64 = 200;
 
-/// 配送サイクル: 取り込み → lease 取得 → 送信 → 結果記録。ゲートの transaction の外で動く。
+/// 配送サイクル: 取り込み → (1 件ずつ) lease 取得 → 送信 → 結果記録。ゲートの transaction の外で動く。
+/// 1 サイクルで最大 `policy.batch_size` 件を処理する。
 ///
 /// 送信中は DB 接続を保持しない。Webhook が無効・設定不備なら何もしない (ゲート動作に影響しない)。
 pub async fn run_webhook_delivery_cycle<D, R, S>(
@@ -177,17 +178,27 @@ where
         report.ingested = ingest.ingested;
     }
 
-    let claims = {
-        let mut connection = database.connection().await?;
-        repository
-            .claim_due(&mut connection, worker_id, (env.clock)(), policy)
-            .await?
+    // lease は送信の直前に 1 件ずつ取る。バッチでまとめて取ると、後ろの配送の lease が前の配送の送信中に
+    // 切れ、別 worker が回収して同じ event を同時に送ってしまう。
+    let single = WebhookDeliveryPolicy {
+        batch_size: 1,
+        ..policy.clone()
     };
-
-    for claim in claims {
+    for _ in 0..policy.batch_size.max(1) {
         if (env.should_stop)() {
             break;
         }
+        let claim = {
+            let mut connection = database.connection().await?;
+            repository
+                .claim_due(&mut connection, worker_id, (env.clock)(), &single)
+                .await?
+                .into_iter()
+                .next()
+        };
+        let Some(claim) = claim else {
+            break;
+        };
         let observation = sender
             .send(&WebhookRequest {
                 event_id: &crate::entity::gate_event_wire_id(&claim.event_id),

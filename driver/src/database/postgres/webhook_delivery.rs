@@ -326,6 +326,22 @@ impl WebhookDeliveryRepository for PostgresWebhookDeliveryRepository {
             }
         }
 
+        // 再試行中のまま最大期間を超えた配送 (worker 停止後の再開など) は再送せず failed にする。
+        // まだ一度も試行していない pending は期間に関係なく送る (再起動後に未完了配送を回収する)。
+        sqlx::query(
+            //language=postgresql
+            r#"
+            UPDATE registration_gate_webhook_deliveries SET
+                status = 'failed', failure_reason = 'retries_exhausted', updated_at = $1
+            WHERE status = 'retrying' AND cycle_started_at <= $2
+            "#,
+        )
+        .bind(now)
+        .bind(age_cutoff)
+        .execute(&mut *tx)
+        .await
+        .convert_error()?;
+
         let ids: Vec<i64> = sqlx::query_scalar(
             //language=postgresql
             r#"

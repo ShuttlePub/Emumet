@@ -80,6 +80,8 @@ pub struct HttpWebhookSender {
     state: ConfigState,
     settings: WebhookNetworkSettings,
     resolver: Arc<dyn HostResolver>,
+    #[cfg(any(test, feature = "test-mode"))]
+    extra_roots: Vec<reqwest::Certificate>,
 }
 
 impl std::fmt::Debug for HttpWebhookSender {
@@ -127,6 +129,8 @@ impl HttpWebhookSender {
             state,
             settings: WebhookNetworkSettings::default(),
             resolver: Arc::new(SystemResolver),
+            #[cfg(any(test, feature = "test-mode"))]
+            extra_roots: Vec::new(),
         }
     }
 
@@ -153,6 +157,15 @@ impl HttpWebhookSender {
             None,
             EndpointMode::AllowInsecureLoopback,
         ))
+    }
+
+    /// 検証用に信頼する追加ルート証明書 (PEM)。TLS fixture テスト専用で、`cfg(test)` / `test-mode`
+    /// ビルドにだけ存在する。
+    #[cfg(any(test, feature = "test-mode"))]
+    pub fn with_extra_root_certificate_pem(mut self, pem: &[u8]) -> Self {
+        let certificate = reqwest::Certificate::from_pem(pem).expect("valid PEM certificate");
+        self.extra_roots.push(certificate);
+        self
     }
 
     pub fn with_settings(mut self, settings: WebhookNetworkSettings) -> Self {
@@ -206,6 +219,10 @@ impl HttpWebhookSender {
             .timeout(self.settings.total_timeout)
             .pool_max_idle_per_host(0)
             .https_only(config.mode.is_strict());
+        #[cfg(any(test, feature = "test-mode"))]
+        for certificate in &self.extra_roots {
+            builder = builder.add_root_certificate(certificate.clone());
+        }
         if let EndpointHost::Domain(domain) = &config.endpoint.host {
             builder = builder.resolve_to_addrs(domain, addresses);
         }

@@ -794,3 +794,146 @@ async fn the_connection_is_pinned_to_the_checked_address() {
     assert_eq!(resolver.calls.load(Ordering::SeqCst), 1);
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
+
+// ---- TLS: 接続固定 + 元のホスト名での証明書検証 ----------------------------------------------
+
+struct TlsReceiver {
+    port: u16,
+    requests: Arc<AtomicUsize>,
+    certificate_pem: String,
+}
+
+fn self_signed_certificate(name: &str) -> (String, String) {
+    use openssl::asn1::Asn1Time;
+    use openssl::bn::BigNum;
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::extension::SubjectAlternativeName;
+    use openssl::x509::{X509Builder, X509NameBuilder};
+
+    let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+    let mut subject = X509NameBuilder::new().unwrap();
+    subject.append_entry_by_text("CN", name).unwrap();
+    let subject = subject.build();
+    let mut builder = X509Builder::new().unwrap();
+    builder.set_version(2).unwrap();
+    let serial = BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap();
+    builder.set_serial_number(&serial).unwrap();
+    builder.set_subject_name(&subject).unwrap();
+    builder.set_issuer_name(&subject).unwrap();
+    builder.set_pubkey(&key).unwrap();
+    builder
+        .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+        .unwrap();
+    builder
+        .set_not_after(&Asn1Time::days_from_now(2).unwrap())
+        .unwrap();
+    let san = SubjectAlternativeName::new()
+        .dns(name)
+        .build(&builder.x509v3_context(None, None))
+        .unwrap();
+    builder.append_extension(san).unwrap();
+    builder.sign(&key, MessageDigest::sha256()).unwrap();
+    let certificate = builder.build();
+    (
+        String::from_utf8(certificate.to_pem().unwrap()).unwrap(),
+        String::from_utf8(key.private_key_to_pem_pkcs8().unwrap()).unwrap(),
+    )
+}
+
+async fn start_tls_receiver(certificate_name: &str) -> TlsReceiver {
+    let (certificate_pem, key_pem) = self_signed_certificate(certificate_name);
+    let identity =
+        native_tls::Identity::from_pkcs8(certificate_pem.as_bytes(), key_pem.as_bytes()).unwrap();
+    let acceptor =
+        tokio_native_tls::TlsAcceptor::from(native_tls::TlsAcceptor::new(identity).unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let requests = Arc::new(AtomicUsize::new(0));
+    let counter = requests.clone();
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((tcp, _)) = listener.accept().await else {
+                break;
+            };
+            let acceptor = acceptor.clone();
+            let counter = counter.clone();
+            tokio::spawn(async move {
+                let Ok(mut stream) = acceptor.accept(tcp).await else {
+                    return;
+                };
+                let mut received = Vec::new();
+                let mut buffer = [0u8; 4096];
+                while !received.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(read) => received.extend_from_slice(&buffer[..read]),
+                    }
+                }
+                counter.fetch_add(1, Ordering::SeqCst);
+                let _ = stream
+                    .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+                let _ = stream.shutdown().await;
+            });
+        }
+    });
+    TlsReceiver {
+        port,
+        requests,
+        certificate_pem,
+    }
+}
+
+fn tls_sender(host: &str, receiver: &TlsReceiver, trust_certificate: bool) -> HttpWebhookSender {
+    let resolver = ScriptedResolver::new(vec![Ok(vec![SocketAddr::new(
+        "127.0.0.1".parse().unwrap(),
+        receiver.port,
+    )])]);
+    let sender = HttpWebhookSender::from_values_allowing_insecure_loopback(
+        &format!("https://{host}:{}/hook", receiver.port),
+        SECRET,
+    )
+    .with_settings(fast_settings())
+    .with_resolver(resolver);
+    if trust_certificate {
+        sender.with_extra_root_certificate_pem(receiver.certificate_pem.as_bytes())
+    } else {
+        sender
+    }
+}
+
+#[tokio::test]
+async fn tls_certificate_is_verified_against_the_original_host_name_on_the_pinned_address() {
+    let receiver = start_tls_receiver("hooks.example.com").await;
+
+    // 名前 (hooks.example.com) は検査済みの 127.0.0.1 に固定して接続し、証明書は元の名前で検証される
+    assert_eq!(
+        tls_sender("hooks.example.com", &receiver, true)
+            .send(&request("1", 1))
+            .await,
+        WebhookSendObservation::Response {
+            status: 204,
+            retry_after: None
+        }
+    );
+    assert_eq!(receiver.requests.load(Ordering::SeqCst), 1);
+
+    // 証明書の名前と違うホスト名では、同じ固定先でも検証に失敗する (リクエストは届かない)
+    assert_eq!(
+        tls_sender("other.example.com", &receiver, true)
+            .send(&request("1", 1))
+            .await,
+        WebhookSendObservation::ConnectFailed
+    );
+    // 信頼されていない証明書も失敗する
+    assert_eq!(
+        tls_sender("hooks.example.com", &receiver, false)
+            .send(&request("1", 1))
+            .await,
+        WebhookSendObservation::ConnectFailed
+    );
+    assert_eq!(receiver.requests.load(Ordering::SeqCst), 1);
+}
