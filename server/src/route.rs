@@ -79,51 +79,9 @@ pub(crate) fn build_test_router_with_auth(
     oidc_config: std::sync::Arc<crate::auth::OidcConfig>,
     jwks_cache: std::sync::Arc<crate::auth::JwksCache>,
 ) -> axum::Router {
-    use crate::route::account::{AccountRouter, AdminAccountRouter, OrgAccountRouter};
-    use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
-    use crate::route::me::MeRouter;
-    use crate::route::media::MediaRouter;
-    use crate::route::oauth2::OAuth2Router;
-    use crate::route::profile_transfer::ProfileTransferRouter;
-    use crate::route::registration_gate::AdminRegistrationGateRouter;
-    use crate::route::registration_gate_webhook::AdminRegistrationGateWebhookRouter;
-    use crate::route::report::{AdminReportRouter, ReportRouter};
-    use crate::route::signing::SigningRouter;
-
-    let api_v1 = axum::Router::new()
-        .route_account()
-        .route_org_account()
-        .route_profile_transfers()
-        .route_reports()
-        .route_me()
-        .route_media()
-        .nest(
-            "/admin",
-            axum::Router::new()
-                .route_admin_account()
-                .route_admin_reports()
-                .route_admin_registration_gate()
-                .route_admin_registration_gate_webhook(),
-        );
-
-    let authed_routes = axum::Router::new()
-        .nest("/api/v1", api_v1)
-        .nest("/internal/v1", axum::Router::new().route_signing())
-        .layer(axum::middleware::from_fn_with_state(
-            app.clone(),
-            crate::api::organization_context::organization_context_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            (oidc_config, jwks_cache),
-            crate::auth::auth_middleware,
-        ));
-
-    let public_routes = axum::Router::new()
-        .route_oauth2()
-        .route_activitypub()
-        .nest("/ap", axum::Router::new().route_federation());
-
-    authed_routes.merge(public_routes).with_state(app)
+    // Same composition as the production server: tests (including the route-absence tests for
+    // the not-yet-mounted Profile routes) must see exactly the routes that production serves.
+    crate::root_router::build_root_router(app, oidc_config, jwks_cache)
 }
 
 #[cfg(test)]

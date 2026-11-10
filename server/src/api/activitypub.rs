@@ -1,9 +1,11 @@
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
-use application::dto::activitypub::{GetActorDto, GetWebFingerDto, InboxActivityDto};
+use application::dto::activitypub::{
+    GetActorDto, GetProfileActorDto, GetProfileWebFingerDto, GetWebFingerDto, InboxActivityDto,
+};
 use application::service::activitypub::{
-    GetActorUseCase, GetFollowersCollectionUseCase, GetOutboxUseCase, GetWebFingerUseCase,
-    InboxUseCase,
+    GetActorUseCase, GetFollowersCollectionUseCase, GetOutboxUseCase, GetProfileActorUseCase,
+    GetProfileWebFingerUseCase, GetWebFingerUseCase, InboxUseCase,
 };
 use axum::extract::FromRef;
 use axum::http::StatusCode;
@@ -79,6 +81,20 @@ impl ActivityPubApi {
 
     pub async fn get_actor(&self, dto: GetActorDto) -> error_stack::Result<Actor, KernelError> {
         self.module.get_actor(dto).await
+    }
+
+    pub async fn get_profile_actor(
+        &self,
+        dto: GetProfileActorDto,
+    ) -> error_stack::Result<Actor, KernelError> {
+        self.module.get_profile_actor(dto).await
+    }
+
+    pub async fn get_profile_webfinger(
+        &self,
+        dto: GetProfileWebFingerDto,
+    ) -> error_stack::Result<WebFingerResponse, KernelError> {
+        self.module.get_profile_webfinger(dto).await
     }
 
     pub async fn get_followers_collection(

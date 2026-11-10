@@ -40,7 +40,7 @@ pub(crate) async fn webfinger(
     json_response(&response, JRD_JSON)
 }
 
-fn parse_webfinger_resource(resource: &str) -> Result<GetWebFingerDto, ErrorStatus> {
+pub(super) fn parse_webfinger_resource(resource: &str) -> Result<GetWebFingerDto, ErrorStatus> {
     let value = resource
         .strip_prefix("acct:")
         .ok_or_else(invalid_resource)?;

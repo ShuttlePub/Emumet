@@ -19,7 +19,7 @@ use kernel::interfaces::repository::{
 };
 use kernel::prelude::entity::{
     Account, AccountId, AccountIsBot, AccountName, AuthAccountId, Nanoid, Profile,
-    ProfileDisplayName, ProfileId,
+    ProfileDisplayName, ProfileId, ProfileUsername,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -45,7 +45,19 @@ pub trait CreateAccountUseCase:
         auth_account_id: AuthAccountId,
         dto: CreateAccountDto,
     ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send + '_ {
+        self.create_account_with_profile_username(auth_account_id, dto, None)
+    }
+
+    /// Creates the Account and its Profile; a given `profile_username` is stored on the Profile in
+    /// the same transaction (duplicate username rolls the whole creation back with a 409-class error).
+    fn create_account_with_profile_username(
+        &self,
+        auth_account_id: AuthAccountId,
+        dto: CreateAccountDto,
+        profile_username: Option<String>,
+    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send + '_ {
         async move {
+            let profile_username = profile_username.map(ProfileUsername::parse).transpose()?;
             let account_name = AccountName::new(dto.name);
             let account_is_bot = AccountIsBot::new(dto.is_bot);
             let display_name = ProfileDisplayName::new(account_name.as_ref().to_string());
@@ -88,7 +100,7 @@ pub trait CreateAccountUseCase:
                             return Err(e);
                         }
 
-                        let profile_command = Profile::create(
+                        let profile_command = Profile::create_with_username(
                             ProfileId::new(kernel::generate_id()),
                             account.id().clone(),
                             Some(display_name),
@@ -96,6 +108,7 @@ pub trait CreateAccountUseCase:
                             None,
                             None,
                             Nanoid::<Profile>::default(),
+                            profile_username,
                         );
 
                         let event_envelope = deps

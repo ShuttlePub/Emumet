@@ -32,6 +32,33 @@ impl TryFrom<EventRow> for EventEnvelope<ProfileEvent, Profile> {
 
 pub struct PostgresProfileEventStore;
 
+/// Unique indexes created by `20261105000001_profile_username_and_actor_keys.sql`.
+const USERNAME_UNIQUE_INDEX: &str = "profile_events_username_unique";
+const USERNAME_ONCE_INDEX: &str = "profile_events_username_once_per_profile";
+
+/// Username uniqueness (also against deleted Profiles) and the once-per-Profile rule are
+/// enforced by unique indexes over the append-only `profile_events` table, so concurrent
+/// assignments race on the database instead of on application-level checks.
+fn map_insert_error(error: sqlx::Error) -> Report<KernelError> {
+    if let sqlx::Error::Database(db_error) = &error {
+        match db_error.constraint() {
+            Some(USERNAME_UNIQUE_INDEX) => {
+                return Report::new(KernelError::Concurrency)
+                    .attach_printable("Profile username is already taken");
+            }
+            Some(USERNAME_ONCE_INDEX) => {
+                return Report::new(KernelError::Concurrency)
+                    .attach_printable("Profile already has a username; it is set only once");
+            }
+            _ => {}
+        }
+    }
+    match error {
+        sqlx::Error::PoolTimedOut => Report::from(error).change_context(KernelError::Timeout),
+        _ => Report::from(error).change_context(KernelError::Internal),
+    }
+}
+
 impl ProfileEventStore for PostgresProfileEventStore {
     type Connection = PostgresConnection;
 
@@ -132,7 +159,7 @@ impl PostgresProfileEventStore {
                 .bind(&data)
                 .execute(&mut *con)
                 .await
-                .convert_error()?
+                .map_err(map_insert_error)?
             }
             Some(ExpectedVersion::At(prev)) => {
                 sqlx::query(
@@ -150,7 +177,7 @@ impl PostgresProfileEventStore {
                 .bind(prev.as_ref())
                 .execute(&mut *con)
                 .await
-                .convert_error()?
+                .map_err(map_insert_error)?
             }
             None => {
                 sqlx::query(
@@ -166,7 +193,7 @@ impl PostgresProfileEventStore {
                 .bind(&data)
                 .execute(con)
                 .await
-                .convert_error()?
+                .map_err(map_insert_error)?
             }
         };
 

@@ -38,3 +38,14 @@ pub struct FollowRelationDto {
     pub target_type: String,
     pub target: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GetProfileActorDto {
+    pub profile_nanoid: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GetProfileWebFingerDto {
+    pub username: String,
+    pub domain: String,
+}

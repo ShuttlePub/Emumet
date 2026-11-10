@@ -305,11 +305,17 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
         actor.is_object(),
         "Profile actor contract must be registered"
     );
-    assert!(actor["description"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("NOT MOUNTED"));
-    assert!(actor["responses"].get("501").is_some());
+    let description = actor["description"].as_str().unwrap_or_default();
+    assert!(description.contains("NOT MOUNTED"));
+    assert!(description.contains("/ap/profiles/{profile_nanoid}"));
+    assert!(description.contains("#main-key"));
+    assert_eq!(
+        actor["tags"],
+        serde_json::json!(["ProfileActor"]),
+        "the actor document is real (P1) and no longer part of the 501 ProfilePolicy skeleton"
+    );
+    assert!(actor["responses"].get("501").is_none());
+    assert!(actor["responses"].get("404").is_some());
 }
 
 #[test]
@@ -361,7 +367,7 @@ fn domain_control_contract_defines_revision_and_exact_match_semantics() {
 }
 
 #[test]
-fn username_is_optional_nullable_and_has_no_update_api() {
+fn username_is_optional_nullable_stored_once_and_has_no_update_api() {
     let spec = generated_spec();
     let schemas = &spec["components"]["schemas"];
     let pattern = "^[a-z0-9][a-z0-9._-]{0,63}$";
@@ -401,23 +407,44 @@ fn username_is_optional_nullable_and_has_no_update_api() {
     );
 
     for path in ["/api/v1/accounts", "/api/v1/profiles"] {
+        let responses = &spec["paths"][path]["post"]["responses"];
         assert!(
-            spec["paths"][path]["post"]["responses"]
-                .get("501")
-                .is_some(),
-            "POST {path} must document the explicit unimplemented-username error"
+            responses.get("501").is_none(),
+            "POST {path}: usernames are stored since P1, the E8 501 must be gone"
         );
-        assert!(spec["paths"][path]["post"]["responses"]
-            .get("400")
-            .is_some());
+        assert!(responses.get("400").is_some());
+        assert!(
+            responses.get("409").is_some(),
+            "POST {path} must document the duplicate-username conflict"
+        );
     }
 
+    // The one-time setter is the only username route: POST only, never PUT/PATCH/DELETE.
     let paths = spec["paths"].as_object().unwrap();
+    let username_paths: Vec<_> = paths.keys().filter(|p| p.contains("username")).collect();
+    assert_eq!(
+        username_paths,
+        ["/api/v1/profiles/{profile_nanoid}/username"],
+        "username must only have the one-time setter route"
+    );
+    let setter = paths["/api/v1/profiles/{profile_nanoid}/username"]
+        .as_object()
+        .unwrap();
+    assert_eq!(setter.keys().collect::<Vec<_>>(), ["post"]);
+    let setter = &setter["post"];
+    for status in ["200", "400", "401", "403", "404", "409"] {
+        assert!(setter["responses"].get(status).is_some(), "{status}");
+    }
+    assert_eq!(setter["security"], serde_json::json!([{"bearer_auth": []}]));
+    assert!(setter["description"]
+        .as_str()
+        .unwrap()
+        .contains("exactly once"));
+    assert_eq!(
+        schemas["SetProfileUsernameRequest"]["properties"]["username"]["pattern"],
+        pattern
+    );
     for (path, item) in paths {
-        assert!(
-            !path.contains("username"),
-            "{path}: username must not get its own (update) route"
-        );
         if path.starts_with("/api/v1/profiles/{profile_nanoid}") {
             for method in ["put", "patch"] {
                 if let Some(operation) = item.get(method) {

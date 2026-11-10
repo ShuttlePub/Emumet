@@ -1,10 +1,12 @@
 mod display_name;
 mod id;
 mod summary;
+mod username;
 
 pub use self::display_name::*;
 pub use self::id::*;
 pub use self::summary::*;
+pub use self::username::*;
 
 use super::{
     AccountId, CommandEnvelope, EventEnvelope, EventId, EventVersion, ExpectedVersion, FieldAction,
@@ -30,6 +32,8 @@ pub struct Profile {
     banner: Option<ImageId>,
     version: EventVersion<Profile>,
     nanoid: Nanoid<Profile>,
+    /// Set at most once (at creation or later via `UsernameSet`) and immutable afterwards.
+    username: Option<ProfileUsername>,
 }
 
 #[derive(Debug, Clone, PartialEq, Nameln, Serialize, Deserialize)]
@@ -43,7 +47,12 @@ pub enum ProfileEvent {
         icon: Option<ImageId>,
         banner: Option<ImageId>,
         nanoid: Nanoid<Profile>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        username: Option<ProfileUsername>,
     },
+    /// One-time username assignment for a Profile that has none. Never emitted twice for a Profile
+    /// (the event store enforces this with a unique index; `apply` rejects a second one).
+    UsernameSet { username: ProfileUsername },
     Updated {
         #[serde(default, skip_serializing_if = "FieldAction::is_unchanged")]
         display_name: FieldAction<ProfileDisplayName>,
@@ -70,6 +79,30 @@ impl Profile {
         banner: Option<ImageId>,
         nano_id: Nanoid<Profile>,
     ) -> CommandEnvelope<ProfileEvent, Profile> {
+        Self::create_with_username(
+            id,
+            account_id,
+            display_name,
+            summary,
+            icon,
+            banner,
+            nano_id,
+            None,
+        )
+    }
+
+    /// Like [`Profile::create`], additionally setting the one-time username at creation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_with_username(
+        id: ProfileId,
+        account_id: AccountId,
+        display_name: Option<ProfileDisplayName>,
+        summary: Option<ProfileSummary>,
+        icon: Option<ImageId>,
+        banner: Option<ImageId>,
+        nano_id: Nanoid<Profile>,
+        username: Option<ProfileUsername>,
+    ) -> CommandEnvelope<ProfileEvent, Profile> {
         let event = ProfileEvent::Created {
             account_id,
             display_name,
@@ -77,6 +110,7 @@ impl Profile {
             icon,
             banner,
             nanoid: nano_id,
+            username,
         };
         CommandEnvelope::new(
             EventId::from(id),
@@ -96,6 +130,7 @@ impl Profile {
         banner: Option<ImageId>,
         version: EventVersion<Profile>,
         nanoid: Nanoid<Profile>,
+        username: Option<ProfileUsername>,
     ) -> Self {
         Self {
             id,
@@ -106,7 +141,18 @@ impl Profile {
             banner,
             version,
             nanoid,
+            username,
         }
+    }
+
+    /// One-time username assignment. No optimistic concurrency check: uniqueness and "at most
+    /// once per Profile" are enforced by the event store's unique indexes.
+    pub fn set_username(
+        id: ProfileId,
+        username: ProfileUsername,
+    ) -> CommandEnvelope<ProfileEvent, Profile> {
+        let event = ProfileEvent::UsernameSet { username };
+        CommandEnvelope::new(EventId::from(id), event.name(), event, None)
     }
 
     /// Last-write-wins: no optimistic concurrency check.
@@ -155,6 +201,7 @@ impl EventApplier for Profile {
                 icon,
                 banner,
                 nanoid: nano_id,
+                username,
             } => {
                 if let Some(entity) = entity {
                     return Err(Report::new(KernelError::Internal)
@@ -169,7 +216,23 @@ impl EventApplier for Profile {
                     banner,
                     version: event.version,
                     nanoid: nano_id,
+                    username,
                 });
+            }
+            ProfileEvent::UsernameSet { username } => {
+                if let Some(profile) = entity {
+                    if profile.username.is_some() {
+                        return Err(Report::new(KernelError::Rejected).attach_printable(format!(
+                            "Profile {} already has a username; it is set only once",
+                            event.id.as_ref()
+                        )));
+                    }
+                    profile.username = Some(username);
+                    profile.version = event.version;
+                } else {
+                    return Err(Report::new(KernelError::Internal)
+                        .attach_printable(Self::not_exists(event.id.as_ref())));
+                }
             }
             ProfileEvent::Updated {
                 display_name,

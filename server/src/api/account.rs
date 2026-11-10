@@ -17,6 +17,7 @@ use application::service::activitypub::{
 use application::service::block::{BlockAccountUseCase, GetBlocksUseCase, UnblockAccountUseCase};
 use application::service::mute::{GetMutesUseCase, MuteAccountUseCase, UnmuteAccountUseCase};
 use application::service::profile::CreateOrganizationProfileUseCase;
+use application::service::profile_username::SetProfileUsernameUseCase;
 use application::service::session_context::OrganizationContext;
 use axum::extract::FromRef;
 use kernel::prelude::entity::AuthAccountId;
@@ -70,12 +71,27 @@ impl AccountApi {
             .await
     }
 
-    pub async fn create_account(
+    pub async fn create_account_with_profile_username(
         &self,
         auth_account_id: AuthAccountId,
         dto: CreateAccountDto,
+        profile_username: Option<String>,
     ) -> error_stack::Result<AccountDto, KernelError> {
-        self.module.create_account(auth_account_id, dto).await
+        self.module
+            .create_account_with_profile_username(auth_account_id, dto, profile_username)
+            .await
+    }
+
+    pub async fn set_profile_username(
+        &self,
+        auth_account_id: &AuthAccountId,
+        org_context: Option<&OrganizationContext>,
+        profile_nanoid: String,
+        username: String,
+    ) -> error_stack::Result<application::dto::profile::ProfileDto, KernelError> {
+        self.module
+            .set_profile_username(auth_account_id, org_context, profile_nanoid, username)
+            .await
     }
 
     pub async fn update_account_detail_in_context(

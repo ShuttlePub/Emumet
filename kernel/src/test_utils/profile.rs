@@ -1,6 +1,6 @@
 use crate::entity::{
     AccountId, EventVersion, ImageId, Nanoid, Profile, ProfileDisplayName, ProfileId,
-    ProfileSummary,
+    ProfileSummary, ProfileUsername,
 };
 
 use super::{DEFAULT_DISPLAY_NAME, DEFAULT_SUMMARY};
@@ -14,6 +14,7 @@ pub struct ProfileBuilder {
     banner: Option<Option<ImageId>>,
     version: Option<EventVersion<Profile>>,
     nanoid: Option<Nanoid<Profile>>,
+    username: Option<ProfileUsername>,
 }
 
 impl Default for ProfileBuilder {
@@ -33,6 +34,7 @@ impl ProfileBuilder {
             banner: None,
             version: None,
             nanoid: None,
+            username: None,
         }
     }
 
@@ -71,6 +73,11 @@ impl ProfileBuilder {
         self
     }
 
+    pub fn username(mut self, username: impl Into<String>) -> Self {
+        self.username = Some(ProfileUsername::new(username));
+        self
+    }
+
     pub fn nanoid(mut self, nanoid: Nanoid<Profile>) -> Self {
         self.nanoid = Some(nanoid);
         self
@@ -90,6 +97,7 @@ impl ProfileBuilder {
             self.banner.unwrap_or(None),
             self.version.unwrap_or_default(),
             self.nanoid.unwrap_or_default(),
+            self.username,
         )
     }
 }

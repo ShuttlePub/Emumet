@@ -5,7 +5,7 @@ use kernel::interfaces::read_model::{ProfileProjection, ProfileReadModel};
 use kernel::interfaces::repository::{AggregateRepository, Rehydrated};
 use kernel::prelude::entity::{
     AccountId, CommandEnvelope, EventEnvelope, EventVersion, ImageId, Nanoid, Profile,
-    ProfileEvent, ProfileId,
+    ProfileEvent, ProfileId, ProfileUsername,
 };
 use kernel::KernelError;
 use std::sync::{Arc, Mutex};
@@ -107,6 +107,20 @@ impl ProfileReadModel for MockProfileReadModel {
             .filter(|profile| account_ids.contains(profile.account_id()))
             .cloned()
             .collect())
+    }
+
+    async fn find_by_username(
+        &self,
+        _executor: &mut Self::Connection,
+        username: &ProfileUsername,
+    ) -> error_stack::Result<Option<ProfileProjection>, KernelError> {
+        Ok(self
+            .profiles
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|profile| profile.username().as_ref() == Some(username))
+            .cloned())
     }
 
     async fn find_by_nanoid(

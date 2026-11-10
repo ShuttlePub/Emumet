@@ -765,6 +765,7 @@ delegate_database_dependence! {
     kernel::interfaces::repository::DependOnOrganizationMembershipRepository { OrganizationMembershipRepository, organization_membership_repository },
     kernel::interfaces::repository::DependOnOutboxActivityRepository { OutboxActivityRepository, outbox_activity_repository },
     kernel::interfaces::repository::DependOnProfileRepository { ProfileRepository, profile_repository },
+    kernel::interfaces::repository::DependOnProfileSigningKeyRepository { ProfileSigningKeyRepository, profile_signing_key_repository },
     kernel::interfaces::repository::DependOnRegistrationGateRepository { RegistrationGateRepository, registration_gate_repository },
     kernel::interfaces::repository::DependOnRemoteAccountRepository { RemoteAccountRepository, remote_account_repository },
     kernel::interfaces::repository::DependOnSigningKeyRepository { SigningKeyRepository, signing_key_repository },

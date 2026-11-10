@@ -5,7 +5,9 @@ use kernel::interfaces::database::{DependOnTransactionManager, TransactionManage
 use kernel::interfaces::event::EventApplier;
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::interfaces::repository::{AggregateRepository, DependOnProfileRepository};
-use kernel::prelude::entity::{Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary};
+use kernel::prelude::entity::{
+    Nanoid, Profile, ProfileDisplayName, ProfileId, ProfileSummary, ProfileUsername,
+};
 use kernel::KernelError;
 use std::future::Future;
 
@@ -26,6 +28,7 @@ pub trait CreateOrganizationProfileUseCase:
             if let Some(summary) = &summary {
                 summary.validate()?;
             }
+            let username = dto.username.map(ProfileUsername::parse).transpose()?;
 
             let account_id = org_context.org_account_id;
             let account_nanoid = org_context.org_account_nanoid;
@@ -34,7 +37,7 @@ pub trait CreateOrganizationProfileUseCase:
                 .transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
-                        let command = Profile::create(
+                        let command = Profile::create_with_username(
                             ProfileId::new(kernel::generate_id()),
                             account_id,
                             display_name,
@@ -42,6 +45,7 @@ pub trait CreateOrganizationProfileUseCase:
                             None,
                             None,
                             Nanoid::<Profile>::default(),
+                            username,
                         );
                         let event = deps.profile_repository().save(executor, command).await?;
                         let mut profile = None;

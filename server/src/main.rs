@@ -6,6 +6,7 @@ mod hydra;
 mod kratos;
 mod openapi;
 mod projection_worker;
+mod root_router;
 mod route;
 mod schema;
 mod webhook_worker;
@@ -14,26 +15,12 @@ use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
 use crate::handler::AppModule;
 use crate::projection_worker::{projection_poll_interval_from_env, ProjectionWorker};
-use crate::route::account::{AccountRouter, AdminAccountRouter, OrgAccountRouter};
-use crate::route::activitypub::{ActivityPubRouter, FederationRouter};
-use crate::route::me::MeRouter;
-use crate::route::media::MediaRouter;
-use crate::route::oauth2::OAuth2Router;
-use crate::route::profile_transfer::ProfileTransferRouter;
-use crate::route::registration_gate::AdminRegistrationGateRouter;
-use crate::route::registration_gate_webhook::AdminRegistrationGateWebhookRouter;
-use crate::route::report::{AdminReportRouter, ReportRouter};
-use crate::route::signing::SigningRouter;
-#[cfg(feature = "test-mode")]
-use crate::route::test_mode::TestModeRouter;
-use axum::http::{header, HeaderValue, Method};
 use error_stack::ResultExt;
 use kernel::KernelError;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
@@ -97,50 +84,7 @@ async fn main() -> Result<(), StackTrace> {
         }
     }
 
-    // Routes that require JWT auth (/api/v1, /api/v1/admin, /internal/v1).
-    // Admin authorization (Keto instance_moderate) lives inside the use cases.
-    let api_v1 = axum::Router::new()
-        .route_account()
-        .route_org_account()
-        .route_profile_transfers()
-        .route_reports()
-        .route_me()
-        .route_media()
-        .nest(
-            "/admin",
-            axum::Router::new()
-                .route_admin_account()
-                .route_admin_reports()
-                .route_admin_registration_gate()
-                .route_admin_registration_gate_webhook(),
-        );
-
-    let authed_routes = axum::Router::new()
-        .nest("/api/v1", api_v1)
-        .nest("/internal/v1", axum::Router::new().route_signing())
-        .layer(axum::middleware::from_fn_with_state(
-            app.clone(),
-            api::organization_context::organization_context_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            (oidc_config, jwks_cache),
-            auth::auth_middleware,
-        ));
-
-    // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider,
-    // webfinger, federation under /ap — inbox is HTTP-Signature guarded)
-    let public_routes = axum::Router::new()
-        .route_oauth2()
-        .route_activitypub()
-        .nest("/ap", axum::Router::new().route_federation());
-
-    #[cfg(feature = "test-mode")]
-    let public_routes = public_routes.route_test_mode();
-
-    let router = authed_routes
-        .merge(public_routes)
-        .layer(build_cors_layer())
-        .with_state(app);
+    let router = root_router::build_root_router(app, oidc_config, jwks_cache);
 
     let bind = SocketAddr::from(([0, 0, 0, 0], 8080));
     let tcp = TcpListener::bind(bind)
@@ -161,24 +105,4 @@ async fn main() -> Result<(), StackTrace> {
     }
 
     Ok(())
-}
-
-fn build_cors_layer() -> CorsLayer {
-    match std::env::var("CORS_ALLOWED_ORIGINS").ok().as_deref() {
-        None | Some("*") => CorsLayer::permissive(),
-        Some(origins) => {
-            let origins: Vec<HeaderValue> = origins
-                .split(',')
-                .filter_map(|s| s.trim().parse::<HeaderValue>().ok())
-                .collect();
-            CorsLayer::new()
-                .allow_origin(origins)
-                .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
-                .allow_headers([
-                    header::AUTHORIZATION,
-                    header::CONTENT_TYPE,
-                    header::HeaderName::from_static("x-organization-id"),
-                ])
-        }
-    }
 }
