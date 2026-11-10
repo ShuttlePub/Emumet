@@ -1,24 +1,30 @@
 //! Profile x exact-match domain controls (D8P): owner-only CRUD with revision conflict control,
 //! and the matching lookup used by later units (D8G / D8R).
+//!
+//! Every owner-only operation (reads included) runs in ONE transaction that first takes a shared
+//! lock on the Profile row and reads the Profile's current owner from that locking read. A
+//! Profile transfer updates the same row, so it is serialized with these operations: it either
+//! commits before the owner check (the previous owner is then rejected) or waits until the
+//! operation has finished.
 
 use crate::dto::domain_control::DomainControlDto;
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
-use kernel::interfaces::read_model::{
-    AccountQuery, DependOnAccountQuery, DependOnProfileQuery, ProfileQuery,
+use kernel::interfaces::database::{
+    DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
 };
+use kernel::interfaces::read_model::{AccountQuery, DependOnAccountQuery};
 use kernel::interfaces::repository::{
     DependOnDomainControlRepository, DomainControlDeleteOutcome, DomainControlRepository,
 };
 use kernel::prelude::entity::{
-    AccountKind, AuthAccountId, ControlDomain, DomainControl, DomainControlMode, Nanoid, Profile,
+    AccountKind, AuthAccountId, ControlDomain, DomainControl, DomainControlMode, InvalidDomain,
     ProfileId,
 };
 use kernel::KernelError;
 use std::future::Future;
 
-fn invalid_domain(error: kernel::prelude::entity::InvalidDomain) -> Report<KernelError> {
+fn invalid_domain(error: InvalidDomain) -> Report<KernelError> {
     Report::new(KernelError::Rejected).attach_printable(error.to_string())
 }
 
@@ -26,50 +32,51 @@ fn revision_conflict(message: &'static str) -> Report<KernelError> {
     Report::new(KernelError::Concurrency).attach_printable(message)
 }
 
-/// Resolve the Profile and require the caller to be its **current** owner.
+/// Lock the Profile and require the caller to be its **current** owner. Must run inside the
+/// transaction that performs the rest of the operation (the lock lives until it ends).
 ///
 /// * With an organization context (`X-Organization-Id`, membership already verified by the
 ///   request middleware) the organization must be the Profile's current owning account.
 /// * Without one, one of the caller's live personal accounts must be the owning account.
 ///
-/// Ownership is read from the Profile's current `account_id`, so after a Profile transfer only
-/// the new owner passes and the previous owner is rejected.
+/// Ownership is read from the locked Profile row, so after a Profile transfer only the new owner
+/// passes and the previous owner is rejected.
 async fn require_profile_owner<T>(
     deps: &T,
+    executor: &mut <<T as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
     auth_account_id: &AuthAccountId,
     org_context: Option<&OrganizationContext>,
     profile_nanoid: &str,
-) -> error_stack::Result<(ProfileId, String), KernelError>
+) -> error_stack::Result<ProfileId, KernelError>
 where
-    T: DependOnProfileQuery + DependOnAccountQuery + DependOnDatabaseConnection,
+    T: DependOnAccountQuery + DependOnDomainControlRepository + DependOnDatabaseConnection,
 {
-    let mut connection = deps.database_connection().connection().await?;
-    let profile = deps
-        .profile_query()
-        .find_by_nanoid(&mut connection, &Nanoid::<Profile>::new(profile_nanoid))
+    let (profile_id, owner_account_id) = deps
+        .domain_control_repository()
+        .lock_profile_owner(executor, profile_nanoid)
         .await?
         .ok_or_else(|| {
             Report::new(KernelError::NotFound)
                 .attach_printable(format!("Profile not found: {profile_nanoid}"))
         })?;
     let owned = match org_context {
-        Some(context) => &context.org_account_id == profile.account_id(),
+        Some(context) => context.org_account_id == owner_account_id,
         None => deps
             .account_query()
-            .find_by_auth_id(&mut connection, auth_account_id)
+            .find_by_auth_id(executor, auth_account_id)
             .await?
             .iter()
             .any(|account| {
                 account.kind() == &AccountKind::Personal
                     && account.deleted_at().is_none()
-                    && account.id() == profile.account_id()
+                    && account.id() == &owner_account_id
             }),
     };
     if !owned {
         return Err(Report::new(KernelError::PermissionDenied)
             .attach_printable("Caller is not the current owner of the Profile"));
     }
-    Ok((profile.id().clone(), profile.nanoid().as_ref().to_string()))
+    Ok(profile_id)
 }
 
 pub trait DomainControlUseCase:
@@ -77,10 +84,9 @@ pub trait DomainControlUseCase:
     + Sync
     + Send
     + Clone
-    + DependOnProfileQuery
     + DependOnAccountQuery
     + DependOnDomainControlRepository
-    + DependOnDatabaseConnection
+    + DependOnTransactionManager
 {
     fn list_domain_controls<'a>(
         &'a self,
@@ -90,17 +96,32 @@ pub trait DomainControlUseCase:
     ) -> impl Future<Output = error_stack::Result<Vec<DomainControlDto>, KernelError>> + Send + 'a
     {
         async move {
-            let (profile_id, profile_nanoid) =
-                require_profile_owner(self, auth_account_id, org_context, profile_nanoid).await?;
-            let mut connection = self.database_connection().connection().await?;
-            let controls = self
-                .domain_control_repository()
-                .find_by_profile(&mut connection, &profile_id)
-                .await?;
-            Ok(controls
-                .iter()
-                .map(|control| DomainControlDto::new(&profile_nanoid, control))
-                .collect())
+            let deps = self.clone();
+            let auth_account_id = auth_account_id.clone();
+            let org_context = org_context.cloned();
+            let profile_nanoid = profile_nanoid.to_string();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let profile_id = require_profile_owner(
+                            &deps,
+                            executor,
+                            &auth_account_id,
+                            org_context.as_ref(),
+                            &profile_nanoid,
+                        )
+                        .await?;
+                        let controls = deps
+                            .domain_control_repository()
+                            .find_by_profile(executor, &profile_id)
+                            .await?;
+                        Ok(controls
+                            .iter()
+                            .map(|control| DomainControlDto::new(&profile_nanoid, control))
+                            .collect())
+                    })
+                })
+                .await
         }
     }
 
@@ -112,19 +133,35 @@ pub trait DomainControlUseCase:
         domain: &'a str,
     ) -> impl Future<Output = error_stack::Result<DomainControlDto, KernelError>> + Send + 'a {
         async move {
-            let (profile_id, profile_nanoid) =
-                require_profile_owner(self, auth_account_id, org_context, profile_nanoid).await?;
-            let domain = ControlDomain::parse(domain).map_err(invalid_domain)?;
-            let mut connection = self.database_connection().connection().await?;
-            let control = self
-                .domain_control_repository()
-                .find(&mut connection, &profile_id, &domain)
-                .await?
-                .ok_or_else(|| {
-                    Report::new(KernelError::NotFound)
-                        .attach_printable(format!("Domain control not found: {domain}"))
-                })?;
-            Ok(DomainControlDto::new(&profile_nanoid, &control))
+            let deps = self.clone();
+            let auth_account_id = auth_account_id.clone();
+            let org_context = org_context.cloned();
+            let profile_nanoid = profile_nanoid.to_string();
+            let domain = domain.to_string();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let profile_id = require_profile_owner(
+                            &deps,
+                            executor,
+                            &auth_account_id,
+                            org_context.as_ref(),
+                            &profile_nanoid,
+                        )
+                        .await?;
+                        let domain = ControlDomain::parse(&domain).map_err(invalid_domain)?;
+                        let control = deps
+                            .domain_control_repository()
+                            .find(executor, &profile_id, &domain)
+                            .await?
+                            .ok_or_else(|| {
+                                Report::new(KernelError::NotFound)
+                                    .attach_printable(format!("Domain control not found: {domain}"))
+                            })?;
+                        Ok(DomainControlDto::new(&profile_nanoid, &control))
+                    })
+                })
+                .await
         }
     }
 
@@ -140,33 +177,47 @@ pub trait DomainControlUseCase:
         expected_revision: Option<u64>,
     ) -> impl Future<Output = error_stack::Result<DomainControlDto, KernelError>> + Send + 'a {
         async move {
-            let (profile_id, profile_nanoid) =
-                require_profile_owner(self, auth_account_id, org_context, profile_nanoid).await?;
-            let domain = ControlDomain::parse(domain).map_err(invalid_domain)?;
-            let mut connection = self.database_connection().connection().await?;
-            let control = match expected_revision {
-                None => self
-                    .domain_control_repository()
-                    .create(&mut connection, &profile_id, &domain, mode)
-                    .await?
-                    .ok_or_else(|| {
-                        revision_conflict("A domain control already exists; send expected_revision")
-                    })?,
-                Some(expected_revision) => self
-                    .domain_control_repository()
-                    .replace(
-                        &mut connection,
-                        &profile_id,
-                        &domain,
-                        mode,
-                        expected_revision,
-                    )
-                    .await?
-                    .ok_or_else(|| {
-                        revision_conflict("expected_revision does not match the current control")
-                    })?,
-            };
-            Ok(DomainControlDto::new(&profile_nanoid, &control))
+            let deps = self.clone();
+            let auth_account_id = auth_account_id.clone();
+            let org_context = org_context.cloned();
+            let profile_nanoid = profile_nanoid.to_string();
+            let domain = domain.to_string();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let profile_id = require_profile_owner(
+                            &deps,
+                            executor,
+                            &auth_account_id,
+                            org_context.as_ref(),
+                            &profile_nanoid,
+                        )
+                        .await?;
+                        let domain = ControlDomain::parse(&domain).map_err(invalid_domain)?;
+                        let control = match expected_revision {
+                            None => deps
+                                .domain_control_repository()
+                                .create(executor, &profile_id, &domain, mode)
+                                .await?
+                                .ok_or_else(|| {
+                                    revision_conflict(
+                                        "A domain control already exists; send expected_revision",
+                                    )
+                                })?,
+                            Some(expected_revision) => deps
+                                .domain_control_repository()
+                                .replace(executor, &profile_id, &domain, mode, expected_revision)
+                                .await?
+                                .ok_or_else(|| {
+                                    revision_conflict(
+                                        "expected_revision does not match the current control",
+                                    )
+                                })?,
+                        };
+                        Ok(DomainControlDto::new(&profile_nanoid, &control))
+                    })
+                })
+                .await
         }
     }
 
@@ -179,22 +230,40 @@ pub trait DomainControlUseCase:
         expected_revision: u64,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
         async move {
-            let (profile_id, _) =
-                require_profile_owner(self, auth_account_id, org_context, profile_nanoid).await?;
-            let domain = ControlDomain::parse(domain).map_err(invalid_domain)?;
-            let mut connection = self.database_connection().connection().await?;
-            match self
-                .domain_control_repository()
-                .delete(&mut connection, &profile_id, &domain, expected_revision)
-                .await?
-            {
-                DomainControlDeleteOutcome::Deleted => Ok(()),
-                DomainControlDeleteOutcome::NotFound => Err(Report::new(KernelError::NotFound)
-                    .attach_printable(format!("Domain control not found: {domain}"))),
-                DomainControlDeleteOutcome::RevisionMismatch => Err(revision_conflict(
-                    "expected_revision does not match the current control",
-                )),
-            }
+            let deps = self.clone();
+            let auth_account_id = auth_account_id.clone();
+            let org_context = org_context.cloned();
+            let profile_nanoid = profile_nanoid.to_string();
+            let domain = domain.to_string();
+            self.transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let profile_id = require_profile_owner(
+                            &deps,
+                            executor,
+                            &auth_account_id,
+                            org_context.as_ref(),
+                            &profile_nanoid,
+                        )
+                        .await?;
+                        let domain = ControlDomain::parse(&domain).map_err(invalid_domain)?;
+                        match deps
+                            .domain_control_repository()
+                            .delete(executor, &profile_id, &domain, expected_revision)
+                            .await?
+                        {
+                            DomainControlDeleteOutcome::Deleted => Ok(()),
+                            DomainControlDeleteOutcome::NotFound => Err(Report::new(
+                                KernelError::NotFound,
+                            )
+                            .attach_printable(format!("Domain control not found: {domain}"))),
+                            DomainControlDeleteOutcome::RevisionMismatch => Err(revision_conflict(
+                                "expected_revision does not match the current control",
+                            )),
+                        }
+                    })
+                })
+                .await
         }
     }
 }
@@ -204,10 +273,9 @@ impl<T> DomainControlUseCase for T where
         + Sync
         + Send
         + Clone
-        + DependOnProfileQuery
         + DependOnAccountQuery
         + DependOnDomainControlRepository
-        + DependOnDatabaseConnection
+        + DependOnTransactionManager
 {
 }
 

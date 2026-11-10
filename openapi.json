@@ -4392,7 +4392,7 @@
       },
       "DomainControlListResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).",
         "required": [
           "items"
         ],
@@ -4407,7 +4407,7 @@
       },
       "DomainControlMode": {
         "type": "string",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nTreatment applied to every actor whose canonical actor-ID host equals the domain.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).\n\nTreatment applied to every actor whose canonical actor-ID host equals the domain.",
         "enum": [
           "mute",
           "block"
@@ -4415,7 +4415,7 @@
       },
       "DomainControlResponse": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nA Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).\n\nA Profile x exact-match domain control.\n\nMatching is exact: `example.com` does not cover `sub.example.com`.\nSettings are per Profile and never propagate to other Profiles or Accounts.",
         "required": [
           "profile_id",
           "domain",
@@ -5231,7 +5231,7 @@
       },
       "PutDomainControlRequest": {
         "type": "object",
-        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.\n\nCreate or replace the control for one domain.",
+        "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).\n\nCreate or replace the control for one domain.",
         "required": [
           "mode"
         ],

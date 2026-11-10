@@ -65,7 +65,8 @@ impl std::error::Error for InvalidDomain {}
 ///    (label <= 63, name <= 253, no empty label);
 /// 4. result limited to `[a-z0-9_-]` labels joined by `.` (underscore is tolerated because it
 ///    occurs in real host names);
-/// 5. a purely numeric last label is rejected (IPv4-like).
+/// 5. a last label that is purely numeric or a hexadecimal number (`0x…`) is rejected: such names
+///    are IPv4 addresses for URL parsers (`127.1`, `2130706433`, `0x7f000001`, `127.0.0.0x1`).
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct ControlDomain(String);
 
@@ -112,7 +113,10 @@ impl ControlDomain {
         if last_label.is_empty() {
             return Err(InvalidDomain::Empty);
         }
-        if last_label.bytes().all(|b| b.is_ascii_digit()) {
+        let hex_number = last_label
+            .strip_prefix("0x")
+            .is_some_and(|digits| digits.bytes().all(|b| b.is_ascii_hexdigit()));
+        if last_label.bytes().all(|b| b.is_ascii_digit()) || hex_number {
             return Err(InvalidDomain::IpAddress);
         }
         Ok(Self(normalized))
@@ -283,6 +287,8 @@ mod tests {
         ("faß.example", "xn--fa-hia.example"),
         ("localhost", "localhost"),
         ("127.example.com", "127.example.com"),
+        ("0x7f.example.com", "0x7f.example.com"),
+        ("example.0xyz", "example.0xyz"),
     ];
 
     #[test]
@@ -339,6 +345,13 @@ mod tests {
         ("::1", InvalidDomain::NotAHostName),
         ("127.0.0.1", InvalidDomain::IpAddress),
         ("192.168.1.1.", InvalidDomain::IpAddress),
+        ("127.1", InvalidDomain::IpAddress),
+        ("2130706433", InvalidDomain::IpAddress),
+        ("0x7f000001", InvalidDomain::IpAddress),
+        ("0X7F000001", InvalidDomain::IpAddress),
+        ("0x7f.0x1", InvalidDomain::IpAddress),
+        ("127.0.0.0x1", InvalidDomain::IpAddress),
+        ("0x", InvalidDomain::IpAddress),
         ("example.com..", InvalidDomain::Idna),
         (".example.com", InvalidDomain::Idna),
         ("a..example.com", InvalidDomain::Idna),
@@ -470,6 +483,9 @@ mod tests {
             "https://127.0.0.1/users/alice",
             "https://[::1]/users/alice",
             "https://192.168.0.1:8080/users/alice",
+            "https://0x7f000001/users/alice",
+            "https://2130706433/users/alice",
+            "https://127.1/users/alice",
         ] {
             assert!(
                 ControlDomain::from_actor_id(actor_id).is_err(),

@@ -1,5 +1,5 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
-use crate::entity::{ControlDomain, DomainControl, DomainControlMode, ProfileId};
+use crate::entity::{AccountId, ControlDomain, DomainControl, DomainControlMode, ProfileId};
 use crate::KernelError;
 use std::future::Future;
 
@@ -20,6 +20,17 @@ pub enum DomainControlDeleteOutcome {
 /// Deleted controls keep a tombstone (the revision counter) so revisions never repeat.
 pub trait DomainControlRepository: Sync + Send + 'static {
     type Connection: Connection;
+
+    /// Read the Profile's **current** owning account and hold a shared row lock on the Profile
+    /// until the surrounding transaction ends. A concurrent Profile transfer (which updates the
+    /// same row) therefore waits for the transaction, and a transfer that committed first is
+    /// observed here, so an owner check made with this lock cannot be invalidated before the
+    /// transaction's reads / writes finish.
+    fn lock_profile_owner(
+        &self,
+        executor: &mut Self::Connection,
+        profile_nanoid: &str,
+    ) -> impl Future<Output = error_stack::Result<Option<(ProfileId, AccountId)>, KernelError>> + Send;
 
     /// The live control for the Profile x domain, if any.
     fn find(

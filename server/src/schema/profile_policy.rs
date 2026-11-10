@@ -157,7 +157,7 @@ pub struct ProfileRelationListResponse {
     pub next_cursor: Option<String>,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).
 ///
 /// Treatment applied to every actor whose canonical actor-ID host equals the domain.
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -170,7 +170,7 @@ pub enum DomainControlMode {
     Block,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).
 ///
 /// A Profile x exact-match domain control.
 ///
@@ -192,13 +192,13 @@ pub struct DomainControlResponse {
     pub updated_at: OffsetDateTime,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DomainControlListResponse {
     pub items: Vec<DomainControlResponse>,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
+/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).
 ///
 /// Create or replace the control for one domain.
 #[derive(Debug, Deserialize, ToSchema)]

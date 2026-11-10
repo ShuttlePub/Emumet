@@ -30,6 +30,7 @@ use kernel::test_utils::{
     unique_account_name, AccountBuilder, AuthAccountBuilder, AuthHostBuilder,
 };
 use serde_json::{json, Value};
+use sqlx::{Connection, PgConnection};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
@@ -42,7 +43,12 @@ struct User {
     profile: Profile,
 }
 
+/// Serializes the tests of this file: the lock tests below hold table / row locks that would
+/// otherwise stall unrelated tests and make "who is blocked" ambiguous.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct Harness {
+    _serial: tokio::sync::MutexGuard<'static, ()>,
     module: AppModule,
     router: axum::Router,
     issuer: String,
@@ -52,6 +58,7 @@ struct Harness {
 
 impl Harness {
     async fn new() -> Self {
+        let serial = SERIAL.lock().await;
         kernel::ensure_generator_initialized();
         let issuer = format!("https://issuer.example/{}", uuid::Uuid::new_v4());
         let module = AppModule::new_for_oauth2_test(
@@ -98,6 +105,7 @@ impl Harness {
             ))
             .with_state(module.clone());
         Self {
+            _serial: serial,
             module,
             router,
             issuer,
@@ -1195,6 +1203,251 @@ async fn matching_uses_the_verified_actor_id_host_only() {
     assert!(found(&bob.profile, "https://example.com/users/mallory")
         .await
         .is_none());
+}
+
+async fn raw_connection() -> PgConnection {
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    PgConnection::connect(&url).await.expect("raw connection")
+}
+
+async fn backend_pid(connection: &mut PgConnection) -> i32 {
+    sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+        .fetch_one(connection)
+        .await
+        .unwrap()
+}
+
+/// Waits until some backend is blocked behind `blocker_pid` (the tests of this file are
+/// serialized, so that backend is the request under test).
+async fn wait_until_blocked_by(observer: &mut PgConnection, blocker_pid: i32) {
+    for _ in 0..200 {
+        let blocked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(blocker_pid)
+        .fetch_one(&mut *observer)
+        .await
+        .unwrap();
+        if blocked > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("no request became blocked behind backend {blocker_pid}");
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Operation {
+    List,
+    Get,
+    Put,
+    Delete,
+}
+
+impl Operation {
+    const ALL: [Operation; 4] = [
+        Operation::List,
+        Operation::Get,
+        Operation::Put,
+        Operation::Delete,
+    ];
+
+    fn ok_status(self) -> StatusCode {
+        match self {
+            Operation::Delete => StatusCode::NO_CONTENT,
+            _ => StatusCode::OK,
+        }
+    }
+
+    /// Request of this operation against a control that exists with revision 1 (`locked.example`),
+    /// except PUT which creates a new one (`created.example`).
+    fn request(self, profile: &Profile) -> (Method, String, Option<Value>) {
+        match self {
+            Operation::List => (Method::GET, controls_uri(profile), None),
+            Operation::Get => (Method::GET, control_uri(profile, "locked.example"), None),
+            Operation::Put => (
+                Method::PUT,
+                control_uri(profile, "created.example"),
+                Some(json!({"mode": "block"})),
+            ),
+            Operation::Delete => (
+                Method::DELETE,
+                format!(
+                    "{}?expected_revision=1",
+                    control_uri(profile, "locked.example")
+                ),
+                None,
+            ),
+        }
+    }
+}
+
+async fn seed_locked_control(h: &Harness, owner: &User) {
+    let (status, body) = h
+        .call(
+            Method::PUT,
+            &control_uri(&owner.profile, "locked.example"),
+            Some(owner.token.as_str()),
+            None,
+            Some(json!({"mode": "mute"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// A Profile transfer updates the Profile row. While an authorized operation is in flight (here:
+/// stuck on a table lock AFTER the owner check) that update must wait; once the operation is
+/// done the transfer goes through and the previous owner is refused.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_authorized_operation_in_flight_holds_the_profile_against_transfer() {
+    let h = Harness::new().await;
+    for operation in Operation::ALL {
+        let owner = h.user().await;
+        let org = h.organization_with_member(&owner, OrgRole::Owner).await;
+        seed_locked_control(&h, &owner).await;
+
+        let mut blocker = raw_connection().await;
+        let blocker_pid = backend_pid(&mut blocker).await;
+        sqlx::query("BEGIN").execute(&mut blocker).await.unwrap();
+        sqlx::query("LOCK TABLE profile_domain_controls IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut blocker)
+            .await
+            .unwrap();
+
+        let (method, uri, body) = operation.request(&owner.profile);
+        let router = h.router.clone();
+        let token = owner.token.clone();
+        let in_flight = tokio::spawn(async move {
+            send(&router, method, &uri, Some(&token), None, body)
+                .await
+                .0
+        });
+        let mut observer = raw_connection().await;
+        wait_until_blocked_by(&mut observer, blocker_pid).await;
+        assert!(
+            !in_flight.is_finished(),
+            "{operation:?} must be stuck behind the table lock"
+        );
+
+        // The transfer's UPDATE of the Profile row must NOT get through while the operation holds
+        // the Profile.
+        let mut transfer = raw_connection().await;
+        sqlx::query("SET lock_timeout = '300ms'")
+            .execute(&mut transfer)
+            .await
+            .unwrap();
+        let blocked = sqlx::query(
+            "UPDATE profiles SET account_id = $2,
+               owner_kind = (SELECT kind FROM accounts WHERE id = $2) WHERE id = $1",
+        )
+        .bind(owner.profile.id().as_ref())
+        .bind(org.id().as_ref())
+        .execute(&mut transfer)
+        .await;
+        let error = blocked.expect_err("the transfer update must wait for the in-flight operation");
+        assert_eq!(
+            error.as_database_error().and_then(|e| e.code()).as_deref(),
+            Some("55P03"),
+            "{operation:?}: expected lock_not_available, got {error}"
+        );
+
+        sqlx::query("ROLLBACK").execute(&mut blocker).await.unwrap();
+        let status = in_flight.await.unwrap();
+        assert_eq!(
+            status,
+            operation.ok_status(),
+            "{operation:?} was authorized before the transfer"
+        );
+
+        sqlx::query("SET lock_timeout = 0")
+            .execute(&mut transfer)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE profiles SET account_id = $2,
+               owner_kind = (SELECT kind FROM accounts WHERE id = $2) WHERE id = $1",
+        )
+        .bind(owner.profile.id().as_ref())
+        .bind(org.id().as_ref())
+        .execute(&mut transfer)
+        .await
+        .expect("the transfer proceeds once the operation finished");
+
+        let (method, uri, body) = operation.request(&owner.profile);
+        let (status, _) = h
+            .call(method, &uri, Some(owner.token.as_str()), None, body)
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "{operation:?}: previous owner after the transfer"
+        );
+    }
+}
+
+/// A transfer that is in flight (updated the Profile row, not yet committed) is waited for by the
+/// owner check, and the previous owner is refused with the committed result.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn owner_check_waits_for_an_in_flight_transfer_and_rejects_the_previous_owner() {
+    let h = Harness::new().await;
+    for operation in Operation::ALL {
+        let owner = h.user().await;
+        let org = h.organization_with_member(&owner, OrgRole::Owner).await;
+        seed_locked_control(&h, &owner).await;
+
+        let mut transfer = raw_connection().await;
+        let transfer_pid = backend_pid(&mut transfer).await;
+        sqlx::query("BEGIN").execute(&mut transfer).await.unwrap();
+        sqlx::query(
+            "UPDATE profiles SET account_id = $2,
+               owner_kind = (SELECT kind FROM accounts WHERE id = $2) WHERE id = $1",
+        )
+        .bind(owner.profile.id().as_ref())
+        .bind(org.id().as_ref())
+        .execute(&mut transfer)
+        .await
+        .unwrap();
+
+        let (method, uri, body) = operation.request(&owner.profile);
+        let router = h.router.clone();
+        let token = owner.token.clone();
+        let previous_owner = tokio::spawn(async move {
+            send(&router, method, &uri, Some(&token), None, body)
+                .await
+                .0
+        });
+        let mut observer = raw_connection().await;
+        wait_until_blocked_by(&mut observer, transfer_pid).await;
+        assert!(
+            !previous_owner.is_finished(),
+            "{operation:?}: the owner check must wait for the uncommitted transfer"
+        );
+
+        sqlx::query("COMMIT").execute(&mut transfer).await.unwrap();
+        assert_eq!(
+            previous_owner.await.unwrap(),
+            StatusCode::FORBIDDEN,
+            "{operation:?}: the previous owner must be refused once the transfer committed"
+        );
+
+        let (method, uri, body) = operation.request(&owner.profile);
+        let (status, body_json) = send(
+            &h.router,
+            method,
+            &uri,
+            Some(owner.token.as_str()),
+            Some(&org),
+            body,
+        )
+        .await;
+        assert_eq!(
+            status,
+            operation.ok_status(),
+            "{operation:?}: new owner: {body_json}"
+        );
+    }
 }
 
 #[test_with::env(DATABASE_URL)]

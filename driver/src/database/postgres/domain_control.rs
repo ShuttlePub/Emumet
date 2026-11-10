@@ -4,7 +4,9 @@ use error_stack::Report;
 use kernel::interfaces::repository::{
     DependOnDomainControlRepository, DomainControlDeleteOutcome, DomainControlRepository,
 };
-use kernel::prelude::entity::{ControlDomain, DomainControl, DomainControlMode, ProfileId};
+use kernel::prelude::entity::{
+    AccountId, ControlDomain, DomainControl, DomainControlMode, ProfileId,
+};
 use kernel::KernelError;
 use sqlx::types::time::OffsetDateTime;
 use sqlx::PgConnection;
@@ -56,6 +58,24 @@ pub struct PostgresDomainControlRepository;
 
 impl DomainControlRepository for PostgresDomainControlRepository {
     type Connection = PostgresConnection;
+
+    async fn lock_profile_owner(
+        &self,
+        executor: &mut Self::Connection,
+        profile_nanoid: &str,
+    ) -> error_stack::Result<Option<(ProfileId, AccountId)>, KernelError> {
+        let con: &mut PgConnection = executor;
+        // FOR SHARE conflicts with the UPDATE that a Profile transfer applies to this row. In
+        // READ COMMITTED the locking read returns the latest committed version after waiting,
+        // so the account_id seen here is the owner at the moment the lock is granted.
+        let row: Option<(i64, i64)> =
+            sqlx::query_as("SELECT id, account_id FROM profiles WHERE nanoid = $1 FOR SHARE")
+                .bind(profile_nanoid)
+                .fetch_optional(con)
+                .await
+                .convert_error()?;
+        Ok(row.map(|(id, account_id)| (ProfileId::new(id), AccountId::new(account_id))))
+    }
 
     async fn find(
         &self,
