@@ -4,15 +4,15 @@
   "expected_created": false,
   "response": {
     "status": 400,
-    "seconds": 0.172,
+    "seconds": 0.183,
     "body": {
-      "id": "200fadad-7298-493c-8392-d896d8e5def8",
+      "id": "754584f5-ffe8-415c-9b88-34c6e238f139",
       "type": "browser",
-      "expires_at": "2026-11-10T07:23:36.343426Z",
-      "issued_at": "2026-11-10T06:23:36.343426Z",
+      "expires_at": "2026-11-10T08:15:52.587624Z",
+      "issued_at": "2026-11-10T07:15:52.587624Z",
       "request_url": "http://127.0.0.1:18433/self-service/registration/browser",
       "ui": {
-        "action": "http://127.0.0.1:18433/self-service/registration?flow=200fadad-7298-493c-8392-d896d8e5def8",
+        "action": "http://127.0.0.1:18433/self-service/registration?flow=754584f5-ffe8-415c-9b88-34c6e238f139",
         "method": "POST",
         "nodes": [
           {
@@ -103,7 +103,7 @@
           "via": "email"
         }
       ],
-      "flow_id": "200fadad-7298-493c-8392-d896d8e5def8",
+      "flow_id": "754584f5-ffe8-415c-9b88-34c6e238f139",
       "flow_type": "browser",
       "transient_payload": {},
       "mode": "deny"

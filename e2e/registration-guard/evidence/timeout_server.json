@@ -1,6 +1,6 @@
 [
   {
-    "time": "2026-11-10T06:25:24.450973106Z",
+    "time": "2026-11-10T07:17:40.848676762Z",
     "path": "/self-service/registration",
     "method": "POST",
     "http_response": {
@@ -12,7 +12,7 @@
       "size": 319,
       "status": 504,
       "text_status": "Gateway Timeout",
-      "took": 93172913422
+      "took": 93176531812
     }
   }
 ]

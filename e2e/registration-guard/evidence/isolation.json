@@ -46,15 +46,15 @@
     "mounts": [
       {
         "type": "bind",
+        "destination": "/nix/store"
+      },
+      {
+        "type": "bind",
         "destination": "/fixture"
       },
       {
         "type": "bind",
         "destination": "/run/secrets/master-key-password"
-      },
-      {
-        "type": "bind",
-        "destination": "/nix/store"
       }
     ],
     "tmpfs": {

@@ -1,17 +1,17 @@
 {
   "before_hash": {
     "status": 200,
-    "seconds": 0.003,
-    "body": "ec069f0d4455c33fb3bc63d4a33c6959d2393da4550edd0bd442ef900cb331fe"
+    "seconds": 0.002,
+    "body": "999c86aae463a80a57985e8e7b665472b3bd47db885a233eafc74ddcf7059056"
   },
   "after_hash": {
     "status": 200,
-    "seconds": 0.004,
-    "body": "81f764476df823714a6f614aa861bd2ae6c7848ab77c54979a60ad4f02207a71"
+    "seconds": 0.002,
+    "body": "6cfd1e660ac99aafaa0907cfe75b824cd5f6ac9a25731f314ab66eeaae164a14"
   },
   "health": {
     "status": 200,
-    "seconds": 0.003,
+    "seconds": 0.01,
     "body": {
       "status": "ok"
     }

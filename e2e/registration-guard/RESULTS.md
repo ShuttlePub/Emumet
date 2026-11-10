@@ -3,7 +3,7 @@
 ## 実行条件と結論
 
 2026-11-10、**全 suite exit 0**。registration/regression **29ケース** + captcha schema拒否、
-別プロセスの公式 Turnstile **6条件**が成功。helper/証拠整合性 unit test は6 passed。
+別プロセスの公式 Turnstile **6条件**が成功。helper/証拠整合性 unit test は8 passed。
 Kratos **v1.3.1 / build 36e624c716e45ab405599c71b42c384dd45bdfbb** の実バイナリ、
 PostgreSQL 16、Podman 6.1.4 / podman-compose 1.6.0、upstream Rust1.97.0 の実 Emumet を使用。
 Emumet source base は `0bfa4372e7585b04f9671a70e00fe3ddc30545f7`。
@@ -44,7 +44,7 @@ global hook、parse:false、health-only readiness は同等ではない（下記
 | parse:falseのpost-persist hook拒否 | 負の対照:エラーでもidentity残存 | 502; 新identity 1; hook 1 | [post_persist_deny](evidence/post_persist_deny.json) |
 | global after.hooksのみparse:true | 負の対照:hook未呼出で作成 | 200; 新identity 1; hook 0 | [global_hook_not_pre_persist](evidence/global_hook_not_pre_persist.json) |
 | method hookを設定から削除 | 負の対照:health正常でも作成 | 200; 新identity 1; hook 0 | [hook_removed_canary](evidence/hook_removed_canary.json) |
-| native verification無効、guard維持 | config hash変化、health正常、拒否/0 | 400; 新identity 0; hook 1 | [verification_removed_guard_remains](evidence/verification_removed_guard_remains.json) |
+| native verification無効、guard維持 | config hash変化、health正常、拒否/0 | 400; 新identity 0; hook 1 | [設定観測](evidence/verification_loss.json) / [guard拒否](evidence/verification_removed_guard_remains.json) |
 | client transient_payloadにfake override | 拒否/0 | 400; 新identity 0; hook 1 | [untrusted_override_payload](evidence/untrusted_override_payload.json) |
 | 未有効化OIDC method直接submit | 拒否/0、hook不要 | 404; 新identity 0; hook 0 | [disabled_oidc](evidence/disabled_oidc.json) |
 | passwordless:falseのcode直接submit | 拒否/0、hook不要 | 400; 新identity 0; hook 0 | [disabled_code](evidence/disabled_code.json) |
@@ -64,13 +64,14 @@ global hook、parse:false、health-only readiness は同等ではない（下記
 - [設定API](evidence/config_endpoints.json): `/health/config`=200 SHA256、`/admin/config`=404、health=200、version=v1.3.1。
 - [hook削除](evidence/config_loss.json): hash変化、health=200、guard未呼出でidentity作成。
   設定ファイル/health正常だけではreadyを証明できない。
-- [verification無効化](evidence/verification_removed_guard_remains.json): hash変化でもguardが残れば拒否できる。
+- [verification無効化の設定観測](evidence/verification_loss.json): hash変化・health正常・verification API400。
+  [guardの拒否](evidence/verification_removed_guard_remains.json): native verification喪失後もguardが残れば拒否できる。
 - [captcha schema](evidence/unsupported_captcha.json): 実バイナリが additionalProperties "captcha" not allowed、exit1。
 - [隔離](evidence/isolation.json): 全runtime containerで volume-type mount 0、image既定volumeもtmpfs。
 
 ### timeout の意味
 
-[timeout](evidence/timeout_api.json) は **93.174秒 / 3 hook calls / public RemoteDisconnected**。
+[timeout](evidence/timeout_api.json) は **93.18秒 / 3 hook calls / public RemoteDisconnected**。
 [Kratos server側](evidence/timeout_server.json) は内部HTTP504を記録するが、Go HTTP write deadline超過のため
 clientが504本文を受け取れるとは限らない。HTTP statusだけで成功/失敗を推定せず、admin/DB identity差分を確認した。
 

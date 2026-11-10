@@ -1,0 +1,31 @@
+{
+  "before_hash": {
+    "status": 200,
+    "seconds": 0.002,
+    "body": "4fe6d9b0f4fb2a3c69f15b92313ca7f2cfe171535bddcdbf7376e9ba4cc5e53b"
+  },
+  "after_hash": {
+    "status": 200,
+    "seconds": 0.003,
+    "body": "27ab62308fac09fff0573b481c64f3583ccb833f9372e971c46a6c30bcb51bf2"
+  },
+  "health": {
+    "status": 200,
+    "seconds": 0.001,
+    "body": {
+      "status": "ok"
+    }
+  },
+  "verification_flow": {
+    "status": 400,
+    "seconds": 0.001,
+    "body": {
+      "error": {
+        "code": 400,
+        "status": "Bad Request",
+        "reason": "Verification is not allowed because it was disabled.",
+        "message": "The request was malformed or contained invalid parameters"
+      }
+    }
+  }
+}

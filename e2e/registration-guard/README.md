@@ -10,15 +10,8 @@ Kratos **v1.3.1 の実バイナリ**と PostgreSQL を使う隔離実験。
 公開 image の取得、loopback **18433 / 18434 / 18445** が空いていること。
 pip 不要。実メール宛先・実 provider secret を投入しない。同一 project の並列実行は禁止。
 
-```sh
-CONTAINER_ENGINE=podman bash e2e/registration-guard/run.sh --skip-provider
-# Docker の場合は CONTAINER_ENGINE=docker
-# 公式公開テストキーのみのオンライン protocol probe は別実行:
-python3 e2e/registration-guard/provider_probe.py
-```
-
-既定では実 Emumet を `Dockerfile.account` で build する。
-**今回実行・検証したのは Nix/native 経路**（portable Dockerfile の build 自体は未検証）。
+**最初に案内するのは今回実行・検証した Nix/native 経路**。
+portable Dockerfile の build 自体は未検証であり、下記に別記する。
 upstream Rust/Cargo 1.97.0 を使う。`CARGO_BIN` と必要なら `RUSTC`、`PYTHON_BIN`、
 `OPENSSL_BIN` に実行可能ファイルを指定できる。
 
@@ -30,6 +23,19 @@ nix develop --command env NATIVE_APP=1 CONTAINER_ENGINE=podman \
 # 検証時の Nix devshell/Python の HTTPS support 問題を避け、devshell 外で実施:
 python3 e2e/registration-guard/provider_probe.py
 ```
+
+### 代替: portable Dockerfile（未検証）
+
+`NATIVE_APP=1` を省略した既定動作は `Dockerfile.account` による build。
+この経路の build は今回未実行のため、上記の検証済み経路と区別する。
+
+```sh
+CONTAINER_ENGINE=podman bash e2e/registration-guard/run.sh --skip-provider
+# Docker の場合は CONTAINER_ENGINE=docker
+python3 e2e/registration-guard/provider_probe.py
+```
+
+### 実行範囲
 
 native は実 server を build し、Ubuntu container に read-only `/nix/store` と公開 CA bundle を渡す。
 実 Account handler / JWT middleware / DB / 鍵生成・暗号化を通す。

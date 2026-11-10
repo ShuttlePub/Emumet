@@ -4,38 +4,38 @@
   "expected_created": true,
   "response": {
     "status": 200,
-    "seconds": 0.189,
+    "seconds": 0.18,
     "body": {
       "identity": {
-        "id": "8f096c6b-b62f-44f2-afb5-d26a65eb71b4",
+        "id": "476b5ba1-117b-4648-98ce-dad6788a4634",
         "schema_id": "default",
         "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
         "state": "active",
-        "state_changed_at": "2026-11-10T06:26:10.920808838Z",
+        "state_changed_at": "2026-11-10T07:18:12.64582753Z",
         "traits": {
           "email": "global-hook-not-pre-persist@example.test"
         },
         "verifiable_addresses": [
           {
-            "id": "c50135f8-2cb0-49a7-bce9-c6fceeafbb24",
+            "id": "c1d94edb-886e-45b0-975b-c2a567e0bff7",
             "value": "global-hook-not-pre-persist@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:26:10.922189Z",
-            "updated_at": "2026-11-10T06:26:10.922189Z"
+            "created_at": "2026-11-10T07:18:12.646821Z",
+            "updated_at": "2026-11-10T07:18:12.646821Z"
           }
         ],
         "metadata_public": null,
-        "created_at": "2026-11-10T06:26:10.921547Z",
-        "updated_at": "2026-11-10T06:26:10.921547Z",
+        "created_at": "2026-11-10T07:18:12.646402Z",
+        "updated_at": "2026-11-10T07:18:12.646402Z",
         "organization_id": null
       },
       "continue_with": [
         {
           "action": "show_verification_ui",
           "flow": {
-            "id": "6169d3dc-f999-4da9-9659-8fd9a406d04a",
+            "id": "2deb0633-87b3-4863-93ec-886d98cb2ca9",
             "verifiable_address": "global-hook-not-pre-persist@example.test"
           }
         }
@@ -45,157 +45,157 @@
   "before": {
     "admin": [
       {
-        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
-        "email": "override-browser@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
-            "value": "override-browser@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:23:39.988684Z",
-            "updated_at": "2026-11-10T06:23:39.988684Z"
-          }
-        ]
-      },
-      {
-        "id": "13d8f9f7-684a-4519-b1d2-3e035dc0f8e3",
-        "email": "empty-parsed@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "4e37a10f-f028-40f6-b3a7-e39ca44d3601",
-            "value": "empty-parsed@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:26:00.11948Z",
-            "updated_at": "2026-11-10T06:26:00.11948Z"
-          }
-        ]
-      },
-      {
-        "id": "4fdc0561-f5a8-4923-b83c-a49fc11601af",
-        "email": "created-malformed-is-not-parsed@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "3042a957-ce25-47ff-b821-c9eaf9ad2844",
-            "value": "created-malformed-is-not-parsed@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:26:04.828878Z",
-            "updated_at": "2026-11-10T06:26:04.828878Z"
-          }
-        ]
-      },
-      {
-        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
-        "email": "override-api@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
-            "value": "override-api@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:23:39.121433Z",
-            "updated_at": "2026-11-10T06:23:39.121433Z"
-          }
-        ]
-      },
-      {
-        "id": "af6ab71c-0bda-4f35-86dd-6e6fd9a1474e",
+        "id": "2b3f0e86-3cdb-4054-b281-3c6ca84f6413",
         "email": "false-json-is-not-denial@example.test",
         "verifiable_addresses": [
           {
-            "id": "7d5ff9b0-bf66-4bcb-bef1-a908e58f2fa2",
+            "id": "8b155069-e2c5-4482-a652-5fd44ac00593",
             "value": "false-json-is-not-denial@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:26:01.166547Z",
-            "updated_at": "2026-11-10T06:26:01.166547Z"
+            "created_at": "2026-11-10T07:18:05.476289Z",
+            "updated_at": "2026-11-10T07:18:05.476289Z"
           }
         ]
       },
       {
-        "id": "aff60ccb-1be8-47ac-9f42-7b0cf172e87f",
-        "email": "malformed-unparsed@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "32ae1217-c968-4b88-a6f0-212833379f17",
-            "value": "malformed-unparsed@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:25:49.054067Z",
-            "updated_at": "2026-11-10T06:25:49.054067Z"
-          }
-        ]
-      },
-      {
-        "id": "ce08a656-a485-475f-83ba-43c127eaaee4",
+        "id": "33e89d3c-afa7-47a1-85e6-29d7e4321363",
         "email": "empty-unparsed@example.test",
         "verifiable_addresses": [
           {
-            "id": "dc9d4020-b7b9-4029-b9df-2debc59f53ed",
+            "id": "eb17ea50-f6cb-4482-9a4e-639542116026",
             "value": "empty-unparsed@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:25:50.250948Z",
-            "updated_at": "2026-11-10T06:25:50.250948Z"
+            "created_at": "2026-11-10T07:17:59.6723Z",
+            "updated_at": "2026-11-10T07:17:59.6723Z"
           }
         ]
       },
       {
-        "id": "e6651a29-785b-4ae0-83cd-c070053124b5",
+        "id": "422610f0-d6c2-44b4-8832-9ef3a324324f",
+        "email": "malformed-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "9664e848-068f-476c-a97e-9477b8ab58bc",
+            "value": "malformed-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:17:58.45731Z",
+            "updated_at": "2026-11-10T07:17:58.45731Z"
+          }
+        ]
+      },
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
+          }
+        ]
+      },
+      {
+        "id": "9e986f9e-9148-4e27-ab97-c43abf58bc28",
+        "email": "created-malformed-is-not-parsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "2cc39353-de9e-4c9d-99ab-5eb60bcb93a6",
+            "value": "created-malformed-is-not-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:06.75222Z",
+            "updated_at": "2026-11-10T07:18:06.75222Z"
+          }
+        ]
+      },
+      {
+        "id": "d01c464b-c2f2-4fb0-9b38-d24f370eed38",
+        "email": "empty-parsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "40978cfc-567e-4fa7-bff4-a217be2fbf58",
+            "value": "empty-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:04.598557Z",
+            "updated_at": "2026-11-10T07:18:04.598557Z"
+          }
+        ]
+      },
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
+          }
+        ]
+      },
+      {
+        "id": "fb3223f7-d057-4c7d-b531-e9cd93adb338",
         "email": "post-persist-deny@example.test",
         "verifiable_addresses": [
           {
-            "id": "8bbe4985-4ebc-4924-946b-af4def32d860",
+            "id": "2395eb79-bb12-4e09-903b-8bdef0e27fc9",
             "value": "post-persist-deny@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:26:08.401598Z",
-            "updated_at": "2026-11-10T06:26:08.401598Z"
+            "created_at": "2026-11-10T07:18:10.279689Z",
+            "updated_at": "2026-11-10T07:18:10.279689Z"
           }
         ]
       }
     ],
     "db": [
       {
-        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
         "email": "override-api@example.test"
       },
       {
-        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
         "email": "override-browser@example.test"
       },
       {
-        "id": "aff60ccb-1be8-47ac-9f42-7b0cf172e87f",
+        "id": "422610f0-d6c2-44b4-8832-9ef3a324324f",
         "email": "malformed-unparsed@example.test"
       },
       {
-        "id": "ce08a656-a485-475f-83ba-43c127eaaee4",
+        "id": "33e89d3c-afa7-47a1-85e6-29d7e4321363",
         "email": "empty-unparsed@example.test"
       },
       {
-        "id": "13d8f9f7-684a-4519-b1d2-3e035dc0f8e3",
+        "id": "d01c464b-c2f2-4fb0-9b38-d24f370eed38",
         "email": "empty-parsed@example.test"
       },
       {
-        "id": "af6ab71c-0bda-4f35-86dd-6e6fd9a1474e",
+        "id": "2b3f0e86-3cdb-4054-b281-3c6ca84f6413",
         "email": "false-json-is-not-denial@example.test"
       },
       {
-        "id": "4fdc0561-f5a8-4923-b83c-a49fc11601af",
+        "id": "9e986f9e-9148-4e27-ab97-c43abf58bc28",
         "email": "created-malformed-is-not-parsed@example.test"
       },
       {
-        "id": "e6651a29-785b-4ae0-83cd-c070053124b5",
+        "id": "fb3223f7-d057-4c7d-b531-e9cd93adb338",
         "email": "post-persist-deny@example.test"
       }
     ]
@@ -203,176 +203,176 @@
   "after": {
     "admin": [
       {
-        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
-        "email": "override-browser@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
-            "value": "override-browser@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:23:39.988684Z",
-            "updated_at": "2026-11-10T06:23:39.988684Z"
-          }
-        ]
-      },
-      {
-        "id": "13d8f9f7-684a-4519-b1d2-3e035dc0f8e3",
-        "email": "empty-parsed@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "4e37a10f-f028-40f6-b3a7-e39ca44d3601",
-            "value": "empty-parsed@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:26:00.11948Z",
-            "updated_at": "2026-11-10T06:26:00.11948Z"
-          }
-        ]
-      },
-      {
-        "id": "4fdc0561-f5a8-4923-b83c-a49fc11601af",
-        "email": "created-malformed-is-not-parsed@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "3042a957-ce25-47ff-b821-c9eaf9ad2844",
-            "value": "created-malformed-is-not-parsed@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:26:04.828878Z",
-            "updated_at": "2026-11-10T06:26:04.828878Z"
-          }
-        ]
-      },
-      {
-        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
-        "email": "override-api@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
-            "value": "override-api@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:23:39.121433Z",
-            "updated_at": "2026-11-10T06:23:39.121433Z"
-          }
-        ]
-      },
-      {
-        "id": "8f096c6b-b62f-44f2-afb5-d26a65eb71b4",
-        "email": "global-hook-not-pre-persist@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "c50135f8-2cb0-49a7-bce9-c6fceeafbb24",
-            "value": "global-hook-not-pre-persist@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:26:10.922189Z",
-            "updated_at": "2026-11-10T06:26:10.922189Z"
-          }
-        ]
-      },
-      {
-        "id": "af6ab71c-0bda-4f35-86dd-6e6fd9a1474e",
+        "id": "2b3f0e86-3cdb-4054-b281-3c6ca84f6413",
         "email": "false-json-is-not-denial@example.test",
         "verifiable_addresses": [
           {
-            "id": "7d5ff9b0-bf66-4bcb-bef1-a908e58f2fa2",
+            "id": "8b155069-e2c5-4482-a652-5fd44ac00593",
             "value": "false-json-is-not-denial@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:26:01.166547Z",
-            "updated_at": "2026-11-10T06:26:01.166547Z"
+            "created_at": "2026-11-10T07:18:05.476289Z",
+            "updated_at": "2026-11-10T07:18:05.476289Z"
           }
         ]
       },
       {
-        "id": "aff60ccb-1be8-47ac-9f42-7b0cf172e87f",
-        "email": "malformed-unparsed@example.test",
-        "verifiable_addresses": [
-          {
-            "id": "32ae1217-c968-4b88-a6f0-212833379f17",
-            "value": "malformed-unparsed@example.test",
-            "verified": false,
-            "via": "email",
-            "status": "sent",
-            "created_at": "2026-11-10T06:25:49.054067Z",
-            "updated_at": "2026-11-10T06:25:49.054067Z"
-          }
-        ]
-      },
-      {
-        "id": "ce08a656-a485-475f-83ba-43c127eaaee4",
+        "id": "33e89d3c-afa7-47a1-85e6-29d7e4321363",
         "email": "empty-unparsed@example.test",
         "verifiable_addresses": [
           {
-            "id": "dc9d4020-b7b9-4029-b9df-2debc59f53ed",
+            "id": "eb17ea50-f6cb-4482-9a4e-639542116026",
             "value": "empty-unparsed@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:25:50.250948Z",
-            "updated_at": "2026-11-10T06:25:50.250948Z"
+            "created_at": "2026-11-10T07:17:59.6723Z",
+            "updated_at": "2026-11-10T07:17:59.6723Z"
           }
         ]
       },
       {
-        "id": "e6651a29-785b-4ae0-83cd-c070053124b5",
+        "id": "422610f0-d6c2-44b4-8832-9ef3a324324f",
+        "email": "malformed-unparsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "9664e848-068f-476c-a97e-9477b8ab58bc",
+            "value": "malformed-unparsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:17:58.45731Z",
+            "updated_at": "2026-11-10T07:17:58.45731Z"
+          }
+        ]
+      },
+      {
+        "id": "476b5ba1-117b-4648-98ce-dad6788a4634",
+        "email": "global-hook-not-pre-persist@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "c1d94edb-886e-45b0-975b-c2a567e0bff7",
+            "value": "global-hook-not-pre-persist@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:12.646821Z",
+            "updated_at": "2026-11-10T07:18:12.646821Z"
+          }
+        ]
+      },
+      {
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
+        "email": "override-browser@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
+            "value": "override-browser@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
+          }
+        ]
+      },
+      {
+        "id": "9e986f9e-9148-4e27-ab97-c43abf58bc28",
+        "email": "created-malformed-is-not-parsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "2cc39353-de9e-4c9d-99ab-5eb60bcb93a6",
+            "value": "created-malformed-is-not-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:06.75222Z",
+            "updated_at": "2026-11-10T07:18:06.75222Z"
+          }
+        ]
+      },
+      {
+        "id": "d01c464b-c2f2-4fb0-9b38-d24f370eed38",
+        "email": "empty-parsed@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "40978cfc-567e-4fa7-bff4-a217be2fbf58",
+            "value": "empty-parsed@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:18:04.598557Z",
+            "updated_at": "2026-11-10T07:18:04.598557Z"
+          }
+        ]
+      },
+      {
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
+        "email": "override-api@example.test",
+        "verifiable_addresses": [
+          {
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
+            "value": "override-api@example.test",
+            "verified": false,
+            "via": "email",
+            "status": "sent",
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
+          }
+        ]
+      },
+      {
+        "id": "fb3223f7-d057-4c7d-b531-e9cd93adb338",
         "email": "post-persist-deny@example.test",
         "verifiable_addresses": [
           {
-            "id": "8bbe4985-4ebc-4924-946b-af4def32d860",
+            "id": "2395eb79-bb12-4e09-903b-8bdef0e27fc9",
             "value": "post-persist-deny@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:26:08.401598Z",
-            "updated_at": "2026-11-10T06:26:08.401598Z"
+            "created_at": "2026-11-10T07:18:10.279689Z",
+            "updated_at": "2026-11-10T07:18:10.279689Z"
           }
         ]
       }
     ],
     "db": [
       {
-        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
         "email": "override-api@example.test"
       },
       {
-        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
         "email": "override-browser@example.test"
       },
       {
-        "id": "aff60ccb-1be8-47ac-9f42-7b0cf172e87f",
+        "id": "422610f0-d6c2-44b4-8832-9ef3a324324f",
         "email": "malformed-unparsed@example.test"
       },
       {
-        "id": "ce08a656-a485-475f-83ba-43c127eaaee4",
+        "id": "33e89d3c-afa7-47a1-85e6-29d7e4321363",
         "email": "empty-unparsed@example.test"
       },
       {
-        "id": "13d8f9f7-684a-4519-b1d2-3e035dc0f8e3",
+        "id": "d01c464b-c2f2-4fb0-9b38-d24f370eed38",
         "email": "empty-parsed@example.test"
       },
       {
-        "id": "af6ab71c-0bda-4f35-86dd-6e6fd9a1474e",
+        "id": "2b3f0e86-3cdb-4054-b281-3c6ca84f6413",
         "email": "false-json-is-not-denial@example.test"
       },
       {
-        "id": "4fdc0561-f5a8-4923-b83c-a49fc11601af",
+        "id": "9e986f9e-9148-4e27-ab97-c43abf58bc28",
         "email": "created-malformed-is-not-parsed@example.test"
       },
       {
-        "id": "e6651a29-785b-4ae0-83cd-c070053124b5",
+        "id": "fb3223f7-d057-4c7d-b531-e9cd93adb338",
         "email": "post-persist-deny@example.test"
       },
       {
-        "id": "8f096c6b-b62f-44f2-afb5-d26a65eb71b4",
+        "id": "476b5ba1-117b-4648-98ce-dad6788a4634",
         "email": "global-hook-not-pre-persist@example.test"
       }
     ]

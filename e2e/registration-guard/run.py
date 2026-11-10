@@ -33,7 +33,7 @@ def redact(value):
     if not isinstance(value, dict):
         return value
     out = {k: ("<redacted>" if k in (
-        "session_token", "token", "csrf_token", "credentials", "password"
+        "session_token", "ory_session_token", "token", "csrf_token", "credentials", "password"
     ) else redact(v)) for k, v in value.items()}
     if out.get("name") == "csrf_token" and "value" in out:
         out["value"] = "<redacted>"

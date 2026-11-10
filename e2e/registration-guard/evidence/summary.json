@@ -4,7 +4,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 1,
-    "seconds": 0.204,
+    "seconds": 0.203,
     "evidence": "deny_api.json"
   },
   {
@@ -12,7 +12,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 1,
-    "seconds": 0.172,
+    "seconds": 0.174,
     "evidence": "deny_browser.json"
   },
   {
@@ -28,7 +28,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 1,
-    "seconds": 0.173,
+    "seconds": 0.172,
     "evidence": "old_flow_api.json"
   },
   {
@@ -36,7 +36,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 1,
-    "seconds": 0.172,
+    "seconds": 0.183,
     "evidence": "old_flow_browser.json"
   },
   {
@@ -44,7 +44,7 @@
     "status": 200,
     "identity_created": true,
     "hook_calls": 1,
-    "seconds": 0.18,
+    "seconds": 0.184,
     "evidence": "override_api.json"
   },
   {
@@ -68,7 +68,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 3,
-    "seconds": 3.178,
+    "seconds": 3.172,
     "evidence": "rate_limit_api.json"
   },
   {
@@ -76,7 +76,7 @@
     "status": null,
     "identity_created": false,
     "hook_calls": 3,
-    "seconds": 93.174,
+    "seconds": 93.18,
     "evidence": "timeout_api.json"
   },
   {
@@ -84,7 +84,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 3,
-    "seconds": 3.212,
+    "seconds": 3.171,
     "evidence": "disconnect_api.json"
   },
   {
@@ -92,7 +92,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 0,
-    "seconds": 3.241,
+    "seconds": 3.204,
     "evidence": "unreachable_api.json"
   },
   {
@@ -100,7 +100,7 @@
     "status": 200,
     "identity_created": true,
     "hook_calls": 1,
-    "seconds": 0.224,
+    "seconds": 0.225,
     "evidence": "malformed_unparsed.json"
   },
   {
@@ -108,7 +108,7 @@
     "status": 200,
     "identity_created": true,
     "hook_calls": 1,
-    "seconds": 0.19,
+    "seconds": 0.198,
     "evidence": "empty_unparsed.json"
   },
   {
@@ -116,7 +116,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 1,
-    "seconds": 0.221,
+    "seconds": 0.2,
     "evidence": "malformed_parsed.json"
   },
   {
@@ -124,7 +124,7 @@
     "status": 200,
     "identity_created": true,
     "hook_calls": 1,
-    "seconds": 0.193,
+    "seconds": 0.18,
     "evidence": "empty_parsed.json"
   },
   {
@@ -132,7 +132,7 @@
     "status": 200,
     "identity_created": true,
     "hook_calls": 1,
-    "seconds": 0.188,
+    "seconds": 0.174,
     "evidence": "false_json_is_not_denial.json"
   },
   {
@@ -140,7 +140,7 @@
     "status": 200,
     "identity_created": true,
     "hook_calls": 1,
-    "seconds": 0.186,
+    "seconds": 0.189,
     "evidence": "created_malformed_is_not_parsed.json"
   },
   {
@@ -153,7 +153,7 @@
     "status": 502,
     "identity_created": true,
     "hook_calls": 1,
-    "seconds": 0.251,
+    "seconds": 0.213,
     "evidence": "post_persist_deny.json"
   },
   {
@@ -161,7 +161,7 @@
     "status": 200,
     "identity_created": true,
     "hook_calls": 0,
-    "seconds": 0.189,
+    "seconds": 0.18,
     "evidence": "global_hook_not_pre_persist.json"
   },
   {
@@ -169,7 +169,7 @@
     "status": 200,
     "identity_created": true,
     "hook_calls": 0,
-    "seconds": 0.21,
+    "seconds": 0.178,
     "evidence": "hook_removed_canary.json"
   },
   {
@@ -177,7 +177,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 1,
-    "seconds": 0.229,
+    "seconds": 0.249,
     "evidence": "verification_removed_guard_remains.json"
   },
   {
@@ -185,7 +185,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 1,
-    "seconds": 0.236,
+    "seconds": 0.205,
     "evidence": "untrusted_override_payload.json"
   },
   {
@@ -193,7 +193,7 @@
     "status": 404,
     "identity_created": false,
     "hook_calls": 0,
-    "seconds": 0.003,
+    "seconds": 0.012,
     "evidence": "disabled_oidc.json"
   },
   {
@@ -201,7 +201,7 @@
     "status": 400,
     "identity_created": false,
     "hook_calls": 0,
-    "seconds": 0.006,
+    "seconds": 0.011,
     "evidence": "disabled_code.json"
   },
   {

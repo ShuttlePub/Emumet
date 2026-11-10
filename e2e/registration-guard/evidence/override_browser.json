@@ -7,76 +7,76 @@
     "seconds": 0.175,
     "body": {
       "session": {
-        "id": "8b7c5729-91b0-4625-a53e-463cddffaf8b",
+        "id": "0014fa94-1a2b-4e05-a8b5-4c437ffd51e5",
         "active": true,
-        "expires_at": "2026-11-11T06:23:39.9894697Z",
-        "authenticated_at": "2026-11-10T06:23:39.98949256Z",
+        "expires_at": "2026-11-11T07:15:56.452101586Z",
+        "authenticated_at": "2026-11-10T07:15:56.452123146Z",
         "authenticator_assurance_level": "aal1",
         "authentication_methods": [
           {
             "method": "password",
             "aal": "aal1",
-            "completed_at": "2026-11-10T06:23:39.98946946Z"
+            "completed_at": "2026-11-10T07:15:56.452101296Z"
           }
         ],
-        "issued_at": "2026-11-10T06:23:39.9894697Z",
+        "issued_at": "2026-11-10T07:15:56.452101586Z",
         "identity": {
-          "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+          "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
           "schema_id": "default",
           "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
           "state": "active",
-          "state_changed_at": "2026-11-10T06:23:39.987890778Z",
+          "state_changed_at": "2026-11-10T07:15:56.450462531Z",
           "traits": {
             "email": "override-browser@example.test"
           },
           "verifiable_addresses": [
             {
-              "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+              "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
               "value": "override-browser@example.test",
               "verified": false,
               "via": "email",
               "status": "sent",
-              "created_at": "2026-11-10T06:23:39.988684Z",
-              "updated_at": "2026-11-10T06:23:39.988684Z"
+              "created_at": "2026-11-10T07:15:56.451279Z",
+              "updated_at": "2026-11-10T07:15:56.451279Z"
             }
           ],
           "metadata_public": null,
-          "created_at": "2026-11-10T06:23:39.988394Z",
-          "updated_at": "2026-11-10T06:23:39.988394Z",
+          "created_at": "2026-11-10T07:15:56.450994Z",
+          "updated_at": "2026-11-10T07:15:56.450994Z",
           "organization_id": null
         },
         "devices": [
           {
-            "id": "2aa3d8c0-0999-4457-823d-a5d9b39d0cfc",
-            "ip_address": "10.89.2.40:57858",
+            "id": "492e4bf1-954c-4948-8126-d3408f6aa586",
+            "ip_address": "10.89.2.58:52770",
             "user_agent": "Python-urllib/3.11",
             "location": ""
           }
         ]
       },
       "identity": {
-        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
         "schema_id": "default",
         "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
         "state": "active",
-        "state_changed_at": "2026-11-10T06:23:39.987890778Z",
+        "state_changed_at": "2026-11-10T07:15:56.450462531Z",
         "traits": {
           "email": "override-browser@example.test"
         },
         "verifiable_addresses": [
           {
-            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
             "value": "override-browser@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:23:39.988684Z",
-            "updated_at": "2026-11-10T06:23:39.988684Z"
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
           }
         ],
         "metadata_public": null,
-        "created_at": "2026-11-10T06:23:39.988394Z",
-        "updated_at": "2026-11-10T06:23:39.988394Z",
+        "created_at": "2026-11-10T07:15:56.450994Z",
+        "updated_at": "2026-11-10T07:15:56.450994Z",
         "organization_id": null
       },
       "continue_with": [
@@ -87,9 +87,9 @@
         {
           "action": "show_verification_ui",
           "flow": {
-            "id": "817013be-8c4c-4f98-bf66-20f066a1543e",
+            "id": "f5ea7324-504b-4167-9bb6-c36ff5b09d18",
             "verifiable_address": "override-browser@example.test",
-            "url": "http://127.0.0.1:18445/verification?flow=817013be-8c4c-4f98-bf66-20f066a1543e"
+            "url": "http://127.0.0.1:18445/verification?flow=f5ea7324-504b-4167-9bb6-c36ff5b09d18"
           }
         }
       ]
@@ -98,24 +98,24 @@
   "before": {
     "admin": [
       {
-        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
         "email": "override-api@example.test",
         "verifiable_addresses": [
           {
-            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
             "value": "override-api@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:23:39.121433Z",
-            "updated_at": "2026-11-10T06:23:39.121433Z"
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
           }
         ]
       }
     ],
     "db": [
       {
-        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
         "email": "override-api@example.test"
       }
     ]
@@ -123,43 +123,43 @@
   "after": {
     "admin": [
       {
-        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
         "email": "override-browser@example.test",
         "verifiable_addresses": [
           {
-            "id": "3f9221f9-d7b9-492c-a58f-a310c68ebe3d",
+            "id": "b7f41b82-cf80-490a-9590-6fafda52a4aa",
             "value": "override-browser@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:23:39.988684Z",
-            "updated_at": "2026-11-10T06:23:39.988684Z"
+            "created_at": "2026-11-10T07:15:56.451279Z",
+            "updated_at": "2026-11-10T07:15:56.451279Z"
           }
         ]
       },
       {
-        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
         "email": "override-api@example.test",
         "verifiable_addresses": [
           {
-            "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
+            "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
             "value": "override-api@example.test",
             "verified": false,
             "via": "email",
             "status": "sent",
-            "created_at": "2026-11-10T06:23:39.121433Z",
-            "updated_at": "2026-11-10T06:23:39.121433Z"
+            "created_at": "2026-11-10T07:15:55.557114Z",
+            "updated_at": "2026-11-10T07:15:55.557114Z"
           }
         ]
       }
     ],
     "db": [
       {
-        "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+        "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
         "email": "override-api@example.test"
       },
       {
-        "id": "09e85b58-ef59-4ae0-ad57-248352ee02f5",
+        "id": "63f44db3-ff12-44a9-9ad0-82665db8d4a4",
         "email": "override-browser@example.test"
       }
     ]
@@ -183,7 +183,7 @@
           "via": "email"
         }
       ],
-      "flow_id": "a689cabd-985a-4fc8-aa5c-b9b0d6c37ff8",
+      "flow_id": "d8dd5dc7-32a5-4fff-8ce4-97f384c05ced",
       "flow_type": "browser",
       "transient_payload": {},
       "mode": "override"

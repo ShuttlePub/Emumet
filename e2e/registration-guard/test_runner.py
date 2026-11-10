@@ -12,6 +12,10 @@ class EvidenceTests(unittest.TestCase):
         root = Path(__file__).resolve().parent
         manifest = json.loads((root / "evidence/manifest.json").read_text())
         self.assertEqual(manifest["full_suite_exit_code"], 0)
+        recorded = {"evidence/" + p.name for p in (root / "evidence").glob("*.json")
+                    if p.name != "manifest.json"}
+        declared = {name for name in manifest["sha256"] if name.startswith("evidence/")}
+        self.assertSetEqual(recorded, declared)
         for name, expected in manifest["sha256"].items():
             with self.subTest(file=name):
                 self.assertEqual(hashlib.sha256((root / name).read_bytes()).hexdigest(),
@@ -35,12 +39,44 @@ class EvidenceTests(unittest.TestCase):
     def test_nested_credentials_and_flow_csrf_are_not_retained(self):
         original = {
             "session_token": "secret-session",
+            "continue_with": [{"ory_session_token": "secret-ory-session"}],
             "identity": {"credentials": {"password": "secret-password"}},
             "ui": {"nodes": [{"attributes": {"name": "csrf_token", "value": "secret-csrf"}}]},
         }
         result = redact(original)
         self.assertNotIn("secret-", str(result))
         self.assertEqual(original["session_token"], "secret-session")
+
+    def test_committed_evidence_has_no_unredacted_session_tokens(self):
+        root = Path(__file__).resolve().parent
+        found = []
+
+        def check(value, path):
+            if isinstance(value, list):
+                for index, item in enumerate(value):
+                    check(item, f"{path}[{index}]")
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    location = f"{path}.{key}"
+                    if key in ("session_token", "ory_session_token"):
+                        found.append(location)
+                        self.assertTrue(item == "<redacted>", f"unredacted key: {location}")
+                    else:
+                        check(item, location)
+
+        for file in (root / "evidence").glob("*.json"):
+            with self.subTest(file=file.name):
+                check(json.loads(file.read_text()), file.name)
+        self.assertTrue(found, "the corpus must exercise session-token redaction")
+
+    def test_verification_loss_observations_are_recorded(self):
+        root = Path(__file__).resolve().parent
+        evidence = json.loads((root / "evidence/verification_loss.json").read_text())
+        self.assertEqual(evidence["before_hash"]["status"], 200)
+        self.assertEqual(evidence["after_hash"]["status"], 200)
+        self.assertNotEqual(evidence["before_hash"]["body"], evidence["after_hash"]["body"])
+        self.assertEqual(evidence["health"]["status"], 200)
+        self.assertEqual(evidence["verification_flow"]["status"], 400)
 
     def test_synthetic_observations_are_preserved(self):
         evidence = {"before": {"db": []}, "identity_created": False,

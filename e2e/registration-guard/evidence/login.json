@@ -2,52 +2,52 @@
   "gate": "deny",
   "response": {
     "status": 200,
-    "seconds": 0.198,
+    "seconds": 0.199,
     "body": {
       "session_token": "<redacted>",
       "session": {
-        "id": "e2cb439d-fc6e-4aa7-aad4-d3a0c4630e7b",
+        "id": "799cb487-211a-40e4-bb81-11de67bc16a9",
         "active": true,
-        "expires_at": "2026-11-11T06:26:06.636396886Z",
-        "authenticated_at": "2026-11-10T06:26:06.636396886Z",
+        "expires_at": "2026-11-11T07:18:08.659992805Z",
+        "authenticated_at": "2026-11-10T07:18:08.659992805Z",
         "authenticator_assurance_level": "aal1",
         "authentication_methods": [
           {
             "method": "password",
             "aal": "aal1",
-            "completed_at": "2026-11-10T06:26:06.636392886Z"
+            "completed_at": "2026-11-10T07:18:08.659989265Z"
           }
         ],
-        "issued_at": "2026-11-10T06:26:06.636396886Z",
+        "issued_at": "2026-11-10T07:18:08.659992805Z",
         "identity": {
-          "id": "662159cd-cd9b-4867-97d4-c39bc19ed8d3",
+          "id": "dacccfa2-8145-4d3f-b03c-a21e6c7005c0",
           "schema_id": "default",
           "schema_url": "http://127.0.0.1:18433/schemas/ZGVmYXVsdA",
           "state": "active",
-          "state_changed_at": "2026-11-10T06:23:39.120434Z",
+          "state_changed_at": "2026-11-10T07:15:55.555929Z",
           "traits": {
             "email": "override-api@example.test"
           },
           "verifiable_addresses": [
             {
-              "id": "b1751abf-6479-468a-a989-7a7d00b14fbc",
+              "id": "b157a246-2924-41c9-9f4f-cdb993472b27",
               "value": "override-api@example.test",
               "verified": false,
               "via": "email",
               "status": "sent",
-              "created_at": "2026-11-10T06:23:39.121433Z",
-              "updated_at": "2026-11-10T06:23:39.121433Z"
+              "created_at": "2026-11-10T07:15:55.557114Z",
+              "updated_at": "2026-11-10T07:15:55.557114Z"
             }
           ],
           "metadata_public": null,
-          "created_at": "2026-11-10T06:23:39.120926Z",
-          "updated_at": "2026-11-10T06:23:39.120926Z",
+          "created_at": "2026-11-10T07:15:55.556456Z",
+          "updated_at": "2026-11-10T07:15:55.556456Z",
           "organization_id": null
         },
         "devices": [
           {
-            "id": "c55a4837-e4bd-42af-85f6-11f9bb3bb882",
-            "ip_address": "10.89.2.45:47758",
+            "id": "86ee30a4-8770-41f0-b79f-9cd4928366ce",
+            "ip_address": "10.89.2.63:46120",
             "user_agent": "Python-urllib/3.11",
             "location": ""
           }

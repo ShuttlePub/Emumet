@@ -5,7 +5,7 @@
     "test_pass": {
       "http_status": 200,
       "body": {
-        "challenge_ts": "2026-11-10T06:27:37.271Z",
+        "challenge_ts": "2026-11-10T07:19:13.470Z",
         "error-codes": [],
         "hostname": "example.com",
         "metadata": {
