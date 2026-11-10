@@ -73,7 +73,19 @@ async fn main() -> Result<(), StackTrace> {
         ProjectionWorker::spawn(Arc::new(app.clone()), projection_poll_interval_from_env());
 
     let webhook_shutdown = webhook_worker::spawn_if_enabled(Arc::new(app.clone()));
-    let registration_shutdown = registration_guard::spawn_if_enabled(Arc::new(app.clone())).await?;
+    // Invalid hook configuration must not take login/Account APIs down with registration.
+    let registration_shutdown =
+        match registration_guard::spawn_if_enabled(Arc::new(app.clone())).await {
+            Ok(shutdown) => shutdown,
+            Err(_) => {
+                app.invalidate_registration_enforcement().await?;
+                tracing::error!("registration guard could not start; registration gate stopped");
+                None
+            }
+        };
+    use application::service::registration_enforcement_probe::RegistrationEnforcementMonitorUseCase;
+    app.refresh_registration_enforcement().await?;
+    let enforcement_shutdown = registration_guard::spawn_monitor(Arc::new(app.clone()));
 
     #[cfg(feature = "test-mode")]
     {
@@ -88,11 +100,14 @@ async fn main() -> Result<(), StackTrace> {
 
     let router = root_router::build_root_router(app, oidc_config, jwks_cache);
 
-    let bind = SocketAddr::from(([0, 0, 0, 0], 8080));
+    let bind = std::env::var("HTTP_LISTEN_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
+        .parse::<SocketAddr>()
+        .map_err(|_| error_stack::Report::new(KernelError::Validation))?;
     let tcp = TcpListener::bind(bind)
         .await
         .change_context_lazy(|| KernelError::Internal)
-        .attach_printable_lazy(|| "Failed to bind to port 8080")?;
+        .attach_printable_lazy(|| format!("Failed to bind HTTP listener to {bind}"))?;
 
     axum::serve(
         tcp,
@@ -105,6 +120,7 @@ async fn main() -> Result<(), StackTrace> {
     .change_context_lazy(|| KernelError::Internal)?;
 
     projection_shutdown.trigger();
+    enforcement_shutdown.trigger();
     if let Some(shutdown) = registration_shutdown {
         shutdown.trigger();
     }

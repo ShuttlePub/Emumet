@@ -362,6 +362,13 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnRegistrationEnforcementProbeRepository for $impl_type {
+            type RegistrationEnforcementProbeRepository = <$db_type as $crate::interfaces::repository::DependOnRegistrationEnforcementProbeRepository>::RegistrationEnforcementProbeRepository;
+            fn registration_enforcement_probe_repository(&self) -> &Self::RegistrationEnforcementProbeRepository {
+                $crate::interfaces::repository::DependOnRegistrationEnforcementProbeRepository::registration_enforcement_probe_repository(&self.$field)
+            }
+        }
+
         impl $crate::interfaces::repository::DependOnRegistrationGateRepository for $impl_type {
             type RegistrationGateRepository = <$db_type as $crate::interfaces::repository::DependOnRegistrationGateRepository>::RegistrationGateRepository;
             fn registration_gate_repository(&self) -> &Self::RegistrationGateRepository {

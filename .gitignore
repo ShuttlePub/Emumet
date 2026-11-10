@@ -5,5 +5,7 @@
 .env
 logs
 master-key-password
+.registration-runtime/
+/tools/__pycache__/
 e2e/certs/*.pem
 e2e/certs/*.key

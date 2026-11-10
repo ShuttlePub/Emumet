@@ -8,7 +8,9 @@ use http_body_util::BodyExt;
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::repository::{
     AuthAccountRepository, AuthHostRepository, DependOnAuthAccountRepository,
-    DependOnAuthHostRepository,
+    DependOnAuthHostRepository, DependOnRegistrationEnforcementProbeClient,
+    DependOnRegistrationEnforcementProbeRepository, EnforcementProbeEvidence,
+    RegistrationEnforcementProbeClient, RegistrationEnforcementProbeRepository,
 };
 use kernel::prelude::entity::{
     AuthAccountId, AuthHostId, ProbeStatus, ProtectionObservation, RegistrationObservation,
@@ -82,11 +84,32 @@ impl GateTestApp {
         sqlx::query(
             "TRUNCATE registration_gate_webhook_attempts, registration_gate_webhook_deliveries, \
              registration_gate_webhook_state, registration_gate_event_reads, \
-             registration_gate_events, registration_gate_audit, registration_gate_state",
+             registration_gate_events, registration_gate_audit, registration_gate_state, \
+             registration_enforcement_probe_state, registration_enforcement_probe_schedule, \
+             registration_enforcement_canaries",
         )
         .execute(&mut *executor)
         .await
         .expect("reset registration gate");
+        // These HTTP fixtures model a successfully probed deployment. The actual public
+        // Kratos path is exercised by the enforcement CI, not this control-plane fixture.
+        let checked_at = time::OffsetDateTime::now_utc();
+        module
+            .registration_enforcement_probe_repository()
+            .save_evidence(
+                &mut executor,
+                &EnforcementProbeEvidence {
+                    generation: module
+                        .registration_enforcement_probe_client()
+                        .generation()
+                        .to_string(),
+                    verified: true,
+                    checked_at,
+                    valid_until: checked_at + time::Duration::hours(1),
+                },
+            )
+            .await
+            .expect("seed trusted deployment evidence");
 
         let host_id = AuthHostId::default();
         module

@@ -10,7 +10,9 @@ use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
+
+mod source;
 
 const INVALID_REQUEST: &str = "invalid request";
 const UNAVAILABLE: &str = "registration email verification is currently unavailable";
@@ -36,21 +38,6 @@ fn kratos_csrf_cookie(headers: &HeaderMap) -> Option<String> {
     (!selected.is_empty()).then(|| selected.join("; "))
 }
 
-/// 送信元の識別子。接続元アドレスだけを使い (信頼できないヘッダーは根拠にしない)、IPv6 は /64 に丸める。
-fn source_key(connect: Option<Extension<ConnectInfo<SocketAddr>>>) -> String {
-    match connect.map(|Extension(ConnectInfo(addr))| addr.ip()) {
-        Some(IpAddr::V4(ip)) => ip.to_string(),
-        Some(IpAddr::V6(ip)) => {
-            let segments = ip.segments();
-            format!(
-                "{:x}:{:x}:{:x}:{:x}::/64",
-                segments[0], segments[1], segments[2], segments[3]
-            )
-        }
-        None => "unknown".to_string(),
-    }
-}
-
 #[utoipa::path(
     post,
     path = "/api/v1/registration/email-challenges",
@@ -73,11 +60,23 @@ pub(crate) async fn create_email_challenge(
     let Ok(Json(request)) = request else {
         return Ok((StatusCode::BAD_REQUEST, INVALID_REQUEST).into_response());
     };
+    let source = match source::from_request(
+        connect.map(|Extension(ConnectInfo(addr))| addr.ip()),
+        &headers,
+    ) {
+        Ok(source) => source,
+        Err(source::SourceError::Configuration) => {
+            return Ok((StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE).into_response());
+        }
+        Err(source::SourceError::ForwardedChain) => {
+            return Ok((StatusCode::BAD_REQUEST, INVALID_REQUEST).into_response());
+        }
+    };
     let outcome = api
         .issue_challenge(
             &request.email,
             &request.flow_id,
-            &source_key(connect),
+            &source,
             kratos_csrf_cookie(&headers).as_deref(),
         )
         .await

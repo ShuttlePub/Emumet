@@ -293,6 +293,15 @@ pub trait RecordRegistrationObservationUseCase:
                 .transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
+                        // Provider observations cannot attest deployment integrity, even when
+                        // they race with a trusted attestation update. Preserve it under the row lock.
+                        let mut observation = observation;
+                        observation.enforcement_verified = transaction_deps
+                            .registration_gate_repository()
+                            .load_for_update(executor)
+                            .await?
+                            .observation
+                            .enforcement_verified;
                         apply_gate_observation(
                             transaction_deps.registration_gate_repository(),
                             executor,
@@ -320,3 +329,47 @@ impl<T> RecordRegistrationObservationUseCase for T where
 
 #[cfg(test)]
 mod tests;
+
+/// Trusted deployment input, separate from provider readiness and without a public write route.
+pub trait RecordRegistrationEnforcementUseCase:
+    'static + Sync + Send + Clone + DependOnRegistrationGateRepository + DependOnTransactionManager
+{
+    fn record_registration_enforcement(
+        &self,
+        verified: bool,
+    ) -> impl Future<Output = error_stack::Result<RegistrationGateView, KernelError>> + Send {
+        async move {
+            let deps = self.clone();
+            let state = self
+                .transaction_manager()
+                .transaction(move |executor| {
+                    Box::pin(async move {
+                        let mut observation = deps
+                            .registration_gate_repository()
+                            .load_for_update(executor)
+                            .await?
+                            .observation;
+                        observation.enforcement_verified = verified;
+                        apply_gate_observation(
+                            deps.registration_gate_repository(),
+                            executor,
+                            observation,
+                            now(),
+                        )
+                        .await
+                    })
+                })
+                .await?;
+            Ok(RegistrationGateView::new(state))
+        }
+    }
+}
+impl<T> RecordRegistrationEnforcementUseCase for T where
+    T: 'static
+        + Sync
+        + Send
+        + Clone
+        + DependOnRegistrationGateRepository
+        + DependOnTransactionManager
+{
+}

@@ -1,6 +1,7 @@
 use super::resolve_auth_account_id;
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
+use application::service::registration_enforcement_probe::RegistrationEnforcementMonitorUseCase;
 use application::service::registration_protection::{
     AdminRegistrationProtectionUseCase, AdminVerifyInput, AdminVerifyReport, ConfirmOutcome,
     IssueOutcome, IssueRequest, ProtectionReadinessView, RegistrationEmailChallengeUseCase,
@@ -28,6 +29,7 @@ impl RegistrationEmailApi {
         source: &str,
         flow_cookie: Option<&str>,
     ) -> error_stack::Result<IssueOutcome, KernelError> {
+        self.module.refresh_registration_enforcement().await?;
         self.module
             .issue_registration_email_challenge(&IssueRequest {
                 email,

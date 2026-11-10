@@ -115,6 +115,9 @@ pub fn evaluate(state: &RegistrationGateState) -> RegistrationDecision {
         return RegistrationDecision::AdminClosed;
     }
     let observation = &state.observation;
+    if !observation.enforcement_verified || state.enforcement_lost_latch {
+        return RegistrationDecision::Stopped;
+    }
     let accept = |override_active| RegistrationDecision::Accept {
         enforced: observation.effective_protections(),
         degraded: observation.degraded_protections(),
@@ -136,7 +139,11 @@ pub fn evaluate(state: &RegistrationGateState) -> RegistrationDecision {
 /// 通常判定の対象か (Open かつ override なし かつ ラッチなし)。
 /// episode を新規に開始できるのはこの文脈のみ。
 fn is_judged(state: &RegistrationGateState) -> bool {
-    state.admin == AdminState::Open && !state.is_override_active() && !state.config_lost_latch
+    state.admin == AdminState::Open
+        && !state.is_override_active()
+        && !state.config_lost_latch
+        && state.observation.enforcement_verified
+        && !state.enforcement_lost_latch
 }
 
 /// episode の遷移と通知イベントを決める。
@@ -204,6 +211,8 @@ fn same_control(a: &RegistrationGateState, b: &RegistrationGateState) -> bool {
     a.admin == b.admin
         && a.override_info == b.override_info
         && a.config_lost_latch == b.config_lost_latch
+        && a.enforcement_lost_latch == b.enforcement_lost_latch
+        && a.observation.enforcement_verified == b.observation.enforcement_verified
         && a.episode == b.episode
 }
 
@@ -229,9 +238,20 @@ pub fn apply_command(
     let mut events = Vec::new();
     let mut warning_acknowledged = false;
 
+    if matches!(
+        command,
+        GateCommand::Open | GateCommand::EnableOverride { .. }
+    ) && !state.observation.enforcement_verified
+    {
+        return Err(Report::new(KernelError::Rejected)
+            .attach_printable("Current deployment enforcement attestation is required"));
+    }
     let action = match command {
         GateCommand::Open => {
-            if state.admin == AdminState::Open && !state.config_lost_latch {
+            if state.admin == AdminState::Open
+                && !state.config_lost_latch
+                && !state.enforcement_lost_latch
+            {
                 return Err(Report::new(KernelError::Rejected)
                     .attach_printable("Registration gate is already open"));
             }
@@ -243,6 +263,7 @@ pub fn apply_command(
             }
             next.admin = AdminState::Open;
             next.config_lost_latch = false;
+            next.enforcement_lost_latch = false;
             let (episode, episode_events) =
                 reconcile_episode(next.episode, is_judged(&next), &next.observation);
             next.episode = episode;
@@ -265,13 +286,17 @@ pub fn apply_command(
                     "Opening without protection requires acknowledging the warning".to_string(),
                 ));
             }
-            if state.is_override_active() && state.admin == AdminState::Open {
+            if state.is_override_active()
+                && state.admin == AdminState::Open
+                && !state.enforcement_lost_latch
+            {
                 return Err(Report::new(KernelError::Rejected)
                     .attach_printable("Override is already active"));
             }
             warning_acknowledged = true;
             next.admin = AdminState::Open;
             next.config_lost_latch = false;
+            next.enforcement_lost_latch = false;
             if !state.is_override_active() {
                 next.override_info = Some(OverrideInfo {
                     activated_by: actor.clone(),
@@ -326,14 +351,22 @@ pub fn apply_observation(
     let observation_changed = state.observation != observation;
 
     let mut events = Vec::new();
+    if !observation.enforcement_verified
+        && (state.observation.enforcement_verified || !state.enforcement_lost_latch)
+    {
+        next.enforcement_lost_latch = true;
+        events.push(GateEventKind::EnforcementLostStopped);
+    } else if observation.enforcement_verified && !state.observation.enforcement_verified {
+        events.push(GateEventKind::EnforcementRestored);
+    }
     if !latch_on_config_lost(&mut next, &mut events) {
         let (episode, episode_events) =
-            reconcile_episode(state.episode, is_judged(state), &observation);
+            reconcile_episode(state.episode, is_judged(&next), &observation);
         next.episode = episode;
         events.extend(episode_events);
     }
 
-    if same_control(state, &next) {
+    if same_control(state, &next) && events.is_empty() {
         if observation_changed {
             next.updated_at = now;
         }

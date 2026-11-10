@@ -2,6 +2,8 @@ use super::*;
 use crate::entity::{ProbeStatus, Protection, ProtectionObservation};
 use time::OffsetDateTime;
 
+mod enforcement;
+
 fn now() -> OffsetDateTime {
     OffsetDateTime::UNIX_EPOCH
 }
@@ -46,6 +48,7 @@ fn state(
             activated_at: now(),
         }),
         config_lost_latch: latch,
+        enforcement_lost_latch: false,
         episode,
         observation,
         revision: 7,

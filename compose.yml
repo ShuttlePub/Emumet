@@ -79,12 +79,19 @@ services:
       - type: bind
         source: ./ory/kratos
         target: /etc/config/kratos
+        read_only: true
+        bind:
+          selinux: z
+      - type: bind
+        source: ${KRATOS_CONFIG_FILE:-./ory/kratos/kratos.yml}
+        target: /etc/config/kratos/kratos.yml
+        read_only: true
         bind:
           selinux: z
     command: serve -c /etc/config/kratos/kratos.yml --dev --watch-courier
     ports:
       - "4433:4433"
-      - "4434:4434"
+      - "127.0.0.1:4434:4434"
     depends_on:
       kratos-migrate:
         condition: service_completed_successfully

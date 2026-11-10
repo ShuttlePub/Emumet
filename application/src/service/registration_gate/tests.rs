@@ -319,6 +319,52 @@ fn kind<T: std::fmt::Debug>(result: error_stack::Result<T, KernelError>) -> Kern
 }
 
 #[tokio::test]
+async fn provider_observations_cannot_forge_or_restore_deployment_attestation() {
+    kernel::ensure_generator_initialized();
+    let fx = fixture();
+    let m = &fx.module;
+    m.record_registration_observation(obs(H, H)).await.unwrap();
+    let opened = m.open_registration_gate(&fx.admin, 0).await.unwrap();
+    let lost = m.record_registration_enforcement(false).await.unwrap();
+    assert!(lost.state.enforcement_lost_latch);
+    assert_eq!(lost.decision, RegistrationDecision::Stopped);
+    assert_eq!(lost.state.revision, opened.state.revision + 1);
+
+    let mut forged = obs(H, H);
+    forged.enforcement_verified = true;
+    let provider_update = m.record_registration_observation(forged).await.unwrap();
+    assert!(!provider_update.state.observation.enforcement_verified);
+    assert_eq!(provider_update.state.revision, lost.state.revision);
+    assert_eq!(provider_update.decision, RegistrationDecision::Stopped);
+
+    let restored = m.record_registration_enforcement(true).await.unwrap();
+    assert!(restored.state.observation.enforcement_verified);
+    assert!(restored.state.enforcement_lost_latch);
+    assert_eq!(restored.decision, RegistrationDecision::Stopped);
+    let resumed = m
+        .open_registration_gate(&fx.admin, restored.state.revision)
+        .await
+        .unwrap();
+    assert!(resumed.decision.accepts());
+}
+
+#[tokio::test]
+async fn provider_failure_cannot_revoke_a_valid_deployment_attestation() {
+    kernel::ensure_generator_initialized();
+    let fx = fixture();
+    let m = &fx.module;
+    m.record_registration_enforcement(true).await.unwrap();
+    let mut provider_observation = obs(DOWN, DOWN);
+    provider_observation.enforcement_verified = false;
+    let view = m
+        .record_registration_observation(provider_observation)
+        .await
+        .unwrap();
+    assert!(view.state.observation.enforcement_verified);
+    assert!(!view.state.enforcement_lost_latch);
+}
+
+#[tokio::test]
 async fn every_admin_use_case_rejects_non_admin_without_touching_the_gate() {
     kernel::ensure_generator_initialized();
     let fx = fixture();

@@ -72,7 +72,7 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
 - **障害の保持**: 失敗は段階で範囲に分かれる。`connect`〜`mail_from` = 接続範囲 (`connection_failure`)、`rcpt`・`data` = 配送範囲 (`delivery_failure`)。それぞれ分類・理由・失敗した段階・観測時刻を保持する。同じ範囲に複数の失敗が来たら、分類と理由は最も悪い方 (同格なら新しい方)、段階と観測時刻は **最も遅いもの** を保持する (どれも覆う成功だけが解除する)。
 - **解除の規則**: 成功が既知の障害を解除できるのは、**成功の段階が障害の段階を覆い (`success.stage >= failure.stage`)、かつ成功の証拠時刻が障害の観測時刻より後** のときだけ。両方が必要で、記録時刻 (遅れて届いた古い結果) は順序の根拠にならない。
 - **code 確認は SMTP 対話ではない**: 登録者の確認も canary の確認も、business 鮮度 (`success_ttl`) の更新と所有確認にだけ使い、**既知の障害を解除しない** (`without_evidence`)。障害より前に送ったメールに対する確認 (過去のメール所有) は、現在の SMTP の復旧の証拠ではない。
-- **probe**: 宛先を提示せず **MAIL FROM まで** 検証する (接続 → STARTTLS → 認証 → MAIL FROM → RSET → QUIT。メールは送らない)。成功の証拠は `mail_from` 段階・MAIL FROM 受理時刻で、接続範囲の障害 (MAIL FROM を含む) を解除できるが、RCPT・DATA の障害は覆えない。
+- **probe**: 宛先を提示せず **MAIL FROM まで** 検証する (接続 → STARTTLS → 認証 → MAIL FROM → RSET → QUIT。メールは送らない)。成功の証拠は `mail_from` 段階・MAIL FROM 成功した対話の開始時刻を保守的下限とする時刻で、接続範囲の障害 (MAIL FROM を含む) を解除できるが、RCPT・DATA の障害は覆えない。
 - **canary の配送成功**: DATA を受理された時刻を証拠時刻とし、`data` 段階 (全段階) を覆う。**RCPT・DATA の障害は canary の新規送信の成功 (DATA 受理) でのみ解除される。**
 - `attempt_rejected` は何も変えず、記録もしない。
 

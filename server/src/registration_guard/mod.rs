@@ -1,5 +1,6 @@
 //! Dedicated internal listener: never mounted into the public router or OpenAPI.
 mod config;
+mod probe;
 #[cfg(test)]
 mod tests;
 mod worker;
@@ -7,6 +8,7 @@ mod worker;
 use application::service::registration_enforcement::{
     EnforceRegistrationUseCase, RegistrationAttempt, RegistrationVerdict,
 };
+use application::service::registration_enforcement_probe::RegistrationEnforcementMonitorUseCase;
 use axum::{
     body::to_bytes,
     extract::{ConnectInfo, Request, State},
@@ -30,6 +32,7 @@ pub struct HookContext {
     email: String,
     email_proof: Option<String>,
     bot_token: Option<String>,
+    registration_probe_id: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,7 +49,27 @@ trait GuardService: Clone + Send + Sync + 'static {
 struct GuardApi(Arc<crate::handler::AppModule>);
 impl GuardService for GuardApi {
     async fn check(&self, context: HookContext) -> RegistrationVerdict {
-        self.0
+        if kernel::interfaces::repository::EnforcementProbeId::is_reserved_email(&context.email) {
+            let _ = self
+                .0
+                .receive_registration_enforcement_canary(
+                    context.registration_probe_id.as_deref(),
+                    &context.flow_id,
+                    &context.email,
+                )
+                .await;
+            return RegistrationVerdict::Reject;
+        }
+        if !self
+            .0
+            .refresh_registration_enforcement()
+            .await
+            .is_ok_and(|view| view.state.observation.enforcement_verified)
+        {
+            return RegistrationVerdict::TemporarilyUnavailable;
+        }
+        let verdict = self
+            .0
             .enforce_registration(RegistrationAttempt {
                 flow_id: &context.flow_id,
                 email: &context.email,
@@ -54,7 +77,17 @@ impl GuardService for GuardApi {
                 bot_token: context.bot_token.as_deref(),
             })
             .await
-            .unwrap_or(RegistrationVerdict::TemporarilyUnavailable)
+            .unwrap_or(RegistrationVerdict::TemporarilyUnavailable);
+        if verdict == RegistrationVerdict::Accept
+            && !self
+                .0
+                .refresh_registration_enforcement()
+                .await
+                .is_ok_and(|view| view.decision.accepts())
+        {
+            return RegistrationVerdict::TemporarilyUnavailable;
+        }
+        verdict
     }
 }
 
@@ -111,11 +144,18 @@ async fn check<S: GuardService>(
     if request.method() != Method::POST || !state.config.allowed_peers.contains(&peer.ip()) {
         return denied(false);
     }
-    let supplied = request
+    let mut credentials = request
         .headers()
-        .get("x-emumet-registration-key")
+        .get_all(axum::http::header::AUTHORIZATION)
+        .iter();
+    let supplied = credentials
+        .next()
         .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
         .unwrap_or("");
+    if credentials.next().is_some() {
+        return denied(false);
+    }
     if !constant_time_eq(supplied, &state.config.secret) {
         return denied(false);
     }
@@ -130,6 +170,10 @@ async fn check<S: GuardService>(
         || kernel::prelude::entity::NormalizedEmail::parse(&context.email).is_err()
         || context.email_proof.as_ref().is_some_and(|v| v.len() > 256)
         || context.bot_token.as_ref().is_some_and(|v| v.len() > 2048)
+        || context
+            .registration_probe_id
+            .as_ref()
+            .is_some_and(|v| v.len() > 32)
     {
         return denied(false);
     }
@@ -149,7 +193,7 @@ impl GuardShutdown {
     }
 }
 
-/// Opt-in in the preparatory slice. Production Kratos is NOT wired here yet.
+/// Only same-host loopback HTTP is safe without a TLS-terminating private relay.
 pub async fn spawn_if_enabled(
     module: Arc<crate::handler::AppModule>,
 ) -> error_stack::Result<Option<GuardShutdown>, kernel::KernelError> {
@@ -196,4 +240,10 @@ pub async fn spawn_if_enabled(
         }
     });
     Ok(Some(GuardShutdown { tx }))
+}
+
+pub fn spawn_monitor(module: Arc<crate::handler::AppModule>) -> GuardShutdown {
+    let (tx, rx) = watch::channel(false);
+    tokio::spawn(probe::run(module, rx));
+    GuardShutdown { tx }
 }

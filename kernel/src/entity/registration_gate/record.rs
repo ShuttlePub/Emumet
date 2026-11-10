@@ -31,6 +31,8 @@ pub enum GateEventKind {
     OutageRecovered,
     ProtectionDegraded,
     ProtectionLostStopped,
+    EnforcementLostStopped,
+    EnforcementRestored,
     OverrideStarted,
     OverrideRevoked,
 }

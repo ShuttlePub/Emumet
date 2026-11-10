@@ -49,18 +49,26 @@ impl ProtectionObservation {
 /// 観測入力。テスト fixture と内部 use case からのみ供給する (公開 HTTP の書込口は持たない)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RegistrationObservation {
+    /// Trusted deployment attestation (not provider health). Missing old payloads predate enforcement.
+    #[serde(default = "verified_by_legacy_default")]
+    pub enforcement_verified: bool,
     pub email: ProtectionObservation,
     pub bot: ProtectionObservation,
 }
 
 impl RegistrationObservation {
     pub const UNCONFIGURED: Self = Self {
+        enforcement_verified: true,
         email: ProtectionObservation::UNCONFIGURED,
         bot: ProtectionObservation::UNCONFIGURED,
     };
 
     pub fn new(email: ProtectionObservation, bot: ProtectionObservation) -> Self {
-        Self { email, bot }
+        Self {
+            email,
+            bot,
+            enforcement_verified: true,
+        }
     }
 
     pub fn get(&self, protection: Protection) -> &ProtectionObservation {
@@ -102,6 +110,10 @@ impl RegistrationObservation {
     }
 }
 
+fn verified_by_legacy_default() -> bool {
+    true
+}
+
 /// 管理者の開閉状態。初期状態は Closed。手動閉鎖は管理者のみが解除する (q03)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,13 +144,15 @@ pub struct OverrideInfo {
 ///
 /// 不変条件:
 /// - override 有効中は `config_lost_latch == false` かつ `episode == None`
-/// - `revision` は admin / override / latch / episode のいずれかが変化したときのみ +1 する
-///   (観測値のみの更新では増えない)
+/// - `revision` は admin / override / latch / episode / enforcement 照合状態の変更で +1。
+///   provider 観測だけの反復では増えない
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegistrationGateState {
     pub admin: AdminState,
     pub override_info: Option<OverrideInfo>,
     pub config_lost_latch: bool,
+    #[serde(default)]
+    pub enforcement_lost_latch: bool,
     pub episode: HealthEpisode,
     pub observation: RegistrationObservation,
     pub revision: i64,
@@ -152,6 +166,7 @@ impl RegistrationGateState {
             admin: AdminState::Closed,
             override_info: None,
             config_lost_latch: false,
+            enforcement_lost_latch: false,
             episode: HealthEpisode::None,
             observation: RegistrationObservation::UNCONFIGURED,
             revision: 0,
@@ -168,18 +183,24 @@ impl RegistrationGateState {
             admin: self.admin,
             override_active: self.is_override_active(),
             config_lost_latch: self.config_lost_latch,
+            enforcement_lost_latch: self.enforcement_lost_latch,
+            enforcement_verified: self.observation.enforcement_verified,
             episode: self.episode,
             revision: self.revision,
         }
     }
 }
 
-/// 監査記録に残す制御状態のスナップショット (観測値は含まない)。
+/// 監査記録に残す制御状態。provider 観測は別記し、enforcement 照合状態はここにも残す。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateControlSnapshot {
+    #[serde(default = "verified_by_legacy_default")]
+    pub enforcement_verified: bool,
     pub admin: AdminState,
     pub override_active: bool,
     pub config_lost_latch: bool,
+    #[serde(default)]
+    pub enforcement_lost_latch: bool,
     pub episode: HealthEpisode,
     pub revision: i64,
 }

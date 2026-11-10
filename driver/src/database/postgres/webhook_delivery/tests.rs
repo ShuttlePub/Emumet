@@ -131,7 +131,7 @@ impl Fixture {
         .unwrap();
     }
 
-    /// E15a の通知イベント全 6 種別を発生させる。
+    /// Provider/override and deployment-attestation event coverage.
     async fn emit_all_kinds(&self) {
         self.command(ACK).await;
         self.command(GateCommand::RevokeOverride).await;
@@ -140,6 +140,10 @@ impl Fixture {
         self.observe(obs(DOWN, OFF)).await;
         self.observe(obs(H, OFF)).await;
         self.observe(obs(H, DOWN)).await;
+        self.observe(OFF_OBSERVATION).await;
+        let mut observation = OFF_OBSERVATION;
+        observation.enforcement_verified = false;
+        self.observe(observation).await;
         self.observe(OFF_OBSERVATION).await;
     }
 
@@ -301,8 +305,10 @@ async fn every_event_kind_is_delivered_once_with_stable_id_signature_and_allowli
             "override_started",
             "protection_degraded",
             "protection_lost_stopped",
+            "enforcement_lost_stopped",
+            "enforcement_restored",
         ]),
-        "all six E15a kinds (including override start/revoke) must have been produced"
+        "all provider, override, and enforcement loss/restoration events must have been produced"
     );
 
     let report = fx.cycle(&sender, "worker-a", &policy, t0).await;
@@ -330,6 +336,9 @@ async fn every_event_kind_is_delivered_once_with_stable_id_signature_and_allowli
         let body: serde_json::Value = serde_json::from_slice(&delivered.body).unwrap();
         assert_eq!(body["event_id"], id.to_string());
         assert_eq!(body["type"], kind.as_str());
+        if kind.starts_with("enforcement_") {
+            assert_eq!(body["gate"]["enforcement_lost_latch"], true);
+        }
         let keys: BTreeSet<_> = body.as_object().unwrap().keys().cloned().collect();
         assert_eq!(
             keys,

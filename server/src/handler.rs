@@ -56,6 +56,7 @@ pub struct AppModule {
     email_challenge_policy: EmailChallengePolicy,
     profile_delivery_sender: HttpProfileDeliverySender,
     remote_actor_resolver: HttpRemoteActorResolver,
+    enforcement_probe: driver::registration_enforcement_probe::HttpKratosEnforcementProbe,
 }
 
 fn positive_secs_from_env(key: &str) -> Option<i64> {
@@ -127,6 +128,8 @@ impl AppModule {
             email_challenge_policy,
             profile_delivery_sender: HttpProfileDeliverySender::new(),
             remote_actor_resolver: HttpRemoteActorResolver::new(),
+            enforcement_probe:
+                driver::registration_enforcement_probe::HttpKratosEnforcementProbe::from_env(),
         })
     }
 
@@ -191,6 +194,13 @@ impl AppModule {
             email_challenge_policy: EmailChallengePolicy::default(),
             profile_delivery_sender: HttpProfileDeliverySender::new(),
             remote_actor_resolver: HttpRemoteActorResolver::new(),
+            enforcement_probe:
+                driver::registration_enforcement_probe::HttpKratosEnforcementProbe::new(vec![
+                    driver::registration_enforcement_probe::ProbeTargetSettings {
+                        public_url: "http://localhost:65535/".to_string(),
+                        admin_url: "http://localhost:65535/".to_string(),
+                    },
+                ]),
         })
     }
 
@@ -393,5 +403,13 @@ impl DependOnRemoteActorResolver for AppModule {
 
     fn remote_actor_resolver(&self) -> &Self::RemoteActorResolver {
         &self.remote_actor_resolver
+    }
+}
+
+impl kernel::interfaces::repository::DependOnRegistrationEnforcementProbeClient for AppModule {
+    type RegistrationEnforcementProbeClient =
+        driver::registration_enforcement_probe::HttpKratosEnforcementProbe;
+    fn registration_enforcement_probe_client(&self) -> &Self::RegistrationEnforcementProbeClient {
+        &self.enforcement_probe
     }
 }

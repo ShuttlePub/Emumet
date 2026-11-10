@@ -17,7 +17,7 @@ use sqlx::PgConnection;
 
 const STATE_COLUMNS: &str = "admin_state, override_active, override_activated_by, \
     override_activated_at, config_lost_latch, health_episode, email_configured, email_probe, \
-    bot_configured, bot_probe, revision, updated_at";
+    bot_configured, bot_probe, revision, updated_at, enforcement_verified, enforcement_lost_latch";
 
 /// 列の文字列値は kernel の serde (snake_case) 表現と一致させ、CHECK 制約と同じ語彙を使う。
 pub(super) fn to_column<T: Serialize>(value: &T) -> error_stack::Result<String, KernelError> {
@@ -49,6 +49,8 @@ struct StateRow {
     override_activated_by: Option<i64>,
     override_activated_at: Option<OffsetDateTime>,
     config_lost_latch: bool,
+    enforcement_verified: bool,
+    enforcement_lost_latch: bool,
     health_episode: String,
     email_configured: bool,
     email_probe: String,
@@ -81,11 +83,18 @@ impl TryFrom<StateRow> for RegistrationGateState {
             admin: from_column(&row.admin_state)?,
             override_info,
             config_lost_latch: row.config_lost_latch,
+            enforcement_lost_latch: row.enforcement_lost_latch,
             episode: from_column(&row.health_episode)?,
-            observation: RegistrationObservation::new(
-                ProtectionObservation::new(row.email_configured, from_column(&row.email_probe)?),
-                ProtectionObservation::new(row.bot_configured, from_column(&row.bot_probe)?),
-            ),
+            observation: RegistrationObservation {
+                enforcement_verified: row.enforcement_verified,
+                ..RegistrationObservation::new(
+                    ProtectionObservation::new(
+                        row.email_configured,
+                        from_column(&row.email_probe)?,
+                    ),
+                    ProtectionObservation::new(row.bot_configured, from_column(&row.bot_probe)?),
+                )
+            },
             revision: row.revision,
             updated_at: row.updated_at,
         })
@@ -235,7 +244,9 @@ impl RegistrationGateRepository for PostgresRegistrationGateRepository {
                 bot_configured = $9,
                 bot_probe = $10,
                 revision = $11,
-                updated_at = $12
+                updated_at = $12,
+                enforcement_verified = $14,
+                enforcement_lost_latch = $15
             WHERE id = 1 AND revision = $13
             "#,
         )
@@ -257,6 +268,8 @@ impl RegistrationGateRepository for PostgresRegistrationGateRepository {
         .bind(state.revision)
         .bind(state.updated_at)
         .bind(record.expected_revision)
+        .bind(state.observation.enforcement_verified)
+        .bind(state.enforcement_lost_latch)
         .execute(&mut *con)
         .await
         .convert_error()?;
@@ -328,7 +341,8 @@ impl RegistrationGateRepository for PostgresRegistrationGateRepository {
                 email_probe = $2,
                 bot_configured = $3,
                 bot_probe = $4,
-                updated_at = $5
+                updated_at = $5,
+                enforcement_verified = $6
             WHERE id = 1
             "#,
         )
@@ -337,6 +351,7 @@ impl RegistrationGateRepository for PostgresRegistrationGateRepository {
         .bind(observation.bot.configured)
         .bind(to_column(&observation.bot.probe)?)
         .bind(updated_at)
+        .bind(observation.enforcement_verified)
         .execute(con)
         .await
         .convert_error()?;
