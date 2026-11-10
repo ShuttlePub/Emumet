@@ -497,7 +497,7 @@ fn openapi_documents_admin_only_registration_gate_contract() {
 }
 
 #[test]
-fn openapi_states_that_real_registration_is_not_yet_protected() {
+fn openapi_documents_connected_enforcement_and_manual_resume() {
     let spec: serde_json::Value =
         serde_json::from_str(&crate::openapi::generate_openapi_json()).expect("valid OpenAPI");
     let tag = spec["tags"]
@@ -509,7 +509,11 @@ fn openapi_states_that_real_registration_is_not_yet_protected() {
     assert!(tag["description"]
         .as_str()
         .unwrap()
-        .contains("control plane only"));
+        .contains("authenticated Kratos pre-persist hook"));
+    assert!(tag["description"]
+        .as_str()
+        .unwrap()
+        .contains("cannot physically block"));
     for (method, path) in [
         ("get", ""),
         ("post", "/open"),
@@ -521,14 +525,16 @@ fn openapi_states_that_real_registration_is_not_yet_protected() {
             .as_str()
             .unwrap();
         assert!(
-            description.contains("does NOT block or allow real Kratos registrations"),
-            "{method} {BASE}{path} must say real registration is not protected yet"
+            description.contains("authenticated Kratos pre-persist hook")
+                && description.contains("Enforcement attestation loss")
+                && description.contains("manual resume"),
+            "{method} {BASE}{path} must document connected enforcement and manual resume"
         );
     }
     assert!(
         spec["components"]["schemas"]["RegistrationGateResponse"]["description"]
             .as_str()
             .unwrap()
-            .contains("実登録はまだ守られない")
+            .contains("登録可否は必ず `accepting` / `decision` で判断する")
     );
 }
