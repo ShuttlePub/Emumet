@@ -35,3 +35,7 @@ pub async fn provision_profile_keys(
 #[cfg(test)]
 #[path = "cutover_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "profile_lifecycle_tests.rs"]
+mod lifecycle_tests;

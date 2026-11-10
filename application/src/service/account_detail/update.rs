@@ -133,6 +133,15 @@ pub trait UpdateAccountDetailUseCase:
                             .find_by_account_id(executor, &account_id)
                             .await?
                             .ok_or_else(|| Report::new(KernelError::NotFound))?;
+                        // Serialize with a concurrent transfer / username write on the same Profile
+                        // before its event stream is saved and re-read (see the transfer use case).
+                        deps.profile_read_model()
+                            .lock_by_id_for_update(executor, profile.id())
+                            .await?
+                            .ok_or_else(|| {
+                                Report::new(KernelError::NotFound)
+                                    .attach_printable("Profile no longer exists")
+                            })?;
                         let icon =
                             resolve_field_action_image_id(&deps, executor, &dto.icon_url).await?;
                         let banner =

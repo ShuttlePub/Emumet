@@ -223,6 +223,21 @@ impl GraphWorld {
         }
     }
 
+    /// Lets the permission mock (Keto) allow every check and accept relation deletions, for tests
+    /// that run the real use cases (deactivate / reactivate) instead of building rows by hand.
+    pub async fn allow_all_permissions(&self) {
+        Mock::given(method("POST"))
+            .and(path("/relation-tuples/check"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"allowed": true})))
+            .mount(&self._keto)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/admin/relation-tuples"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&self._keto)
+            .await;
+    }
+
     pub fn pool(&self) -> &PgPool {
         &self.database.pool
     }

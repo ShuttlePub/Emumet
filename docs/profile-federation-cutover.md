@@ -39,7 +39,8 @@
 ## 2. 事前条件
 
 1. **全既存 Profile に username が設定済み**であること (FN `profile-identity-web-adaptation` のマージ後、`POST /api/v1/profiles/{profile_nanoid}/username` で設定)。
-   未設定が残っていると migration が `profile federation cutover refused: N profile(s) have no username ...` で abort する。
+   未設定が残っていると、**最初の P4 migration (`20261120000001`) の先頭の検査**が `profile federation cutover refused: N profile(s) have no username ...` で abort する (`20261120000002` にも同じ検査があるが、通常は手前で拒否される)。
+   migration は P4 の 1 件も適用されず、DB は切替前のまま・旧データも消えない。ただし**新バイナリは migration に失敗して起動しない**ので、復旧は §3.1 の手順で行う。
    事前確認 (psql): `SELECT count(*) FROM profiles WHERE username IS NULL;` が 0。
    DB の `NOT NULL` 化は行わない (旧イベント列からの projection 再構築で username を持たない Created イベントが残りうるため)。作成 API 側で必須化している。
 2. master key password (`/run/secrets/master-key-password`、開発では `./master-key-password`) が新バイナリから読めること (鍵の生成・署名に使う)。
@@ -61,6 +62,17 @@
    - 外部 instance (Mastodon / Iceshrimp) から Profile actor を検索して Follow → `GET /api/v1/profiles/{nanoid}/followers` に載り、Accept が配送される
    - `POST /api/v1/profiles/{nanoid}/follows` で外部 actor を Follow → 相手の inbox に署名付き Follow が届く
 5. 旧バイナリへ戻さない。問題があればバックアップから復元する。
+
+### 3.1 username 検査で拒否された場合の復旧
+
+拒否時点で DB は切替前の状態 (P4 の migration は未適用、旧連合データ・鍵・台帳なし) のままなので、**バックアップ復元は不要**。新サーバーは起動できないため、username の設定は**切替前のバイナリ**で行う。
+
+1. 新バイナリを停止したまま (起動を繰り返さない)、拒否メッセージの件数を確認する: `SELECT id, nanoid FROM profiles WHERE username IS NULL;`
+2. **切替前のバイナリ**を、外部からの受信・配送を再開しないよう (ingress を閉じたまま、管理 API だけに到達できる経路で) 起動する。
+   `_sqlx_migrations` には切替前の migration しか入っていないので、旧バイナリはそのまま起動できる。
+3. 該当 Profile の所有者が `POST /api/v1/profiles/{profile_nanoid}/username` で username を設定する (一回限りで変更不可。FN の画面経由でもよい)。
+4. `SELECT count(*) FROM profiles WHERE username IS NULL;` が 0 になったら旧バイナリを停止し、§3 の手順 3 から再試行する。
+5. もし検査後に migration の途中で失敗した場合も、各 migration は 1 transaction なので部分適用は残らない。原因を直して再起動すればよい。それでも戻せない状態になったら (例えば誤って部分的に手で変更した場合) §2.3 のバックアップから復元する。
 
 複数プロセス/レプリカで運用する場合も、台帳・advisory lock・unique index により二重初期化・二重鍵生成は起きない (が、切替は 1 プロセスで行うこと)。
 
@@ -97,3 +109,9 @@ Account 管理 API (作成・取得・更新・無効化・再有効化・組織
 - Profile 編集 (icon 変更など) の `Update(Person)` 配送は新モデルにはない (Profile 配送 job の種別は Follow / Accept / Reject / Undo のみ)。後続 unit の課題。
 - 配送 worker は `PROFILE_DELIVERY_POLL_INTERVAL_MS` (既定 2000) ごとにキューを処理する。再試行はバックオフ付き (最大 12 回、約 1 日)。
 - ローカル開発 DB に旧データと username 未設定の Profile がある場合は migration が拒否する。DB を作り直すか username を設定する。
+
+## 7. 相手 instance の actor 取得 (制約と検証範囲)
+
+- 相手 actor・公開鍵の取得は**署名なしの GET** (`Accept: application/activity+json`) で行う。署名付き取得 (Mastodon の `AUTHORIZED_FETCH` / secure mode) を必須にしている相手の actor は取得できず、その相手への Follow 送信は配送失敗 (再試行後に failed) になる。逆に、こちらの Profile actor は署名なし GET で公開している。署名付き取得への対応 (Profile 鍵での署名 GET) は未実装で、必要になれば後続 unit で扱う。
+- 取得先は SSRF 対策で制限される (public な http(s) の URL のみ。loopback・private・link-local・メタデータ宛先・それらへの redirect は拒否)。
+- 検証範囲: 実 HTTP での actor / WebFinger / 公開鍵取得 (cache なし) は mock peer E2E (`server/tests/e2e_ap_mock.rs`) と、server の結合テスト (`profile_lifecycle_tests`) が通している。Iceshrimp / Mastodon E2E は、docker 内の自己署名 https の相手を `test-mode` の cache 注入 (`/__test__/cache-actor-key`、`/__test__/cache-remote-actor`) で解決しており、相手の actor 取得そのものは通していない (署名付き Follow 配送・受信 Accept の検証は実 instance で行う)。

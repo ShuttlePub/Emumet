@@ -18,6 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::PostgresDatabase;
 
+/// 最初の P4 migration (Profile social graph schema + 前提検査) のバージョン。
+pub const CUTOVER_FIRST_MIGRATION_VERSION: i64 = 20261120000001;
 /// 初期化 migration のバージョン。これより前の migration が「初期化直前」の DB を作る。
 pub const RESET_MIGRATION_VERSION: i64 = 20261120000002;
 pub const RESET_SQL: &str =
@@ -36,6 +38,11 @@ impl IsolatedDatabase {
     /// 全ての本番 migrations を適用した独立 DB (初期化は空の DB に対して実行済み)。
     pub async fn create() -> Self {
         Self::create_with(None).await
+    }
+
+    /// P4 の migration を **1 つも適用していない**独立 DB (切替前の本番の状態)。
+    pub async fn create_before_cutover() -> Self {
+        Self::create_with(Some(CUTOVER_FIRST_MIGRATION_VERSION)).await
     }
 
     /// 旧連合データの初期化 migration の**直前**まで (新 Profile schema は適用済み) の独立 DB。

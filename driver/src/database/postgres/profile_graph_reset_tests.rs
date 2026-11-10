@@ -364,6 +364,63 @@ async fn cutover_is_refused_while_a_profile_has_no_username() {
     assert_eq!(count(&iso.pool, LEDGER).await, 1);
 }
 
+/// 本番と同じ「P4 migration を 1 つも適用していない」DB で username 未設定の Profile が残っていると、
+/// 最初の P4 migration が拒否し、新 schema も作られず DB は切替前のまま (旧バイナリで復旧できる)。
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn precheck_refuses_before_any_p4_migration_is_applied() {
+    kernel::ensure_generator_initialized();
+    let iso = IsolatedDatabase::create_before_cutover().await;
+    let account = seed_retained(&iso.database, &iso.pool, false).await;
+    seed_legacy_federation(&iso.pool, account).await;
+    let (_, unnamed) = seed_personal_profile(&iso.database).await;
+    let before_retained = retained_snapshot(&iso.pool).await;
+    let tables_before = table_names(&iso.pool).await;
+
+    let message = format!(
+        "{:?}",
+        iso.try_apply_reset()
+            .await
+            .expect_err("a Profile without username must refuse the cutover")
+    );
+    assert!(
+        message.contains("no username"),
+        "the refusal must say why: {message}"
+    );
+
+    // 何も適用されない: 新 schema も台帳もなく、旧データ・保持データも変わらない。
+    assert_eq!(tables_before, table_names(&iso.pool).await);
+    assert!(!table_names(&iso.pool)
+        .await
+        .contains(&"profile_follows".to_string()));
+    let applied: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM _sqlx_migrations WHERE version >= 20261120000001",
+    )
+    .fetch_one(&iso.pool)
+    .await
+    .unwrap();
+    assert_eq!(applied, 0);
+    for table in RESET_TARGETS {
+        assert!(
+            count(&iso.pool, table).await > 0,
+            "{table} must be untouched"
+        );
+    }
+    assert_eq!(before_retained, retained_snapshot(&iso.pool).await);
+
+    // 旧バイナリ相当で username を設定すれば、そのまま切替できる。
+    sqlx::query("UPDATE profiles SET username = 'late-name' WHERE id = $1")
+        .bind(*unnamed.as_ref())
+        .execute(&iso.pool)
+        .await
+        .unwrap();
+    iso.apply_reset().await;
+    for table in RESET_TARGETS {
+        assert_eq!(count(&iso.pool, table).await, 0);
+    }
+    assert_eq!(count(&iso.pool, LEDGER).await, 1);
+}
+
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
 async fn reset_is_not_repeated() {

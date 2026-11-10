@@ -13,6 +13,31 @@
 --   * ローカル側の外部キーは profiles への ON DELETE CASCADE のみ。旧テーブル (remote_accounts 等) を
 --     参照しないので、旧連合データの初期化 (20261120000002_reset_legacy_federation.sql) と独立している。
 
+-- 切替の前提検査 (旧連合データの初期化と同じ検査) を、最初の P4 migration の先頭にも置く。
+-- username 未設定の Profile が残っていると、ここで abort する。P4 の migration が 1 つも適用されないので、
+-- DB は切替を試みる前と同じ状態のまま (旧バイナリがそのまま起動でき、username を設定して再試行できる)。
+-- 初期化済み (台帳に記録済み) の DB では検査しない。
+DO $precheck$
+DECLARE
+  already_reset BOOLEAN := FALSE;
+  missing_username BIGINT;
+BEGIN
+  IF to_regclass('public.profile_federation_resets') IS NOT NULL THEN
+    EXECUTE 'SELECT EXISTS (SELECT 1 FROM profile_federation_resets WHERE reset_id = ''legacy-account-federation-v1'')'
+      INTO already_reset;
+  END IF;
+  IF NOT already_reset THEN
+    SELECT count(*) INTO missing_username FROM profiles WHERE username IS NULL;
+    IF missing_username > 0 THEN
+      RAISE EXCEPTION
+        'profile federation cutover refused: % profile(s) have no username. Set a username for every existing Profile (POST /api/v1/profiles/{profile_nanoid}/username, with the pre-cutover server) and start again. Nothing was changed.',
+        missing_username
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
+END
+$precheck$;
+
 CREATE TABLE "profile_follows" (
   "id" BIGINT PRIMARY KEY,
   "nanoid" TEXT NOT NULL UNIQUE,

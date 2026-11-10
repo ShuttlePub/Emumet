@@ -367,24 +367,49 @@ mod test {
 
     #[test_with::env(DATABASE_URL)]
     #[tokio::test]
-    async fn keys_are_removed_together_with_the_profile_row() {
+    async fn keys_survive_the_deletion_of_the_profile_row_and_reattach() {
         let db = PostgresDatabase::new().await.unwrap();
         let mut conn = db.connection().await.unwrap();
         let repository = db.profile_signing_key_repository();
         let (profile_id, nanoid) = seed_profile(&db).await;
-        repository
-            .create(&mut conn, &key_for(&profile_id, &nanoid))
+        let key = key_for(&profile_id, &nanoid);
+        repository.create(&mut conn, &key).await.unwrap();
+        // Deactivating the Account deletes the Profile projection row.
+        let profile = db
+            .profile_read_model()
+            .find_by_id_unfiltered(&mut conn, &profile_id)
             .await
+            .unwrap()
             .unwrap();
         db.profile_read_model()
             .delete(&mut conn, &profile_id)
             .await
             .unwrap();
-        assert!(repository
-            .find_by_profile_id(&mut conn, &profile_id)
+        let retained = repository
+            .find_active_by_profile_id(&mut conn, &profile_id)
             .await
-            .unwrap()
-            .is_empty());
+            .unwrap();
+        assert_eq!(retained.len(), 1, "the key must survive the Profile row");
+        assert_eq!(retained[0].id(), key.id());
+        // The projector re-materializes the same Profile id: the key is attached again.
+        db.profile_read_model()
+            .create(&mut conn, &kernel::prelude::entity::Profile::from(profile))
+            .await
+            .unwrap();
+        assert_eq!(
+            repository
+                .find_active_by_profile_id(&mut conn, &profile_id)
+                .await
+                .unwrap()[0]
+                .public_key_pem,
+            key.public_key_pem
+        );
+        // A second active key is still refused (one active key per Profile).
+        let error = repository
+            .create(&mut conn, &key_for(&profile_id, &nanoid))
+            .await
+            .unwrap_err();
+        assert_eq!(error.current_context(), &KernelError::Concurrency);
     }
 
     #[test_with::env(DATABASE_URL)]

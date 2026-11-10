@@ -256,14 +256,14 @@ impl ProfileReadModel for PostgresProfileReadModel {
                 summary = $4,
                 icon_id = $5,
                 banner_id = $6,
-                -- Never move the projection version backwards: when two writers race, the one that
-                -- committed second may carry the older event version (the tailing projector then
-                -- re-applies and converges).
-                version = GREATEST(version, $7),
+                version = $7,
                 -- NULL -> value only: a Profile edit that did not observe a concurrently stored
                 -- one-time username (its event stream was read before that commit) must not erase it.
                 username = COALESCE(username, $8)
-            WHERE id = $1
+            -- The whole row is replaced by one snapshot, so a snapshot older than the stored one must
+            -- never be written: it would bring back an old owner / display content under a newer
+            -- version, and the projector (which only applies newer events) could not repair it.
+            WHERE id = $1 AND version <= $7
             "#,
         )
         .bind(profile.id().as_ref())
@@ -283,8 +283,21 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .await
         .convert_error()?;
         if result.rows_affected() == 0 {
-            return Err(Report::new(KernelError::NotFound)
-                .attach_printable("Target profile not found for update"));
+            let con: &mut PgConnection = executor;
+            let stored: Option<i64> =
+                sqlx::query_scalar("SELECT version FROM profiles WHERE id = $1")
+                    .bind(profile.id().as_ref())
+                    .fetch_optional(con)
+                    .await
+                    .convert_error()?;
+            return Err(match stored {
+                None => Report::new(KernelError::NotFound)
+                    .attach_printable("Target profile not found for update"),
+                Some(stored) => Report::new(KernelError::Concurrency).attach_printable(format!(
+                    "Refused to overwrite profile projection version {stored} with older snapshot version {}",
+                    profile.version().as_ref()
+                )),
+            });
         }
         Ok(())
     }
@@ -330,6 +343,7 @@ mod test {
         };
         use kernel::prelude::entity::{AccountId, EventVersion, ProfileId};
         use kernel::test_utils::{AccountBuilder, ProfileBuilder};
+        use kernel::KernelError;
 
         use crate::database::PostgresDatabase;
 
@@ -434,6 +448,7 @@ mod test {
                 .account_id(account_id.clone())
                 .display_name(Some("old".to_string()))
                 .summary(Some("old summary".to_string()))
+                .version(EventVersion::new(1))
                 .build();
             let updated_profile = ProfileBuilder::new()
                 .id(profile_id.clone())
@@ -476,11 +491,12 @@ mod test {
                 .unwrap();
         }
 
-        /// Two writers racing on one Profile: the update that carries the older event version arrives
-        /// last. The projection version must not go backwards (P1 hand-over).
+        /// The projection row and its version change together. A snapshot older than the stored
+        /// one is refused, so it cannot bring back an old owner or old display content under a newer
+        /// version (which the projector, applying only newer events, could never repair).
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
-        async fn update_with_an_older_version_never_moves_the_version_backwards() {
+        async fn a_stale_snapshot_never_overwrites_owner_or_content() {
             kernel::ensure_generator_initialized();
             let database = PostgresDatabase::new().await.unwrap();
             let mut conn = database.connection().await.unwrap();
@@ -488,66 +504,91 @@ mod test {
             let profile_id = ProfileId::new(kernel::generate_id());
             let account_id = AccountId::default();
             let account = AccountBuilder::new().id(account_id.clone()).build();
-            let profile = |version: i64, display: &str| {
+            let org_id = AccountId::default();
+            let org = AccountBuilder::new()
+                .id(org_id.clone())
+                .kind(kernel::prelude::entity::AccountKind::Organization)
+                .build();
+            let profile = |owner: &AccountId, version: i64, display: &str| {
                 ProfileBuilder::new()
                     .id(profile_id.clone())
-                    .account_id(account_id.clone())
+                    .account_id(owner.clone())
                     .display_name(Some(display.to_string()))
                     .version(EventVersion::new(version))
                     .build()
             };
-            database
-                .account_read_model()
-                .create(&mut conn, &account)
-                .await
-                .unwrap();
-            database
-                .profile_read_model()
-                .create(&mut conn, &profile(1, "v1"))
-                .await
-                .unwrap();
-            // Newer first, then the older one (reverse order).
+            for a in [&account, &org] {
+                database
+                    .account_read_model()
+                    .create(&mut conn, a)
+                    .await
+                    .unwrap();
+            }
             database
                 .profile_read_model()
-                .update(&mut conn, &profile(5, "v5"))
+                .create(&mut conn, &profile(&account_id, 1, "v1"))
                 .await
                 .unwrap();
+            // v5 is the transferred, newest state; the older v3 snapshot arrives last.
             database
                 .profile_read_model()
-                .update(&mut conn, &profile(3, "v3"))
+                .update(&mut conn, &profile(&org_id, 5, "v5"))
                 .await
                 .unwrap();
+            let stale = database
+                .profile_read_model()
+                .update(&mut conn, &profile(&account_id, 3, "v3"))
+                .await;
+            assert!(
+                matches!(
+                    stale.as_ref().map_err(|e| e.current_context()),
+                    Err(KernelError::Concurrency)
+                ),
+                "the stale snapshot must be refused, got {stale:?}"
+            );
 
             let stored = database
                 .profile_read_model()
-                .find_by_id(&mut conn, &profile_id)
+                .find_by_id_unfiltered(&mut conn, &profile_id)
                 .await
                 .unwrap()
                 .unwrap();
+            assert_eq!(stored.version().as_ref(), &5);
             assert_eq!(
-                stored.version().as_ref(),
-                &5,
-                "version must stay at the newest"
+                stored.account_id(),
+                &org_id,
+                "the owner must stay the new one"
             );
-            // A later, newer update still advances it.
+            assert_eq!(
+                stored.display_name().as_ref().map(|d| d.as_ref().as_str()),
+                Some("v5")
+            );
+            // The same version (a rehydrate of the stored state) and newer ones are accepted.
             database
                 .profile_read_model()
-                .update(&mut conn, &profile(6, "v6"))
+                .update(&mut conn, &profile(&org_id, 5, "v5b"))
+                .await
+                .unwrap();
+            database
+                .profile_read_model()
+                .update(&mut conn, &profile(&org_id, 6, "v6"))
                 .await
                 .unwrap();
             let stored = database
                 .profile_read_model()
-                .find_by_id(&mut conn, &profile_id)
+                .find_by_id_unfiltered(&mut conn, &profile_id)
                 .await
                 .unwrap()
                 .unwrap();
             assert_eq!(stored.version().as_ref(), &6);
 
-            database
-                .account_read_model()
-                .deactivate(&mut conn, account.id())
-                .await
-                .unwrap();
+            for a in [&account, &org] {
+                database
+                    .account_read_model()
+                    .deactivate(&mut conn, a.id())
+                    .await
+                    .unwrap();
+            }
         }
 
         #[test_with::env(DATABASE_URL)]

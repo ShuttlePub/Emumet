@@ -23,6 +23,9 @@
 --     テーブルにあれば TRUNCATE は失敗する (黙って巻き込まない)。
 --   * 前提検査: username が未設定の Profile が 1 件でも残っていれば RAISE EXCEPTION で abort する。
 --     migration は 1 transaction なので、abort 時は何も消えず台帳も残らない (切替拒否)。
+--     同じ検査は最初の P4 migration (20261120000001) の先頭にもあり、通常はそこで先に拒否される
+--     (P4 の migration が 1 つも適用されず、DB は切替前のまま)。ここは「検査後に未設定の Profile が
+--     作られた」場合などの二重の安全弁。
 --   * 実行済みかどうかを profile_federation_resets に記録し、再実行しても再消去しない。
 --     記録の確認・前提検査・消去・記録は同じ transaction で行う。
 
