@@ -757,6 +757,7 @@ delegate_database_dependence! {
     kernel::interfaces::repository::DependOnProfileTransferRequestRepository { ProfileTransferRequestRepository, profile_transfer_request_repository },
     kernel::interfaces::repository::DependOnAuthHostRepository { AuthHostRepository, auth_host_repository },
     kernel::interfaces::repository::DependOnBlockRepository { BlockRepository, block_repository },
+    kernel::interfaces::repository::DependOnDomainControlRepository { DomainControlRepository, domain_control_repository },
     kernel::interfaces::repository::DependOnFollowRepository { FollowRepository, follow_repository },
     kernel::interfaces::repository::DependOnImageRepository { ImageRepository, image_repository },
     kernel::interfaces::repository::DependOnMetadataRepository { MetadataRepository, metadata_repository },

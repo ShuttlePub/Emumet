@@ -72,7 +72,8 @@ fn contract_operations() -> Vec<ContractOperation> {
             let is_contract = operation["tags"]
                 .as_array()
                 .is_some_and(|tags| tags.iter().any(|t| t == "ProfilePolicy"));
-            if !is_contract {
+            // domain-controls are implemented by D8P (see route::profile_domain_control_tests).
+            if !is_contract || template.contains("/domain-controls") {
                 continue;
             }
             let mut uri = String::new();
@@ -124,7 +125,7 @@ async fn every_contract_operation_answers_explicit_501_when_authenticated() {
     let operations = contract_operations();
     assert_eq!(
         operations.len(),
-        16,
+        12,
         "expected the full ProfilePolicy contract, found {} operations",
         operations.len()
     );
@@ -184,6 +185,7 @@ fn production_entrypoint_does_not_mount_contract_routes() {
         "ProfilePolicyContractRouter",
         "route_profile_policy_contract",
         "route_profile_actor_contract",
+        "profile_domain_control",
     ] {
         assert!(
             !main_rs.contains(needle),

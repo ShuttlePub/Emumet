@@ -258,22 +258,22 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
         (
             format!("{profile}/domain-controls"),
             "get",
-            vec!["200", "401", "403", "404", "501"],
+            vec!["200", "401", "403", "404"],
         ),
         (
             format!("{profile}/domain-controls/{{domain}}"),
             "get",
-            vec!["200", "401", "403", "404", "501"],
+            vec!["200", "401", "403", "404", "422"],
         ),
         (
             format!("{profile}/domain-controls/{{domain}}"),
             "put",
-            vec!["200", "401", "403", "404", "409", "422", "501"],
+            vec!["200", "401", "403", "404", "409", "422"],
         ),
         (
             format!("{profile}/domain-controls/{{domain}}"),
             "delete",
-            vec!["204", "401", "403", "404", "409", "501"],
+            vec!["204", "400", "401", "403", "404", "409", "422"],
         ),
     ] {
         let operation = &spec["paths"][path.as_str()][method];
