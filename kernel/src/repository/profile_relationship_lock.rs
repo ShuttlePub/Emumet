@@ -26,6 +26,19 @@ pub trait ProfileRelationshipLock: Sync + Send + 'static {
         executor: &mut Self::Connection,
         profiles: &[ProfileId],
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    /// `FOR SHARE` lock of the Profile row, for a transaction that updates Follow / delivery job rows
+    /// without an owner check (the delivery pre-send guard). Deleting a Profile (the account
+    /// projection) takes the row exclusively and then cascades to Follow and job rows, i.e. the order
+    /// *Profile -> Follow -> job*; a transaction that holds a job row and then updates the Follow row
+    /// would form a cycle with it. Taking this lock **before** [`Self::lock_profiles`] (Profile row ->
+    /// advisory lock -> Follow / job rows) serializes the two. Returns false when the Profile no
+    /// longer exists (deleted: its Follow and job rows are gone with it).
+    fn lock_profile_row_shared(
+        &self,
+        executor: &mut Self::Connection,
+        profile: &ProfileId,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
 }
 
 pub trait DependOnProfileRelationshipLock: Sync + Send + DependOnDatabaseConnection {

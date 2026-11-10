@@ -30,6 +30,9 @@ pub enum ProfileInboxIgnored {
     StaleFollow,
     /// The transition already happened or the generation is already known.
     AlreadyApplied,
+    /// An Accept from an actor whose domain this Profile blocks (D8G). The Follow generation is left
+    /// as it was; the reception is recorded so a replay after an unblock does not apply it.
+    DomainBlocked,
 }
 
 /// What a processed Profile inbox activity did.
@@ -53,6 +56,9 @@ pub enum ProfileInboxOutcome {
     /// The Profile blocks the follower: the Follow was refused (stored as an ended generation) and a
     /// `Reject(Follow)` was reserved in the same transaction. Nothing is accepted.
     FollowRefusedByBlock,
+    /// Same refusal as [`Self::FollowRefusedByBlock`], decided by a domain `block` of this Profile (D8G)
+    /// on the host of the signer's canonical actor ID.
+    FollowRefusedByDomainBlock,
     /// Already received (P2 inbound activity record): nothing was processed again.
     Duplicate,
     Ignored(ProfileInboxIgnored),

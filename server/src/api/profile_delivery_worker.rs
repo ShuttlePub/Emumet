@@ -70,6 +70,7 @@ async fn run(
                                 retrying = report.retrying,
                                 failed = report.failed,
                                 cancelled = report.cancelled,
+                                domain_blocked = report.domain_blocked,
                                 lease_lost = report.lease_lost,
                                 "profile delivery cycle"
                             );

@@ -799,7 +799,7 @@ async fn muting_changes_no_relationship_and_delivers_nothing() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn individual_blocks_neither_read_nor_write_domain_controls() {
+async fn individual_blocks_do_not_write_domain_controls_and_a_domain_block_refuses_follow() {
     let env = Env::new().await;
     let alice = env.seed_user().await;
     // peer は 127.0.0.1 で待ち受けるが、`localhost` 名でも同じ peer に届く。
@@ -828,11 +828,12 @@ async fn individual_blocks_neither_read_nor_write_domain_controls() {
             .unwrap();
     }
 
-    // domain block が保存されていても、個別 actor の Follow は domain 方針を読まないので拒否されない
-    // (domain 方針の適用は D8G/D8R が所有する)。
-    follow(&env, &alice, &target)
-        .await
-        .expect("domain controls are not consulted");
+    // domain block が保存されていれば、その domain の actor への Follow は拒否される (D8G)。個別 actor の
+    // block の設定は domain 方針を書かず、domain block は個別 block として見えない。
+    let refused = follow(&env, &alice, &target).await;
+    assert_eq!(context(refused), KernelError::Rejected);
+    assert_eq!(env.count("SELECT count(*) FROM profile_follows").await, 0);
+    assert!(env.jobs_of(&alice.profile_id).await.is_empty());
     env.module
         .block_actor(&alice.auth, None, &alice.nanoid, &target)
         .await

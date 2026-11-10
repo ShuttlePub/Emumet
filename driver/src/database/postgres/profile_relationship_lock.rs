@@ -30,6 +30,21 @@ impl ProfileRelationshipLock for PostgresProfileRelationshipLock {
         }
         Ok(())
     }
+
+    async fn lock_profile_row_shared(
+        &self,
+        executor: &mut Self::Connection,
+        profile: &ProfileId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        let row: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM profiles WHERE id = $1 FOR SHARE")
+                .bind(profile.as_ref())
+                .fetch_optional(con)
+                .await
+                .convert_error()?;
+        Ok(row.is_some())
+    }
 }
 
 impl DependOnProfileRelationshipLock for PostgresDatabase {
