@@ -21,9 +21,3 @@ pub struct ProfileRelationDto {
     pub target: String,
     pub created_at: OffsetDateTime,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProfileFollowPage {
-    pub items: Vec<ProfileFollowDto>,
-    pub next_cursor: Option<String>,
-}

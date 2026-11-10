@@ -14,10 +14,10 @@
 //! - mute は表示抑制の設定だけで、既存の関係も配送も変えない。
 
 use super::activity::{
-    follow_activity_id, follow_body, local_profile_nanoid, profile_actor_url, profile_inbox_url,
-    reject_activity_id, reject_follow_body, undo_activity_id, undo_follow_body,
+    follow_activity_id, follow_body, local_profile_nanoid, profile_actor_url, reject_activity_id,
+    reject_follow_body, undo_activity_id, undo_follow_body,
 };
-use crate::dto::profile_relationship::{ProfileFollowDto, ProfileFollowPage, ProfileRelationDto};
+use crate::dto::profile_relationship::{ProfileFollowDto, ProfileRelationDto};
 use crate::service::domain_control::require_profile_owner;
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
@@ -37,10 +37,9 @@ use kernel::interfaces::repository::{
     ProfileFollowRepository, ProfileMuteRepository, ProfileRelationshipLock, RemoteActorResolver,
 };
 use kernel::prelude::entity::{
-    AuthAccountId, DeliveryActivityType, GraphActorUrl, GraphInboxUrl, Nanoid,
-    NewProfileDeliveryJob, ProfileBlock, ProfileBlockId, ProfileDeliveryJobState, ProfileFollow,
-    ProfileFollowEndReason, ProfileFollowId, ProfileGraphActor, ProfileId, ProfileMute,
-    ProfileMuteId,
+    AuthAccountId, DeliveryActivityType, GraphActorUrl, Nanoid, NewProfileDeliveryJob,
+    ProfileBlock, ProfileBlockId, ProfileDeliveryJobState, ProfileFollow, ProfileFollowEndReason,
+    ProfileFollowId, ProfileGraphActor, ProfileId, ProfileMute, ProfileMuteId,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -414,8 +413,9 @@ async fn prepare_target<T: RelationshipDeps + DependOnRemoteActorResolver>(
 }
 
 pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorResolver {
-    /// Profile が `target` を Follow する。Follow 世代 (Accept 待ち) の保存と `Follow` activity の配送 job
-    /// 予約を同一 transaction で行う。target が自分・block 関係にある (どちらの向きでも) 場合は拒否 (422)、
+    /// Profile が `target` を Follow する。remote actor 宛ては Follow 世代 (Accept 待ち) の保存と `Follow`
+    /// activity の配送 job 予約を同一 transaction で行う。ローカル Profile 宛ては HTTP を経由せず、同じ
+    /// transaction で承認済みの世代を確定する (配送 job なし)。target が自分・block 関係にある (どちらの向きでも) 場合は拒否 (422)、
     /// 有効な Follow が既にあれば 409。remote actor の inbox 解決 (HTTP) は transaction の外で行い、
     /// 解決できない target は 400。
     fn follow_profile<'a>(
@@ -481,30 +481,34 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                             return Err(Report::new(KernelError::Rejected)
                                 .attach_printable("follow refused by an individual block"));
                         }
-                        let inbox = match (&target.local_nanoid, remote_inbox) {
-                            (Some(nanoid), _) => GraphInboxUrl::new(profile_inbox_url(
-                                deps.public_base_url(),
-                                nanoid,
-                            ))?,
-                            (None, Some(info)) => info.inbox,
-                            (None, None) => {
-                                return Err(Report::new(KernelError::Internal)
-                                    .attach_printable("remote target without a resolved inbox"))
-                            }
-                        };
                         let follow_id = ProfileFollowId::new(kernel::generate_id());
                         let activity_id = follow_activity_id(
                             deps.public_base_url(),
                             &profile_nanoid,
                             &follow_id,
                         )?;
-                        let follow = ProfileFollow::new_pending(
-                            follow_id.clone(),
-                            me,
-                            target.actor.clone(),
-                            activity_id.clone(),
-                            now,
-                        )?;
+                        // ローカル Profile 宛ては HTTP を経由せず、同じ transaction (両 Profile の関係ロック下)
+                        // で確定する。受信側 (P3i) の Follow 処理と同じ意味論で、承認不要の Profile として
+                        // 承認済みの世代を `Local(ProfileId)` 同士で保存する (相手の個別 block は上で検査済み)。
+                        // 自インスタンスの actor からの HTTP 受信は P3i が 422 で拒否するので、配送 job は作らない。
+                        let is_local_target = target.local_nanoid.is_some();
+                        let follow = if is_local_target {
+                            ProfileFollow::new_accepted(
+                                follow_id.clone(),
+                                me,
+                                target.actor.clone(),
+                                activity_id.clone(),
+                                now,
+                            )?
+                        } else {
+                            ProfileFollow::new_pending(
+                                follow_id.clone(),
+                                me,
+                                target.actor.clone(),
+                                activity_id.clone(),
+                                now,
+                            )?
+                        };
                         match deps
                             .profile_follow_repository()
                             .begin_generation(executor, &follow)
@@ -516,6 +520,13 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                                 return Err(conflict("an active follow already exists"))
                             }
                         }
+                        if is_local_target {
+                            return Ok(follow_dto(&follow, &profile_nanoid, target.url));
+                        }
+                        let Some(remote) = remote_inbox else {
+                            return Err(Report::new(KernelError::Internal)
+                                .attach_printable("remote target without a resolved inbox"));
+                        };
                         let body = follow_body(
                             &activity_id,
                             &profile_actor_url(deps.public_base_url(), &profile_nanoid),
@@ -525,7 +536,7 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                             profile_id,
                             DeliveryActivityType::Follow,
                             activity_id,
-                            inbox,
+                            remote.inbox,
                             body,
                             now,
                         )?
@@ -595,64 +606,6 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                             now,
                         )
                         .await
-                    })
-                })
-                .await
-        }
-    }
-
-    /// Profile の following 一覧 (有効な世代。ID 昇順)。`cursor` は直前のページ最後の Follow の nanoid。
-    fn list_profile_following<'a>(
-        &'a self,
-        auth_account_id: &'a AuthAccountId,
-        org_context: Option<&'a OrganizationContext>,
-        profile_nanoid: &'a str,
-        cursor: Option<&'a str>,
-        limit: i64,
-    ) -> impl Future<Output = error_stack::Result<ProfileFollowPage, KernelError>> + Send + 'a {
-        async move {
-            let deps = self.clone();
-            let auth_account_id = auth_account_id.clone();
-            let org_context = org_context.cloned();
-            let profile_nanoid = profile_nanoid.to_string();
-            let cursor = cursor.map(str::to_string);
-            let limit = limit.clamp(1, 100);
-            self.transaction_manager()
-                .transaction(move |executor| {
-                    Box::pin(async move {
-                        let profile_id = require_profile_owner(
-                            &deps,
-                            executor,
-                            &auth_account_id,
-                            org_context.as_ref(),
-                            &profile_nanoid,
-                        )
-                        .await?;
-                        let follows = deps.profile_follow_repository();
-                        let after = match cursor {
-                            Some(cursor) => Some(
-                                follows
-                                    .find_by_nanoid(executor, &Nanoid::new(cursor))
-                                    .await?
-                                    .ok_or_else(|| validation("invalid cursor"))?
-                                    .id()
-                                    .clone(),
-                            ),
-                            None => None,
-                        };
-                        let rows = follows
-                            .list_following(executor, &profile_id, after.as_ref(), limit + 1)
-                            .await?;
-                        let has_more = rows.len() as i64 > limit;
-                        let mut items = Vec::new();
-                        for follow in rows.iter().take(limit as usize) {
-                            let target = actor_url(&deps, executor, follow.followee()).await?;
-                            items.push(follow_dto(follow, &profile_nanoid, target));
-                        }
-                        let next_cursor = has_more
-                            .then(|| items.last().map(|item| item.nanoid.clone()))
-                            .flatten();
-                        Ok(ProfileFollowPage { items, next_cursor })
                     })
                 })
                 .await

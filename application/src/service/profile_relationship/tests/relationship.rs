@@ -1,6 +1,8 @@
 use super::support::{Env, User, LOCAL_BASE};
+use crate::dto::profile_inbound::ProfileFollowDirection;
 use crate::dto::profile_relationship::ProfileFollowDto;
 use crate::service::activitypub::GetOutboxUseCase;
+use crate::service::profile_follow_list::ProfileFollowListUseCase;
 use crate::service::profile_relationship::ProfileRelationshipUseCase;
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
@@ -460,13 +462,27 @@ async fn profiles_of_one_account_do_not_share_follows_blocks_or_mutes() {
     assert_eq!(env.jobs_of(&second).await.len(), 1);
     let list = env
         .module
-        .list_profile_following(&caller.auth, Some(&org_context), &first_nanoid, None, 10)
+        .list_profile_follows(
+            &caller.auth,
+            Some(&org_context),
+            &first_nanoid,
+            ProfileFollowDirection::Following,
+            None,
+            Some(10),
+        )
         .await
         .unwrap();
     assert!(list.items.is_empty());
     let list = env
         .module
-        .list_profile_following(&caller.auth, Some(&org_context), &second_nanoid, None, 10)
+        .list_profile_follows(
+            &caller.auth,
+            Some(&org_context),
+            &second_nanoid,
+            ProfileFollowDirection::Following,
+            None,
+            Some(10),
+        )
         .await
         .unwrap();
     assert_eq!(list.items.len(), 1);
@@ -506,11 +522,105 @@ async fn a_block_refuses_follows_in_both_directions_between_local_profiles() {
         .unwrap();
     let dto = follow(&env, &bob, &actor_url(&alice)).await.unwrap();
     assert_eq!(dto.target, actor_url(&alice));
-    let job = &env.jobs_of(&bob.profile_id).await[0];
+}
+
+async fn local_follow_row(env: &Env, nanoid: &str) -> (String, bool, bool, Option<String>) {
+    sqlx::query_as(
+        "SELECT state, (follower_profile_id IS NOT NULL AND followee_profile_id IS NOT NULL), (follower_actor_url IS NULL AND followee_actor_url IS NULL), end_reason FROM profile_follows WHERE nanoid = $1",
+    )
+    .bind(nanoid)
+    .fetch_one(&env.iso.pool)
+    .await
+    .unwrap()
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn following_a_local_profile_completes_in_one_transaction_without_http() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    let bob = env.seed_user().await;
+    let carol = env.seed_user().await;
+
+    let dto = follow(&env, &bob, &actor_url(&alice)).await.unwrap();
+
     assert_eq!(
-        job.target_inbox.as_str(),
-        format!("{}/inbox", actor_url(&alice)),
-        "a local target is delivered to its own Profile inbox"
+        dto.state,
+        ProfileFollowState::Accepted,
+        "no Accept round trip is needed"
+    );
+    assert_eq!(dto.target, actor_url(&alice));
+    assert_eq!(
+        local_follow_row(&env, &dto.nanoid).await,
+        ("accepted".to_string(), true, true, None),
+        "stored between the two Local(ProfileId) parties, never as a remote actor URL"
+    );
+    assert!(
+        env.jobs_of(&bob.profile_id).await.is_empty()
+            && env.jobs_of(&alice.profile_id).await.is_empty(),
+        "no delivery job: the receiving side would refuse an HTTP delivery from a local actor"
+    );
+    let following = env
+        .module
+        .list_profile_follows(
+            &bob.auth,
+            None,
+            &bob.nanoid,
+            ProfileFollowDirection::Following,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(following.items.len(), 1);
+    let followers = env
+        .module
+        .list_profile_follows(
+            &alice.auth,
+            None,
+            &alice.nanoid,
+            ProfileFollowDirection::Followers,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(followers.items.len(), 1, "alice sees bob as a follower");
+    assert_eq!(followers.items[0].id, dto.nanoid);
+    assert_eq!(
+        context(follow(&env, &bob, &actor_url(&alice)).await),
+        KernelError::Concurrency,
+        "an active follow is not duplicated"
+    );
+
+    // unfollow は関係を終了するだけで、配送はない。
+    unfollow(&env, &bob, &dto.nanoid).await.unwrap();
+    assert_eq!(
+        local_follow_row(&env, &dto.nanoid).await,
+        ("ended".to_string(), true, true, Some("undone".to_string()))
+    );
+    assert!(env.jobs_of(&bob.profile_id).await.is_empty());
+
+    // block は双方向の Follow を解除する (配送なし)。carol → alice と alice → carol の両方を作って検証する。
+    let incoming = follow(&env, &carol, &actor_url(&alice)).await.unwrap();
+    let outgoing = follow(&env, &alice, &actor_url(&carol)).await.unwrap();
+    env.module
+        .block_actor(&alice.auth, None, &alice.nanoid, &actor_url(&carol))
+        .await
+        .unwrap();
+    for nanoid in [&incoming.nanoid, &outgoing.nanoid] {
+        assert_eq!(
+            local_follow_row(&env, nanoid).await,
+            ("ended".to_string(), true, true, Some("blocked".to_string()))
+        );
+    }
+    assert!(
+        env.jobs_of(&alice.profile_id).await.is_empty()
+            && env.jobs_of(&carol.profile_id).await.is_empty()
+    );
+    assert_eq!(
+        context(follow(&env, &carol, &actor_url(&alice)).await),
+        KernelError::Rejected
     );
 }
 
@@ -799,22 +909,36 @@ async fn following_list_paginates_active_follows_only() {
 
     let first = env
         .module
-        .list_profile_following(&alice.auth, None, &alice.nanoid, None, 1)
+        .list_profile_follows(
+            &alice.auth,
+            None,
+            &alice.nanoid,
+            ProfileFollowDirection::Following,
+            None,
+            Some(1),
+        )
         .await
         .unwrap();
     assert_eq!(first.items.len(), 1);
-    assert_eq!(first.items[0].nanoid, created[0].nanoid);
+    assert_eq!(first.items[0].id, created[0].nanoid);
     let cursor = first.next_cursor.clone().expect("more pages");
     let second = env
         .module
-        .list_profile_following(&alice.auth, None, &alice.nanoid, Some(&cursor), 5)
+        .list_profile_follows(
+            &alice.auth,
+            None,
+            &alice.nanoid,
+            ProfileFollowDirection::Following,
+            Some(&cursor),
+            Some(5),
+        )
         .await
         .unwrap();
     assert_eq!(
         second
             .items
             .iter()
-            .map(|i| i.nanoid.clone())
+            .map(|i| i.id.clone())
             .collect::<Vec<_>>(),
         vec![created[2].nanoid.clone()],
         "the unfollowed generation is not listed"

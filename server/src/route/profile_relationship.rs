@@ -1,5 +1,6 @@
-//! Profile relationship routes (P3o): Follow / unfollow, individual block / mute, and the following
-//! list, as real handlers on the E8 contract paths.
+//! Profile relationship routes (P3o): Follow / unfollow and individual block / mute as real handlers on the E8
+//! contract paths. The following / followers reads are P3i's (`route::profile_follow_list`); both mount
+//! functions can be combined on one router (the paths do not overlap).
 //!
 //! The routes are intentionally NOT part of the production root router: [`ProfileRelationshipRouter`]
 //! is only used by tests until the P4 cutover mounts them. The OpenAPI description of these paths
@@ -11,18 +12,15 @@ use crate::api::profile_relationship::ProfileRelationshipApi;
 use crate::auth::{AuthClaims, OidcAuthInfo, RequestOrganizationContext};
 use crate::error::ErrorStatus;
 use crate::schema::profile_policy::{
-    CreateProfileFollowRequest, CreateProfileRelationRequest, ProfileFollowListResponse,
-    ProfileFollowResponse, ProfileFollowState, ProfileRelationKind, ProfileRelationResponse,
+    CreateProfileFollowRequest, CreateProfileRelationRequest, ProfileFollowResponse,
+    ProfileFollowState, ProfileRelationKind, ProfileRelationResponse,
 };
 use application::dto::profile_relationship::{ProfileFollowDto, ProfileRelationDto};
-use axum::extract::{FromRef, Path, Query, State};
+use axum::extract::{FromRef, Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, post};
 use axum::{Extension, Json, Router};
 use kernel::prelude::entity::ProfileFollowState as KernelFollowState;
-use serde::Deserialize;
-
-const DEFAULT_LIMIT: i64 = 20;
 
 fn follow_response(dto: ProfileFollowDto) -> ProfileFollowResponse {
     ProfileFollowResponse {
@@ -49,12 +47,6 @@ fn relation_response(
         target: dto.target,
         created_at: dto.created_at,
     }
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ListQuery {
-    limit: Option<u32>,
-    cursor: Option<String>,
 }
 
 pub(crate) async fn follow_profile(
@@ -91,29 +83,6 @@ pub(crate) async fn unfollow_profile(
     .await
     .map_err(ErrorStatus::from)?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-pub(crate) async fn list_profile_following(
-    Extension(claims): Extension<AuthClaims>,
-    Extension(RequestOrganizationContext(org_context)): Extension<RequestOrganizationContext>,
-    State(api): State<ProfileRelationshipApi>,
-    Path(profile_nanoid): Path<String>,
-    Query(query): Query<ListQuery>,
-) -> Result<Json<ProfileFollowListResponse>, ErrorStatus> {
-    let page = api
-        .list_following(
-            OidcAuthInfo::from(claims),
-            org_context.as_ref(),
-            &profile_nanoid,
-            query.cursor.as_deref(),
-            query.limit.map_or(DEFAULT_LIMIT, i64::from),
-        )
-        .await
-        .map_err(ErrorStatus::from)?;
-    Ok(Json(ProfileFollowListResponse {
-        items: page.items.into_iter().map(follow_response).collect(),
-        next_cursor: page.next_cursor,
-    }))
 }
 
 pub(crate) async fn block_actor(
@@ -212,10 +181,6 @@ where
             .route(
                 "/profiles/{profile_nanoid}/follows/{follow_id}",
                 delete(unfollow_profile),
-            )
-            .route(
-                "/profiles/{profile_nanoid}/following",
-                get(list_profile_following),
             )
             .route("/profiles/{profile_nanoid}/blocks", post(block_actor))
             .route(

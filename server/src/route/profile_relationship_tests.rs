@@ -7,12 +7,14 @@ use crate::auth::{
     auth_middleware, encode_test_jwt, generate_test_keys, AuthClaims, JwksCache, OidcConfig,
 };
 use crate::handler::AppModule;
+use crate::route::profile_follow_list::ProfileFollowListRouter;
 use application::profile_signing_key::CreateProfileSigningKeyUseCase;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use driver::crypto::FilePasswordProvider;
 use driver::database::isolated_db::IsolatedDatabase;
 use http_body_util::BodyExt;
+use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::SigningAlgorithm;
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
@@ -100,7 +102,14 @@ impl Harness {
             keys.jwk_set.clone(),
         ));
         let router = axum::Router::new()
-            .nest("/api/v1", axum::Router::new().route_profile_relationships())
+            // Both mount functions on one router: the paths must not overlap (axum panics on a
+            // duplicate method registration for a path).
+            .nest(
+                "/api/v1",
+                axum::Router::new()
+                    .route_profile_relationships()
+                    .route_profile_follow_lists(),
+            )
             .layer(axum::middleware::from_fn_with_state(
                 module.clone(),
                 crate::api::organization_context::organization_context_middleware,
@@ -577,4 +586,70 @@ async fn the_delivery_worker_loop_delivers_and_stops_on_shutdown() {
         .count();
     assert_eq!(inbox_hits, 1);
     let _ = (&alice.account, &h.password);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn following_a_local_profile_completes_through_the_routes_without_a_delivery_job() {
+    let h = Harness::new().await;
+    let alice = h.user().await;
+    let bob = h.user().await;
+    let alice_url = format!(
+        "{}/ap/profiles/{}",
+        h.module.public_base_url().as_str().trim_end_matches('/'),
+        alice.profile.nanoid().as_ref()
+    );
+
+    let (status, created) = h
+        .call(
+            Method::POST,
+            &uri(&bob.profile, "follows"),
+            Some(&bob.token),
+            Some(json!({"target": alice_url})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["state"], "accepted");
+    assert_eq!(created["target"], alice_url);
+    assert_eq!(
+        h.count("SELECT count(*) FROM profile_delivery_jobs").await,
+        0
+    );
+
+    let (status, following) = h
+        .call(
+            Method::GET,
+            &uri(&bob.profile, "following"),
+            Some(&bob.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(following["items"].as_array().unwrap().len(), 1);
+    let (status, followers) = h
+        .call(
+            Method::GET,
+            &uri(&alice.profile, "followers"),
+            Some(&alice.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(followers["items"].as_array().unwrap().len(), 1);
+
+    let follow_id = created["id"].as_str().unwrap();
+    let (status, _) = h
+        .call(
+            Method::DELETE,
+            &uri(&bob.profile, &format!("follows/{follow_id}")),
+            Some(&bob.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        h.count("SELECT count(*) FROM profile_delivery_jobs").await,
+        0
+    );
+    let _ = (&alice.account, &bob.account);
 }

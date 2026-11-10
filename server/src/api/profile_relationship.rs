@@ -1,9 +1,7 @@
 use super::resolve_auth_account_id;
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
-use application::dto::profile_relationship::{
-    ProfileFollowDto, ProfileFollowPage, ProfileRelationDto,
-};
+use application::dto::profile_relationship::{ProfileFollowDto, ProfileRelationDto};
 use application::service::profile_relationship::ProfileRelationshipUseCase;
 use application::service::session_context::OrganizationContext;
 use axum::extract::FromRef;
@@ -45,20 +43,6 @@ impl ProfileRelationshipApi {
         let auth_account_id = resolve_auth_account_id(&self.module, auth_info).await?;
         self.module
             .unfollow_profile(&auth_account_id, org_context, profile_nanoid, follow_nanoid)
-            .await
-    }
-
-    pub async fn list_following(
-        &self,
-        auth_info: OidcAuthInfo,
-        org_context: Option<&OrganizationContext>,
-        profile_nanoid: &str,
-        cursor: Option<&str>,
-        limit: i64,
-    ) -> error_stack::Result<ProfileFollowPage, KernelError> {
-        let auth_account_id = resolve_auth_account_id(&self.module, auth_info).await?;
-        self.module
-            .list_profile_following(&auth_account_id, org_context, profile_nanoid, cursor, limit)
             .await
     }
 
