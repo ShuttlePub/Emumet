@@ -650,3 +650,175 @@ async fn the_pre_send_decision_waits_for_the_sender_lock() {
         "cancelled after the block committed"
     );
 }
+
+async fn follow_id_of(env: &Env, follow_nanoid: &str) -> ProfileFollowId {
+    let id: i64 = sqlx::query_scalar("SELECT id FROM profile_follows WHERE nanoid = $1")
+        .bind(follow_nanoid)
+        .fetch_one(&env.iso.pool)
+        .await
+        .unwrap();
+    ProfileFollowId::new(id)
+}
+
+/// The pre-send guard's transaction, paused after it touched the job row and before it touches the
+/// Follow row (the order that deadlocks with a path that updates the Follow first).
+fn guard_paused_between_job_and_follow(
+    env: &Env,
+    sender: ProfileId,
+    follow_id: ProfileFollowId,
+) -> (
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (paused_tx, paused_rx) = tokio::sync::oneshot::channel::<()>();
+    let (resume_tx, resume_rx) = tokio::sync::oneshot::channel::<()>();
+    let module = env.module.clone();
+    let handle = tokio::spawn(async move {
+        let deps = module.clone();
+        module
+            .transaction_manager()
+            .transaction(move |executor| {
+                Box::pin(async move {
+                    lock_profile_for_domain_control_write(&deps, executor, &sender).await?;
+                    let now = OffsetDateTime::now_utc();
+                    deps.profile_delivery_job_repository()
+                        .cancel_undelivered_for_follow(
+                            executor,
+                            &follow_id,
+                            DeliveryActivityType::Follow,
+                            "domain_blocked",
+                            now,
+                        )
+                        .await?;
+                    paused_tx.send(()).ok();
+                    resume_rx.await.ok();
+                    deps.profile_follow_repository()
+                        .end(
+                            executor,
+                            &follow_id,
+                            kernel::prelude::entity::ProfileFollowEndReason::Blocked,
+                            now,
+                        )
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .await
+            .expect("the guard transaction must not be chosen as a deadlock victim");
+    });
+    (paused_rx, resume_tx, handle)
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn unfollow_queues_behind_the_pre_send_guard_instead_of_deadlocking_with_it() {
+    let env = std::sync::Arc::new(Env::new().await);
+    let (alice, _target, follow_nanoid) = pending_follow(&env).await;
+    let follow_id = follow_id_of(&env, &follow_nanoid).await;
+
+    let (paused, resume, guard) =
+        guard_paused_between_job_and_follow(&env, alice.profile_id.clone(), follow_id);
+    paused.await.unwrap();
+
+    // The guard holds the Follow job row (cancelled) and the sender's relationship lock. unfollow
+    // must wait at the lock *before* it touches the Follow row; otherwise it would hold the Follow
+    // row, wait for the job row, and the guard's pending Follow update would close a cycle.
+    let mut unfollow = tokio::spawn({
+        let env = env.clone();
+        let auth = alice.auth.clone();
+        let nanoid = alice.nanoid.clone();
+        let follow_nanoid = follow_nanoid.clone();
+        async move {
+            env.module
+                .unfollow_profile(&auth, None, &nanoid, &follow_nanoid)
+                .await
+        }
+    });
+    assert!(
+        still_waiting(&mut unfollow).await,
+        "unfollow must queue behind the guard's relationship lock"
+    );
+    // Longer than PostgreSQL's deadlock_timeout (1s): a cycle would have been detected by now.
+    tokio::time::sleep(StdDuration::from_millis(1500)).await;
+
+    resume.send(()).unwrap();
+    tokio::time::timeout(StdDuration::from_secs(30), guard)
+        .await
+        .expect("the guard finishes")
+        .unwrap();
+    let result = tokio::time::timeout(StdDuration::from_secs(30), unfollow)
+        .await
+        .expect("unfollow finishes")
+        .unwrap();
+    assert!(
+        matches!(&result, Err(report) if matches!(report.current_context(), KernelError::NotFound)),
+        "the guard ended the Follow first, so unfollow finds nothing active: {result:?}"
+    );
+    let row: (String, Option<String>) =
+        sqlx::query_as("SELECT state, end_reason FROM profile_follows WHERE nanoid = $1")
+            .bind(&follow_nanoid)
+            .fetch_one(&env.iso.pool)
+            .await
+            .unwrap();
+    assert_eq!(row, ("ended".to_string(), Some("blocked".to_string())));
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn unfollow_racing_the_real_pre_send_guard_never_deadlocks() {
+    let env = std::sync::Arc::new(Env::new().await);
+    for round in 0..8 {
+        let (alice, _target, follow_nanoid) = pending_follow(&env).await;
+        set_control(
+            &env,
+            &alice.profile_id,
+            "localhost",
+            DomainControlMode::Block,
+        )
+        .await;
+        let claim = {
+            use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+            let mut executor = env.module.database_connection().connection().await.unwrap();
+            env.module
+                .profile_delivery_job_repository()
+                .claim_due(
+                    &mut executor,
+                    "worker-1",
+                    env.now(),
+                    &DeliveryClaimPolicy {
+                        lease_duration: Duration::seconds(120),
+                        limit: 1,
+                        max_attempts: 12,
+                    },
+                )
+                .await
+                .unwrap()
+                .into_iter()
+                .next()
+                .expect("the Follow job is claimable")
+        };
+        let (guard, unfollow) = tokio::join!(
+            tokio::time::timeout(
+                StdDuration::from_secs(30),
+                env.module
+                    .cancel_if_recipient_domain_blocked(&claim, OffsetDateTime::now_utc()),
+            ),
+            tokio::time::timeout(
+                StdDuration::from_secs(30),
+                env.module
+                    .unfollow_profile(&alice.auth, None, &alice.nanoid, &follow_nanoid),
+            ),
+        );
+        let guard = guard.unwrap_or_else(|_| panic!("round {round}: guard timed out"));
+        let unfollow = unfollow.unwrap_or_else(|_| panic!("round {round}: unfollow timed out"));
+        guard.unwrap_or_else(|e| panic!("round {round}: guard failed (deadlock victim?): {e:?}"));
+        if let Err(report) = unfollow {
+            assert!(
+                matches!(report.current_context(), KernelError::NotFound),
+                "round {round}: unfollow failed with {report:?}"
+            );
+        }
+        clear_controls(&env).await;
+    }
+}

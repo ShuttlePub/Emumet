@@ -21,9 +21,11 @@
 //! `ProfileId`, once, before any relation read or write), and holds it until it ends:
 //!
 //! * inbound `Follow` / `Accept` / `Reject` / `Undo`: the receiving Profile;
-//! * outbound `follow` / `block`: the sender, plus the target when it is a local Profile (a
-//!   local -> local Follow therefore locks both Profiles in ascending order, so A -> B and B -> A
-//!   at the same time cannot deadlock);
+//! * outbound `follow` / `block` / `unfollow`: the sender, plus the target when it is a local Profile for
+//!   `follow` / `block` (a local -> local Follow therefore locks both Profiles in ascending order, so
+//!   A -> B and B -> A at the same time cannot deadlock). `unfollow` takes the sender's lock because it
+//!   updates the Follow row and then its delivery job, the reverse of the pre-send guard (job, then
+//!   Follow): without the shared lock those row locks form a cycle and PostgreSQL aborts one side;
 //! * delivery pre-send decision: the sending Profile;
 //! * **domain control writes** (`put_domain_control` / `delete_domain_control`, and D8R's block
 //!   application): the owning Profile, taken right after the owner check ([`lock_profile_for_domain_control_write`]).
@@ -35,7 +37,9 @@
 //! (D8R); the two never interleave into "block + active Follow".
 //!
 //! Lock order across resources: Profile row (`FOR SHARE` owner check) -> relationship advisory
-//! lock(s). Inbound and delivery transactions take only the advisory lock(s), so there is no
+//! lock(s) -> Follow / job rows. `unblock`, `mute` and `unmute` touch neither Follow nor delivery job
+//! rows (one block / mute row each; Follow decisions only read them under the lock), so they do not
+//! take the lock. Inbound and delivery transactions take only the advisory lock(s), so there is no
 //! cycle with the owner check.
 //!
 //! D8R note: a domain block only needs the owning Profile's lock because every Follow transaction

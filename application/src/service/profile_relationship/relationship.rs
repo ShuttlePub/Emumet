@@ -606,6 +606,12 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                             &profile_nanoid,
                         )
                         .await?;
+                        // 関係ロックは所有者確認の直後・Follow の読取り前。配送前の domain 判定は
+                        // 「job -> Follow 世代」の順に更新するので、ここで「Follow 世代 -> job」をロックなしに
+                        // 更新すると行ロックが循環してデッドロックする。
+                        deps.profile_relationship_lock()
+                            .lock_profiles(executor, std::slice::from_ref(&profile_id))
+                            .await?;
                         let now = now();
                         let me = ProfileGraphActor::Local(profile_id.clone());
                         let follows = deps.profile_follow_repository();
