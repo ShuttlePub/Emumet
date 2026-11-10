@@ -7,7 +7,9 @@ mod smtp_mock;
 use super::config::{secret_fingerprint, ProcessEnv, ValueSource};
 use super::smtp::{classify_smtp_failure, SmtpFailure, SmtpStage};
 use super::*;
-use kernel::interfaces::repository::{BotTokenCheck, EmailTransport, TurnstileVerifier};
+use kernel::interfaces::repository::{
+    BotTokenCheck, EmailTransport, SendPurpose, TurnstileVerifier,
+};
 use kernel::prelude::entity::{ProviderOutcome, ProviderResult, ReasonCode, TransportClass};
 use smtp_mock::{MockSmtp, SmtpScript};
 use std::time::Duration;
@@ -900,6 +902,14 @@ async fn live_turnstile_official_test_keys() {
 
 // ---- SMTP: 分類 -------------------------------------------------------------------------------
 
+fn classify(failure: SmtpFailure) -> ProviderResult {
+    classify_smtp_failure(failure, SendPurpose::Registration)
+}
+
+fn classify_canary(failure: SmtpFailure) -> ProviderResult {
+    classify_smtp_failure(failure, SendPurpose::Canary)
+}
+
 #[test]
 fn smtp_failures_are_classified_by_stage_and_nothing_after_the_recipient_changes_readiness() {
     let at = |stage, code: u16| SmtpFailure {
@@ -922,25 +932,13 @@ fn smtp_failures_are_classified_by_stage_and_nothing_after_the_recipient_changes
     // 宛先を提示する前 (接続・認証・MAIL FROM) だけが provider の障害を示せる。
     for stage in [SmtpStage::Connect, SmtpStage::Auth, SmtpStage::MailFrom] {
         for status in [421, 450, 451, 452] {
-            assert_eq!(
-                classify_smtp_failure(at(stage, status)),
-                transient,
-                "{stage:?} {status}"
-            );
+            assert_eq!(classify(at(stage, status)), transient, "{stage:?} {status}");
         }
         for status in [530, 534, 535, 538] {
-            assert_eq!(
-                classify_smtp_failure(at(stage, status)),
-                auth,
-                "{stage:?} {status}"
-            );
+            assert_eq!(classify(at(stage, status)), auth, "{stage:?} {status}");
         }
         for status in [500, 501, 502, 503, 504, 521, 550, 551, 552, 553, 554, 555] {
-            assert_eq!(
-                classify_smtp_failure(at(stage, status)),
-                permanent,
-                "{stage:?} {status}"
-            );
+            assert_eq!(classify(at(stage, status)), permanent, "{stage:?} {status}");
         }
     }
     // RCPT コマンド送信以降は、どのコードでも attempt_rejected (readiness の根拠にしない)。
@@ -948,7 +946,7 @@ fn smtp_failures_are_classified_by_stage_and_nothing_after_the_recipient_changes
         for status in [
             421, 450, 451, 452, 500, 501, 503, 530, 535, 550, 551, 552, 553, 554, 555,
         ] {
-            let result = classify_smtp_failure(at(stage, status));
+            let result = classify(at(stage, status));
             assert_eq!(
                 result.outcome,
                 ProviderOutcome::AttemptRejected,
@@ -984,7 +982,7 @@ fn smtp_failures_are_classified_by_stage_and_nothing_after_the_recipient_changes
             },
         ] {
             assert_eq!(
-                classify_smtp_failure(failure).outcome,
+                classify(failure).outcome,
                 ProviderOutcome::AttemptRejected,
                 "{failure:?}"
             );
@@ -993,7 +991,7 @@ fn smtp_failures_are_classified_by_stage_and_nothing_after_the_recipient_changes
     // 宛先提示前の接続失敗・timeout は一時障害、TLS・client の不備は設定不正。
     for stage in [SmtpStage::Connect, SmtpStage::Auth, SmtpStage::MailFrom] {
         assert_eq!(
-            classify_smtp_failure(SmtpFailure {
+            classify(SmtpFailure {
                 stage,
                 ..SmtpFailure::default()
             }),
@@ -1003,7 +1001,7 @@ fn smtp_failures_are_classified_by_stage_and_nothing_after_the_recipient_changes
             )
         );
         assert_eq!(
-            classify_smtp_failure(SmtpFailure {
+            classify(SmtpFailure {
                 stage,
                 timeout: true,
                 ..SmtpFailure::default()
@@ -1011,7 +1009,7 @@ fn smtp_failures_are_classified_by_stage_and_nothing_after_the_recipient_changes
             ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
         );
         assert_eq!(
-            classify_smtp_failure(SmtpFailure {
+            classify(SmtpFailure {
                 stage,
                 tls: true,
                 ..SmtpFailure::default()
@@ -1022,7 +1020,7 @@ fn smtp_failures_are_classified_by_stage_and_nothing_after_the_recipient_changes
             )
         );
         assert_eq!(
-            classify_smtp_failure(SmtpFailure {
+            classify(SmtpFailure {
                 stage,
                 client: true,
                 ..SmtpFailure::default()
@@ -1052,7 +1050,9 @@ fn script_with_auth() -> SmtpScript {
 async fn code_is_actually_sent_over_smtp_and_only_accepted_is_reported() {
     let server = MockSmtp::start(script_with_auth()).await;
     let transport = transport_for(&server).await;
-    let result = transport.send_code("Alice@Example.com", "12345678").await;
+    let result = transport
+        .send_code("Alice@Example.com", "12345678", SendPurpose::Registration)
+        .await;
     // SMTP 250 は受理 (Accepted) であって所有確認・business success ではない。
     assert_eq!(
         result,
@@ -1080,7 +1080,9 @@ async fn smtp_authentication_failure_is_configuration_invalid() {
     .await;
     let transport = transport_for(&server).await;
     assert_eq!(
-        transport.send_code("alice@example.com", "12345678").await,
+        transport
+            .send_code("alice@example.com", "12345678", SendPurpose::Registration)
+            .await,
         ProviderResult::configuration_invalid(
             ReasonCode::SmtpAuthFailed,
             TransportClass::SmtpAuthRejected
@@ -1105,7 +1107,9 @@ async fn smtp_recipient_rejection_is_an_attempt_rejection_not_a_provider_failure
     .await;
     let transport = transport_for(&server).await;
     assert_eq!(
-        transport.send_code("ghost@example.com", "12345678").await,
+        transport
+            .send_code("ghost@example.com", "12345678", SendPurpose::Registration)
+            .await,
         ProviderResult::attempt_rejected(
             ReasonCode::RecipientRejected,
             TransportClass::SmtpPermanent
@@ -1121,7 +1125,9 @@ async fn outcome_of(script: SmtpScript, timeout: Duration) -> (ProviderResult, u
             &smtp_env(server.port()),
             timeout,
         ));
-    let result = transport.send_code("alice@example.com", "12345678").await;
+    let result = transport
+        .send_code("alice@example.com", "12345678", SendPurpose::Registration)
+        .await;
     (result, server.mails().len())
 }
 
@@ -1299,7 +1305,9 @@ async fn smtp_connection_failure_and_timeout_are_temporarily_unavailable() {
         &smtp_env(closed),
     ));
     assert_eq!(
-        transport.send_code("alice@example.com", "12345678").await,
+        transport
+            .send_code("alice@example.com", "12345678", SendPurpose::Registration)
+            .await,
         ProviderResult::temporarily_unavailable(
             ReasonCode::ConnectFailed,
             TransportClass::ConnectFailed
@@ -1322,7 +1330,9 @@ async fn smtp_connection_failure_and_timeout_are_temporarily_unavailable() {
         ));
     let started = std::time::Instant::now();
     assert_eq!(
-        transport.send_code("alice@example.com", "12345678").await,
+        transport
+            .send_code("alice@example.com", "12345678", SendPurpose::Registration)
+            .await,
         ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
     );
     assert!(started.elapsed() < Duration::from_secs(5));
@@ -1333,7 +1343,9 @@ async fn starttls_is_required_so_a_server_without_it_is_a_configuration_failure(
     let server = MockSmtp::start(script_with_auth()).await;
     let env = smtp_env(server.port()).with("REGISTRATION_SMTP_TLS", "starttls");
     let transport = SmtpEmailTransport::new(SmtpSettings::from_source_allowing_plaintext(&env));
-    let result = transport.send_code("alice@example.com", "12345678").await;
+    let result = transport
+        .send_code("alice@example.com", "12345678", SendPurpose::Registration)
+        .await;
     // 平文へ黙って降格して code を送らない。
     assert!(server.mails().is_empty());
     assert_eq!(
@@ -1363,7 +1375,9 @@ async fn unusable_smtp_configuration_never_connects() {
     let server = MockSmtp::start(SmtpScript::default()).await;
     let unconfigured = SmtpEmailTransport::new(SmtpSettings::from_source(&EnvSource::new()));
     assert_eq!(
-        unconfigured.send_code("alice@example.com", "1").await,
+        unconfigured
+            .send_code("alice@example.com", "1", SendPurpose::Registration)
+            .await,
         ProviderResult::configuration_invalid(ReasonCode::NotConfigured, TransportClass::None)
     );
     assert_eq!(
@@ -1372,7 +1386,10 @@ async fn unusable_smtp_configuration_never_connects() {
     );
     let production = SmtpEmailTransport::new(SmtpSettings::from_source(&smtp_env(server.port())));
     assert_eq!(
-        production.send_code("alice@example.com", "1").await.reason,
+        production
+            .send_code("alice@example.com", "1", SendPurpose::Registration)
+            .await
+            .reason,
         ReasonCode::InvalidConfiguration
     );
     assert_eq!(
@@ -1390,7 +1407,9 @@ async fn malformed_recipients_are_rejected_before_any_connection() {
         "a@example.com, b@example.com",
         "not-an-address",
     ] {
-        let result = transport.send_code(bad, "12345678").await;
+        let result = transport
+            .send_code(bad, "12345678", SendPurpose::Registration)
+            .await;
         assert_eq!(result.outcome, ProviderOutcome::AttemptRejected, "{bad:?}");
     }
     assert_eq!(
@@ -1414,7 +1433,9 @@ async fn a_silent_quit_does_not_override_a_delivery_the_server_already_accepted(
     let started = std::time::Instant::now();
     // DATA が受理された後に QUIT へ応答がなくても、送信は成功のまま (全体 timeout に覆されない)。
     assert_eq!(
-        transport.send_code("alice@example.com", "12345678").await,
+        transport
+            .send_code("alice@example.com", "12345678", SendPurpose::Registration)
+            .await,
         ProviderResult::accepted(TransportClass::SmtpAccepted)
     );
     assert_eq!(server.mails().len(), 1);
@@ -1422,6 +1443,140 @@ async fn a_silent_quit_does_not_override_a_delivery_the_server_already_accepted(
     // probe も同様 (NOOP 成功の後の QUIT 無応答で結果が変わらない)。
     assert_eq!(
         transport.probe_connection().await,
+        ProviderResult::accepted(TransportClass::SmtpAccepted)
+    );
+}
+
+#[test]
+fn canary_delivery_failures_are_provider_failures_at_every_stage() {
+    // 管理者 canary は固定の承認済み宛先なので、RCPT・DATA・timeout・切断も provider の障害として分類する
+    // (公開要求ではこれらを attempt_rejected にして観測から除外する)。
+    let at = |stage, code: u16| SmtpFailure {
+        stage,
+        code: Some(code),
+        ..SmtpFailure::default()
+    };
+    for stage in [SmtpStage::Rcpt, SmtpStage::Data] {
+        for status in [421, 450, 451, 452] {
+            assert_eq!(
+                classify_canary(at(stage, status)),
+                ProviderResult::temporarily_unavailable(
+                    ReasonCode::SmtpTransientFailure,
+                    TransportClass::SmtpTransient
+                ),
+                "{stage:?} {status}"
+            );
+            assert_eq!(
+                classify(at(stage, status)).outcome,
+                ProviderOutcome::AttemptRejected,
+                "the same failure is excluded from the observation for a public request"
+            );
+        }
+        for status in [500, 503, 550, 551, 552, 553, 554, 555] {
+            assert_eq!(
+                classify_canary(at(stage, status)),
+                ProviderResult::configuration_invalid(
+                    ReasonCode::SmtpPermanentFailure,
+                    TransportClass::SmtpPermanent
+                ),
+                "{stage:?} {status}"
+            );
+        }
+        assert_eq!(
+            classify_canary(SmtpFailure {
+                stage,
+                timeout: true,
+                ..SmtpFailure::default()
+            }),
+            ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
+        );
+        assert_eq!(
+            classify_canary(SmtpFailure {
+                stage,
+                ..SmtpFailure::default()
+            }),
+            ProviderResult::temporarily_unavailable(
+                ReasonCode::ConnectFailed,
+                TransportClass::ConnectFailed
+            )
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_canary_delivery_failure_after_the_recipient_is_a_provider_failure_over_real_smtp() {
+    let canary = |script: SmtpScript, timeout: Duration| async move {
+        let server = MockSmtp::start(script).await;
+        let transport =
+            SmtpEmailTransport::new(SmtpSettings::from_source_allowing_plaintext_with_timeout(
+                &smtp_env(server.port()),
+                timeout,
+            ));
+        transport
+            .send_code("canary@example.com", "12345678", SendPurpose::Canary)
+            .await
+    };
+    let long = Duration::from_secs(5);
+    for (script, expected) in [
+        (
+            SmtpScript {
+                data_reply: "452 4.2.2 mailbox full".to_string(),
+                ..script_with_auth()
+            },
+            ProviderOutcome::TemporarilyUnavailable,
+        ),
+        (
+            SmtpScript {
+                rcpt_reply: "450 4.2.1 mailbox busy".to_string(),
+                ..script_with_auth()
+            },
+            ProviderOutcome::TemporarilyUnavailable,
+        ),
+        (
+            SmtpScript {
+                rcpt_reply: "550 5.1.1 no such user".to_string(),
+                ..script_with_auth()
+            },
+            ProviderOutcome::ConfigurationInvalid,
+        ),
+        (
+            SmtpScript {
+                data_reply: "554 5.6.0 message rejected".to_string(),
+                ..script_with_auth()
+            },
+            ProviderOutcome::ConfigurationInvalid,
+        ),
+    ] {
+        let result = canary(script, long).await;
+        assert_eq!(result.outcome, expected, "{result:?}");
+    }
+    // RCPT 後に固まる・切断される配送も provider の一時障害。
+    for script in [
+        SmtpScript {
+            silent_on: Some("RCPT TO".to_string()),
+            ..script_with_auth()
+        },
+        SmtpScript {
+            silent_data_end: true,
+            ..script_with_auth()
+        },
+        SmtpScript {
+            close_on: Some("DATA".to_string()),
+            ..script_with_auth()
+        },
+    ] {
+        let label = format!("{script:?}");
+        let result = canary(script, Duration::from_millis(400)).await;
+        assert_eq!(
+            result.outcome,
+            ProviderOutcome::TemporarilyUnavailable,
+            "{label}: {result:?}"
+        );
+    }
+    // 受理された canary は従来どおり Accepted (business success は code の確認 roundtrip だけ)。
+    let accepted = canary(script_with_auth(), long).await;
+    assert_eq!(
+        accepted,
         ProviderResult::accepted(TransportClass::SmtpAccepted)
     );
 }

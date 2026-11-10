@@ -25,7 +25,7 @@ use kernel::interfaces::repository::{
     DependOnRegistrationGateRepository, DependOnRegistrationProtectionPolicy,
     DependOnRegistrationProtectionRepository, DependOnTurnstileVerifier, EmailTransport,
     NewEmailChallenge, ProofVerification, RegistrationFlowDirectory, RegistrationFlowStatus,
-    RegistrationGateRepository, RegistrationProtectionRepository, ReserveOutcome,
+    RegistrationGateRepository, RegistrationProtectionRepository, ReserveOutcome, SendPurpose,
     TurnstileVerifier,
 };
 use kernel::prelude::entity::{
@@ -510,7 +510,7 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
 
             let result = self
                 .email_transport()
-                .send_code(email.as_str(), &code)
+                .send_code(email.as_str(), &code, SendPurpose::Registration)
                 .await;
             // 送信を試みた発行の外部応答は結果によらず同一にする。宛先拒否 (RCPT 550) と宛先依存の
             // 一時拒否 (RCPT 450 など) を公開応答で区別させない (宛先の状態の列挙を防ぐ)。
@@ -884,7 +884,9 @@ pub trait AdminRegistrationProtectionUseCase:
                     })
                 })
                 .await?;
-            let sent = transport.send_code(email.as_str(), &code).await;
+            let sent = transport
+                .send_code(email.as_str(), &code, SendPurpose::Canary)
+                .await;
             if sent.outcome == ProviderOutcome::Accepted {
                 return Ok((
                     sent,

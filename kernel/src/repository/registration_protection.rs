@@ -145,6 +145,17 @@ pub trait DependOnTurnstileVerifier: Sync + Send {
     fn turnstile_verifier(&self) -> &Self::TurnstileVerifier;
 }
 
+/// メール送信の目的。送信失敗を readiness の根拠にしてよいかが目的で変わる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendPurpose {
+    /// 公開要求の登録者宛て。宛先を提示した後 (RCPT 以降) の失敗は宛先に依存し得るので、観測の根拠にしない
+    /// (`attempt_rejected`)。公開応答から先行宛先の状態を判別させないため。
+    Registration,
+    /// 管理者の canary (固定の承認済み宛先)。宛先は固定で攻撃者が選べないので、RCPT/DATA/timeout を含む
+    /// 配送失敗を provider の障害 (一時障害/設定不正) として扱う。
+    Canary,
+}
+
 /// メール送信 (SMTP) adapter のポート。
 pub trait EmailTransport: Sync + Send + 'static {
     fn snapshot(&self) -> ProtectionConfigSnapshot;
@@ -155,7 +166,12 @@ pub trait EmailTransport: Sync + Send + 'static {
     /// code を含むメールを送る。成功は `Accepted` (SMTP 受理) までで所有確認ではない。
     /// 宛先拒否 (550 等) は `AttemptRejected`、認証・設定不正は `ConfigurationInvalid`、
     /// 接続失敗・timeout・4xx は `TemporarilyUnavailable`。code・本文・secret はログに出さない。
-    fn send_code(&self, to: &str, code: &str) -> impl Future<Output = ProviderResult> + Send;
+    fn send_code(
+        &self,
+        to: &str,
+        code: &str,
+        purpose: SendPurpose,
+    ) -> impl Future<Output = ProviderResult> + Send;
 
     /// メールを送らずに接続・認証だけ確認する probe (成功は `Accepted`)。
     fn probe_connection(&self) -> impl Future<Output = ProviderResult> + Send;

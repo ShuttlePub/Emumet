@@ -64,8 +64,10 @@ struct FakeEmail {
     snapshot: Arc<Mutex<ProtectionConfigSnapshot>>,
     canary: Option<String>,
     send: Arc<Mutex<ProviderResult>>,
+    canary_send: Arc<Mutex<ProviderResult>>,
     probe: Arc<Mutex<ProviderResult>>,
     sent: Arc<Mutex<Vec<(String, String)>>>,
+    purposes: Arc<Mutex<Vec<SendPurpose>>>,
 }
 
 impl EmailTransport for FakeEmail {
@@ -77,8 +79,12 @@ impl EmailTransport for FakeEmail {
         self.canary.clone()
     }
 
-    async fn send_code(&self, to: &str, code: &str) -> ProviderResult {
-        let result = *self.send.lock().unwrap();
+    async fn send_code(&self, to: &str, code: &str, purpose: SendPurpose) -> ProviderResult {
+        self.purposes.lock().unwrap().push(purpose);
+        let result = match purpose {
+            SendPurpose::Registration => *self.send.lock().unwrap(),
+            SendPurpose::Canary => *self.canary_send.lock().unwrap(),
+        };
         if matches!(
             result.outcome,
             ProviderOutcome::Accepted | ProviderOutcome::BusinessSuccess
@@ -248,8 +254,10 @@ impl Fixture {
                 snapshot: Arc::new(Mutex::new(config(Protection::Email, "e1"))),
                 canary: Some(CANARY.to_string()),
                 send: Arc::new(Mutex::new(accepted())),
+                canary_send: Arc::new(Mutex::new(accepted())),
                 probe: Arc::new(Mutex::new(accepted())),
                 sent: Arc::new(Mutex::new(Vec::new())),
+                purposes: Arc::new(Mutex::new(Vec::new())),
             },
             flows: FakeFlows::default(),
             permission_checker: FakePermissionChecker {
@@ -1468,12 +1476,15 @@ async fn the_public_response_sequence_is_identical_whatever_happens_after_the_re
     // (A への発行の応答と、その後の別宛先 B への発行の応答) から区別できない。結果は実際の SMTP 分類関数で作る。
     use driver::registration_protection::smtp::{classify_smtp_failure, SmtpFailure, SmtpStage};
     let failure = |stage, code: Option<u16>, timeout: bool| {
-        classify_smtp_failure(SmtpFailure {
-            stage,
-            code,
-            timeout,
-            ..SmtpFailure::default()
-        })
+        classify_smtp_failure(
+            SmtpFailure {
+                stage,
+                code,
+                timeout,
+                ..SmtpFailure::default()
+            },
+            SendPurpose::Registration,
+        )
     };
     let mut shapes = Vec::new();
     let mut followups = Vec::new();
@@ -1574,4 +1585,83 @@ async fn a_short_lived_flow_caps_the_challenge_and_the_browser_cookie_is_forward
             .flatten(),
         Some("csrf_token_x=1".to_string())
     );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_canary_delivery_failure_makes_an_operational_email_unhealthy_while_public_failures_do_not(
+) {
+    use driver::registration_protection::smtp::{classify_smtp_failure, SmtpFailure, SmtpStage};
+    let fx = Fixture::new().await;
+    fx.bootstrap_bot().await;
+    fx.bootstrap_email().await;
+    assert!(fx.gate().await.observation.email.is_effective());
+    let failure = SmtpFailure {
+        stage: SmtpStage::Data,
+        code: Some(452),
+        ..SmtpFailure::default()
+    };
+
+    // 公開要求で同じ DATA 452 が起きても、観測は変わらない (attempt レベル)。
+    fx.set_gate_admin_state(AdminState::Open).await;
+    fx.set_flow("flow-1", Duration::hours(1));
+    *fx.module.email.send.lock().unwrap() =
+        classify_smtp_failure(failure, SendPurpose::Registration);
+    fx.module
+        .issue_registration_email_challenge(&fx.issue_request("a@example.com", "flow-1", "s"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::Operational
+    );
+    assert!(fx.gate().await.observation.email.is_effective());
+
+    // 管理者 canary (固定宛先) の配送で DATA 452 になれば、provider の一時障害として記録され、
+    // operational だったメールは非健全 (Unhealthy) へ遷移する。
+    *fx.module.email.canary_send.lock().unwrap() =
+        classify_smtp_failure(failure, SendPurpose::Canary);
+    let report = fx
+        .module
+        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.result.outcome,
+        ProviderOutcome::TemporarilyUnavailable
+    );
+    assert!(report.recorded);
+    assert_eq!(
+        report.readiness.effective.status,
+        ReadinessStatus::TemporarilyUnavailable
+    );
+    assert_eq!(
+        fx.gate().await.observation.email,
+        ProtectionObservation::new(true, ProbeStatus::Unhealthy)
+    );
+    assert!(fx.gate().await.observation.bot.is_effective());
+    assert_eq!(
+        fx.module.email.purposes.lock().unwrap().last().copied(),
+        Some(SendPurpose::Canary)
+    );
+
+    // canary の配送が設定不正 (RCPT 550 = canary 宛先の不備) なら設定喪失として扱う。
+    *fx.module.email.canary_send.lock().unwrap() = classify_smtp_failure(
+        SmtpFailure {
+            stage: SmtpStage::Rcpt,
+            code: Some(550),
+            ..SmtpFailure::default()
+        },
+        SendPurpose::Canary,
+    );
+    let report = fx
+        .module
+        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.readiness.effective.status,
+        ReadinessStatus::ConfigurationInvalid
+    );
+    assert!(!fx.gate().await.observation.email.configured);
 }

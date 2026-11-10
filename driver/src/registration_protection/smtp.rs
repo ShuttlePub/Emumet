@@ -10,7 +10,7 @@ use super::config::{
     derive_generation, explicit_enabled, load_secret, non_empty, secret_fingerprint, Secret,
     SecretError, ValueSource,
 };
-use kernel::interfaces::repository::EmailTransport;
+use kernel::interfaces::repository::{EmailTransport, SendPurpose};
 use kernel::prelude::entity::{
     NormalizedEmail, Protection, ProtectionConfigSnapshot, ProtectionProvider, ProviderResult,
     ReasonCode, TransportClass,
@@ -332,8 +332,9 @@ pub struct SmtpFailure {
     pub client: bool,
 }
 
-/// SMTP 失敗を段階つきで分類する純粋関数。
+/// SMTP 失敗を段階と送信の目的つきで分類する純粋関数。
 ///
+/// **公開要求 (`SendPurpose::Registration`)**:
 /// - **宛先を提示した後 (RCPT コマンド送信以降: RCPT・DATA の全コード、その段階の timeout・切断) の失敗は
 ///   すべて `attempt_rejected`**。応答コードや段階だけでは宛先非依存と保証できず、readiness を変えると
 ///   先行する宛先の状態が後続の公開応答 (202/503) から判別できてしまうため (非列挙契約)。RCPT の 550-554 は
@@ -341,8 +342,14 @@ pub struct SmtpFailure {
 /// - 宛先提示前 (接続・STARTTLS・認証・MAIL FROM) の失敗だけが provider の障害を示せる: timeout・接続失敗・
 ///   4xx は一時障害、TLS 不正・認証失敗 (530/534/535/538)・STARTTLS 非対応・5xx は `configuration_invalid`
 /// - provider の健全性は宛先を伴わない独立 probe と管理者の canary で判定する
-pub fn classify_smtp_failure(failure: SmtpFailure) -> ProviderResult {
-    if matches!(failure.stage, SmtpStage::Rcpt | SmtpStage::Data) {
+///
+/// **管理者 canary (`SendPurpose::Canary`)**: 宛先は固定の承認済み mailbox で攻撃者が選べないので、RCPT・DATA・
+/// timeout・切断を含むすべての段階の失敗を provider の障害として分類する (4xx・timeout・切断は一時障害、
+/// 認証失敗・5xx・設定不備は設定不正。canary 宛先の 550 系も設定不正)
+pub fn classify_smtp_failure(failure: SmtpFailure, purpose: SendPurpose) -> ProviderResult {
+    if purpose == SendPurpose::Registration
+        && matches!(failure.stage, SmtpStage::Rcpt | SmtpStage::Data)
+    {
         let transport = match failure.code {
             _ if failure.timeout => TransportClass::Timeout,
             Some(500..=599) => TransportClass::SmtpPermanent,
@@ -410,17 +417,14 @@ fn failure_of(error: &lettre::transport::smtp::Error, stage: SmtpStage) -> SmtpF
     }
 }
 
-type StageResult<T> = Result<T, ProviderResult>;
-
-fn timeout_result() -> ProviderResult {
-    ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
-}
+/// 段階つきの生の失敗。分類 (観測への反映可否) は送信の目的が決まる呼出し側で行う。
+type StageResult<T> = Result<T, SmtpFailure>;
 
 fn at_stage<T>(
     result: Result<T, lettre::transport::smtp::Error>,
     stage: SmtpStage,
 ) -> StageResult<T> {
-    result.map_err(|error| classify_smtp_failure(failure_of(&error, stage)))
+    result.map_err(|error| failure_of(&error, stage))
 }
 
 impl SmtpSession {
@@ -444,10 +448,10 @@ impl SmtpSession {
         )?;
         if self.mode == SmtpTlsMode::StartTls {
             let Some(tls) = self.tls.clone() else {
-                return Err(classify_smtp_failure(SmtpFailure {
+                return Err(SmtpFailure {
                     client: true,
                     ..SmtpFailure::default()
-                }));
+                });
             };
             // STARTTLS を必須にする。サーバーが提供しなければ平文へ降格せずエラー (client error)。
             at_stage(connection.starttls(tls, &hello).await, SmtpStage::Connect)?;
@@ -471,14 +475,14 @@ impl SmtpSession {
         let work = async {
             let mut connection = self.open().await?;
             let result = Self::deliver(&mut connection, envelope, body, &progress).await;
-            Ok::<_, ProviderResult>((result, connection))
+            Ok::<_, SmtpFailure>((result, connection))
         };
         match tokio::time::timeout(deadline, work).await {
-            Err(_) => Err(classify_smtp_failure(SmtpFailure {
+            Err(_) => Err(SmtpFailure {
                 stage: SmtpStage::from_u8(progress.load(Ordering::SeqCst)),
                 timeout: true,
                 ..SmtpFailure::default()
-            })),
+            }),
             Ok(Err(result)) => Err(result),
             Ok(Ok((result, mut connection))) => {
                 // 切断は best effort。確定済みの結果は QUIT の成否・遅延に影響されない。
@@ -521,10 +525,15 @@ impl SmtpSession {
         let work = async {
             let mut connection = self.open().await?;
             let alive = connection.test_connected().await;
-            Ok::<_, ProviderResult>((alive, connection))
+            Ok::<_, SmtpFailure>((alive, connection))
         };
         let (alive, mut connection) = match tokio::time::timeout(deadline, work).await {
-            Err(_) => return Err(timeout_result()),
+            Err(_) => {
+                return Err(SmtpFailure {
+                    timeout: true,
+                    ..SmtpFailure::default()
+                })
+            }
             Ok(Err(result)) => return Err(result),
             Ok(Ok(done)) => done,
         };
@@ -532,10 +541,7 @@ impl SmtpSession {
         if alive {
             Ok(())
         } else {
-            Err(ProviderResult::temporarily_unavailable(
-                ReasonCode::ConnectFailed,
-                TransportClass::ConnectFailed,
-            ))
+            Err(SmtpFailure::default())
         }
     }
 }
@@ -588,7 +594,7 @@ impl EmailTransport for SmtpEmailTransport {
             .map(|c| c.as_str().to_string())
     }
 
-    async fn send_code(&self, to: &str, code: &str) -> ProviderResult {
+    async fn send_code(&self, to: &str, code: &str, purpose: SendPurpose) -> ProviderResult {
         if let Some(result) = self.unusable() {
             return result;
         }
@@ -631,7 +637,7 @@ impl EmailTransport for SmtpEmailTransport {
             .await
         {
             Ok(()) => ProviderResult::accepted(TransportClass::SmtpAccepted),
-            Err(result) => result,
+            Err(result) => classify_smtp_failure(result, purpose),
         }
     }
 
@@ -647,7 +653,7 @@ impl EmailTransport for SmtpEmailTransport {
         };
         match session.probe(self.settings.deadline).await {
             Ok(()) => ProviderResult::accepted(TransportClass::SmtpAccepted),
-            Err(result) => result,
+            Err(result) => classify_smtp_failure(result, SendPurpose::Canary),
         }
     }
 }
