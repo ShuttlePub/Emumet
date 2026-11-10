@@ -14,6 +14,7 @@ mod profile_follow;
 mod profile_inbound_activity;
 mod profile_mute;
 mod registration_gate;
+mod registration_protection;
 mod remote_account;
 mod webhook_delivery;
 
@@ -33,5 +34,6 @@ pub use self::profile_follow::*;
 pub use self::profile_inbound_activity::*;
 pub use self::profile_mute::*;
 pub use self::registration_gate::*;
+pub use self::registration_protection::*;
 pub use self::remote_account::*;
 pub use self::webhook_delivery::*;

@@ -70,3 +70,98 @@ pub struct KratosIdentity {
     #[serde(default)]
     pub traits: serde_json::Value,
 }
+
+/// Kratos public API で registration flow の実在を確認する (登録前 email challenge を実 flow に束縛するため)。
+///
+/// `GET /self-service/registration/flows?id=` は browser flow だと CSRF cookie を要求し、cookie なしでは
+/// 403 になる (Kratos v1.3.1)。flow は先に読み込まれるので 403 は「存在するが中身を見られない」を意味し、
+/// 期限は不明なので保守的に短い期限 (`UNKNOWN_FLOW_EXPIRY`) を当てる。最終的な flow 束縛の強制は
+/// hook が Kratos の実 context と proof を照合する側 (E15d) の責務。
+#[derive(Clone)]
+pub struct KratosRegistrationFlowDirectory {
+    public_url: String,
+    http_client: Client,
+}
+
+const FLOW_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const UNKNOWN_FLOW_EXPIRY: time::Duration = time::Duration::minutes(10);
+
+#[derive(Deserialize)]
+struct KratosFlowBody {
+    expires_at: Option<String>,
+}
+
+impl KratosRegistrationFlowDirectory {
+    pub fn new(public_url: &str) -> Self {
+        Self {
+            public_url: public_url.trim_end_matches('/').to_string(),
+            http_client: Client::builder()
+                .timeout(FLOW_LOOKUP_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl kernel::interfaces::repository::RegistrationFlowDirectory for KratosRegistrationFlowDirectory {
+    async fn lookup(
+        &self,
+        flow_id: &str,
+    ) -> error_stack::Result<
+        kernel::interfaces::repository::RegistrationFlowStatus,
+        kernel::KernelError,
+    > {
+        use kernel::interfaces::repository::RegistrationFlowStatus;
+        use kernel::KernelError;
+        let response = self
+            .http_client
+            .get(format!(
+                "{}/self-service/registration/flows",
+                self.public_url
+            ))
+            .query(&[("id", flow_id)])
+            .header("accept", "application/json")
+            .send()
+            .await
+            .map_err(|error| {
+                let kind = if error.is_timeout() {
+                    KernelError::Timeout
+                } else {
+                    KernelError::Internal
+                };
+                error_stack::Report::new(kind)
+            })?;
+        let status = response.status();
+        let now = time::OffsetDateTime::now_utc();
+        match status.as_u16() {
+            200 => {
+                let body: KratosFlowBody = response
+                    .json()
+                    .await
+                    .map_err(|_| error_stack::Report::new(KernelError::Internal))?;
+                let expires_at = body
+                    .expires_at
+                    .as_deref()
+                    .and_then(|value| {
+                        time::OffsetDateTime::parse(
+                            value,
+                            &time::format_description::well_known::Rfc3339,
+                        )
+                        .ok()
+                    })
+                    .ok_or_else(|| error_stack::Report::new(KernelError::Internal))?;
+                Ok(if expires_at > now {
+                    RegistrationFlowStatus::Active { expires_at }
+                } else {
+                    RegistrationFlowStatus::NotUsable
+                })
+            }
+            403 => Ok(RegistrationFlowStatus::Active {
+                expires_at: now + UNKNOWN_FLOW_EXPIRY,
+            }),
+            404 | 410 => Ok(RegistrationFlowStatus::NotUsable),
+            _ => Err(error_stack::Report::new(KernelError::Internal)),
+        }
+    }
+}

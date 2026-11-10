@@ -20,7 +20,7 @@ const STATE_COLUMNS: &str = "admin_state, override_active, override_activated_by
     bot_configured, bot_probe, revision, updated_at";
 
 /// 列の文字列値は kernel の serde (snake_case) 表現と一致させ、CHECK 制約と同じ語彙を使う。
-fn to_column<T: Serialize>(value: &T) -> error_stack::Result<String, KernelError> {
+pub(super) fn to_column<T: Serialize>(value: &T) -> error_stack::Result<String, KernelError> {
     match serde_json::to_value(value) {
         Ok(serde_json::Value::String(value)) => Ok(value),
         Ok(other) => Err(Report::new(KernelError::Internal)
@@ -29,7 +29,7 @@ fn to_column<T: Serialize>(value: &T) -> error_stack::Result<String, KernelError
     }
 }
 
-fn from_column<T: DeserializeOwned>(value: &str) -> error_stack::Result<T, KernelError> {
+pub(super) fn from_column<T: DeserializeOwned>(value: &str) -> error_stack::Result<T, KernelError> {
     serde_json::from_value(serde_json::Value::String(value.to_string())).map_err(|error| {
         Report::from(error)
             .change_context(KernelError::Internal)

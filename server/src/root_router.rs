@@ -15,6 +15,9 @@ use crate::route::oauth2::OAuth2Router;
 use crate::route::profile_transfer::ProfileTransferRouter;
 use crate::route::registration_gate::AdminRegistrationGateRouter;
 use crate::route::registration_gate_webhook::AdminRegistrationGateWebhookRouter;
+use crate::route::registration_protection::{
+    AdminRegistrationProtectionRouter, RegistrationEmailRouter,
+};
 use crate::route::report::{AdminReportRouter, ReportRouter};
 use crate::route::signing::SigningRouter;
 #[cfg(feature = "test-mode")]
@@ -43,7 +46,8 @@ pub(crate) fn build_root_router(
                 .route_admin_account()
                 .route_admin_reports()
                 .route_admin_registration_gate()
-                .route_admin_registration_gate_webhook(),
+                .route_admin_registration_gate_webhook()
+                .route_admin_registration_protection(),
         );
 
     let authed_routes = axum::Router::new()
@@ -63,7 +67,8 @@ pub(crate) fn build_root_router(
     let public_routes = axum::Router::new()
         .route_oauth2()
         .route_activitypub()
-        .nest("/ap", axum::Router::new().route_federation());
+        .nest("/ap", axum::Router::new().route_federation())
+        .route_registration_email();
 
     #[cfg(feature = "test-mode")]
     let public_routes = public_routes.route_test_mode();

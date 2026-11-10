@@ -112,6 +112,10 @@ impl Modify for SecurityAddon {
         crate::route::registration_gate_webhook::get_registration_gate_webhook_status,
         crate::route::registration_gate_webhook::send_registration_gate_webhook_test,
         crate::route::registration_gate_webhook::retry_registration_gate_webhooks,
+        crate::route::registration_protection::list_registration_protections,
+        crate::route::registration_protection::verify_registration_protection,
+        crate::route::registration_protection::create_email_challenge,
+        crate::route::registration_protection::confirm_email_challenge,
     ),
     components(schemas(
         crate::schema::account::CreateAccountRequest,
@@ -196,6 +200,17 @@ impl Modify for SecurityAddon {
         crate::schema::registration_gate_webhook::WebhookDeliveryResponse,
         crate::schema::registration_gate_webhook::WebhookStatusResponse,
         crate::schema::registration_gate_webhook::WebhookTestResponse,
+        crate::schema::registration_protection::CreateEmailChallengeRequest,
+        crate::schema::registration_protection::EmailChallengeResponse,
+        crate::schema::registration_protection::ConfirmEmailChallengeRequest,
+        crate::schema::registration_protection::EmailProofResponse,
+        crate::schema::registration_protection::LastCheckResponse,
+        crate::schema::registration_protection::ProtectionReadinessResponse,
+        crate::schema::registration_protection::ProtectionListResponse,
+        crate::schema::registration_protection::VerifyProtectionRequest,
+        crate::schema::registration_protection::ProviderResultResponse,
+        crate::schema::registration_protection::PendingChallengeResponse,
+        crate::schema::registration_protection::VerifyProtectionResponse,
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -212,6 +227,7 @@ impl Modify for SecurityAddon {
         (name = "Organization", description = "Organization account and membership management"),
         (name = "RegistrationGate", description = "Registration readiness gate control plane (admin only). NOTE: E15a is the control plane only. Until the Kratos enforcement unit (E15d) is connected, opening, closing or overriding the gate does NOT block or allow real Kratos registrations; real registration is not protected yet."),
         (name = "RegistrationGateWebhook", description = "External Webhook delivery of registration gate notification events (admin only; E15w). The endpoint URL and the HMAC-SHA256 signing secret are server configuration only (REGISTRATION_WEBHOOK_URL, REGISTRATION_WEBHOOK_SECRET or REGISTRATION_WEBHOOK_SECRET_FILE). When they are unset the Webhook is disabled: nothing is delivered, the status endpoint reports `not_configured`, and the gate is unaffected (this is not an error). Delivery guarantees: at-least-once, so the same event can be delivered more than once (retries, crash recovery, admin retry) and receivers must de-duplicate by the stable event ID (`X-Emumet-Event-Id`); ordering is not guaranteed (order by `occurred_at` if needed). Retries: 408/429/5xx/timeouts/connection failures are retried with exponential backoff and jitter (Retry-After is honored up to a cap) until the attempt or age limit, then the delivery is `failed`; redirects, other 4xx responses and destination-check (SSRF) rejections fail immediately. Failed deliveries are resent only when an admin requests a retry. Webhook trouble never changes the gate state and never creates a new notification event. HTTPS only, no redirects, destinations are checked at connect time and pinned. Receiver documentation: docs/registration-gate-webhook.md."),
+        (name = "RegistrationProtection", description = "Registration protection readiness and pre-registration email proof (E15c). Unauthenticated: POST /api/v1/registration/email-challenges and /confirm (email ownership challenge: code by SMTP, proof only after the code is confirmed; rate limited; bound to flow, email and configuration generation). Admin only: GET /api/v1/admin/registration-gate/protections and POST /api/v1/admin/registration-gate/protections/{protection}/verify (readiness and real verification). Configuration is server-side only (REGISTRATION_TURNSTILE_*, REGISTRATION_SMTP_*, REGISTRATION_EMAIL_*). A protection is operational only while a real verification business success bound to the current configuration generation is fresh; health, HTTP 200 and SMTP 250 alone never make it operational. The production registration hook that consumes proofs and tokens is E15d and is not connected yet. Operations guide: docs/registration-protection-readiness.md."),
     )
 )]
 #[allow(dead_code)] // utoipa OpenApiマクロ内部で使用される

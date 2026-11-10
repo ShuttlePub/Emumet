@@ -90,6 +90,7 @@ Copy `.env.example` to `.env`:
 - `EXPECTED_AUDIENCE` — Expected JWT audience claim (default: account)
 - `REDIS_URL` or `REDIS_HOST` — Redis connection for message queue
 - `REGISTRATION_WEBHOOK_URL` / `REGISTRATION_WEBHOOK_SECRET` (or `REGISTRATION_WEBHOOK_SECRET_FILE`) — registration gate notification Webhook endpoint (HTTPS only) and HMAC-SHA256 signing secret. Both unset = Webhook disabled (not an error). See `docs/registration-gate-webhook.md`
+- `REGISTRATION_TURNSTILE_*` (`SITE_KEY`, `SECRET` or `SECRET_FILE`, `EXPECTED_HOSTNAME` (required), `EXPECTED_ACTION`, `TOKEN_MAX_AGE_SECS`, `ENABLED`) and `REGISTRATION_SMTP_*` / `REGISTRATION_EMAIL_*` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS` = `starttls` (default) or `tls`, `SMTP_USERNAME`, `SMTP_PASSWORD` or `SMTP_PASSWORD_FILE`, `EMAIL_FROM`, `EMAIL_CANARY_ADDRESS`, `EMAIL_ENABLED`) — registration protection providers (Turnstile Siteverify, SMTP). All unset = the protection is `configuration_invalid` (not an error at startup). See `docs/registration-protection-readiness.md`
 
 ### Master Key Password
 

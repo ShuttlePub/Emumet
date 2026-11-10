@@ -92,12 +92,15 @@ async fn main() -> Result<(), StackTrace> {
         .change_context_lazy(|| KernelError::Internal)
         .attach_printable_lazy(|| "Failed to bind to port 8080")?;
 
-    axum::serve(tcp, router.into_make_service())
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await
-        .change_context_lazy(|| KernelError::Internal)?;
+    axum::serve(
+        tcp,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await
+    .change_context_lazy(|| KernelError::Internal)?;
 
     projection_shutdown.trigger();
     if let Some(shutdown) = webhook_shutdown {
