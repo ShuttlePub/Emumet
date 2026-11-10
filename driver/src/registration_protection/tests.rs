@@ -901,7 +901,7 @@ async fn live_turnstile_official_test_keys() {
 // ---- SMTP: 分類 -------------------------------------------------------------------------------
 
 #[test]
-fn smtp_failures_are_classified_by_stage_without_conflating_all_5xx() {
+fn smtp_failures_are_classified_by_stage_and_nothing_after_the_recipient_changes_readiness() {
     let at = |stage, code: u16| SmtpFailure {
         stage,
         code: Some(code),
@@ -909,10 +909,6 @@ fn smtp_failures_are_classified_by_stage_without_conflating_all_5xx() {
     };
     let transient = ProviderResult::temporarily_unavailable(
         ReasonCode::SmtpTransientFailure,
-        TransportClass::SmtpTransient,
-    );
-    let deferred = ProviderResult::attempt_rejected(
-        ReasonCode::RecipientDeferred,
         TransportClass::SmtpTransient,
     );
     let auth = ProviderResult::configuration_invalid(
@@ -923,30 +919,12 @@ fn smtp_failures_are_classified_by_stage_without_conflating_all_5xx() {
         ReasonCode::SmtpPermanentFailure,
         TransportClass::SmtpPermanent,
     );
-    let recipient = ProviderResult::attempt_rejected(
-        ReasonCode::RecipientRejected,
-        TransportClass::SmtpPermanent,
-    );
-    let stages = [
-        SmtpStage::Connect,
-        SmtpStage::Auth,
-        SmtpStage::MailFrom,
-        SmtpStage::Rcpt,
-        SmtpStage::Data,
-    ];
-
-    for stage in stages {
-        // 宛先依存の RCPT 段階の 4xx (421 を除く) は provider の障害ではなく当該 attempt の失敗。
-        // それ以外の段階の 4xx と 421 は宛先に依存しない一時障害。
+    // 宛先を提示する前 (接続・認証・MAIL FROM) だけが provider の障害を示せる。
+    for stage in [SmtpStage::Connect, SmtpStage::Auth, SmtpStage::MailFrom] {
         for status in [421, 450, 451, 452] {
-            let expected = if stage == SmtpStage::Rcpt && status != 421 {
-                deferred
-            } else {
-                transient
-            };
             assert_eq!(
                 classify_smtp_failure(at(stage, status)),
-                expected,
+                transient,
                 "{stage:?} {status}"
             );
         }
@@ -957,61 +935,102 @@ fn smtp_failures_are_classified_by_stage_without_conflating_all_5xx() {
                 "{stage:?} {status}"
             );
         }
-        // 認証以外の 5xx は宛先拒否ではなく設定不正。
-        for status in [500, 501, 502, 503, 504, 521, 555] {
+        for status in [500, 501, 502, 503, 504, 521, 550, 551, 552, 553, 554, 555] {
             assert_eq!(
                 classify_smtp_failure(at(stage, status)),
                 permanent,
                 "{stage:?} {status}"
             );
         }
-        // 宛先拒否になれるのは RCPT 段階の 550-554 だけ (MAIL FROM の「送信者不許可」・DATA・接続・認証の
-        // 550 系は readiness を変えない attempt_rejected にせず、設定不正として扱う)。
-        for status in [550, 551, 552, 553, 554] {
-            let expected = if stage == SmtpStage::Rcpt {
-                recipient
-            } else {
-                permanent
-            };
+    }
+    // RCPT コマンド送信以降は、どのコードでも attempt_rejected (readiness の根拠にしない)。
+    for stage in [SmtpStage::Rcpt, SmtpStage::Data] {
+        for status in [
+            421, 450, 451, 452, 500, 501, 503, 530, 535, 550, 551, 552, 553, 554, 555,
+        ] {
+            let result = classify_smtp_failure(at(stage, status));
             assert_eq!(
-                classify_smtp_failure(at(stage, status)),
-                expected,
+                result.outcome,
+                ProviderOutcome::AttemptRejected,
                 "{stage:?} {status}"
+            );
+            let expected = if stage == SmtpStage::Rcpt && (550..=554).contains(&status) {
+                ReasonCode::RecipientRejected
+            } else {
+                ReasonCode::RecipientDeferred
+            };
+            assert_eq!(result.reason, expected, "{stage:?} {status}");
+        }
+        // timeout・切断・client/tls の各種もその段階では attempt レベル。
+        for failure in [
+            SmtpFailure {
+                stage,
+                timeout: true,
+                ..SmtpFailure::default()
+            },
+            SmtpFailure {
+                stage,
+                ..SmtpFailure::default()
+            },
+            SmtpFailure {
+                stage,
+                client: true,
+                ..SmtpFailure::default()
+            },
+            SmtpFailure {
+                stage,
+                tls: true,
+                ..SmtpFailure::default()
+            },
+        ] {
+            assert_eq!(
+                classify_smtp_failure(failure).outcome,
+                ProviderOutcome::AttemptRejected,
+                "{failure:?}"
             );
         }
     }
-    assert_eq!(
-        classify_smtp_failure(SmtpFailure::default()),
-        ProviderResult::temporarily_unavailable(
-            ReasonCode::ConnectFailed,
-            TransportClass::ConnectFailed
-        )
-    );
-    assert_eq!(
-        classify_smtp_failure(SmtpFailure {
-            timeout: true,
-            ..SmtpFailure::default()
-        }),
-        ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
-    );
-    assert_eq!(
-        classify_smtp_failure(SmtpFailure {
-            tls: true,
-            ..SmtpFailure::default()
-        }),
-        ProviderResult::configuration_invalid(
-            ReasonCode::SmtpTlsFailure,
-            TransportClass::TlsFailed
-        )
-    );
-    assert_eq!(
-        classify_smtp_failure(SmtpFailure {
-            client: true,
-            ..SmtpFailure::default()
-        })
-        .outcome,
-        ProviderOutcome::ConfigurationInvalid
-    );
+    // 宛先提示前の接続失敗・timeout は一時障害、TLS・client の不備は設定不正。
+    for stage in [SmtpStage::Connect, SmtpStage::Auth, SmtpStage::MailFrom] {
+        assert_eq!(
+            classify_smtp_failure(SmtpFailure {
+                stage,
+                ..SmtpFailure::default()
+            }),
+            ProviderResult::temporarily_unavailable(
+                ReasonCode::ConnectFailed,
+                TransportClass::ConnectFailed
+            )
+        );
+        assert_eq!(
+            classify_smtp_failure(SmtpFailure {
+                stage,
+                timeout: true,
+                ..SmtpFailure::default()
+            }),
+            ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
+        );
+        assert_eq!(
+            classify_smtp_failure(SmtpFailure {
+                stage,
+                tls: true,
+                ..SmtpFailure::default()
+            }),
+            ProviderResult::configuration_invalid(
+                ReasonCode::SmtpTlsFailure,
+                TransportClass::TlsFailed
+            )
+        );
+        assert_eq!(
+            classify_smtp_failure(SmtpFailure {
+                stage,
+                client: true,
+                ..SmtpFailure::default()
+            })
+            .outcome,
+            ProviderOutcome::ConfigurationInvalid
+        );
+    }
 }
 
 // ---- SMTP: ローカル SMTP 模擬への実送信 -----------------------------------------------------------
@@ -1095,16 +1114,21 @@ async fn smtp_recipient_rejection_is_an_attempt_rejection_not_a_provider_failure
     assert!(server.mails().is_empty());
 }
 
+async fn outcome_of(script: SmtpScript, timeout: Duration) -> (ProviderResult, usize) {
+    let server = MockSmtp::start(script).await;
+    let transport =
+        SmtpEmailTransport::new(SmtpSettings::from_source_allowing_plaintext_with_timeout(
+            &smtp_env(server.port()),
+            timeout,
+        ));
+    let result = transport.send_code("alice@example.com", "12345678").await;
+    (result, server.mails().len())
+}
+
 #[tokio::test]
-async fn smtp_transient_and_permanent_failures_are_distinguished() {
+async fn failures_before_the_recipient_is_presented_can_signal_a_provider_problem() {
+    let long = Duration::from_secs(5);
     for (script, expected) in [
-        (
-            SmtpScript {
-                rcpt_reply: "451 4.3.0 try again later".to_string(),
-                ..script_with_auth()
-            },
-            ProviderOutcome::AttemptRejected,
-        ),
         (
             SmtpScript {
                 greeting: "421 4.3.2 service not available".to_string(),
@@ -1114,17 +1138,17 @@ async fn smtp_transient_and_permanent_failures_are_distinguished() {
         ),
         (
             SmtpScript {
-                data_reply: "452 4.2.2 mailbox full".to_string(),
+                mail_reply: "450 4.2.1 sender temporarily rejected".to_string(),
                 ..script_with_auth()
             },
             ProviderOutcome::TemporarilyUnavailable,
         ),
+        // MAIL FROM の拒否 (送信者不許可・認証要求) は宛先拒否ではなく設定不正。
         (
             SmtpScript {
                 mail_reply: "553 5.7.1 sender not allowed".to_string(),
                 ..script_with_auth()
             },
-            // MAIL FROM の拒否 (送信者不許可) は宛先拒否ではなく設定不正。
             ProviderOutcome::ConfigurationInvalid,
         ),
         (
@@ -1141,50 +1165,128 @@ async fn smtp_transient_and_permanent_failures_are_distinguished() {
             },
             ProviderOutcome::ConfigurationInvalid,
         ),
-        (
-            SmtpScript {
-                rcpt_reply: "450 4.2.1 mailbox busy".to_string(),
-                ..script_with_auth()
-            },
-            ProviderOutcome::AttemptRejected,
-        ),
-        (
-            SmtpScript {
-                mail_reply: "450 4.2.1 sender temporarily rejected".to_string(),
-                ..script_with_auth()
-            },
-            ProviderOutcome::TemporarilyUnavailable,
-        ),
-        (
-            SmtpScript {
-                rcpt_reply: "550 5.1.1 no such user".to_string(),
-                ..script_with_auth()
-            },
-            ProviderOutcome::AttemptRejected,
-        ),
-        (
-            SmtpScript {
-                data_reply: "554 5.6.0 message rejected".to_string(),
-                ..script_with_auth()
-            },
-            ProviderOutcome::ConfigurationInvalid,
-        ),
-        (
-            SmtpScript {
-                data_reply: "500 5.5.1 command unrecognized".to_string(),
-                ..script_with_auth()
-            },
-            ProviderOutcome::ConfigurationInvalid,
-        ),
     ] {
-        let server = MockSmtp::start(script).await;
-        let result = transport_for(&server)
-            .await
-            .send_code("alice@example.com", "12345678")
-            .await;
+        let (result, mails) = outcome_of(script, long).await;
         assert_eq!(result.outcome, expected, "{result:?}");
-        assert!(server.mails().is_empty());
+        assert_eq!(mails, 0);
     }
+    // MAIL FROM で固まる (宛先提示前の timeout) は一時障害。
+    let (result, _) = outcome_of(
+        SmtpScript {
+            silent_on: Some("MAIL FROM".to_string()),
+            ..script_with_auth()
+        },
+        Duration::from_millis(400),
+    )
+    .await;
+    assert_eq!(
+        result,
+        ProviderResult::temporarily_unavailable(ReasonCode::Timeout, TransportClass::Timeout)
+    );
+}
+
+#[tokio::test]
+async fn every_failure_after_the_recipient_is_presented_is_an_attempt_level_failure() {
+    // RCPT 以降の失敗は、コード・段階・timeout・切断のいずれでも provider の健全性の根拠にしない
+    // (readiness を変えると後続の公開応答から先行宛先の状態が判別できる)。
+    let long = Duration::from_secs(5);
+    for reply in [
+        "421 4.3.2 shutting down",
+        "450 4.2.1 mailbox busy",
+        "451 4.3.0 try again later",
+        "452 4.2.2 mailbox full",
+        "500 5.5.1 command unrecognized",
+        "503 5.5.1 bad sequence",
+        "550 5.1.1 no such user",
+        "554 5.7.1 rejected",
+    ] {
+        let (result, mails) = outcome_of(
+            SmtpScript {
+                rcpt_reply: reply.to_string(),
+                ..script_with_auth()
+            },
+            long,
+        )
+        .await;
+        assert_eq!(
+            result.outcome,
+            ProviderOutcome::AttemptRejected,
+            "RCPT {reply}: {result:?}"
+        );
+        assert_eq!(mails, 0);
+    }
+    for reply in [
+        "421 4.3.2 shutting down",
+        "451 4.3.0 try again later",
+        "452 4.2.2 mailbox full",
+        "500 5.5.1 command unrecognized",
+        "554 5.6.0 message rejected",
+    ] {
+        let (result, mails) = outcome_of(
+            SmtpScript {
+                data_reply: reply.to_string(),
+                ..script_with_auth()
+            },
+            long,
+        )
+        .await;
+        assert_eq!(
+            result.outcome,
+            ProviderOutcome::AttemptRejected,
+            "DATA {reply}: {result:?}"
+        );
+        assert_eq!(mails, 0);
+    }
+    let short = Duration::from_millis(400);
+    for script in [
+        SmtpScript {
+            silent_on: Some("RCPT TO".to_string()),
+            ..script_with_auth()
+        },
+        SmtpScript {
+            silent_on: Some("DATA".to_string()),
+            ..script_with_auth()
+        },
+        SmtpScript {
+            silent_data_end: true,
+            ..script_with_auth()
+        },
+        SmtpScript {
+            close_on: Some("RCPT TO".to_string()),
+            ..script_with_auth()
+        },
+        SmtpScript {
+            close_on: Some("DATA".to_string()),
+            ..script_with_auth()
+        },
+    ] {
+        let label = format!("{script:?}");
+        let (result, _) = outcome_of(script, short).await;
+        assert_eq!(
+            result.outcome,
+            ProviderOutcome::AttemptRejected,
+            "{label}: {result:?}"
+        );
+    }
+    // 550 は宛先拒否、それ以外は宛先提示後の失敗として区別する (どちらも観測は変えない)。
+    let (rejected, _) = outcome_of(
+        SmtpScript {
+            rcpt_reply: "550 5.1.1 no such user".to_string(),
+            ..script_with_auth()
+        },
+        long,
+    )
+    .await;
+    assert_eq!(rejected.reason, ReasonCode::RecipientRejected);
+    let (deferred, _) = outcome_of(
+        SmtpScript {
+            rcpt_reply: "450 4.2.1 mailbox busy".to_string(),
+            ..script_with_auth()
+        },
+        long,
+    )
+    .await;
+    assert_eq!(deferred.reason, ReasonCode::RecipientDeferred);
 }
 
 #[tokio::test]

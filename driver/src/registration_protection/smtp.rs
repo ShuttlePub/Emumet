@@ -25,6 +25,7 @@ use lettre::transport::smtp::commands::{Data, Mail, Rcpt};
 use lettre::transport::smtp::extension::ClientId;
 use lettre::Message;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 pub const ENV_ENABLED: &str = "REGISTRATION_EMAIL_ENABLED";
@@ -309,6 +310,18 @@ pub enum SmtpStage {
     Data,
 }
 
+impl SmtpStage {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Auth,
+            2 => Self::MailFrom,
+            3 => Self::Rcpt,
+            4 => Self::Data,
+            _ => Self::Connect,
+        }
+    }
+}
+
 /// SMTP 失敗の観測 (分類の純粋関数の入力)。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SmtpFailure {
@@ -321,11 +334,26 @@ pub struct SmtpFailure {
 
 /// SMTP 失敗を段階つきで分類する純粋関数。
 ///
-/// - timeout・接続失敗・RCPT 以外の 4xx・421 は一時障害
-/// - TLS 不正・認証失敗 (530/534/535/538)・STARTTLS 非対応などの設定不正は `configuration_invalid`
-/// - 宛先依存の失敗 (**RCPT 段階の 550-554 と、421 以外の 4xx**) だけが `attempt_rejected`。MAIL FROM (送信者不許可) や
-///   DATA の 5xx、その他の 5xx は宛先拒否ではなく `configuration_invalid`
+/// - **宛先を提示した後 (RCPT コマンド送信以降: RCPT・DATA の全コード、その段階の timeout・切断) の失敗は
+///   すべて `attempt_rejected`**。応答コードや段階だけでは宛先非依存と保証できず、readiness を変えると
+///   先行する宛先の状態が後続の公開応答 (202/503) から判別できてしまうため (非列挙契約)。RCPT の 550-554 は
+///   `RecipientRejected`、それ以外は `RecipientDeferred`
+/// - 宛先提示前 (接続・STARTTLS・認証・MAIL FROM) の失敗だけが provider の障害を示せる: timeout・接続失敗・
+///   4xx は一時障害、TLS 不正・認証失敗 (530/534/535/538)・STARTTLS 非対応・5xx は `configuration_invalid`
+/// - provider の健全性は宛先を伴わない独立 probe と管理者の canary で判定する
 pub fn classify_smtp_failure(failure: SmtpFailure) -> ProviderResult {
+    if matches!(failure.stage, SmtpStage::Rcpt | SmtpStage::Data) {
+        let transport = match failure.code {
+            _ if failure.timeout => TransportClass::Timeout,
+            Some(500..=599) => TransportClass::SmtpPermanent,
+            _ => TransportClass::SmtpTransient,
+        };
+        let reason = match failure.code {
+            Some(550..=554) if failure.stage == SmtpStage::Rcpt => ReasonCode::RecipientRejected,
+            _ => ReasonCode::RecipientDeferred,
+        };
+        return ProviderResult::attempt_rejected(reason, transport);
+    }
     if failure.timeout {
         return ProviderResult::temporarily_unavailable(
             ReasonCode::Timeout,
@@ -339,15 +367,6 @@ pub fn classify_smtp_failure(failure: SmtpFailure) -> ProviderResult {
         );
     }
     match failure.code {
-        // RCPT 段階の 4xx (421 を除く) は宛先依存 (greylisting・mailbox busy など)。provider の障害として
-        // readiness を変えると、先行する宛先の状態が後続要求の応答から観測できてしまうので、当該 attempt の
-        // 失敗にとどめる。接続・STARTTLS・認証・MAIL FROM・DATA の失敗や 421 は宛先に依存しない障害。
-        Some(400..=499) if failure.stage == SmtpStage::Rcpt && failure.code != Some(421) => {
-            ProviderResult::attempt_rejected(
-                ReasonCode::RecipientDeferred,
-                TransportClass::SmtpTransient,
-            )
-        }
         Some(400..=499) => ProviderResult::temporarily_unavailable(
             ReasonCode::SmtpTransientFailure,
             TransportClass::SmtpTransient,
@@ -355,10 +374,6 @@ pub fn classify_smtp_failure(failure: SmtpFailure) -> ProviderResult {
         Some(530 | 534 | 535 | 538) => ProviderResult::configuration_invalid(
             ReasonCode::SmtpAuthFailed,
             TransportClass::SmtpAuthRejected,
-        ),
-        Some(550..=554) if failure.stage == SmtpStage::Rcpt => ProviderResult::attempt_rejected(
-            ReasonCode::RecipientRejected,
-            TransportClass::SmtpPermanent,
         ),
         Some(500..=599) => ProviderResult::configuration_invalid(
             ReasonCode::SmtpPermanentFailure,
@@ -450,13 +465,20 @@ impl SmtpSession {
 
     /// 全体の期限 (`deadline`) は接続から DATA 受理までに掛け、QUIT は含めない。
     async fn send(&self, envelope: &Envelope, body: &[u8], deadline: Duration) -> StageResult<()> {
+        // 最後に開始した段階。全体期限が切れたとき、宛先を提示した後 (RCPT 以降) の timeout は宛先に
+        // 依存し得るので、段階つきで分類する。
+        let progress = AtomicU8::new(SmtpStage::Connect as u8);
         let work = async {
             let mut connection = self.open().await?;
-            let result = Self::deliver(&mut connection, envelope, body).await;
+            let result = Self::deliver(&mut connection, envelope, body, &progress).await;
             Ok::<_, ProviderResult>((result, connection))
         };
         match tokio::time::timeout(deadline, work).await {
-            Err(_) => Err(timeout_result()),
+            Err(_) => Err(classify_smtp_failure(SmtpFailure {
+                stage: SmtpStage::from_u8(progress.load(Ordering::SeqCst)),
+                timeout: true,
+                ..SmtpFailure::default()
+            })),
             Ok(Err(result)) => Err(result),
             Ok(Ok((result, mut connection))) => {
                 // 切断は best effort。確定済みの結果は QUIT の成否・遅延に影響されない。
@@ -470,13 +492,17 @@ impl SmtpSession {
         connection: &mut AsyncSmtpConnection,
         envelope: &Envelope,
         body: &[u8],
+        progress: &AtomicU8,
     ) -> StageResult<()> {
+        progress.store(SmtpStage::MailFrom as u8, Ordering::SeqCst);
         at_stage(
             connection
                 .command(Mail::new(envelope.from().cloned(), vec![]))
                 .await,
             SmtpStage::MailFrom,
         )?;
+        // RCPT コマンドを送った時点で宛先を提示したことになる。
+        progress.store(SmtpStage::Rcpt as u8, Ordering::SeqCst);
         for recipient in envelope.to() {
             at_stage(
                 connection
@@ -485,6 +511,7 @@ impl SmtpSession {
                 SmtpStage::Rcpt,
             )?;
         }
+        progress.store(SmtpStage::Data as u8, Ordering::SeqCst);
         at_stage(connection.command(Data).await, SmtpStage::Data)?;
         at_stage(connection.message(body).await, SmtpStage::Data)?;
         Ok(())

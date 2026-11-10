@@ -21,6 +21,12 @@ pub struct SmtpScript {
     pub silent: bool,
     /// true なら QUIT に応答しない (確定済みの結果を QUIT が覆さないことの試験)。
     pub silent_quit: bool,
+    /// 指定した接頭辞 (`MAIL FROM` / `RCPT TO` / `DATA`) のコマンドに応答せず固まる。
+    pub silent_on: Option<String>,
+    /// 指定した接頭辞のコマンドを受けたら応答せずに接続を切る。
+    pub close_on: Option<String>,
+    /// true なら DATA の本文を受け取った後に応答しない。
+    pub silent_data_end: bool,
 }
 
 impl Default for SmtpScript {
@@ -34,6 +40,9 @@ impl Default for SmtpScript {
             data_reply: "250 queued".to_string(),
             silent: false,
             silent_quit: false,
+            silent_on: None,
+            close_on: None,
+            silent_data_end: false,
         }
     }
 }
@@ -123,6 +132,17 @@ async fn handle(
         }
         let command = line.trim_end().to_string();
         let upper = command.to_ascii_uppercase();
+        if let Some(prefix) = &script.close_on {
+            if upper.starts_with(prefix.as_str()) {
+                return Ok(());
+            }
+        }
+        if let Some(prefix) = &script.silent_on {
+            if upper.starts_with(prefix.as_str()) {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                return Ok(());
+            }
+        }
         let reply = if upper.starts_with("EHLO") || upper.starts_with("HELO") {
             let mut reply = String::from("250-mock\r\n");
             if script.credentials.is_some() {
@@ -173,6 +193,10 @@ async fn handle(
                     break;
                 }
                 data.push_str(&line);
+            }
+            if script.silent_data_end {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                return Ok(());
             }
             if script.data_reply.starts_with('2') {
                 current.data = data;

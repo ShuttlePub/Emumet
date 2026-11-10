@@ -1462,21 +1462,32 @@ async fn bot_token_verification_records_provider_outcomes_but_not_user_rejection
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn the_public_response_sequence_is_identical_for_accepted_rcpt_550_and_rcpt_450() {
-    // 受理・宛先拒否 (RCPT 550)・宛先依存の一時拒否 (RCPT 450) を、公開応答 (発行結果) から区別できない。
+async fn the_public_response_sequence_is_identical_whatever_happens_after_the_recipient_is_presented(
+) {
+    // 宛先を提示した後の結果 (受理・RCPT 550/450/421・DATA 4xx/5xx・RCPT 後の timeout) を、公開応答の列
+    // (A への発行の応答と、その後の別宛先 B への発行の応答) から区別できない。結果は実際の SMTP 分類関数で作る。
+    use driver::registration_protection::smtp::{classify_smtp_failure, SmtpFailure, SmtpStage};
+    let failure = |stage, code: Option<u16>, timeout: bool| {
+        classify_smtp_failure(SmtpFailure {
+            stage,
+            code,
+            timeout,
+            ..SmtpFailure::default()
+        })
+    };
     let mut shapes = Vec::new();
     let mut followups = Vec::new();
     for (index, result) in [
         accepted(),
-        ProviderResult::attempt_rejected(
-            ReasonCode::RecipientRejected,
-            TransportClass::SmtpPermanent,
-        ),
-        // RCPT 450 (宛先依存の一時拒否) は provider の障害ではなく当該 attempt の失敗。
-        ProviderResult::attempt_rejected(
-            ReasonCode::RecipientDeferred,
-            TransportClass::SmtpTransient,
-        ),
+        failure(SmtpStage::Rcpt, Some(550), false),
+        failure(SmtpStage::Rcpt, Some(450), false),
+        failure(SmtpStage::Rcpt, Some(421), false),
+        failure(SmtpStage::Data, Some(452), false),
+        failure(SmtpStage::Data, Some(554), false),
+        failure(SmtpStage::Data, Some(500), false),
+        failure(SmtpStage::Rcpt, None, true),
+        failure(SmtpStage::Data, None, true),
+        failure(SmtpStage::Rcpt, None, false),
     ]
     .into_iter()
     .enumerate()

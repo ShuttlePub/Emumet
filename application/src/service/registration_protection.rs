@@ -514,7 +514,10 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
                 .await;
             // 送信を試みた発行の外部応答は結果によらず同一にする。宛先拒否 (RCPT 550) と宛先依存の
             // 一時拒否 (RCPT 450 など) を公開応答で区別させない (宛先の状態の列挙を防ぐ)。
-            // provider の障害は内部の readiness に記録し、以降の発行を止める (宛先に依存しない 503)。
+            // readiness に記録するのは、宛先を提示する前の段階 (接続・STARTTLS・認証・MAIL FROM) の失敗だけ。
+            // 宛先提示後 (RCPT 以降) の失敗は adapter が必ず attempt_rejected にするので、公開要求の失敗を
+            // readiness に積み上げて後続の応答 (202/503) から先行宛先の状態が分かることはない。
+            // provider の健全性は宛先を伴わない独立 probe と管理者の canary で判定する。
             if !matches!(
                 result.outcome,
                 ProviderOutcome::Accepted | ProviderOutcome::BusinessSuccess
