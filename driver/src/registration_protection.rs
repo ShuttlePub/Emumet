@@ -10,8 +10,8 @@ pub mod turnstile;
 pub use self::config::{derive_generation, secret_fingerprint, EnvSource, ProcessEnv, ValueSource};
 pub use self::smtp::{SmtpEmailTransport, SmtpSettings, SmtpTlsMode};
 pub use self::turnstile::{
-    classify_siteverify, HttpTurnstileVerifier, SiteverifyExpectation, TurnstileNetworkSettings,
-    TurnstileSettings,
+    classify_probe_response, classify_siteverify, HttpTurnstileVerifier, SiteverifyExpectation,
+    TurnstileNetworkSettings, TurnstileSettings,
 };
 
 #[cfg(test)]

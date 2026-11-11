@@ -411,6 +411,101 @@ fn fixture_case(name: &str) -> (u16, Vec<u8>) {
     )
 }
 
+/// 入力 token の無い管理者検証 (d15-q05) は、有効でないダミー token への応答で secret の有効性を判定する。
+/// E15b の実応答 fixture: token 起因の拒否 = secret は有効 (Accepted になる attempt_rejected のまま)、
+/// `invalid-input-secret` / `missing-input-secret` = 設定不正。HTTP 200 / 400 のどちらでも本文で判定する。
+#[test]
+fn the_negative_probe_decides_secret_validity_from_real_siteverify_responses() {
+    let probe = |name: &str| {
+        let (status, body) = fixture_case(name);
+        classify_probe_response(status, &body, &expectation(), OffsetDateTime::now_utc())
+    };
+    for name in ["test_reject", "test_duplicate", "empty_response"] {
+        assert_eq!(
+            probe(name).outcome,
+            ProviderOutcome::AttemptRejected,
+            "{name}"
+        );
+    }
+    assert_eq!(
+        probe("invalid_secret"),
+        ProviderResult::configuration_invalid(ReasonCode::InvalidSecret, TransportClass::Http4xx)
+    );
+    assert_eq!(
+        probe("empty_secret"),
+        ProviderResult::configuration_invalid(ReasonCode::MissingSecret, TransportClass::Http4xx)
+    );
+    // success:false の HTTP 200 でも、secret の有効性を示さない応答 (bad-request だけ・未知の code・本文なし) は
+    // 準備済みの根拠にならない。
+    for body in [
+        failure_body(&["bad-request"]),
+        failure_body(&[]),
+        failure_body(&["something-new"]),
+        // 既知の secret 有効 code に未知の code が混在しても準備済みにならない。
+        failure_body(&["invalid-input-response", "something-new"]),
+        failure_body(&["something-new", "timeout-or-duplicate"]),
+        failure_body(&["bad-request", "something-new"]),
+        "not json".to_string(),
+        "{}".to_string(),
+    ] {
+        let result = classify_probe_response(
+            200,
+            body.as_bytes(),
+            &expectation(),
+            OffsetDateTime::now_utc(),
+        );
+        assert_eq!(
+            result.outcome,
+            ProviderOutcome::TemporarilyUnavailable,
+            "{body}"
+        );
+    }
+    // secret の error は他の code が混在しても設定不正が優先 (準備済みにならない)。
+    for codes in [
+        &["invalid-input-response", "invalid-input-secret"][..],
+        &["something-new", "missing-input-secret"][..],
+    ] {
+        assert_eq!(
+            classify_probe_response(
+                200,
+                failure_body(codes).as_bytes(),
+                &expectation(),
+                OffsetDateTime::now_utc(),
+            )
+            .outcome,
+            ProviderOutcome::ConfigurationInvalid,
+            "{codes:?}"
+        );
+    }
+    // 既知の拒否 code の組み合わせ (bad-request の併記を含む) は secret 有効の証拠のまま。
+    for codes in [
+        &["invalid-input-response", "bad-request"][..],
+        &["missing-input-response", "invalid-input-response"][..],
+    ] {
+        assert_eq!(
+            classify_probe_response(
+                200,
+                failure_body(codes).as_bytes(),
+                &expectation(),
+                OffsetDateTime::now_utc(),
+            )
+            .outcome,
+            ProviderOutcome::AttemptRejected,
+            "{codes:?}"
+        );
+    }
+    // 一時障害はそのまま。
+    for (status, outcome) in [
+        (429, ProviderOutcome::TemporarilyUnavailable),
+        (503, ProviderOutcome::TemporarilyUnavailable),
+    ] {
+        assert_eq!(
+            classify_probe_response(status, b"", &expectation(), OffsetDateTime::now_utc()).outcome,
+            outcome
+        );
+    }
+}
+
 #[test]
 fn real_siteverify_responses_from_e15b_are_classified() {
     let fixture = provider_fixture();
@@ -900,6 +995,16 @@ async fn negative_probe_confirms_the_secret_but_is_never_a_business_success() {
     let result = verifier(&server).probe_secret().await;
     assert_eq!(result.outcome, ProviderOutcome::Accepted);
 
+    // bad-request だけの応答は secret の有効性を示さないので、準備済みの根拠にしない。
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(failure_body(&["bad-request"])))
+        .mount(&server)
+        .await;
+    assert_eq!(
+        verifier(&server).probe_secret().await.outcome,
+        ProviderOutcome::TemporarilyUnavailable
+    );
     // secret 不正・一時障害はそのまま検出する。
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -949,6 +1054,20 @@ async fn live_turnstile_official_test_keys() {
     );
     assert_eq!(pass.probe_secret().await.outcome, ProviderOutcome::Accepted);
     let reject = HttpTurnstileVerifier::new(settings("2x0000000000000000000000000000000AA"));
+    // 入力 token の無い検証 (有効でないダミー token): 有効な secret は invalid-input-response で
+    // token だけが拒否される → secret 有効 (Accepted。管理者検証で business success に昇格する)。
+    assert_eq!(
+        reject.probe_secret().await.outcome,
+        ProviderOutcome::Accepted,
+        "official always-fail key: the secret is valid, only the dummy token is rejected"
+    );
+    assert_eq!(
+        HttpTurnstileVerifier::new(settings("3x0000000000000000000000000000000AA"))
+            .probe_secret()
+            .await
+            .outcome,
+        ProviderOutcome::Accepted
+    );
     assert_provider_class!(
         reject.verify(&check(dummy)).await,
         ProviderResult::attempt_rejected(ReasonCode::TokenRejected, TransportClass::Http2xx)
@@ -963,6 +1082,8 @@ async fn live_turnstile_official_test_keys() {
         invalid.verify(&check(dummy)).await,
         ProviderResult::configuration_invalid(ReasonCode::InvalidSecret, TransportClass::Http4xx)
     );
+    // 検証順序は公式に保証されないため実測で確認する: 無効な secret は probe と同じダミー token でも
+    // invalid-input-secret になり、response エラーに隠れて Accepted になることはない。
     assert_eq!(
         invalid.probe_secret().await.outcome,
         ProviderOutcome::ConfigurationInvalid

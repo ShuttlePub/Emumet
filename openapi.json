@@ -1937,7 +1937,7 @@
         "tags": [
           "RegistrationProtection"
         ],
-        "description": "Run one real verification now (bootstrap or re-verification) and record both the business result and the transport classification. bot: with `token` (a valid token issued by the widget for the configured site key) the real Siteverify business result decides (success must match the expected hostname/action and be fresh); without it only a negative probe runs (confirms the secret is accepted, never makes the protection operational). email: without `challenge_id`/`code` an SMTP connection/auth probe runs and a code is sent to the approved canary mailbox (REGISTRATION_EMAIL_CANARY_ADDRESS; `canary_not_configured` leaves the protection unverified); with `challenge_id` and `code` the canary roundtrip is confirmed, which is the business success. A canary confirmation never issues a registration proof. A user-attributable rejection (`attempt_rejected`, for example a wrong code or an invalid token) is reported but not recorded and does not change the gate observation. Recorded results update the registration gate observation through the E15a use case.",
+        "description": "Run one real verification now (initial bootstrap or re-verification) with no input, and record both the business result and the transport classification. The request body is an empty object `{}`; unknown fields (the removed `token` / `challenge_id` / `code`) are rejected with 400. A protection becomes operational only through this administrator verification (configuration alone never does; the periodic worker only renews a generation already verified here). bot: Siteverify is called with a deliberately invalid probe token; a user-token rejection (`invalid-input-response`) proves the secret is valid and is the business success, `invalid-input-secret` / `missing-input-secret` are `configuration_invalid`, and 429/5xx/timeouts/malformed responses are `temporarily_unavailable` (HTTP 200 alone is never success). email: a code is really sent to the fixed approved canary mailbox (REGISTRATION_EMAIL_CANARY_ADDRESS) and SMTP DATA acceptance is the business success; failures at CONNECT/STARTTLS/AUTH/MAIL FROM/RCPT/DATA are classified and recorded; `canary_not_configured` leaves the protection unverified. No code confirmation exists and no registration proof is issued. Responses always carry `pending_challenge: null`. Recorded results update the registration gate observation through the E15a use case.",
         "operationId": "verify_registration_protection",
         "parameters": [
           {
@@ -5369,6 +5369,7 @@
       },
       "PendingChallengeResponse": {
         "type": "object",
+        "description": "互換のために残す形。canary の code 確認は廃止されたため、`pending_challenge` は常に `null`。",
         "required": [
           "challenge_id",
           "expires_at"
@@ -6299,29 +6300,8 @@
       },
       "VerifyProtectionRequest": {
         "type": "object",
-        "properties": {
-          "challenge_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "email: 先に送った canary challenge の ID。`code` と一緒に指定すると roundtrip を確認する。"
-          },
-          "code": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "email: 承認済み canary mailbox に届いた code。"
-          },
-          "token": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "bot: widget が発行した有効な token (business 検証)。省略すると secret の負の probe だけを行い、\noperational にはならない。"
-          }
-        }
+        "description": "入力なしの検証。本文は空のオブジェクト `{}` (未知のフィールドは 400)。\n旧 `token` / `challenge_id` / `code` は廃止された (d15-q05: 管理者の入力なしの再検証だけで準備済みになる)。",
+        "additionalProperties": false
       },
       "VerifyProtectionResponse": {
         "type": "object",
@@ -6334,7 +6314,7 @@
         "properties": {
           "disposition": {
             "type": "string",
-            "description": "`completed` / `pending_confirmation` (canary mailbox に code を送った) /\n`canary_not_configured` (承認済み canary mailbox が未設定で、メールは unverified のまま)。"
+            "description": "`completed` / `canary_not_configured` (承認済み canary mailbox が未設定で、メールは unverified のまま)。\n旧 `pending_confirmation` (code 確認待ち) は返さない。"
           },
           "pending_challenge": {
             "oneOf": [
@@ -6342,7 +6322,8 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/PendingChallengeResponse"
+                "$ref": "#/components/schemas/PendingChallengeResponse",
+                "description": "互換のための項目。常に `null` (code 確認は廃止)。"
               }
             ]
           },

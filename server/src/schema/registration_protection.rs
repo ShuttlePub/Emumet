@@ -119,19 +119,11 @@ pub struct ProtectionListResponse {
     pub protections: Vec<ProtectionReadinessResponse>,
 }
 
+/// 入力なしの検証。本文は空のオブジェクト `{}` (未知のフィールドは 400)。
+/// 旧 `token` / `challenge_id` / `code` は廃止された (d15-q05: 管理者の入力なしの再検証だけで準備済みになる)。
 #[derive(Default, Deserialize, ToSchema)]
-pub struct VerifyProtectionRequest {
-    /// bot: widget が発行した有効な token (business 検証)。省略すると secret の負の probe だけを行い、
-    /// operational にはならない。
-    #[serde(default)]
-    pub token: Option<String>,
-    /// email: 先に送った canary challenge の ID。`code` と一緒に指定すると roundtrip を確認する。
-    #[serde(default)]
-    pub challenge_id: Option<String>,
-    /// email: 承認済み canary mailbox に届いた code。
-    #[serde(default)]
-    pub code: Option<String>,
-}
+#[serde(deny_unknown_fields)]
+pub struct VerifyProtectionRequest {}
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProviderResultResponse {
@@ -152,6 +144,7 @@ impl From<&ProviderResult> for ProviderResultResponse {
     }
 }
 
+/// 互換のために残す形。canary の code 確認は廃止されたため、`pending_challenge` は常に `null`。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PendingChallengeResponse {
     pub challenge_id: String,
@@ -164,34 +157,25 @@ pub struct VerifyProtectionResponse {
     pub result: ProviderResultResponse,
     /// readiness へ記録したか。当該試行だけの拒否 (`attempt_rejected`) は記録しない。
     pub recorded: bool,
-    /// `completed` / `pending_confirmation` (canary mailbox に code を送った) /
-    /// `canary_not_configured` (承認済み canary mailbox が未設定で、メールは unverified のまま)。
+    /// `completed` / `canary_not_configured` (承認済み canary mailbox が未設定で、メールは unverified のまま)。
+    /// 旧 `pending_confirmation` (code 確認待ち) は返さない。
     pub disposition: String,
+    /// 互換のための項目。常に `null` (code 確認は廃止)。
     pub pending_challenge: Option<PendingChallengeResponse>,
     pub readiness: ProtectionReadinessResponse,
 }
 
 impl From<&AdminVerifyReport> for VerifyProtectionResponse {
     fn from(report: &AdminVerifyReport) -> Self {
-        let (disposition, pending_challenge) = match &report.disposition {
-            VerifyDisposition::Completed => ("completed", None),
-            VerifyDisposition::CanaryNotConfigured => ("canary_not_configured", None),
-            VerifyDisposition::PendingConfirmation {
-                challenge_id,
-                expires_at,
-            } => (
-                "pending_confirmation",
-                Some(PendingChallengeResponse {
-                    challenge_id: challenge_id.clone(),
-                    expires_at: *expires_at,
-                }),
-            ),
+        let disposition = match &report.disposition {
+            VerifyDisposition::Completed => "completed",
+            VerifyDisposition::CanaryNotConfigured => "canary_not_configured",
         };
         Self {
             result: (&report.result).into(),
             recorded: report.recorded,
             disposition: disposition.to_string(),
-            pending_challenge,
+            pending_challenge: None,
             readiness: (&report.readiness).into(),
         }
     }

@@ -347,6 +347,9 @@ pub async fn reserve_email_challenge<R: RegistrationEmailChallengeRepository>(
 }
 
 /// 管理者の canary challenge の保存 (rate limit の対象外。proof は発行されない)。
+///
+/// 廃止予定: d15-q05 で初回 bootstrap の code 確認を廃止したため、現在の呼び出し元はない。
+/// 別途 canary challenge 型とあわせて削除できる。
 pub async fn insert_canary_challenge<R: RegistrationEmailChallengeRepository>(
     repository: &R,
     executor: &mut R::Connection,

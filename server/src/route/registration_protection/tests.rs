@@ -165,7 +165,7 @@ async fn verify_runs_a_real_check_records_both_business_result_and_transport_and
     assert_eq!(json["result"]["outcome"], "configuration_invalid");
     assert_eq!(json["disposition"], "completed");
 
-    // 入力検証: 不正な組み合わせ・不正な body・未知の protection。
+    // 入力検証: 廃止された入力 (token / challenge_id / code) は未知のフィールドとして 400、未知の protection は 404。
     for (protection, body, expected) in [
         (
             "bot",
@@ -390,6 +390,14 @@ fn openapi_documents_public_and_admin_registration_protection_endpoints() {
     ] {
         assert!(schemas.contains_key(name), "{name}");
     }
+    // 検証は入力なし (d15-q05): 要求の本文に token / challenge_id / code は存在しない。
+    assert!(
+        schemas["VerifyProtectionRequest"]
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .is_none_or(|p| p.is_empty()),
+        "the verification request takes no input"
+    );
     // 管理者の応答に secret・token・メールアドレスを持つフィールドはない。
     for name in [
         "ProtectionReadinessResponse",
