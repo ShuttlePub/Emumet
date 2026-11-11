@@ -1790,3 +1790,60 @@ mod block_pair_jobs {
         );
     }
 }
+
+mod cancelled_lease {
+    use super::*;
+
+    /// D8R: a cancel clears the lease columns (the in_flight CHECK) but keeps the lease that was held, so
+    /// the time until which the cancelled send may still land survives a chain of operations.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn a_cancel_keeps_the_lease_that_was_held() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let sending = job(&p1, "sending", "bob");
+        let unsent = job(&p1, "unsent", "bob");
+        enqueue(db, &sending).await;
+        let claimed = claim(db, "w", now(), 1).await;
+        assert_eq!(claimed.len(), 1);
+        enqueue(db, &unsent).await;
+
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_delivery_job_repository();
+        let held = repo
+            .find_by_id(&mut conn, &claimed[0].id)
+            .await
+            .unwrap()
+            .unwrap()
+            .lease_expires_at
+            .expect("in flight has a lease");
+        assert!(repo
+            .cancel(&mut conn, &claimed[0].id, "test", now())
+            .await
+            .unwrap());
+        assert!(repo
+            .cancel(&mut conn, &unsent.id, "test", now())
+            .await
+            .unwrap());
+
+        let sending_after = repo
+            .find_by_id(&mut conn, &claimed[0].id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(sending_after.state, ProfileDeliveryJobState::Cancelled);
+        assert_eq!(sending_after.lease_expires_at, None);
+        assert_eq!(sending_after.cancelled_lease_expires_at, Some(held));
+        let unsent_after = repo
+            .find_by_id(&mut conn, &unsent.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            unsent_after.cancelled_lease_expires_at, None,
+            "no lease, nothing to keep"
+        );
+    }
+}

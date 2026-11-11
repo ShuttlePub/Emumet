@@ -18,8 +18,8 @@ use time::OffsetDateTime;
 const COLUMNS: &str = "id, sender_profile_id, activity_type, activity_id, target_inbox, payload, \
                        follow_id, state, attempt_count, next_attempt_at, last_attempt_at, \
                        last_result, last_http_status, failure_reason, lease_owner, lease_token, \
-                       lease_expires_at, delivered_at, cancelled_at, cancel_reason, created_at, \
-                       updated_at";
+                       lease_expires_at, cancelled_lease_expires_at, delivered_at, cancelled_at, \
+                       cancel_reason, created_at, updated_at";
 
 #[derive(sqlx::FromRow)]
 struct JobRow {
@@ -40,6 +40,7 @@ struct JobRow {
     lease_owner: Option<String>,
     lease_token: Option<String>,
     lease_expires_at: Option<OffsetDateTime>,
+    cancelled_lease_expires_at: Option<OffsetDateTime>,
     delivered_at: Option<OffsetDateTime>,
     cancelled_at: Option<OffsetDateTime>,
     cancel_reason: Option<String>,
@@ -76,6 +77,7 @@ impl TryFrom<JobRow> for ProfileDeliveryJob {
                 .transpose()?,
             lease_owner: row.lease_owner,
             lease_expires_at: row.lease_expires_at,
+            cancelled_lease_expires_at: row.cancelled_lease_expires_at,
             delivered_at: row.delivered_at,
             cancelled_at: row.cancelled_at,
             cancel_reason: row.cancel_reason,
@@ -438,6 +440,7 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
             r#"
             UPDATE profile_delivery_jobs SET
                 state = 'cancelled', cancelled_at = $3, cancel_reason = $2,
+                cancelled_lease_expires_at = lease_expires_at,
                 lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = $3
             WHERE id = $1 AND state IN ('pending', 'in_flight', 'retrying')
             "#,
@@ -465,6 +468,7 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
             r#"
             UPDATE profile_delivery_jobs SET
                 state = 'cancelled', cancelled_at = $4, cancel_reason = $3,
+                cancelled_lease_expires_at = lease_expires_at,
                 lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = $4
             WHERE follow_id = $1 AND activity_type = $2
               AND state IN ('pending', 'in_flight', 'retrying')

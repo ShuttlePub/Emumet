@@ -292,6 +292,8 @@ pub struct ProfileDeliveryJob {
     pub failure_reason: Option<DeliveryFailureReason>,
     pub lease_owner: Option<String>,
     pub lease_expires_at: Option<OffsetDateTime>,
+    /// 取消した瞬間の lease の期限 (送信中に取り消した job が相手に着地し得る最後の時刻の下限)。
+    pub cancelled_lease_expires_at: Option<OffsetDateTime>,
     pub delivered_at: Option<OffsetDateTime>,
     pub cancelled_at: Option<OffsetDateTime>,
     pub cancel_reason: Option<String>,

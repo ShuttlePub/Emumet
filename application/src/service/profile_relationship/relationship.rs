@@ -104,6 +104,8 @@ struct BlockPair {
     undo_not_before: Option<OffsetDateTime>,
     /// 相手側に block が残っている可能性がある場合の、最新の (試行済みの) `Block` job。
     block_at_peer: Option<ProfileDeliveryJob>,
+    /// この actor 対の最新の job の宛先 inbox (相手を解決できなくても、同じ宛先へ送るために使う)。
+    known_inbox: Option<kernel::prelude::entity::GraphInboxUrl>,
 }
 
 /// 個別 block の job 一覧 (作成順) から、相手側の状態と待ち時間を求める (純粋関数)。
@@ -117,7 +119,10 @@ fn analyze_block_pair(
     cancelled_now: &std::collections::HashSet<i64>,
     now_bounds: &[(bool, OffsetDateTime)],
 ) -> BlockPair {
-    let mut pair = BlockPair::default();
+    let mut pair = BlockPair {
+        known_inbox: jobs.last().map(|job| job.target_inbox.clone()),
+        ..BlockPair::default()
+    };
     for job in jobs {
         let is_undo = job.activity_type == DeliveryActivityType::Undo;
         let attempted = job.attempt_count > 0;
@@ -127,7 +132,12 @@ fn analyze_block_pair(
             && !cancelled_now.contains(job.id.as_ref())
         {
             if let Some(cancelled_at) = job.cancelled_at {
-                let bound = cancelled_at + IN_FLIGHT_GRACE;
+                // The lease that was held at the cancel (kept on the cancelled row) keeps the bound
+                // from shrinking when operations repeat.
+                let bound = settle_time(
+                    cancelled_at + IN_FLIGHT_GRACE,
+                    [job.cancelled_lease_expires_at],
+                );
                 pair.undo_not_before = later(pair.undo_not_before, bound);
                 if is_undo {
                     pair.block_not_before = later(pair.block_not_before, bound);
@@ -990,26 +1000,12 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                         // An individual block of a remote actor is also announced with an AP `Block`
                         // (user decision), alongside the Undo / Reject of the detached Follows. A local
                         // target needs no delivery. A domain block never sends a `Block`.
-                        let block_inbox = match block_inbox {
-                            None if target.local_nanoid.is_none() => {
-                                known_inbox(&deps, executor, &me, &ended).await?
-                            }
-                            other => other,
-                        };
-                        if let (Some(inbox), None) = (block_inbox, &target.local_nanoid) {
-                            let activity_id = block_activity_id(
-                                deps.public_base_url(),
-                                &profile_nanoid,
-                                block.id(),
-                            )?;
-                            let body = block_body(
-                                &activity_id,
-                                &profile_actor_url(deps.public_base_url(), &profile_nanoid),
-                                &target.url,
-                            )?;
+                        if target.local_nanoid.is_none() {
                             // An earlier block of the same actor may still have an Undo(Block) waiting,
-                            // retrying or in flight: it is cancelled, and the new Block starts only after
-                            // an Undo that may be landing could no longer undo it.
+                            // retrying or in flight. It is cancelled whether or not the actor can be
+                            // resolved now (a peer outage must not leave the old Undo to fire after
+                            // recovery), and the new Block starts only after an Undo that may be landing
+                            // could no longer undo it.
                             let pair = supersede_block_pair(
                                 &deps,
                                 executor,
@@ -1018,20 +1014,38 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                                 "superseded by a new block",
                             )
                             .await?;
-                            let mut job = NewProfileDeliveryJob::new(
-                                profile_id.clone(),
-                                DeliveryActivityType::Block,
-                                activity_id,
-                                inbox,
-                                body,
-                                now,
-                            )?;
-                            if let Some(not_before) = pair.block_not_before {
-                                job = job.not_before(not_before);
+                            // Inbox: the freshly resolved one, else the one of an earlier Block / Undo(Block)
+                            // of this pair, else one known from the detached Follows.
+                            let inbox = match block_inbox.or(pair.known_inbox.clone()) {
+                                Some(inbox) => Some(inbox),
+                                None => known_inbox(&deps, executor, &me, &ended).await?,
+                            };
+                            if let Some(inbox) = inbox {
+                                let activity_id = block_activity_id(
+                                    deps.public_base_url(),
+                                    &profile_nanoid,
+                                    block.id(),
+                                )?;
+                                let body = block_body(
+                                    &activity_id,
+                                    &profile_actor_url(deps.public_base_url(), &profile_nanoid),
+                                    &target.url,
+                                )?;
+                                let mut job = NewProfileDeliveryJob::new(
+                                    profile_id.clone(),
+                                    DeliveryActivityType::Block,
+                                    activity_id,
+                                    inbox,
+                                    body,
+                                    now,
+                                )?;
+                                if let Some(not_before) = pair.block_not_before {
+                                    job = job.not_before(not_before);
+                                }
+                                deps.profile_delivery_enqueuer()
+                                    .enqueue(executor, &job)
+                                    .await?;
                             }
-                            deps.profile_delivery_enqueuer()
-                                .enqueue(executor, &job)
-                                .await?;
                         }
                         Ok(ProfileRelationDto {
                             nanoid: block.nanoid().as_ref().to_string(),
@@ -1257,6 +1271,7 @@ mod pair_tests {
             failure_reason: None,
             lease_owner: None,
             lease_expires_at: None,
+            cancelled_lease_expires_at: None,
             delivered_at: (state == ProfileDeliveryJobState::Delivered).then_some(T0),
             cancelled_at: (state == ProfileDeliveryJobState::Cancelled).then_some(T0),
             cancel_reason: None,
@@ -1318,6 +1333,16 @@ mod pair_tests {
         // An Undo cancelled after an attempt may still land: a new Block waits as well.
         let pair = analyze_block_pair(&[job(2, Undo, Cancelled, 1)], &none, &[]);
         assert_eq!(pair.block_not_before, Some(T0 + IN_FLIGHT_GRACE));
+        assert_eq!(pair.undo_not_before, Some(T0 + IN_FLIGHT_GRACE));
+
+        // The lease held at the cancel keeps the bound from shrinking in a chain of operations.
+        let mut held = job(1, Block, Cancelled, 1);
+        held.cancelled_lease_expires_at = Some(T0 + Duration::seconds(600));
+        let pair = analyze_block_pair(&[held], &none, &[]);
+        assert_eq!(pair.undo_not_before, Some(T0 + Duration::seconds(600)));
+        let mut short = job(1, Block, Cancelled, 1);
+        short.cancelled_lease_expires_at = Some(T0 + Duration::seconds(30));
+        let pair = analyze_block_pair(&[short], &none, &[]);
         assert_eq!(pair.undo_not_before, Some(T0 + IN_FLIGHT_GRACE));
 
         // Never attempted, or delivered: nothing to wait for.

@@ -40,6 +40,7 @@ async fn table_names(pool: &Pool<Postgres>) -> Vec<String> {
 }
 
 /// 初期化対象と台帳を除く全テーブルの (行数, 内容の hash)。将来の新テーブルも自動的に対象外として検査される。
+/// NULL の列は hash から除く (後続の migration が足す nullable 列で、保持した行の内容が変わったことにしない)。
 async fn retained_snapshot(pool: &Pool<Postgres>) -> Snapshot {
     let mut snapshot = Snapshot::new();
     for table in table_names(pool).await {
@@ -48,7 +49,8 @@ async fn retained_snapshot(pool: &Pool<Postgres>) -> Snapshot {
             continue;
         }
         let (count, digest): (i64, String) = sqlx::query_as(&format!(
-            "SELECT count(*)::bigint, coalesce(md5(string_agg(t::text, '|' ORDER BY t::text)), '') \
+            "SELECT count(*)::bigint, coalesce(md5(string_agg(jsonb_strip_nulls(to_jsonb(t))::text, '|' \
+                                         ORDER BY jsonb_strip_nulls(to_jsonb(t))::text)), '') \
              FROM \"{table}\" t"
         ))
         .fetch_one(pool)
