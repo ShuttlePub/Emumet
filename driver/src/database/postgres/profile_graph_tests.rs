@@ -1632,3 +1632,91 @@ mod url_limits {
         assert!(job.is_err());
     }
 }
+
+mod block_activity {
+    use super::*;
+
+    /// D8R: the `Block` job type is stored (migration `20261122000001`), found by sender + activity
+    /// ID regardless of the inbox, and an unknown type is still rejected by the CHECK.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn a_block_job_is_stored_and_found_by_its_activity_id() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let (_, p2) = seed_personal_profile(db).await;
+        let block_job = NewProfileDeliveryJob::new(
+            p1.clone(),
+            DeliveryActivityType::Block,
+            activity("block-1"),
+            GraphInboxUrl::new("https://remote.example/bob/inbox").unwrap(),
+            "{\"type\":\"Block\"}",
+            now(),
+        )
+        .unwrap();
+        assert!(enqueue(db, &block_job).await.is_newly_enqueued());
+
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_delivery_job_repository();
+        let found = repo
+            .find_by_activity(&mut conn, &p1, &activity("block-1"))
+            .await
+            .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].activity_type, DeliveryActivityType::Block);
+        assert_eq!(found[0].follow_id, None);
+        assert!(repo
+            .find_by_activity(&mut conn, &p2, &activity("block-1"))
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(repo
+            .find_by_activity(&mut conn, &p1, &activity("other"))
+            .await
+            .unwrap()
+            .is_empty());
+
+        let rejected = sqlx::query(
+            "UPDATE profile_delivery_jobs SET activity_type = 'Create' WHERE activity_id = $1",
+        )
+        .bind(activity("block-1").as_str())
+        .execute(&iso.pool)
+        .await;
+        assert!(rejected.is_err(), "unknown activity types stay refused");
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn a_block_is_found_by_nanoid_only_for_its_owner() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let (_, p2) = seed_personal_profile(db).await;
+        let bob = remote("bob");
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_block_repository();
+        let block = ProfileBlock::new(
+            ProfileBlockId::new(kernel::generate_id()),
+            p1.clone(),
+            bob.clone(),
+            now(),
+        )
+        .unwrap();
+        assert!(repo.insert_if_absent(&mut conn, &block).await.unwrap());
+
+        let found = repo
+            .find_by_nanoid(&mut conn, &p1, block.nanoid())
+            .await
+            .unwrap()
+            .expect("owner finds it");
+        assert_eq!(found.id(), block.id());
+        assert_eq!(found.target(), &bob);
+        assert!(repo
+            .find_by_nanoid(&mut conn, &p2, block.nanoid())
+            .await
+            .unwrap()
+            .is_none());
+    }
+}

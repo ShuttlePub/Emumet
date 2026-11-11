@@ -2557,7 +2557,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Block one target (individual actor) as the Profile. Semantics: display suppression, detaches existing follow relations in both directions and rejects new follows/interactions in both directions. No ActivityPub Block is sent. Removing the block never restores detached relations. Authorization: only the Profile's current owner. Settings never propagate to other Profiles or Accounts.",
+        "description": "Block one target (individual actor) as the Profile. Semantics: display suppression, detaches existing follow relations in both directions and rejects new follows/interactions in both directions. In the same transaction the detached follows are announced to a remote actor with Undo(Follow) (your Follow) / Reject(Follow) (their Follow) and an ActivityPub `Block` (object = the blocked actor) is delivered to its inbox; a local target needs no delivery and a peer that cannot be resolved does not fail the block. (A domain block sends no ActivityPub Block.) Removing the block never restores detached relations. Authorization: only the Profile's current owner. Settings never propagate to other Profiles or Accounts.",
         "operationId": "block_actor",
         "parameters": [
           {
@@ -2619,7 +2619,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Remove an individual block. Detached follow relations are NOT restored and no restore list is kept. Authorization: only the Profile's current owner.",
+        "description": "Remove an individual block. Detached follow relations are NOT restored and no restore list is kept. A `Block` already delivered to a remote actor is taken back with an `Undo(Block)` that embeds it; a `Block` not yet sent is cancelled and no Undo is sent. Authorization: only the Profile's current owner.",
         "operationId": "unblock_actor",
         "parameters": [
           {

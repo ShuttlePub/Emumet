@@ -95,6 +95,29 @@ impl ProfileBlockRepository for PostgresProfileBlockRepository {
             .transpose()
     }
 
+    async fn find_by_nanoid(
+        &self,
+        executor: &mut Self::Connection,
+        owner: &ProfileId,
+        nanoid: &Nanoid<ProfileBlock>,
+    ) -> error_stack::Result<Option<ProfileBlock>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let mut builder = select_builder();
+        builder
+            .push("owner_profile_id = ")
+            .push_bind(*owner.as_ref());
+        builder
+            .push(" AND nanoid = ")
+            .push_bind(nanoid.as_ref().to_string());
+        builder
+            .build_query_as::<ProfileBlockRow>()
+            .fetch_optional(con)
+            .await
+            .convert_error()?
+            .map(ProfileBlock::try_from)
+            .transpose()
+    }
+
     async fn is_blocked(
         &self,
         executor: &mut Self::Connection,

@@ -106,9 +106,13 @@ Account 管理 API (作成・取得・更新・無効化・再有効化・組織
 | `GET /api/v1/profiles/{profile_nanoid}` | Profile identity (所有者のみ) |
 | `POST /api/v1/profiles/{profile_nanoid}/follows`、`DELETE .../follows/{follow_id}` | Follow / unfollow |
 | `GET .../following`、`GET .../followers` | 所有者のみ |
-| `GET|POST .../blocks`、`DELETE .../blocks/{id}`、`GET|POST .../mutes`、`DELETE .../mutes/{id}` | 個別 actor の block / mute (AP `Block` は送らない) |
+| `GET|POST .../blocks`、`DELETE .../blocks/{id}`、`GET|POST .../mutes`、`DELETE .../mutes/{id}` | 個別 actor の block / mute (個別 block は remote actor へ AP `Block` を送り、解除は `Undo(Block)`。domain block は送らない) |
 | `GET .../domain-controls`、`GET|PUT|DELETE .../domain-controls/{domain}` | domain 単位の mute / block (D8P の保存 + D8R の mount)。block の PUT は同一 transaction で対象 domain の既存関係を解除する (下記) |
 | `POST /api/v1/profiles/{profile_nanoid}/username` | 一回限りの username 設定 (切替前の既存 Profile 用。切替後は全 Profile が設定済みなので 409) |
+
+### 個別 actor の block の AP `Block` (D8R、ユーザー決定)
+
+個別 actor の block (`POST .../blocks`) は、双方向の Follow 解除と `Undo(Follow)` / `Reject(Follow)` に加えて、remote actor の inbox へ `Block` (`object` = 相手 actor、ID は `{actor}/blocks/{block ID}`) を同一 transaction で予約する。解除 (`DELETE .../blocks/{id}`) は、未送信の `Block` job を取り消す (`Undo` なし)、送信済み・結果不明なら元 Block を埋め込んだ `Undo(Block)` を同じ宛先へ予約する (送信中だった可能性があれば元の送信が届き得る時間の後)。ローカル Profile 相手は配送しない。相手を解決できなくても block と解除は適用され、解除した Follow から分かる inbox があればそこへ、無ければ `Block` だけ予約されない。受信した `Block` / `Undo(Block)` は関係を変えない (P3i)。配送 job 種別の DB CHECK への `Block` の追加は migration `20261122000001`。
 
 ### domain block の既存関係の解除 (D8R)
 
@@ -119,7 +123,7 @@ Account 管理 API (作成・取得・更新・無効化・再有効化・組織
 | 自分の Follow | Follow job を取消 (相手は Follow を知らないので何も送らない) | 元 Follow を埋め込んだ `Undo(Follow)`。送信中だった可能性があれば 120 秒後に回す |
 | 相手の Follow | Accept job を取消し、`Reject(Follow)` (元 Follow を参照) を予約 | 同上 (送信中の Accept があれば Reject を 120 秒後に回す) |
 
-- 相手の Follow を自分が作者であるかのように Undo しない。AP `Block` は送らない。外部配送の成否は block・解除のローカル適用に影響しない。
+- 相手の Follow を自分が作者であるかのように Undo しない。**domain block は AP `Block` を送らない** (個別 actor の block は送る。下記)。外部配送の成否は block・解除のローカル適用に影響しない。
 - block を解除 (DELETE) しても関係は復元せず、何も配送しない。復元用の一覧も持たない。
 - 自 instance の host を block した場合は、同じ host のローカル Profile との関係も解除する (配送なし)。ロックはその相手 Profile も含めて昇順の単一呼び出しで取る。
 - ロック順: Profile 行 FOR SHARE → advisory (`lock_profiles`) → block 保存 → Follow 行 (`end_active_between`) → job 行 (取消・予約)。配送前ガードは job → Follow の順に更新するが、同じ Profile の advisory ロックを先に取るため、この解除 (と unfollow) とは直列化され行ロックは循環しない。`renew_lease` / `record_attempt` は job 行だけを触る。

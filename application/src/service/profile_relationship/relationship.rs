@@ -11,14 +11,15 @@
 //!   **domain 単位の方針は Follow の拒否にだけ使う (D8G)**: `follow_profile` が `domain_follow_guard` の
 //!   判定 (検証済み canonical actor URL の host の完全一致・mode=block のみ) を関係ロック下で行い、
 //!   mute は無視する。配送前の再判定は `delivery`。個別 block の適用 (双方向解除) は domain 方針と混ぜない。
-//!   AP `Block` は送らず
-//!   (D08)、解除された Follow を相手に伝える `Undo(Follow)` / `Reject(Follow)` だけを配送する。
-//!   block を解除しても解除済みの関係は復元せず、何も配送しない。
+//!   remote actor への個別 block は AP `Block` も送り (ユーザー決定。domain block は送らない)、解除された Follow を
+//!   相手に伝える `Undo(Follow)` / `Reject(Follow)` と併用する。解除は元 Block を埋め込んだ `Undo(Block)`
+//!   (未送信なら Block job を取り消すだけ)。block を解除しても解除済みの関係は復元しない。
 //! - mute は表示抑制の設定だけで、既存の関係も配送も変えない。
 
 use super::activity::{
-    follow_activity_id, follow_body, local_profile_nanoid, profile_actor_url, reject_activity_id,
-    reject_follow_body, undo_activity_id, undo_follow_body,
+    block_activity_id, block_body, follow_activity_id, follow_body, local_profile_nanoid,
+    profile_actor_url, reject_activity_id, reject_follow_body, undo_activity_id, undo_block_body,
+    undo_follow_body,
 };
 use crate::dto::profile_relationship::{ProfileFollowDto, ProfileRelationDto};
 use crate::service::domain_control::require_profile_owner;
@@ -376,6 +377,90 @@ pub(super) async fn reject_incoming_follow<T: RelationshipDeps>(
     Ok(())
 }
 
+/// 個別 block を解除したとき、相手へ送った (または送るはずだった) `Block` の後始末を同じ transaction で行う。
+///
+/// `Block` job が未送信 (試行 0) なら取り消すだけで `Undo(Block)` は送らない (相手は block を知らない)。試行済み
+/// なら、元 Block を埋め込んだ `Undo(Block)` を同じ宛先へ予約する。送信中だった可能性があれば、Follow の
+/// Undo と同じ規則で、元の送信が届き得る時間の後 (取消後に取り直した時刻から数える) に回す。
+async fn retract_block<T: RelationshipDeps>(
+    deps: &T,
+    executor: &mut Conn<T>,
+    sender: &LocalSender<'_>,
+    block: &ProfileBlock,
+    target_url: &str,
+    now: OffsetDateTime,
+) -> error_stack::Result<(), KernelError> {
+    let block_id = block_activity_id(deps.public_base_url(), sender.nanoid, block.id())?;
+    let jobs = deps.profile_delivery_job_repository();
+    let Some(before) = jobs
+        .find_by_activity(executor, sender.profile_id, &block_id)
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(());
+    };
+    jobs.cancel(executor, &before.id, "unblocked", now).await?;
+    let after = jobs
+        .find_by_id(executor, &before.id)
+        .await?
+        .ok_or_else(|| not_found("delivery job disappeared"))?;
+    if after.attempt_count == 0 {
+        return Ok(());
+    }
+    let in_flight_possible = before.state == ProfileDeliveryJobState::InFlight
+        || before.attempt_count < after.attempt_count;
+    let undo_id = undo_activity_id(&block_id)?;
+    let body = undo_block_body(
+        &undo_id,
+        &profile_actor_url(deps.public_base_url(), sender.nanoid),
+        target_url,
+        &before.payload,
+    )?;
+    let mut undo = NewProfileDeliveryJob::new(
+        sender.profile_id.clone(),
+        DeliveryActivityType::Undo,
+        undo_id,
+        before.target_inbox.clone(),
+        body,
+        now,
+    )?;
+    if in_flight_possible {
+        undo = undo.not_before(cleanup_not_before(&before, &after));
+    }
+    deps.profile_delivery_enqueuer()
+        .enqueue(executor, &undo)
+        .await?;
+    Ok(())
+}
+
+/// 解除した Follow から分かっている相手の inbox (自分の Follow の宛先、または相手の Follow に対する Accept の
+/// 宛先)。相手を解決できなかったときの `Block` の宛先に使う。
+async fn known_inbox<T: RelationshipDeps>(
+    deps: &T,
+    executor: &mut Conn<T>,
+    me: &ProfileGraphActor,
+    ended: &[ProfileFollow],
+) -> error_stack::Result<Option<kernel::prelude::entity::GraphInboxUrl>, KernelError> {
+    let jobs = deps.profile_delivery_job_repository();
+    for follow in ended {
+        let activity_type = if follow.follower() == me {
+            DeliveryActivityType::Follow
+        } else {
+            DeliveryActivityType::Accept
+        };
+        if let Some(job) = jobs
+            .find_by_follow(executor, follow.id(), activity_type)
+            .await?
+            .into_iter()
+            .next()
+        {
+            return Ok(Some(job.target_inbox));
+        }
+    }
+    Ok(None)
+}
+
 async fn authorize<T: RelationshipDeps>(
     deps: &T,
     auth_account_id: &AuthAccountId,
@@ -691,7 +776,7 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
     }
 
     /// Profile が個別の actor を block する。block 設定の保存、双方向の有効な Follow の解除、解除した Follow を
-    /// 相手へ伝える job (`Undo(Follow)` / `Reject(Follow)`) の予約を同一 transaction で行う。AP `Block` は送らない。
+    /// 相手へ伝える job (`Undo(Follow)` / `Reject(Follow)`) と、remote actor 宛ての AP `Block` (個別 block のみ。ユーザー決定) の予約を同一 transaction で行う。peer を解決できなくても block と解除は適用され、`Block` だけ予約されない。
     /// 既に block していれば 409。
     fn block_actor<'a>(
         &'a self,
@@ -704,6 +789,21 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
         async move {
             let kind =
                 prepare_target(self, auth_account_id, org_context, profile_nanoid, target).await?;
+            // The inbox of a remote target is resolved before the transaction (after the owner is
+            // authorized). The block and the detachment are local facts: when the peer cannot be
+            // resolved they still apply, the `Block` then goes to an inbox known from the detached
+            // Follows, and without one it is not reserved.
+            let block_inbox = match &kind {
+                TargetKind::Remote(url) => {
+                    authorize(self, auth_account_id, org_context, profile_nanoid).await?;
+                    self.remote_actor_resolver()
+                        .resolve(url)
+                        .await
+                        .ok()
+                        .map(|actor| actor.inbox)
+                }
+                TargetKind::Local(_) | TargetKind::Acct(_) => None,
+            };
             let deps = self.clone();
             let auth_account_id = auth_account_id.clone();
             let org_context = org_context.cloned();
@@ -770,6 +870,38 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                                 .await?;
                             }
                         }
+                        // An individual block of a remote actor is also announced with an AP `Block`
+                        // (user decision), alongside the Undo / Reject of the detached Follows. A local
+                        // target needs no delivery. A domain block never sends a `Block`.
+                        let block_inbox = match block_inbox {
+                            None if target.local_nanoid.is_none() => {
+                                known_inbox(&deps, executor, &me, &ended).await?
+                            }
+                            other => other,
+                        };
+                        if let (Some(inbox), None) = (block_inbox, &target.local_nanoid) {
+                            let activity_id = block_activity_id(
+                                deps.public_base_url(),
+                                &profile_nanoid,
+                                block.id(),
+                            )?;
+                            let body = block_body(
+                                &activity_id,
+                                &profile_actor_url(deps.public_base_url(), &profile_nanoid),
+                                &target.url,
+                            )?;
+                            let job = NewProfileDeliveryJob::new(
+                                profile_id.clone(),
+                                DeliveryActivityType::Block,
+                                activity_id,
+                                inbox,
+                                body,
+                                now,
+                            )?;
+                            deps.profile_delivery_enqueuer()
+                                .enqueue(executor, &job)
+                                .await?;
+                        }
                         Ok(ProfileRelationDto {
                             nanoid: block.nanoid().as_ref().to_string(),
                             profile_nanoid,
@@ -782,8 +914,9 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
         }
     }
 
-    /// block を解除する (自分の設定だけ。他 Profile の設定は消えない。無ければ 404)。解除済みの Follow は復元せず、
-    /// 何も配送しない。
+    /// block を解除する (自分の設定だけ。他 Profile の設定は消えない。無ければ 404)。解除済みの Follow は復元しない。
+    /// remote actor への block だった場合は、送った `Block` の取消 (未送信) または `Undo(Block)` の予約 (送信済み・
+    /// 結果不明) を同じ transaction で行う。
     fn unblock_actor<'a>(
         &'a self,
         auth_account_id: &'a AuthAccountId,
@@ -808,15 +941,36 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                             &profile_nanoid,
                         )
                         .await?;
-                        if deps
-                            .profile_block_repository()
-                            .delete_by_nanoid(executor, &profile_id, &Nanoid::new(block_nanoid))
+                        let now = now();
+                        let block_nanoid = Nanoid::new(block_nanoid);
+                        let blocks = deps.profile_block_repository();
+                        let block = blocks
+                            .find_by_nanoid(executor, &profile_id, &block_nanoid)
+                            .await?
+                            .ok_or_else(|| not_found("block not found"))?;
+                        if !blocks
+                            .delete_by_nanoid(executor, &profile_id, &block_nanoid)
                             .await?
                         {
-                            Ok(())
-                        } else {
-                            Err(not_found("block not found"))
+                            return Err(not_found("block not found"));
                         }
+                        // Detached Follows are never restored; only the `Block` that was (or was about
+                        // to be) sent to a remote actor is taken back.
+                        if let ProfileGraphActor::Remote(url) = block.target() {
+                            retract_block(
+                                &deps,
+                                executor,
+                                &LocalSender {
+                                    profile_id: &profile_id,
+                                    nanoid: &profile_nanoid,
+                                },
+                                &block,
+                                url.as_str(),
+                                now,
+                            )
+                            .await?;
+                        }
+                        Ok(())
                     })
                 })
                 .await

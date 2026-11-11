@@ -519,6 +519,27 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
         .transpose()
     }
 
+    async fn find_by_activity(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        activity_id: &GraphActivityId,
+    ) -> error_stack::Result<Vec<ProfileDeliveryJob>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, JobRow>(&format!(
+            "SELECT {COLUMNS} FROM profile_delivery_jobs \
+             WHERE sender_profile_id = $1 AND activity_id = $2 ORDER BY id ASC"
+        ))
+        .bind(sender.as_ref())
+        .bind(activity_id.as_str())
+        .fetch_all(con)
+        .await
+        .convert_error()?
+        .into_iter()
+        .map(ProfileDeliveryJob::try_from)
+        .collect()
+    }
+
     async fn find_by_follow(
         &self,
         executor: &mut Self::Connection,

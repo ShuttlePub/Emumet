@@ -121,6 +121,15 @@ pub trait ProfileDeliveryJobRepository: Sync + Send + 'static {
         target_inbox: &GraphInboxUrl,
     ) -> impl Future<Output = error_stack::Result<Option<ProfileDeliveryJob>, KernelError>> + Send;
 
+    /// 送信元と activity ID が一致する job を古い順に返す (宛先 inbox・状態は問わない)。個別 block の `Block` job を
+    /// block から引く (activity ID が block ID から決まる) ために使う。
+    fn find_by_activity(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        activity_id: &GraphActivityId,
+    ) -> impl Future<Output = error_stack::Result<Vec<ProfileDeliveryJob>, KernelError>> + Send;
+
     /// `follow_id` に紐づく `activity_type` の job を古い順に返す (状態は問わない。終端状態を含む)。
     /// 関係の終了時に、既に予約済みの Follow / Accept job の宛先 inbox と状態を知るために使う
     /// (P3o が追加した読み取り専用の参照。P2 の保存・予約の契約は変えない)。

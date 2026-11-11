@@ -139,11 +139,11 @@ Iceshrimp のテストユーザー認証情報は `run-ap-e2e.sh` の出力か�
 | `inbound_follow_creates_a_follower_and_delivers_a_verifiable_accept` | Cavage 署名 Follow (実 HTTP で peer 鍵を取得) → followers・Accept 配送・重複・Undo |
 | `inbox_rejects_unsigned_requests` | 未署名リクエスト拒否 |
 | `inbox_refuses_to_fetch_keys_from_internal_hosts_directly_or_by_redirect` | 鍵取得の SSRF 対策 (内部 host への直接指定・redirect) |
-| `individual_block_detaches_relations_without_sending_an_activitypub_block` | 個別 block: 双方向解除 (Undo/Reject)、AP Block は送らない、解除しても復元しない |
+| `individual_block_detaches_relations_and_announces_an_activitypub_block` | 個別 block: 双方向解除 (Undo/Reject) と AP Block の配送、解除は Undo(Block)、解除しても復元しない (domain block は Block を送らない) |
 | `inbound_activitypub_block_is_acknowledged_and_changes_nothing` | 受信 Block は 202 で無変更 |
 | `mute_is_idempotent_per_target_and_changes_no_relation` | mute (409 重複、配送なし) |
 | `usernames_with_dot_underscore_and_hyphen_are_actors` | `.` `_` `-` を含む username |
-| `iceshrimp_full_federation_scenario` (S7-S10) | Iceshrimp → Emumet Follow → Emumet → Iceshrimp Follow → Profile 鍵で署名した Create/Note 配送 → 個別 block (Undo/Reject、AP Block なし) |
+| `iceshrimp_full_federation_scenario` (S7-S10) | Iceshrimp → Emumet Follow → Emumet → Iceshrimp Follow → Profile 鍵で署名した Create/Note 配送 → 個別 block (Undo/Reject と AP Block、解除は Undo(Block)) |
 | `mastodon_full_federation_scenario` (S7-S10) | Mastodon → Emumet Follow → Emumet → Mastodon Follow → Profile 鍵で署名した Create/Note 配送 → 双方向 Undo(Follow) |
 
 Create/Note の署名はサーバーに署名 API が無いため、テスト fixture (`support/profile_signer.rs`) が DB の Profile 鍵を master key password で復号して行います (配送 worker と同じ手順)。

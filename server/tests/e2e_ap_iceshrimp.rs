@@ -282,7 +282,8 @@ async fn iceshrimp_full_federation_scenario() {
 
     // ── S10: Emumet → Iceshrimp individual block ─────────────────────
     // Both follow relations (Iceshrimp → Emumet from S7, Emumet → Iceshrimp from S8) are detached
-    // at once: Iceshrimp learns it from Undo(Follow) / Reject(Follow). No ActivityPub Block is sent.
+    // at once: Iceshrimp learns it from Undo(Follow) / Reject(Follow). An individual block also delivers
+    // an ActivityPub Block (Iceshrimp then reports isBlocked) and the unblock an Undo(Block).
 
     let block_resp = post_block(
         &jwt,
@@ -339,14 +340,14 @@ async fn iceshrimp_full_federation_scenario() {
     );
 
     assert!(
-        iceshrimp_setup::wait_for_iceshrimp_block_absent(
+        iceshrimp_setup::wait_for_iceshrimp_block_present(
             &fixture.client,
             &remote_user_id,
             &fixture.user.token,
         )
         .await,
-        "S10: no ActivityPub Block is sent, so Iceshrimp must not report the Emumet account as blocking \
-         the local user (users/show isBlocked == false)"
+        "S10: Iceshrimp should report the Emumet account as blocking the local user after receiving \
+         Block (users/show isBlocked == true)"
     );
 
     let unblock_resp = delete_block(
@@ -360,6 +361,16 @@ async fn iceshrimp_full_federation_scenario() {
         unblock_resp.status(),
         reqwest::StatusCode::NO_CONTENT,
         "S10: Emumet unblock request should return 204"
+    );
+    assert!(
+        iceshrimp_setup::wait_for_iceshrimp_block_absent(
+            &fixture.client,
+            &remote_user_id,
+            &fixture.user.token,
+        )
+        .await,
+        "S10: Iceshrimp should clear the block state after processing Undo(Block) \
+         (users/show isBlocked == false)"
     );
     for list in ["following", "followers"] {
         let relations =

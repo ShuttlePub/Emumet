@@ -24,7 +24,8 @@ pub struct ProfileBlockId(i64);
 ///
 /// block は表示抑制、双方向の Follow 解除 (`ProfileFollowEndReason::Blocked`)、新規操作の拒否を
 /// 意味するが、それらの適用は use case の責務で、この型は設定の保存だけを表す。
-/// block を解除しても解除済みの関係は復元しない。AP Block は送らない。
+/// block を解除しても解除済みの関係は復元しない。AP `Block` は個別 actor の block だけが送る
+/// (domain block は送らない)。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, References, Serialize, Deserialize)]
 pub struct ProfileBlock {
     id: ProfileBlockId,
