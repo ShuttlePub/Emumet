@@ -448,6 +448,70 @@ async fn checking_has_no_side_effects() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
+async fn an_organization_header_does_not_make_the_check_create_an_auth_account() {
+    let (_keto, fixture) = bootstrap().await;
+    let free = unique_username();
+    let existing_organization = fixture.organization.nanoid().as_ref().to_string();
+
+    for organization in [existing_organization.as_str(), "no-such-organization"] {
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(request(
+                "GET",
+                &format!("{AVAILABILITY_PATH}?username={free}"),
+                &fixture.fresh_token,
+                Some(organization),
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{organization}");
+        let json = response_json(response).await;
+        assert_eq!(json["available"], true);
+        assert_eq!(
+            count_rows(
+                &fixture.module,
+                "SELECT count(*) FROM auth_accounts WHERE client_id = $1",
+                &fixture.fresh_subject,
+            )
+            .await,
+            0,
+            "{organization}: the organization header must not resolve (and create) an auth account"
+        );
+    }
+
+    let unauthenticated = fixture
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("{AVAILABILITY_PATH}?username={free}"))
+                .header("X-Organization-Id", &existing_organization)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        unauthenticated.status(),
+        StatusCode::UNAUTHORIZED,
+        "JWT authentication still applies with the header"
+    );
+    assert_eq!(
+        count_rows(
+            &fixture.module,
+            "SELECT count(*) FROM auth_accounts WHERE client_id = $1",
+            &fixture.fresh_subject,
+        )
+        .await,
+        0
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
 async fn too_many_checks_are_limited_per_caller_with_retry_after() {
     let (_keto, fixture) = bootstrap().await;
     let free = unique_username();
