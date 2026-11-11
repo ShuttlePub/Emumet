@@ -1,6 +1,8 @@
 use super::fields::apply_field_updates;
 use super::validate::validate_update_account_dto;
-use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto, UpdateAccountDto};
+use crate::dto::account::{
+    AccountDetailDto, AccountDto, AccountFieldDto, ProfileIdentityDto, UpdateAccountDto,
+};
 use crate::permission::{account_edit, check_organization_account_edit, check_permission};
 use crate::service::activitypub::DeliverUpdatePersonUseCase;
 use crate::service::session_context::OrganizationContext;
@@ -257,6 +259,13 @@ pub trait UpdateAccountDetailUseCase:
                         };
                         Ok((
                             AccountDto::from(account).into_detail(
+                                ProfileIdentityDto {
+                                    nanoid: profile.nanoid().as_ref().to_string(),
+                                    username: profile
+                                        .username()
+                                        .as_ref()
+                                        .map(|u| u.as_ref().to_string()),
+                                },
                                 display_name,
                                 summary,
                                 icon_id.as_ref().and_then(|id| images.get(id).cloned()),

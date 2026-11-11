@@ -33,10 +33,19 @@ pub struct AccountFieldDto {
     pub content: String,
 }
 
+/// Identity of the Profile an Account response describes.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ProfileIdentityDto {
+    pub nanoid: String,
+    pub username: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct AccountDetailDto {
     pub nanoid: String,
     pub name: String,
+    pub profile_id: String,
+    pub profile_username: Option<String>,
     pub display_name: Option<String>,
     pub summary: Option<String>,
     pub icon_url: Option<String>,
@@ -91,6 +100,7 @@ impl From<Account> for AccountDto {
 impl AccountDto {
     pub fn into_detail(
         self,
+        profile: ProfileIdentityDto,
         display_name: Option<String>,
         summary: Option<String>,
         icon_url: Option<String>,
@@ -100,6 +110,8 @@ impl AccountDto {
         AccountDetailDto {
             nanoid: self.nanoid,
             name: self.name,
+            profile_id: profile.nanoid,
+            profile_username: profile.username,
             display_name,
             summary,
             icon_url,
