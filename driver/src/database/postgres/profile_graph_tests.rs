@@ -1720,3 +1720,73 @@ mod block_activity {
             .is_none());
     }
 }
+
+mod block_pair_jobs {
+    use super::*;
+
+    fn pair_job(
+        sender: &ProfileId,
+        kind: DeliveryActivityType,
+        id: &str,
+        payload: &str,
+    ) -> NewProfileDeliveryJob {
+        NewProfileDeliveryJob::new(
+            sender.clone(),
+            kind,
+            activity(id),
+            GraphInboxUrl::new("https://remote.example/bob/inbox").unwrap(),
+            payload,
+            now(),
+        )
+        .unwrap()
+    }
+
+    /// D8R: the Block and the Undo(Block) of one actor pair are found together, in creation order;
+    /// other actors, other senders and Undo(Follow) are not.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn the_jobs_of_one_actor_pair_are_listed_in_creation_order() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let (_, p2) = seed_personal_profile(db).await;
+        let bob = "https://remote.example/users/bob";
+        let carol = "https://remote.example/users/carol";
+        let block = |target: &str| format!("{{\"type\":\"Block\",\"object\":\"{target}\"}}");
+        let undo = |target: &str| {
+            format!(
+                "{{\"type\":\"Undo\",\"object\":{{\"type\":\"Block\",\"object\":\"{target}\"}}}}"
+            )
+        };
+        let undo_follow = format!(
+            "{{\"type\":\"Undo\",\"object\":{{\"type\":\"Follow\",\"object\":\"{bob}\"}}}}"
+        );
+        for job in [
+            pair_job(&p1, DeliveryActivityType::Block, "b1", &block(bob)),
+            pair_job(&p1, DeliveryActivityType::Block, "c1", &block(carol)),
+            pair_job(&p1, DeliveryActivityType::Undo, "b1/undo", &undo(bob)),
+            pair_job(&p1, DeliveryActivityType::Undo, "f1/undo", &undo_follow),
+            pair_job(&p2, DeliveryActivityType::Block, "b2", &block(bob)),
+            pair_job(&p1, DeliveryActivityType::Block, "b3", &block(bob)),
+        ] {
+            assert!(enqueue(db, &job).await.is_newly_enqueued());
+        }
+
+        let mut conn = db.connection().await.unwrap();
+        let listed = db
+            .profile_delivery_job_repository()
+            .list_block_pair_jobs(&mut conn, &p1, bob)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = listed.iter().map(|job| job.activity_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "https://activities.example/b1",
+                "https://activities.example/b1/undo",
+                "https://activities.example/b3"
+            ]
+        );
+    }
+}
