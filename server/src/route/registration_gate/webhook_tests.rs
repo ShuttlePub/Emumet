@@ -19,7 +19,8 @@ const ENDPOINTS: &str = "/api/v1/admin/registration-gate/webhook/endpoints";
 const SECRET: &str = "whsec_route_test_secret_0123456789";
 const SECRET_2: &str = "whsec_route_second_secret_9876543210";
 const URL_SECRET_PATH: &str = "/very/secret/path/abcdefghij-a8f2";
-const URL: &str = "https://hooks.example.com:8443/very/secret/path/abcdefghij-a8f2?token=QueryTokZk9";
+const URL: &str =
+    "https://hooks.example.com:8443/very/secret/path/abcdefghij-a8f2?token=QueryTokZk9";
 
 struct InternalResolver;
 
@@ -688,7 +689,13 @@ async fn webhook_trouble_and_endpoint_management_never_touch_the_gate_or_notific
     assert_eq!(env["status"], "failing");
     assert_eq!(env["failed_count"], event_count);
     assert_eq!(body["has_failed_deliveries"], true);
-    for leaked in [SECRET, "QueryTokZk9", "very/secret", "https://", "abcdefghij"] {
+    for leaked in [
+        SECRET,
+        "QueryTokZk9",
+        "very/secret",
+        "https://",
+        "abcdefghij",
+    ] {
         assert!(!text.contains(leaked), "list leaks {leaked}: {text}");
     }
     assert_eq!(env["masked_url"], "hooks.example.com:8443/••••/a8f2");
