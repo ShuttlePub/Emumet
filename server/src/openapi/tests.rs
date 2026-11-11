@@ -596,3 +596,61 @@ fn contract_only_component_schemas_state_they_are_not_mounted() {
         "every contract-only schema must be listed in this test"
     );
 }
+
+#[test]
+fn query_parameters_are_documented_as_optional_query_parameters_and_path_parameters_exist_in_the_path(
+) {
+    let spec: serde_json::Value = serde_json::from_str(&generate_openapi_json())
+        .expect("generated OpenAPI spec is valid JSON");
+    let param = |path: &str, name: &str| -> serde_json::Value {
+        spec["paths"][path]["get"]["parameters"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{path} has no parameters"))
+            .iter()
+            .find(|parameter| parameter["name"] == name)
+            .unwrap_or_else(|| panic!("{path} has no parameter {name}"))
+            .clone()
+    };
+    for (path, names) in [
+        (
+            "/api/v1/admin/registration-gate/webhook/failures",
+            &["endpoint_id", "limit", "before"][..],
+        ),
+        (
+            "/api/v1/admin/registration-gate/notifications",
+            &["limit", "before"][..],
+        ),
+    ] {
+        for name in names {
+            let parameter = param(path, name);
+            assert_eq!(
+                parameter["in"], "query",
+                "{path} {name} must be a query parameter"
+            );
+            assert_ne!(
+                parameter["required"],
+                serde_json::json!(true),
+                "{path} {name} must be optional"
+            );
+        }
+    }
+    // Every path parameter of the registration gate admin API must be a `{placeholder}` of its
+    // path template (a query struct that derives `IntoParams` without `parameter_in = Query` is
+    // documented as a path parameter).
+    for (path, item) in spec["paths"].as_object().expect("paths") {
+        if !path.starts_with("/api/v1/admin/registration-gate/") {
+            continue;
+        }
+        for (method, operation) in item.as_object().expect("path item") {
+            for parameter in operation["parameters"].as_array().into_iter().flatten() {
+                if parameter["in"] == "path" {
+                    let name = parameter["name"].as_str().expect("parameter name");
+                    assert!(
+                        path.contains(&format!("{{{name}}}")),
+                        "{method} {path}: path parameter {name} is not in the path template"
+                    );
+                }
+            }
+        }
+    }
+}

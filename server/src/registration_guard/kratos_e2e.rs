@@ -692,7 +692,7 @@ async fn real_kratos_d15_q01_through_q11() {
         ),
     );
     let mut db = module.database_connection().connection().await.unwrap();
-    sqlx::query("TRUNCATE registration_gate_webhook_attempts, registration_gate_webhook_deliveries, registration_gate_webhook_state, registration_gate_event_reads, registration_gate_events, registration_gate_audit, registration_gate_state, registration_enforcement_probe_state, registration_enforcement_probe_schedule, registration_enforcement_canaries, registration_protection_readiness, registration_email_challenges, registration_email_send_log, registration_protection_schedule CASCADE").execute(&mut *db).await.unwrap();
+    sqlx::query("TRUNCATE registration_gate_webhook_attempts, registration_gate_webhook_deliveries, registration_gate_webhook_endpoints, registration_gate_webhook_endpoint_audit, registration_gate_webhook_env_import, registration_gate_webhook_state, registration_gate_event_reads, registration_gate_events, registration_gate_audit, registration_gate_state, registration_enforcement_probe_state, registration_enforcement_probe_schedule, registration_enforcement_canaries, registration_protection_readiness, registration_email_challenges, registration_email_send_log, registration_protection_schedule CASCADE").execute(&mut *db).await.unwrap();
     drop(db);
     let keys = generate_test_keys();
     let issuer = "https://issuer.e15d.example";

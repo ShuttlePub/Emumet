@@ -4,7 +4,9 @@
 //! 設定不備は起動失敗にせず `WebhookConfigIssue` として状態 API に出す。secret・URL の値は
 //! Debug/ログ/エラーに出さない。
 
-use kernel::prelude::entity::WebhookConfigIssue;
+use kernel::prelude::entity::{
+    WebhookConfigIssue, WebhookEndpointRejection, MAX_WEBHOOK_URL_LENGTH,
+};
 use reqwest::Url;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use url::Host;
@@ -168,6 +170,25 @@ pub(crate) fn parse_endpoint(
         }
     }
     Ok(WebhookEndpoint { url, host, port })
+}
+
+/// 管理者 API で登録・更新する URL の検査 (環境変数より厳しい: fragment と長さ上限も拒否する)。
+/// 通った URL は正規化済み (host の小文字化・末尾ドット除去・既定ポート省略)。
+pub(crate) fn parse_registration_endpoint(
+    raw: &str,
+    mode: EndpointMode,
+) -> Result<WebhookEndpoint, WebhookEndpointRejection> {
+    let raw = raw.trim();
+    if raw.chars().count() > MAX_WEBHOOK_URL_LENGTH {
+        return Err(WebhookEndpointRejection::UrlTooLong);
+    }
+    if Url::parse(raw)
+        .map(|url| url.fragment().is_some())
+        .unwrap_or(false)
+    {
+        return Err(WebhookEndpointRejection::FragmentInUrl);
+    }
+    parse_endpoint(raw, mode).map_err(WebhookEndpointRejection::from)
 }
 
 /// 環境変数の値 (またはテスト入力) から secret を取り出す。直接指定とファイル指定は排他。

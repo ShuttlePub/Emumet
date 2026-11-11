@@ -11,7 +11,7 @@ use driver::profile_delivery::{HttpProfileDeliverySender, HttpRemoteActorResolve
 use driver::registration_protection::SmtpSettings;
 use driver::registration_protection::{HttpTurnstileVerifier, SmtpEmailTransport};
 use driver::storage::{NoopProfileMediaCopyGateway, S3ImageStorage};
-use driver::webhook::HttpWebhookSender;
+use driver::webhook::{AeadWebhookSecretCipher, HttpWebhookSender};
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
     DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
@@ -22,7 +22,7 @@ use kernel::interfaces::permission::{DependOnPermissionChecker, DependOnPermissi
 use kernel::interfaces::repository::{
     DependOnEmailTransport, DependOnProfileDeliverySender, DependOnRegistrationFlowDirectory,
     DependOnRegistrationProtectionPolicy, DependOnRemoteActorResolver, DependOnTurnstileVerifier,
-    DependOnWebhookSender,
+    DependOnWebhookSecretCipher, DependOnWebhookSender,
 };
 use kernel::prelude::entity::{EmailChallengePolicy, ReadinessPolicy};
 use kernel::KernelError;
@@ -49,6 +49,7 @@ pub struct AppModule {
     image_storage: S3ImageStorage,
     profile_media_copy_gateway: NoopProfileMediaCopyGateway,
     webhook_sender: HttpWebhookSender,
+    webhook_secret_cipher: AeadWebhookSecretCipher,
     turnstile_verifier: HttpTurnstileVerifier,
     email_transport: SmtpEmailTransport,
     registration_flow_directory: KratosRegistrationFlowDirectory,
@@ -121,6 +122,7 @@ impl AppModule {
             image_storage,
             profile_media_copy_gateway: NoopProfileMediaCopyGateway,
             webhook_sender: HttpWebhookSender::from_env(),
+            webhook_secret_cipher: AeadWebhookSecretCipher::from_env(),
             turnstile_verifier: HttpTurnstileVerifier::from_env(),
             email_transport: SmtpEmailTransport::from_env(),
             registration_flow_directory,
@@ -181,6 +183,7 @@ impl AppModule {
             image_storage,
             profile_media_copy_gateway: NoopProfileMediaCopyGateway,
             webhook_sender: HttpWebhookSender::disabled(),
+            webhook_secret_cipher: AeadWebhookSecretCipher::not_configured(),
             turnstile_verifier: HttpTurnstileVerifier::new(
                 driver::registration_protection::turnstile::TurnstileSettings::from_source(
                     &driver::registration_protection::EnvSource::new(),
@@ -229,6 +232,15 @@ impl AppModule {
     #[cfg(test)]
     pub(crate) fn with_webhook_sender(mut self, webhook_sender: HttpWebhookSender) -> Self {
         self.webhook_sender = webhook_sender;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_webhook_secret_cipher(
+        mut self,
+        webhook_secret_cipher: AeadWebhookSecretCipher,
+    ) -> Self {
+        self.webhook_secret_cipher = webhook_secret_cipher;
         self
     }
 
@@ -375,6 +387,14 @@ impl DependOnWebhookSender for AppModule {
 
     fn webhook_sender(&self) -> &Self::WebhookSender {
         &self.webhook_sender
+    }
+}
+
+impl DependOnWebhookSecretCipher for AppModule {
+    type WebhookSecretCipher = AeadWebhookSecretCipher;
+
+    fn webhook_secret_cipher(&self) -> &Self::WebhookSecretCipher {
+        &self.webhook_secret_cipher
     }
 }
 

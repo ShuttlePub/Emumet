@@ -5,19 +5,21 @@
 use super::PostgresWebhookDeliveryRepository;
 use crate::database::{PostgresDatabase, REGISTRATION_GATE_DB_TEST_LOCK};
 use crate::webhook::{
-    HostResolver, HttpWebhookSender, WebhookNetworkSettings, HEADER_DELIVERY_ATTEMPT,
-    HEADER_EVENT_ID, HEADER_EVENT_TYPE, HEADER_SIGNATURE, HEADER_TIMESTAMP,
+    AeadWebhookSecretCipher, HostResolver, HttpWebhookSender, WebhookNetworkSettings,
+    HEADER_DELIVERY_ATTEMPT, HEADER_EVENT_ID, HEADER_EVENT_TYPE, HEADER_SIGNATURE,
+    HEADER_TIMESTAMP,
 };
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::repository::{
     apply_gate_command, apply_gate_observation, run_webhook_delivery_cycle, send_webhook_test,
     DependOnRegistrationGateRepository, RegistrationGateRepository, WebhookCycleEnv,
-    WebhookCycleReport, WebhookDeliveryRepository, WebhookTestOutcome,
+    WebhookCycleReport, WebhookDeliveryRepository, WebhookSender, WebhookTestOutcome,
 };
 use kernel::prelude::entity::{
     AuthAccountId, GateCommand, GateEventKind, ProbeStatus, ProtectionObservation,
-    RegistrationGateEventId, RegistrationGateState, RegistrationObservation, WebhookDeliveryPolicy,
-    WebhookDeliveryStatus, WebhookFailureReason, WebhookResultClass,
+    RegistrationGateEventId, RegistrationGateState, RegistrationObservation, WebhookConfigStatus,
+    WebhookDeliveryPolicy, WebhookDeliveryStatus, WebhookEndpointId, WebhookFailureReason,
+    WebhookResultClass,
 };
 use sqlx::types::time::OffsetDateTime;
 use sqlx::PgConnection;
@@ -77,7 +79,8 @@ impl Fixture {
         let con: &mut PgConnection = &mut conn;
         sqlx::query(
             "TRUNCATE registration_gate_webhook_attempts, registration_gate_webhook_deliveries, \
-             registration_gate_webhook_state, registration_gate_event_reads, \
+             registration_gate_webhook_endpoints, registration_gate_webhook_endpoint_audit, \
+             registration_gate_webhook_env_import, registration_gate_webhook_state, registration_gate_event_reads, \
              registration_gate_events, registration_gate_audit, registration_gate_state",
         )
         .execute(con)
@@ -181,6 +184,7 @@ impl Fixture {
             &self.db,
             &PostgresWebhookDeliveryRepository,
             sender,
+            &AeadWebhookSecretCipher::not_configured(),
             worker,
             policy,
             &WebhookCycleEnv {
@@ -196,7 +200,7 @@ impl Fixture {
     async fn deliveries(&self) -> Vec<kernel::prelude::entity::WebhookDelivery> {
         let mut conn = self.db.connection().await.unwrap();
         PostgresWebhookDeliveryRepository
-            .list_recent(&mut conn, 100)
+            .list_recent(&mut conn, None, 100)
             .await
             .unwrap()
     }
@@ -212,7 +216,11 @@ impl Fixture {
     async fn attempts(&self, event_id: i64) -> Vec<(u32, WebhookResultClass, Option<u16>)> {
         let mut conn = self.db.connection().await.unwrap();
         PostgresWebhookDeliveryRepository
-            .list_attempts(&mut conn, &RegistrationGateEventId::new(event_id))
+            .list_attempts(
+                &mut conn,
+                WebhookEndpointId::ENVIRONMENT,
+                &RegistrationGateEventId::new(event_id),
+            )
             .await
             .unwrap()
             .into_iter()
@@ -224,7 +232,7 @@ impl Fixture {
         let mut conn = self.db.connection().await.unwrap();
         let id = event_id.map(RegistrationGateEventId::new);
         PostgresWebhookDeliveryRepository
-            .retry_failed(&mut conn, id.as_ref(), at)
+            .retry_failed(&mut conn, None, id.as_ref(), at)
             .await
             .unwrap()
     }
@@ -447,7 +455,7 @@ async fn ingestion_is_idempotent_even_when_run_concurrently() {
     {
         let mut conn = fx.db.connection().await.unwrap();
         PostgresWebhookDeliveryRepository
-            .ingest_gate_events(&mut conn, t0, 100)
+            .ingest_gate_events(&mut conn, t0, 100, true)
             .await
             .unwrap();
     }
@@ -457,7 +465,7 @@ async fn ingestion_is_idempotent_even_when_run_concurrently() {
     let ingest = |_: u8| async {
         let mut conn = fx.db.connection().await.unwrap();
         PostgresWebhookDeliveryRepository
-            .ingest_gate_events(&mut conn, t0, 100)
+            .ingest_gate_events(&mut conn, t0, 100, true)
             .await
     };
     let (a, b, c) = tokio::join!(ingest(1), ingest(2), ingest(3));
@@ -813,11 +821,17 @@ async fn a_crashed_worker_is_recovered_after_lease_expiry_without_losing_the_eve
         let mut conn = fx.db.connection().await.unwrap();
         let repository = PostgresWebhookDeliveryRepository;
         repository
-            .ingest_gate_events(&mut conn, t0, 100)
+            .ingest_gate_events(&mut conn, t0, 100, true)
             .await
             .unwrap();
         let claims = repository
-            .claim_due(&mut conn, "worker-old", t0, &policy)
+            .claim_due(
+                &mut conn,
+                WebhookEndpointId::ENVIRONMENT,
+                "worker-old",
+                t0,
+                &policy,
+            )
             .await
             .unwrap();
         assert_eq!(claims.len(), 1);
@@ -902,11 +916,17 @@ async fn a_recovered_delivery_over_the_attempt_budget_fails_instead_of_resending
         let mut conn = fx.db.connection().await.unwrap();
         let repository = PostgresWebhookDeliveryRepository;
         repository
-            .ingest_gate_events(&mut conn, t0, 100)
+            .ingest_gate_events(&mut conn, t0, 100, true)
             .await
             .unwrap();
         repository
-            .claim_due(&mut conn, "crashed", t0, &policy)
+            .claim_due(
+                &mut conn,
+                WebhookEndpointId::ENVIRONMENT,
+                "crashed",
+                t0,
+                &policy,
+            )
             .await
             .unwrap();
     }
@@ -1079,7 +1099,10 @@ async fn test_send_uses_the_real_path_but_touches_no_gate_state_notification_or_
     let events_before = fx.event_ids_and_kinds().await;
     let audit_before = fx.count("registration_gate_audit").await;
 
-    let outcome = send_webhook_test(&sender, now()).await.unwrap();
+    let destination = sender.environment_destination();
+    let outcome = send_webhook_test(&sender, destination.as_ref(), now())
+        .await
+        .unwrap();
     let WebhookTestOutcome::Sent {
         event_id,
         delivered,
@@ -1122,7 +1145,9 @@ async fn test_send_uses_the_real_path_but_touches_no_gate_state_notification_or_
     mount_status(&server, 503).await;
     let WebhookTestOutcome::Sent {
         delivered, result, ..
-    } = send_webhook_test(&sender, now()).await.unwrap()
+    } = send_webhook_test(&sender, destination.as_ref(), now())
+        .await
+        .unwrap()
     else {
         panic!("expected a sent test");
     };
@@ -1130,21 +1155,16 @@ async fn test_send_uses_the_real_path_but_touches_no_gate_state_notification_or_
     assert_eq!(result, WebhookResultClass::HttpServerError);
     assert_eq!(fx.count("registration_gate_webhook_deliveries").await, 0);
 
+    // 未設定・設定不備の環境変数の送信先は送信先として現れない (use case が NotConfigured /
+    // Misconfigured を返す。application のテストで固定)。
     assert_eq!(
-        send_webhook_test(&HttpWebhookSender::from_values(None, None, None), now())
-            .await
-            .unwrap(),
-        WebhookTestOutcome::NotConfigured
+        HttpWebhookSender::from_values(None, None, None).status(),
+        WebhookConfigStatus::Disabled
     );
-    assert_eq!(
-        send_webhook_test(
-            &HttpWebhookSender::from_values(Some("http://x.example/"), Some(SECRET), None),
-            now()
-        )
-        .await
-        .unwrap(),
-        WebhookTestOutcome::Misconfigured
-    );
+    assert!(matches!(
+        HttpWebhookSender::from_values(Some("http://x.example/"), Some(SECRET), None).status(),
+        WebhookConfigStatus::Misconfigured { .. }
+    ));
 }
 
 #[test_with::env(DATABASE_URL)]
@@ -1173,10 +1193,13 @@ async fn summary_reports_counts_and_last_success_and_failure_times() {
     fx.cycle(&sender, "w", &policy, t0 + TimeDuration::seconds(5))
         .await;
     let mut conn = fx.db.connection().await.unwrap();
-    let summary = PostgresWebhookDeliveryRepository
-        .summary(&mut conn)
+    let stats = PostgresWebhookDeliveryRepository
+        .endpoint_stats(&mut conn)
         .await
         .unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].0, WebhookEndpointId::ENVIRONMENT);
+    let summary = &stats[0].1;
     let counts = &summary.counts;
     assert_eq!(counts.delivered, 1);
     assert_eq!(counts.retrying, 1);
@@ -1342,6 +1365,7 @@ async fn run_with(
         &fx.db,
         &PostgresWebhookDeliveryRepository,
         sender,
+        &AeadWebhookSecretCipher::not_configured(),
         worker,
         policy,
         &WebhookCycleEnv {
@@ -1419,7 +1443,7 @@ async fn a_never_attempted_delivery_is_still_sent_after_a_long_outage() {
     {
         let mut conn = fx.db.connection().await.unwrap();
         let ingested = PostgresWebhookDeliveryRepository
-            .ingest_gate_events(&mut conn, t0, 100)
+            .ingest_gate_events(&mut conn, t0, 100, true)
             .await
             .unwrap();
         assert_eq!(ingested.ingested, 1);
@@ -1451,3 +1475,5 @@ async fn a_never_attempted_delivery_is_still_sent_after_a_long_outage() {
     );
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
+
+mod endpoint_tests;

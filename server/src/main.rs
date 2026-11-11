@@ -75,7 +75,7 @@ async fn main() -> Result<(), StackTrace> {
     if webhook_worker::prepare_baseline(&app).await.is_err() {
         tracing::warn!("registration webhook baseline could not be prepared; worker will retry");
     }
-    let webhook_shutdown = webhook_worker::spawn_if_enabled(Arc::new(app.clone()));
+    let webhook_shutdown = webhook_worker::spawn(Arc::new(app.clone()));
     // Invalid hook configuration must not take login/Account APIs down with registration.
     let registration_shutdown =
         match registration_guard::spawn_if_enabled(Arc::new(app.clone())).await {
@@ -127,9 +127,7 @@ async fn main() -> Result<(), StackTrace> {
     if let Some(shutdown) = registration_shutdown {
         shutdown.trigger();
     }
-    if let Some(shutdown) = webhook_shutdown {
-        shutdown.trigger();
-    }
+    webhook_shutdown.trigger();
 
     Ok(())
 }

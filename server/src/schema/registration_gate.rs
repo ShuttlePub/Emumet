@@ -31,6 +31,7 @@ pub struct MarkNotificationsReadRequest {
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct NotificationsQuery {
     /// 1〜100 (既定 50)。
     pub limit: Option<i64>,

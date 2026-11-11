@@ -556,10 +556,7 @@ fn main_starts_no_profile_delivery_worker() {
         "unexpected worker start in main.rs: {spawns:?}"
     );
     assert!(spawns[0].contains("ProjectionWorker::spawn"), "{spawns:?}");
-    assert!(
-        spawns[1].contains("webhook_worker::spawn_if_enabled"),
-        "{spawns:?}"
-    );
+    assert!(spawns[1].contains("webhook_worker::spawn("), "{spawns:?}");
     assert!(
         spawns[2].contains("registration_guard::spawn_if_enabled"),
         "{spawns:?}"

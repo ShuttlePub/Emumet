@@ -22,6 +22,7 @@ mod registration_protection;
 mod remote_account;
 mod signing_key;
 mod webhook_delivery;
+mod webhook_endpoint;
 
 pub use self::account::*;
 pub use self::account_report::*;
@@ -47,3 +48,4 @@ pub use self::registration_protection::*;
 pub use self::remote_account::*;
 pub use self::signing_key::*;
 pub use self::webhook_delivery::*;
+pub use self::webhook_endpoint::*;
