@@ -417,3 +417,225 @@ async fn a_domain_block_never_sends_a_block_even_to_an_actor_that_is_individuall
         0
     );
 }
+
+/// A peer that keeps its block state per actor pair like Mastodon / Iceshrimp: a `Block` blocks, any
+/// `Undo(Block)` unblocks (it does not look at which Block it names). Requests answered with a failure
+/// status are logged but change nothing.
+#[derive(Default)]
+struct PeerState {
+    blocked: bool,
+    log: Vec<String>,
+}
+
+type SharedPeer = std::sync::Arc<std::sync::Mutex<PeerState>>;
+
+async fn mount_stateful_inbox(
+    env: &Env,
+    status: std::sync::Arc<std::sync::atomic::AtomicU16>,
+) -> SharedPeer {
+    let state: SharedPeer = SharedPeer::default();
+    let shared = state.clone();
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/inbox"))
+        .respond_with(move |request: &wiremock::Request| {
+            let value: Value = serde_json::from_slice(&request.body).unwrap();
+            let label = match (value["type"].as_str(), value["object"]["type"].as_str()) {
+                (Some("Undo"), Some("Block")) => "Undo(Block)",
+                (Some("Block"), _) => "Block",
+                _ => "other",
+            };
+            let code = status.load(std::sync::atomic::Ordering::SeqCst);
+            let mut state = shared.lock().unwrap();
+            if (200..300).contains(&code) {
+                match label {
+                    "Block" => state.blocked = true,
+                    "Undo(Block)" => state.blocked = false,
+                    _ => {}
+                }
+                state.log.push(label.to_string());
+            } else {
+                state.log.push(format!("{code}:{label}"));
+            }
+            ResponseTemplate::new(code)
+        })
+        .mount(&env.peer)
+        .await;
+    state
+}
+
+fn status(code: u16) -> std::sync::Arc<std::sync::atomic::AtomicU16> {
+    std::sync::Arc::new(std::sync::atomic::AtomicU16::new(code))
+}
+
+async fn run_worker(env: &Env) {
+    for _ in 0..6 {
+        if env.cycle("w").await.attempted == 0 {
+            break;
+        }
+    }
+}
+
+fn log(peer: &SharedPeer) -> Vec<String> {
+    peer.lock().unwrap().log.clone()
+}
+
+fn blocked(peer: &SharedPeer) -> bool {
+    peer.lock().unwrap().blocked
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_undo_waiting_for_a_retry_cannot_unblock_a_later_reblock() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    env.create_key(&alice.profile_id, &alice.nanoid).await;
+    env.mount_actor("/users/bob").await;
+    let bob = env.peer_url("/users/bob");
+    let code = status(202);
+    let peer = mount_stateful_inbox(&env, code.clone()).await;
+
+    // B1 reaches the peer; the unblock's Undo(B1) then fails once and waits for a retry.
+    let first = block(&env, &alice, &bob).await;
+    run_worker(&env).await;
+    unblock(&env, &alice, &first).await;
+    code.store(503, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(env.cycle("w").await.attempted, 1);
+    let undo_b1 = of_type(
+        &env.jobs_of(&alice.profile_id).await,
+        DeliveryActivityType::Undo,
+    )[0]
+    .clone();
+    assert_eq!(undo_b1.state, ProfileDeliveryJobState::Retrying);
+
+    // The reblock cancels the waiting Undo and sends B2 without delay (nothing is in flight).
+    block(&env, &alice, &bob).await;
+    let jobs = env.jobs_of(&alice.profile_id).await;
+    assert_eq!(
+        env.job(&undo_b1.id).await.state,
+        ProfileDeliveryJobState::Cancelled
+    );
+    let block_jobs = of_type(&jobs, DeliveryActivityType::Block);
+    assert_eq!(block_jobs.len(), 2);
+    assert!(block_jobs[1].next_attempt_at < OffsetDateTime::now_utc() + Duration::seconds(60));
+
+    code.store(202, std::sync::atomic::Ordering::SeqCst);
+    run_worker(&env).await;
+    env.advance_clock(Duration::hours(3));
+    run_worker(&env).await;
+
+    assert_eq!(
+        log(&peer),
+        vec!["Block", "503:Undo(Block)", "Block"],
+        "the failed Undo(B1) is never retried after the reblock"
+    );
+    assert!(blocked(&peer), "the latest block stands at the peer");
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_undo_in_flight_at_the_reblock_is_waited_for_before_the_new_block_is_sent() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    env.create_key(&alice.profile_id, &alice.nanoid).await;
+    env.mount_actor("/users/bob").await;
+    let bob = env.peer_url("/users/bob");
+    let peer = mount_stateful_inbox(&env, status(202)).await;
+
+    let first = block(&env, &alice, &bob).await;
+    run_worker(&env).await;
+    unblock(&env, &alice, &first).await;
+    // A worker holds the lease of Undo(B1): it may be landing at the peer right now.
+    claim_one(&env).await;
+    let undo_b1 = of_type(
+        &env.jobs_of(&alice.profile_id).await,
+        DeliveryActivityType::Undo,
+    )[0]
+    .clone();
+    assert_eq!(undo_b1.state, ProfileDeliveryJobState::InFlight);
+    let lease_end = undo_b1.lease_expires_at.expect("in flight has a lease");
+
+    block(&env, &alice, &bob).await;
+
+    let jobs = env.jobs_of(&alice.profile_id).await;
+    assert_eq!(
+        env.job(&undo_b1.id).await.state,
+        ProfileDeliveryJobState::Cancelled
+    );
+    let b2 = of_type(&jobs, DeliveryActivityType::Block)[1].clone();
+    assert!(
+        b2.next_attempt_at >= lease_end,
+        "B2 starts after the lease of the in-flight Undo ({lease_end}), not at {}",
+        b2.next_attempt_at
+    );
+    assert!(b2.next_attempt_at > OffsetDateTime::now_utc() + Duration::seconds(60));
+
+    // Now: B2 is not due, so the worker sends nothing; the in-flight Undo lands (simulated at the peer)
+    // and only after that the new Block follows.
+    assert_eq!(env.cycle("w").await.attempted, 0);
+    {
+        let mut state = peer.lock().unwrap();
+        state.blocked = false;
+        state.log.push("Undo(Block)-late".to_string());
+    }
+    env.advance_clock(Duration::seconds(200));
+    run_worker(&env).await;
+    assert_eq!(log(&peer), vec!["Block", "Undo(Block)-late", "Block"]);
+    assert!(blocked(&peer), "the new Block is the last word");
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_unsent_undo_is_cancelled_by_the_reblock_and_the_reblock_is_not_delayed() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    env.create_key(&alice.profile_id, &alice.nanoid).await;
+    env.mount_actor("/users/bob").await;
+    let bob = env.peer_url("/users/bob");
+    let peer = mount_stateful_inbox(&env, status(202)).await;
+    let first = block(&env, &alice, &bob).await;
+    run_worker(&env).await;
+    unblock(&env, &alice, &first).await;
+
+    block(&env, &alice, &bob).await;
+    run_worker(&env).await;
+
+    assert_eq!(
+        log(&peer),
+        vec!["Block", "Block"],
+        "no Undo reaches the peer"
+    );
+    assert!(blocked(&peer));
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn unblocking_again_before_the_reblock_was_sent_still_undoes_the_block_the_peer_holds() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    env.create_key(&alice.profile_id, &alice.nanoid).await;
+    env.mount_actor("/users/bob").await;
+    let bob = env.peer_url("/users/bob");
+    let peer = mount_stateful_inbox(&env, status(202)).await;
+    let first = block(&env, &alice, &bob).await;
+    run_worker(&env).await;
+    // unblock (Undo(B1) waits), reblock (Undo(B1) cancelled, B2 waits), unblock again before B2 is sent.
+    unblock(&env, &alice, &first).await;
+    let second = block(&env, &alice, &bob).await;
+    unblock(&env, &alice, &second).await;
+
+    let jobs = env.jobs_of(&alice.profile_id).await;
+    let live_undo: Vec<_> = of_type(&jobs, DeliveryActivityType::Undo)
+        .into_iter()
+        .filter(|job| job.state == ProfileDeliveryJobState::Pending)
+        .collect();
+    assert_eq!(live_undo.len(), 1, "exactly one Undo is left to send");
+    assert_eq!(
+        body(live_undo[0])["object"]["id"],
+        body(of_type(&jobs, DeliveryActivityType::Block)[0])["id"],
+        "it undoes the Block the peer actually holds (B1: B2 was never sent)"
+    );
+
+    run_worker(&env).await;
+    assert_eq!(log(&peer), vec!["Block", "Undo(Block)"]);
+    assert!(!blocked(&peer), "the final state at the peer is unblocked");
+}

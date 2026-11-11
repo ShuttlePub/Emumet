@@ -540,6 +540,32 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
         .collect()
     }
 
+    async fn list_block_pair_jobs(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+    ) -> error_stack::Result<Vec<ProfileDeliveryJob>, KernelError> {
+        let con: &mut PgConnection = executor;
+        // Every payload is a JSON object (enforced at enqueue), so the cast cannot fail.
+        sqlx::query_as::<_, JobRow>(&format!(
+            "SELECT {COLUMNS} FROM profile_delivery_jobs \
+             WHERE sender_profile_id = $1 AND ( \
+               (activity_type = 'Block' AND payload::jsonb ->> 'object' = $2) \
+               OR (activity_type = 'Undo' AND payload::jsonb -> 'object' ->> 'type' = 'Block' \
+                   AND payload::jsonb -> 'object' ->> 'object' = $2)) \
+             ORDER BY id ASC"
+        ))
+        .bind(sender.as_ref())
+        .bind(target_actor_url)
+        .fetch_all(con)
+        .await
+        .convert_error()?
+        .into_iter()
+        .map(ProfileDeliveryJob::try_from)
+        .collect()
+    }
+
     async fn find_by_follow(
         &self,
         executor: &mut Self::Connection,

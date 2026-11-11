@@ -43,10 +43,10 @@ use kernel::interfaces::repository::{
     ProfileFollowRepository, ProfileMuteRepository, ProfileRelationshipLock, RemoteActorResolver,
 };
 use kernel::prelude::entity::{
-    AuthAccountId, DeliveryActivityType, GraphActorUrl, Nanoid, NewProfileDeliveryJob,
-    ProfileBlock, ProfileBlockId, ProfileDeliveryJob, ProfileDeliveryJobState, ProfileFollow,
-    ProfileFollowEndReason, ProfileFollowId, ProfileGraphActor, ProfileId, ProfileMute,
-    ProfileMuteId,
+    AuthAccountId, DeliveryActivityType, GraphActivityId, GraphActorUrl, Nanoid,
+    NewProfileDeliveryJob, ProfileBlock, ProfileBlockId, ProfileDeliveryJob,
+    ProfileDeliveryJobState, ProfileFollow, ProfileFollowEndReason, ProfileFollowId,
+    ProfileGraphActor, ProfileId, ProfileMute, ProfileMuteId,
 };
 use kernel::KernelError;
 use std::future::Future;
@@ -74,10 +74,132 @@ pub(super) fn now() -> OffsetDateTime {
 /// (行ロック待ち・大きな解除バッチ) ときに古い時刻から数えると、後始末の開始が元の送信より先に来る。
 /// lease の期限が分かっていればそれより前にもならない。
 fn cleanup_not_before(before: &ProfileDeliveryJob, after: &ProfileDeliveryJob) -> OffsetDateTime {
-    [before.lease_expires_at, after.lease_expires_at]
-        .into_iter()
-        .flatten()
-        .fold(now() + IN_FLIGHT_GRACE, OffsetDateTime::max)
+    settle_time(
+        now() + IN_FLIGHT_GRACE,
+        [before.lease_expires_at, after.lease_expires_at],
+    )
+}
+
+/// `base` (取消後に取り直した時刻 + 猶予) と、分かっている lease の期限の遅い方。期限なし (`None`)・過去の期限は
+/// 無視される (`base` より前にはならない)。
+fn settle_time(
+    base: OffsetDateTime,
+    leases: impl IntoIterator<Item = Option<OffsetDateTime>>,
+) -> OffsetDateTime {
+    leases.into_iter().flatten().fold(base, OffsetDateTime::max)
+}
+
+fn later(current: Option<OffsetDateTime>, candidate: OffsetDateTime) -> Option<OffsetDateTime> {
+    Some(current.map_or(candidate, |current| current.max(candidate)))
+}
+
+/// 同じ actor 対の個別 block の job (`Block` と `Undo(Block)`) の整理結果。
+#[derive(Debug, Default)]
+struct BlockPair {
+    /// 新しい `Block` を送り始めてよい時刻の下限。相手に届き得る (送信中だった) 古い `Undo(Block)` が後から
+    /// 着地して、新しい block を打ち消さないようにする。`None` は待つ必要なし。
+    block_not_before: Option<OffsetDateTime>,
+    /// 新しい `Undo(Block)` を送り始めてよい時刻の下限。古い `Block` / `Undo(Block)` のどちらが後から着地しても、
+    /// 新しい `Undo` の後にならないようにする。
+    undo_not_before: Option<OffsetDateTime>,
+    /// 相手側に block が残っている可能性がある場合の、最新の (試行済みの) `Block` job。
+    block_at_peer: Option<ProfileDeliveryJob>,
+}
+
+/// 個別 block の job 一覧 (作成順) から、相手側の状態と待ち時間を求める (純粋関数)。
+///
+/// * `cancelled_now`: この操作で取り消した job の ID。送信中だった可能性があるものは `now_bounds`
+///   (`(Undo か, 起算時刻)`) に入っている。
+/// * 取消済みで試行済み・未配送の過去の job は、取消時刻 + 猶予まで相手に着地し得るとみなす。
+/// * 相手側の block: 試行済みの `Block` で立ち、配送済みの `Undo(Block)` で下りる (作成順に畳む)。
+fn analyze_block_pair(
+    jobs: &[ProfileDeliveryJob],
+    cancelled_now: &std::collections::HashSet<i64>,
+    now_bounds: &[(bool, OffsetDateTime)],
+) -> BlockPair {
+    let mut pair = BlockPair::default();
+    for job in jobs {
+        let is_undo = job.activity_type == DeliveryActivityType::Undo;
+        let attempted = job.attempt_count > 0;
+        if job.state == ProfileDeliveryJobState::Cancelled
+            && attempted
+            && job.delivered_at.is_none()
+            && !cancelled_now.contains(job.id.as_ref())
+        {
+            if let Some(cancelled_at) = job.cancelled_at {
+                let bound = cancelled_at + IN_FLIGHT_GRACE;
+                pair.undo_not_before = later(pair.undo_not_before, bound);
+                if is_undo {
+                    pair.block_not_before = later(pair.block_not_before, bound);
+                }
+            }
+        }
+        match job.activity_type {
+            DeliveryActivityType::Block
+                if attempted || job.state == ProfileDeliveryJobState::Delivered =>
+            {
+                pair.block_at_peer = Some(job.clone());
+            }
+            DeliveryActivityType::Undo if job.state == ProfileDeliveryJobState::Delivered => {
+                pair.block_at_peer = None;
+            }
+            _ => {}
+        }
+    }
+    for (is_undo, bound) in now_bounds {
+        pair.undo_not_before = later(pair.undo_not_before, *bound);
+        if *is_undo {
+            pair.block_not_before = later(pair.block_not_before, *bound);
+        }
+    }
+    pair
+}
+
+/// 同じ actor 対の未配送の `Block` / `Undo(Block)` job を取り消し (配送中・再試行待ちを含む)、整理結果を返す。
+///
+/// block / unblock を繰り返すと、古い `Undo(Block)` が遅延・再試行・送信中のまま後から着地して、最新の block を
+/// 相手側で打ち消し得る (相手は actor 対で block を管理する)。最新の意思だけが残るよう、状態を変える操作
+/// (block・unblock) は、先にこの関数で古い未配送 job を取り消す。
+async fn supersede_block_pair<T: RelationshipDeps>(
+    deps: &T,
+    executor: &mut Conn<T>,
+    sender: &ProfileId,
+    target_url: &str,
+    reason: &str,
+) -> error_stack::Result<BlockPair, KernelError> {
+    let jobs = deps.profile_delivery_job_repository();
+    let listed = jobs
+        .list_block_pair_jobs(executor, sender, target_url)
+        .await?;
+    let mut cancelled_now = std::collections::HashSet::new();
+    let mut now_bounds = Vec::new();
+    for job in listed.iter().filter(|job| {
+        matches!(
+            job.state,
+            ProfileDeliveryJobState::Pending
+                | ProfileDeliveryJobState::InFlight
+                | ProfileDeliveryJobState::Retrying
+        )
+    }) {
+        jobs.cancel(executor, &job.id, reason, now()).await?;
+        cancelled_now.insert(*job.id.as_ref());
+        let after = jobs
+            .find_by_id(executor, &job.id)
+            .await?
+            .ok_or_else(|| not_found("delivery job disappeared"))?;
+        let in_flight_possible = job.state == ProfileDeliveryJobState::InFlight
+            || job.attempt_count < after.attempt_count;
+        if in_flight_possible {
+            now_bounds.push((
+                job.activity_type == DeliveryActivityType::Undo,
+                cleanup_not_before(job, &after),
+            ));
+        }
+    }
+    let relisted = jobs
+        .list_block_pair_jobs(executor, sender, target_url)
+        .await?;
+    Ok(analyze_block_pair(&relisted, &cancelled_now, &now_bounds))
 }
 
 fn validation(message: &str) -> Report<KernelError> {
@@ -379,54 +501,49 @@ pub(super) async fn reject_incoming_follow<T: RelationshipDeps>(
 
 /// 個別 block を解除したとき、相手へ送った (または送るはずだった) `Block` の後始末を同じ transaction で行う。
 ///
-/// `Block` job が未送信 (試行 0) なら取り消すだけで `Undo(Block)` は送らない (相手は block を知らない)。試行済み
-/// なら、元 Block を埋め込んだ `Undo(Block)` を同じ宛先へ予約する。送信中だった可能性があれば、Follow の
-/// Undo と同じ規則で、元の送信が届き得る時間の後 (取消後に取り直した時刻から数える) に回す。
+/// まず同じ actor 対の未配送の `Block` / `Undo(Block)` を取り消す (古い `Undo` が後から着地しない)。相手側に
+/// block が残っている可能性 (試行済みの `Block` があり、それを打ち消す `Undo` が配送済みでない) があるときだけ、
+/// 最新のその `Block` を埋め込んだ `Undo(Block)` を同じ宛先へ予約する。未送信の `Block` だけだったなら何も
+/// 送らない。送信中だった可能性のある古い job があれば、取消後に取り直した時刻から 120 秒 / lease 後に回す。
 async fn retract_block<T: RelationshipDeps>(
     deps: &T,
     executor: &mut Conn<T>,
     sender: &LocalSender<'_>,
-    block: &ProfileBlock,
     target_url: &str,
     now: OffsetDateTime,
 ) -> error_stack::Result<(), KernelError> {
-    let block_id = block_activity_id(deps.public_base_url(), sender.nanoid, block.id())?;
-    let jobs = deps.profile_delivery_job_repository();
-    let Some(before) = jobs
-        .find_by_activity(executor, sender.profile_id, &block_id)
-        .await?
-        .into_iter()
-        .next()
-    else {
+    let pair =
+        supersede_block_pair(deps, executor, sender.profile_id, target_url, "unblocked").await?;
+    let Some(latest) = pair.block_at_peer else {
         return Ok(());
     };
-    jobs.cancel(executor, &before.id, "unblocked", now).await?;
-    let after = jobs
-        .find_by_id(executor, &before.id)
+    let mut undo_id = undo_activity_id(&latest.activity_id)?;
+    if !deps
+        .profile_delivery_job_repository()
+        .find_by_activity(executor, sender.profile_id, &undo_id)
         .await?
-        .ok_or_else(|| not_found("delivery job disappeared"))?;
-    if after.attempt_count == 0 {
-        return Ok(());
+        .is_empty()
+    {
+        // The Undo of this Block was reserved before and then cancelled; a fresh id keeps the new one
+        // from being swallowed by the idempotency key.
+        undo_id = GraphActivityId::new(format!("{}-{}", undo_id.as_str(), kernel::generate_id()))?;
     }
-    let in_flight_possible = before.state == ProfileDeliveryJobState::InFlight
-        || before.attempt_count < after.attempt_count;
-    let undo_id = undo_activity_id(&block_id)?;
     let body = undo_block_body(
         &undo_id,
         &profile_actor_url(deps.public_base_url(), sender.nanoid),
         target_url,
-        &before.payload,
+        &latest.payload,
     )?;
     let mut undo = NewProfileDeliveryJob::new(
         sender.profile_id.clone(),
         DeliveryActivityType::Undo,
         undo_id,
-        before.target_inbox.clone(),
+        latest.target_inbox.clone(),
         body,
         now,
     )?;
-    if in_flight_possible {
-        undo = undo.not_before(cleanup_not_before(&before, &after));
+    if let Some(not_before) = pair.undo_not_before {
+        undo = undo.not_before(not_before);
     }
     deps.profile_delivery_enqueuer()
         .enqueue(executor, &undo)
@@ -890,7 +1007,18 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                                 &profile_actor_url(deps.public_base_url(), &profile_nanoid),
                                 &target.url,
                             )?;
-                            let job = NewProfileDeliveryJob::new(
+                            // An earlier block of the same actor may still have an Undo(Block) waiting,
+                            // retrying or in flight: it is cancelled, and the new Block starts only after
+                            // an Undo that may be landing could no longer undo it.
+                            let pair = supersede_block_pair(
+                                &deps,
+                                executor,
+                                &profile_id,
+                                &target.url,
+                                "superseded by a new block",
+                            )
+                            .await?;
+                            let mut job = NewProfileDeliveryJob::new(
                                 profile_id.clone(),
                                 DeliveryActivityType::Block,
                                 activity_id,
@@ -898,6 +1026,9 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                                 body,
                                 now,
                             )?;
+                            if let Some(not_before) = pair.block_not_before {
+                                job = job.not_before(not_before);
+                            }
                             deps.profile_delivery_enqueuer()
                                 .enqueue(executor, &job)
                                 .await?;
@@ -964,7 +1095,6 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                                     profile_id: &profile_id,
                                     nanoid: &profile_nanoid,
                                 },
-                                &block,
                                 url.as_str(),
                                 now,
                             )
@@ -1072,3 +1202,145 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
 }
 
 impl<T> ProfileRelationshipUseCase for T where T: RelationshipDeps + DependOnRemoteActorResolver {}
+
+#[cfg(test)]
+mod pair_tests {
+    use super::*;
+    use kernel::prelude::entity::{GraphInboxUrl, ProfileDeliveryJobId};
+    use std::collections::HashSet;
+    use time::macros::datetime;
+
+    const T0: OffsetDateTime = datetime!(2026-11-11 12:00:00 UTC);
+
+    #[test]
+    fn the_lease_only_raises_the_start_never_lowers_it() {
+        let base = T0 + Duration::seconds(120);
+        assert_eq!(settle_time(base, [None, None]), base, "no lease known");
+        assert_eq!(
+            settle_time(base, [Some(T0 - Duration::seconds(5)), None]),
+            base,
+            "an expired lease is ignored"
+        );
+        assert_eq!(
+            settle_time(base, [Some(base - Duration::seconds(1))]),
+            base,
+            "a lease ending before the base changes nothing"
+        );
+        let far = T0 + Duration::seconds(600);
+        assert_eq!(
+            settle_time(base, [None, Some(far), Some(T0 + Duration::seconds(130))]),
+            far,
+            "the latest future lease wins"
+        );
+    }
+
+    fn job(
+        id: i64,
+        activity_type: DeliveryActivityType,
+        state: ProfileDeliveryJobState,
+        attempts: i32,
+    ) -> ProfileDeliveryJob {
+        ProfileDeliveryJob {
+            id: ProfileDeliveryJobId::new(id),
+            sender: ProfileId::new(1),
+            activity_type,
+            activity_id: GraphActivityId::new(format!("https://l.example/blocks/{id}")).unwrap(),
+            target_inbox: GraphInboxUrl::new("https://r.example/inbox").unwrap(),
+            payload: "{}".to_string(),
+            follow_id: None,
+            state,
+            attempt_count: attempts,
+            next_attempt_at: T0,
+            last_attempt_at: None,
+            last_result: None,
+            last_http_status: None,
+            failure_reason: None,
+            lease_owner: None,
+            lease_expires_at: None,
+            delivered_at: (state == ProfileDeliveryJobState::Delivered).then_some(T0),
+            cancelled_at: (state == ProfileDeliveryJobState::Cancelled).then_some(T0),
+            cancel_reason: None,
+            created_at: T0,
+            updated_at: T0,
+        }
+    }
+
+    use DeliveryActivityType::{Block, Undo};
+    use ProfileDeliveryJobState::{Cancelled, Delivered, Failed, Pending};
+
+    #[test]
+    fn the_peer_holds_a_block_until_an_undo_is_delivered() {
+        let none = HashSet::new();
+        let pair = analyze_block_pair(&[], &none, &[]);
+        assert!(pair.block_at_peer.is_none());
+
+        // A Block that was never attempted is not at the peer.
+        let pair = analyze_block_pair(&[job(1, Block, Pending, 0)], &none, &[]);
+        assert!(pair.block_at_peer.is_none());
+
+        // Delivered, or attempted with an unknown result: it may be there.
+        let pair = analyze_block_pair(&[job(1, Block, Delivered, 1)], &none, &[]);
+        assert_eq!(pair.block_at_peer.unwrap().id, ProfileDeliveryJobId::new(1));
+        let pair = analyze_block_pair(&[job(1, Block, Failed, 3)], &none, &[]);
+        assert!(pair.block_at_peer.is_some());
+
+        // A delivered Undo clears it; a later Block sets it again; a cancelled Undo clears nothing.
+        let jobs = [
+            job(1, Block, Delivered, 1),
+            job(2, Undo, Delivered, 1),
+            job(3, Block, Delivered, 1),
+        ];
+        assert_eq!(
+            analyze_block_pair(&jobs, &none, &[])
+                .block_at_peer
+                .unwrap()
+                .id,
+            ProfileDeliveryJobId::new(3)
+        );
+        let jobs = [job(1, Block, Delivered, 1), job(2, Undo, Cancelled, 0)];
+        assert!(analyze_block_pair(&jobs, &none, &[])
+            .block_at_peer
+            .is_some());
+        let jobs = [job(1, Block, Delivered, 1), job(2, Undo, Delivered, 1)];
+        assert!(analyze_block_pair(&jobs, &none, &[])
+            .block_at_peer
+            .is_none());
+    }
+
+    #[test]
+    fn earlier_cancelled_attempts_and_in_flight_jobs_set_the_waiting_times() {
+        let none = HashSet::new();
+        // A Block cancelled after an attempt may still land: only a new Undo has to wait for it.
+        let pair = analyze_block_pair(&[job(1, Block, Cancelled, 1)], &none, &[]);
+        assert_eq!(pair.undo_not_before, Some(T0 + IN_FLIGHT_GRACE));
+        assert_eq!(pair.block_not_before, None);
+
+        // An Undo cancelled after an attempt may still land: a new Block waits as well.
+        let pair = analyze_block_pair(&[job(2, Undo, Cancelled, 1)], &none, &[]);
+        assert_eq!(pair.block_not_before, Some(T0 + IN_FLIGHT_GRACE));
+        assert_eq!(pair.undo_not_before, Some(T0 + IN_FLIGHT_GRACE));
+
+        // Never attempted, or delivered: nothing to wait for.
+        let pair = analyze_block_pair(
+            &[job(3, Undo, Cancelled, 0), job(4, Block, Delivered, 1)],
+            &none,
+            &[],
+        );
+        assert_eq!((pair.block_not_before, pair.undo_not_before), (None, None));
+
+        // Jobs cancelled by this operation are judged by the precise bounds only.
+        let cancelled_now: HashSet<i64> = [2].into_iter().collect();
+        let late = T0 + Duration::seconds(300);
+        let pair = analyze_block_pair(
+            &[job(2, Undo, Cancelled, 1)],
+            &cancelled_now,
+            &[(true, late)],
+        );
+        assert_eq!(pair.block_not_before, Some(late));
+        let pair = analyze_block_pair(&[job(2, Undo, Cancelled, 0)], &cancelled_now, &[]);
+        assert_eq!(
+            pair.block_not_before, None,
+            "a retrying Undo was not in flight"
+        );
+    }
+}

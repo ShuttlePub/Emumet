@@ -130,6 +130,16 @@ pub trait ProfileDeliveryJobRepository: Sync + Send + 'static {
         activity_id: &GraphActivityId,
     ) -> impl Future<Output = error_stack::Result<Vec<ProfileDeliveryJob>, KernelError>> + Send;
 
+    /// 送信元の、ある相手 actor (`target_actor_url`) との個別 block に関する job (`Block` と、`Block` を埋め込んだ
+    /// `Undo`) を ID 昇順 (作成順) で返す。状態は問わない。block / unblock を繰り返したとき、相手側から見て
+    /// 最新の意思が勝つよう、同じ actor 対の未配送 job を取り消し、相手側に残り得る block を判断するために使う。
+    fn list_block_pair_jobs(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+    ) -> impl Future<Output = error_stack::Result<Vec<ProfileDeliveryJob>, KernelError>> + Send;
+
     /// `follow_id` に紐づく `activity_type` の job を古い順に返す (状態は問わない。終端状態を含む)。
     /// 関係の終了時に、既に予約済みの Follow / Accept job の宛先 inbox と状態を知るために使う
     /// (P3o が追加した読み取り専用の参照。P2 の保存・予約の契約は変えない)。
