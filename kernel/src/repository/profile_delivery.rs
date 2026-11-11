@@ -97,6 +97,9 @@ pub trait ProfileDeliveryJobRepository: Sync + Send + 'static {
         now: OffsetDateTime,
     ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
 
+    /// **transaction 内で呼ぶこと** (行ロックは transaction の終了まで保持される。取消の戻り値と、その後の下限の更新
+    /// (`raise_block_settle`) を同じ transaction にするため)。
+    ///
     /// `cancel` と同じ取消を行い、取り消した job の取消直前の状態 (状態・試行回数・lease の期限) を返す。job の行を
     /// ロックして読み直してから取り消すので、読取後に claim / renew で状態や期限が変わっても、返す値は取消の
     /// 瞬間のもの。取り消せなかった (配送済み・失敗・取消済み) ときは `None`。

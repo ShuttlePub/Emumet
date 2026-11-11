@@ -450,6 +450,16 @@ async fn reset_is_not_repeated() {
     seed_legacy_federation(&iso.pool, account).await;
     let (_, extra_profile) = seed_personal_profile(&iso.database).await;
     let _: ProfileId = extra_profile;
+    // The settle bound of an individual block (a later feature's table) is retained data: a repeated
+    // reset run must leave it alone (it is part of the retained snapshot compared below).
+    sqlx::query(
+        "INSERT INTO profile_block_settle (sender_profile_id, target_actor_url, settle_not_before) \
+         VALUES ($1, 'https://remote.example/users/bob', now() + interval '10 minutes')",
+    )
+    .bind(extra_profile.as_ref())
+    .execute(&iso.pool)
+    .await
+    .unwrap();
     assign_usernames(&iso.pool).await;
     let before = retained_snapshot(&iso.pool).await;
     let legacy_counts: Vec<i64> = {
@@ -477,6 +487,7 @@ async fn reset_is_not_repeated() {
         "a repeated run must not erase again"
     );
     assert_eq!(before, retained_snapshot(&iso.pool).await);
+    assert_eq!(count(&iso.pool, "profile_block_settle").await, 1);
     assert_eq!(count(&iso.pool, LEDGER).await, 1);
 }
 
