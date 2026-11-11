@@ -18,15 +18,14 @@ use kernel::interfaces::database::{
 };
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::repository::{
-    confirm_email_challenge, consume_registration_proof, insert_canary_challenge,
-    invalidate_challenge, record_provider_result, reserve_email_challenge, BotTokenCheck,
-    ConfirmRequest, ConfirmResult, DependOnEmailTransport,
-    DependOnRegistrationEmailChallengeRepository, DependOnRegistrationFlowDirectory,
-    DependOnRegistrationGateRepository, DependOnRegistrationProtectionPolicy,
-    DependOnRegistrationProtectionRepository, DependOnTurnstileVerifier, EmailTransport,
-    NewEmailChallenge, ProofVerification, RegistrationFlowDirectory, RegistrationFlowStatus,
-    RegistrationGateRepository, RegistrationProtectionRepository, ReserveOutcome, SendPurpose,
-    TurnstileVerifier,
+    confirm_email_challenge, consume_registration_proof, invalidate_challenge,
+    record_provider_result, reserve_email_challenge, BotTokenCheck, ConfirmRequest, ConfirmResult,
+    DependOnEmailTransport, DependOnRegistrationEmailChallengeRepository,
+    DependOnRegistrationFlowDirectory, DependOnRegistrationGateRepository,
+    DependOnRegistrationProtectionPolicy, DependOnRegistrationProtectionRepository,
+    DependOnTurnstileVerifier, EmailTransport, NewEmailChallenge, ProofVerification,
+    RegistrationFlowDirectory, RegistrationFlowStatus, RegistrationGateRepository,
+    RegistrationProtectionRepository, ReserveOutcome, SendPurpose, TurnstileVerifier,
 };
 use kernel::prelude::entity::{
     evaluate, evaluate_readiness, observation_from_readiness, AuthAccountId, ChallengePurpose,
@@ -51,7 +50,6 @@ const MAX_FLOW_ID_LEN: usize = 64;
 const MAX_CODE_LEN: usize = 32;
 const MAX_PROOF_LEN: usize = 256;
 const CODE_DIGITS: usize = 8;
-const CANARY_FLOW_ID: &str = "canary";
 
 fn sha256_hex(domain: &str, parts: &[&str]) -> String {
     let mut hasher = Sha256::new();
@@ -293,6 +291,19 @@ async fn renew_bootstrapped_readiness<T: RegistrationProtectionDeps>(
         result.reason = ReasonCode::BusinessSuccess;
     }
     Ok(result)
+}
+
+/// 検証 API が実際に応答したこと (`Accepted`: BOT は secret が有効という業務応答、メールは DATA 受理) を
+/// 当該 generation の business success へ昇格する。証拠 (段階・開始時刻) はそのまま残す。
+/// 障害・拒否・接続だけの受理 (`MAIL FROM` まで) は変えない。管理者の検証だけが使う。
+fn promote_to_business_success(mut result: ProviderResult) -> ProviderResult {
+    if result.outcome == ProviderOutcome::Accepted
+        && result.stage == Some(kernel::prelude::entity::CheckStage::Data)
+    {
+        result.outcome = ProviderOutcome::BusinessSuccess;
+        result.reason = ReasonCode::BusinessSuccess;
+    }
+    result
 }
 
 pub trait RegistrationProtectionReadinessUseCase: RegistrationProtectionDeps {
@@ -810,25 +821,10 @@ pub trait RegistrationEmailChallengeUseCase: RegistrationProtectionDeps {
 
 impl<T> RegistrationEmailChallengeUseCase for T where T: RegistrationProtectionDeps {}
 
-/// 管理者の検証入力。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct AdminVerifyInput {
-    /// BOT: widget が発行した有効 token (business 検証)。省略すると負の probe だけ。
-    pub token: Option<String>,
-    /// メール: 確認する canary challenge の ID と code (roundtrip の確認)。
-    pub challenge_id: Option<String>,
-    pub code: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifyDisposition {
     /// 結果を記録した (記録しない `attempt_rejected` を含む)。
     Completed,
-    /// canary mailbox へ code を送った。確認 (challenge_id + code) で business success になる。
-    PendingConfirmation {
-        challenge_id: String,
-        expires_at: OffsetDateTime,
-    },
     /// 承認済み canary mailbox が未設定。メールは unverified のまま。
     CanaryNotConfigured,
 }
@@ -857,57 +853,32 @@ pub trait AdminRegistrationProtectionUseCase:
         }
     }
 
-    /// 実検証の即時実行 (bootstrap・再検証)。HTTP 200 を成功と同一視せず、business 結果と
-    /// transport 分類の両方を記録する。
+    /// 実検証の即時実行 (初回 bootstrap・再検証)。入力は取らない (d15-q05: 設定が有効なだけでは
+    /// 足りず、有効な保護について実際に検証 API が応答することを確認して初めて準備済み)。
+    ///
+    /// - BOT: 有効でないダミー token で Siteverify を呼び、**secret が有効** (`invalid-input-response`
+    ///   など token 起因の拒否) と応答したときだけ business success。`invalid-input-secret` /
+    ///   `missing-input-secret` は設定不正、429/5xx/timeout/不正応答は一時障害で、HTTP 200 だけでは成功にしない。
+    /// - メール: 固定の canary 宛へ実送信し、SMTP の **DATA 受理** を business success とする。
+    ///   RCPT/DATA を含む各段階の失敗は障害として分類・記録する。
+    ///
+    /// 成功は generation に束縛され、SMTP の対話の段階・開始時刻を証拠として持つ
+    /// (既知の障害を解除できるのは、それを覆う段階の、障害より後の証拠だけ)。
+    /// 周期実行 (`renew_bootstrapped_readiness`) は新しい generation を bootstrap できない。
     fn verify_registration_protection<'a>(
         &'a self,
         admin: &'a AuthAccountId,
         protection: Protection,
-        input: AdminVerifyInput,
     ) -> impl Future<Output = error_stack::Result<AdminVerifyReport, KernelError>> + Send + 'a {
         async move {
             check_permission(self, admin, &instance_administrate()).await?;
             let at = now();
             let (result, disposition) = match protection {
-                Protection::Bot => {
-                    if input.challenge_id.is_some() || input.code.is_some() {
-                        return Err(Report::new(KernelError::Validation)
-                            .attach_printable("challenge_id/code apply to the email protection"));
-                    }
-                    let result = match input.token.as_deref().map(str::trim) {
-                        Some(token) if !token.is_empty() => {
-                            self.turnstile_verifier()
-                                .verify(&BotTokenCheck {
-                                    token,
-                                    remote_ip: None,
-                                })
-                                .await
-                        }
-                        Some(_) => {
-                            return Err(Report::new(KernelError::Validation)
-                                .attach_printable("token must not be empty"))
-                        }
-                        None => self.turnstile_verifier().probe_secret().await,
-                    };
-                    (result, VerifyDisposition::Completed)
-                }
-                Protection::Email => {
-                    if input.token.is_some() {
-                        return Err(Report::new(KernelError::Validation)
-                            .attach_printable("token applies to the bot protection"));
-                    }
-                    match (input.challenge_id.as_deref(), input.code.as_deref()) {
-                        (Some(id), Some(code)) => (
-                            self.confirm_canary(id, code, at).await?,
-                            VerifyDisposition::Completed,
-                        ),
-                        (None, None) => self.start_canary(at).await?,
-                        _ => {
-                            return Err(Report::new(KernelError::Validation)
-                                .attach_printable("challenge_id and code must be given together"))
-                        }
-                    }
-                }
+                Protection::Bot => (
+                    promote_to_business_success(self.turnstile_verifier().probe_secret().await),
+                    VerifyDisposition::Completed,
+                ),
+                Protection::Email => self.verify_canary_delivery().await?,
             };
             let recorded = record_result(self, protection, result, at).await?;
             if recorded {
@@ -927,21 +898,25 @@ pub trait AdminRegistrationProtectionUseCase:
         }
     }
 
-    /// メール: 接続・認証 probe → 承認済み canary mailbox へ code を送る。
-    fn start_canary<'a>(
+    /// メール: 承認済み canary mailbox への実送信。DATA 受理が business success になる。
+    /// canary が未設定なら接続 probe の結果だけを記録し、メールは unverified のまま。
+    /// 宛先は固定で、登録者の入力を宛先にしない。proof も challenge も発行しない。
+    fn verify_canary_delivery<'a>(
         &'a self,
-        at: OffsetDateTime,
     ) -> impl Future<Output = error_stack::Result<(ProviderResult, VerifyDisposition), KernelError>>
            + Send
            + 'a {
         async move {
             let transport = self.email_transport();
-            let probe = transport.probe_connection().await;
-            if probe.outcome != ProviderOutcome::Accepted {
-                return Ok((probe, VerifyDisposition::Completed));
-            }
             let Some(canary) = transport.canary_address() else {
-                return Ok((probe, VerifyDisposition::CanaryNotConfigured));
+                let probe = transport.probe_connection().await;
+                // 接続・認証の失敗はその分類で報告する。canary 未設定は接続が受理されたときだけ。
+                let disposition = if probe.outcome == ProviderOutcome::Accepted {
+                    VerifyDisposition::CanaryNotConfigured
+                } else {
+                    VerifyDisposition::Completed
+                };
+                return Ok((probe, disposition));
             };
             let Ok(email) = NormalizedEmail::parse(&canary) else {
                 return Ok((
@@ -952,110 +927,13 @@ pub trait AdminRegistrationProtectionUseCase:
                     VerifyDisposition::Completed,
                 ));
             };
-            let snapshot = self.protection_snapshot(Protection::Email);
-            let policy = self.email_challenge_policy();
-            let id = random_hex(16);
-            let code = random_code();
-            let new = NewEmailChallenge {
-                id: id.clone(),
-                purpose: ChallengePurpose::Canary,
-                flow_id: CANARY_FLOW_ID.to_string(),
-                email_hash: hash_email(&email),
-                source_hash: hash_source(CANARY_FLOW_ID),
-                generation: snapshot.generation,
-                code_hash: hash_code(&id, &code),
-                flow_expires_at: at + policy.challenge_ttl,
-            };
-            let transaction_deps = self.clone();
-            let expires_at = self
-                .transaction_manager()
-                .transaction(move |executor| {
-                    Box::pin(async move {
-                        insert_canary_challenge(
-                            transaction_deps.registration_email_challenge_repository(),
-                            executor,
-                            new,
-                            &policy,
-                            at,
-                        )
-                        .await
-                    })
-                })
-                .await?;
             let sent = transport
-                .send_code(email.as_str(), &code, SendPurpose::Canary)
+                .send_code(email.as_str(), &random_code(), SendPurpose::Canary)
                 .await;
-            if sent.outcome == ProviderOutcome::Accepted {
-                return Ok((
-                    sent,
-                    VerifyDisposition::PendingConfirmation {
-                        challenge_id: id,
-                        expires_at,
-                    },
-                ));
-            }
-            self.invalidate_registration_challenge(&id).await?;
-            Ok((sent, VerifyDisposition::Completed))
-        }
-    }
-
-    /// メール: canary の code 確認。成功だけが business success (generation に束縛)。
-    /// canary の確認は proof を発行せず、他の登録者の所有証明にもならない。
-    fn confirm_canary<'a>(
-        &'a self,
-        challenge_id: &'a str,
-        code: &'a str,
-        at: OffsetDateTime,
-    ) -> impl Future<Output = error_stack::Result<ProviderResult, KernelError>> + Send + 'a {
-        async move {
-            let challenge_id = challenge_id.trim().to_string();
-            let code = code.trim().to_string();
-            if challenge_id.is_empty()
-                || challenge_id.len() > 64
-                || code.is_empty()
-                || code.len() > MAX_CODE_LEN
-            {
-                return Ok(ProviderResult::attempt_rejected(
-                    ReasonCode::TokenRejected,
-                    TransportClass::None,
-                ));
-            }
-            let snapshot = self.protection_snapshot(Protection::Email);
-            let policy = self.email_challenge_policy();
-            let given_code_hash = hash_code(&challenge_id, &code);
-            let transaction_deps = self.clone();
-            let generation = snapshot.generation;
-            let confirmed = self
-                .transaction_manager()
-                .transaction(move |executor| {
-                    Box::pin(async move {
-                        confirm_email_challenge(
-                            transaction_deps.registration_email_challenge_repository(),
-                            executor,
-                            &ConfirmRequest {
-                                id: &challenge_id,
-                                expected_purpose: ChallengePurpose::Canary,
-                                given_code_hash: &given_code_hash,
-                                new_proof_hash: "",
-                                current_generation: &generation,
-                            },
-                            &policy,
-                            at,
-                        )
-                        .await
-                    })
-                })
-                .await?;
-            Ok(match confirmed {
-                ConfirmResult::Confirmed { .. } => {
-                    ProviderResult::business_success(TransportClass::SmtpAccepted)
-                        .without_evidence()
-                }
-                ConfirmResult::Rejected(_) => ProviderResult::attempt_rejected(
-                    ReasonCode::TokenRejected,
-                    TransportClass::None,
-                ),
-            })
+            Ok((
+                promote_to_business_success(sent),
+                VerifyDisposition::Completed,
+            ))
         }
     }
 }

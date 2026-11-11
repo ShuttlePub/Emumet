@@ -78,8 +78,8 @@ successes cannot survive worker delay or restart.
 
 Each generation retains a strict initial bootstrap:
 
-- email: administrator canary code confirmation;
-- BOT: a valid token's business verification.
+- email: the administrator's input-less verification, which really sends to the fixed canary and requires SMTP DATA acceptance;
+- BOT: the administrator's input-less verification; Siteverify rejects the deliberately invalid probe token as `invalid-input-response` (the secret is valid), which is the business success.
 
 After bootstrap, successful fixed-canary **DATA acceptance** and interpreted
 Siteverify probe responses renew the business TTL (default 24 hours), including

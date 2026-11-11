@@ -4,7 +4,6 @@ use crate::error::ErrorStatus;
 use crate::schema::registration_protection::{
     ProtectionListResponse, VerifyProtectionRequest, VerifyProtectionResponse,
 };
-use application::service::registration_protection::AdminVerifyInput;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -58,7 +57,7 @@ pub(crate) async fn list_registration_protections(
 #[utoipa::path(
     post,
     path = "/api/v1/admin/registration-gate/protections/{protection}/verify",
-    description = "Run one real verification now (bootstrap or re-verification) and record both the business result and the transport classification. bot: with `token` (a valid token issued by the widget for the configured site key) the real Siteverify business result decides (success must match the expected hostname/action and be fresh); without it only a negative probe runs (confirms the secret is accepted, never makes the protection operational). email: without `challenge_id`/`code` an SMTP connection/auth probe runs and a code is sent to the approved canary mailbox (REGISTRATION_EMAIL_CANARY_ADDRESS; `canary_not_configured` leaves the protection unverified); with `challenge_id` and `code` the canary roundtrip is confirmed, which is the business success. A canary confirmation never issues a registration proof. A user-attributable rejection (`attempt_rejected`, for example a wrong code or an invalid token) is reported but not recorded and does not change the gate observation. Recorded results update the registration gate observation through the E15a use case.",
+    description = "Run one real verification now (initial bootstrap or re-verification) with no input, and record both the business result and the transport classification. The request body is an empty object `{}`; unknown fields (the removed `token` / `challenge_id` / `code`) are rejected with 400. A protection becomes operational only through this administrator verification (configuration alone never does; the periodic worker only renews a generation already verified here). bot: Siteverify is called with a deliberately invalid probe token; a user-token rejection (`invalid-input-response`) proves the secret is valid and is the business success, `invalid-input-secret` / `missing-input-secret` are `configuration_invalid`, and 429/5xx/timeouts/malformed responses are `temporarily_unavailable` (HTTP 200 alone is never success). email: a code is really sent to the fixed approved canary mailbox (REGISTRATION_EMAIL_CANARY_ADDRESS) and SMTP DATA acceptance is the business success; failures at CONNECT/STARTTLS/AUTH/MAIL FROM/RCPT/DATA are classified and recorded; `canary_not_configured` leaves the protection unverified. No code confirmation exists and no registration proof is issued. Responses always carry `pending_challenge: null`. Recorded results update the registration gate observation through the E15a use case.",
     params(("protection" = String, Path, description = "`email` or `bot`")),
     request_body = VerifyProtectionRequest,
     responses(
@@ -78,20 +77,11 @@ pub(crate) async fn verify_registration_protection(
     request: Result<Json<VerifyProtectionRequest>, JsonRejection>,
 ) -> Result<Json<VerifyProtectionResponse>, ErrorStatus> {
     let protection = parse_protection(&protection)?;
-    let request = request
-        .map(|Json(request)| request)
-        .map_err(|rejection| bad_request(rejection.body_text()))?;
+    // 本文は空のオブジェクトだけ (未知のフィールドは拒否)。入力は検証に使わない。
+    let Json(_empty) = request.map_err(|rejection| bad_request(rejection.body_text()))?;
     let admin = resolve_admin(&api, claims).await?;
     let report = api
-        .verify(
-            &admin,
-            protection,
-            AdminVerifyInput {
-                token: request.token,
-                challenge_id: request.challenge_id,
-                code: request.code,
-            },
-        )
+        .verify(&admin, protection)
         .await
         .map_err(ErrorStatus::from)?;
     Ok(Json((&report).into()))

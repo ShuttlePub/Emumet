@@ -310,16 +310,24 @@ impl Harness {
             .await
             .unwrap();
     }
+    /// d15-q05: the only bootstrap is the administrator's input-less verification. No widget token and no
+    /// canary code is supplied; the provider's real response (Siteverify's rejection of the dummy token
+    /// proving the secret valid, SMTP DATA acceptance for the fixed canary) is the evidence.
     async fn bootstrap(&self, smtp: &Smtp, email: bool, bot: bool) {
         if bot {
-            self.post(
-                "/api/v1/admin/registration-gate/protections/bot/verify",
-                json!({"token":"valid-bootstrap"}),
-                HttpStatus::OK,
-            )
-            .await;
+            let result = self
+                .post(
+                    "/api/v1/admin/registration-gate/protections/bot/verify",
+                    json!({}),
+                    HttpStatus::OK,
+                )
+                .await;
+            assert_eq!(result["result"]["outcome"], "business_success");
+            assert_eq!(result["readiness"]["status"], "operational");
+            assert!(result["pending_challenge"].is_null());
         }
         if email {
+            let delivered = smtp.messages.lock().unwrap().len();
             let result = self
                 .post(
                     "/api/v1/admin/registration-gate/protections/email/verify",
@@ -327,15 +335,14 @@ impl Harness {
                     HttpStatus::OK,
                 )
                 .await;
-            let id = result["pending_challenge"]["challenge_id"]
-                .as_str()
-                .expect("canary challenge id");
-            self.post(
-                "/api/v1/admin/registration-gate/protections/email/verify",
-                json!({"challenge_id":id,"code":smtp.code()}),
-                HttpStatus::OK,
-            )
-            .await;
+            assert_eq!(result["result"]["outcome"], "business_success");
+            assert_eq!(result["readiness"]["status"], "operational");
+            assert!(result["pending_challenge"].is_null());
+            assert_eq!(
+                smtp.messages.lock().unwrap().len(),
+                delivered + 1,
+                "the canary was really delivered (DATA accepted)"
+            );
         }
         self.module.sync_registration_observation().await.unwrap();
     }
@@ -738,8 +745,35 @@ async fn real_kratos_d15_q01_through_q11() {
         .await;
     app.registration("q05-unverified", "api", false, true, &smtp, false)
         .await;
-    println!("D15 q05_api_verified_readiness ok");
+    // Configuration alone (and the periodic worker, which only renews already-verified generations) never
+    // makes a protection ready or lets the gate open.
+    app.maintenance().await;
+    app.command("open", false, HttpStatus::UNPROCESSABLE_ENTITY)
+        .await;
+    app.registration(
+        "q05-unverified-after-maintenance",
+        "api",
+        false,
+        true,
+        &smtp,
+        false,
+    )
+    .await;
+    // The retired widget-token / canary-code inputs are rejected, not silently ignored.
+    for body in [
+        json!({"token":"valid-bootstrap"}),
+        json!({"challenge_id":"x","code":"12345678"}),
+    ] {
+        app.post(
+            "/api/v1/admin/registration-gate/protections/bot/verify",
+            body,
+            HttpStatus::BAD_REQUEST,
+        )
+        .await;
+    }
+    // The administrator's input-less verification (the provider really answered) is what opens it.
     app.bootstrap(&smtp, false, true).await;
+    println!("D15 q05_api_verified_readiness ok");
     app.command("open", false, HttpStatus::OK).await;
     app.registration("q01-bot-only", "api", false, true, &smtp, true)
         .await;
