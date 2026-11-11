@@ -293,18 +293,34 @@ pub fn classify_siteverify(
     }
 }
 
-/// 負の probe (有効でない固定 token) の応答の分類。Siteverify は secret を先に検証するので、
-/// **secret が有効だと確認できる応答**だけを `attempt_rejected` (token 起因の拒否) として残す:
+/// 負の probe (有効でない固定 token) の応答の分類。**secret が有効だと確認できる応答**だけを
+/// `attempt_rejected` (token 起因の拒否) として残す:
 /// `invalid-input-response` / `missing-input-response` / `timeout-or-duplicate` (または成功)。
-/// `invalid-input-secret` / `missing-input-secret` は `configuration_invalid`、429/5xx・不正応答は一時障害。
-/// `bad-request` だけの応答は secret の有効性を示さないので、不正応答 (一時障害) として扱う。
-/// HTTP 200 であることは根拠にしない。
+/// `invalid-input-secret` / `missing-input-secret` は `configuration_invalid` (他の code が混在しても優先)、
+/// 429/5xx・不正応答は一時障害。`bad-request` だけの応答は secret の有効性を示さないので不正応答
+/// (一時障害) として扱う。**未知の error code を 1 つでも含む拒否応答は、既知の code が混在していても**
+/// 解釈できない応答として一時障害にする (準備済みの根拠にしない)。HTTP 200 であることは根拠にしない。
+///
+/// 前提: 有効でないダミー token + 有効な secret → `invalid-input-response`、無効な secret → `invalid-input-secret`
+/// は、E15b の実応答と公式テストキーでの実測に基づく。公式ドキュメントは secret と response の検証順序を
+/// 保証していないので、仕様保証ではなく実測上の前提であり、live テストで継続的に確認する。
 pub fn classify_probe_response(
     http_status: u16,
     body: &[u8],
     expected: &SiteverifyExpectation,
     now: OffsetDateTime,
 ) -> ProviderResult {
+    const KNOWN_REJECTION_CODES: [&str; 4] = [
+        "invalid-input-response",
+        "missing-input-response",
+        "timeout-or-duplicate",
+        "bad-request",
+    ];
+    const SECRET_PROVING_CODES: [&str; 3] = [
+        "invalid-input-response",
+        "missing-input-response",
+        "timeout-or-duplicate",
+    ];
     let result = classify_siteverify(http_status, body, expected, now);
     if result.outcome != kernel::prelude::entity::ProviderOutcome::AttemptRejected {
         return result;
@@ -313,14 +329,14 @@ pub fn classify_probe_response(
         .ok()
         .is_some_and(|parsed| {
             parsed.success == Some(true)
-                || parsed.error_codes.iter().any(|code| {
-                    matches!(
-                        code.as_str(),
-                        "invalid-input-response"
-                            | "missing-input-response"
-                            | "timeout-or-duplicate"
-                    )
-                })
+                || (parsed
+                    .error_codes
+                    .iter()
+                    .all(|code| KNOWN_REJECTION_CODES.contains(&code.as_str()))
+                    && parsed
+                        .error_codes
+                        .iter()
+                        .any(|code| SECRET_PROVING_CODES.contains(&code.as_str())))
         });
     if secret_proven {
         result

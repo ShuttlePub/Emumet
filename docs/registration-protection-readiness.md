@@ -116,10 +116,10 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
 
 ### bot (Turnstile)
 
-- **bootstrap (入力なしの管理者 [再検証])**: 管理者が `POST .../protections/bot/verify` `{}` を実行する (d15-q05: 設定が有効なだけでは足りず、有効な保護について実際に検証 API が応答することを確認して初めて準備済み)。widget の token も canary の code も要らない。Emumet は **有効でない固定のダミー token** で Siteverify を呼び、応答の本文 (HTTP status ではなく) で判定する (Siteverify は secret を先に検証する。E15b の実応答と公式テストキーで確認):
+- **bootstrap (入力なしの管理者 [再検証])**: 管理者が `POST .../protections/bot/verify` `{}` を実行する (d15-q05: 設定が有効なだけでは足りず、有効な保護について実際に検証 API が応答することを確認して初めて準備済み)。widget の token も canary の code も要らない。Emumet は **有効でない固定のダミー token** で Siteverify を呼び、応答の本文 (HTTP status ではなく) で判定する (有効でないダミー token + 有効 secret → `invalid-input-response`、無効 secret → `invalid-input-secret` は E15b の実応答と公式テストキーでの**実測上の前提**で、公式ドキュメントは secret と response の検証順序を保証していない。live テストで継続確認する):
   - `invalid-input-response` (・`missing-input-response`・`timeout-or-duplicate`、または成功) = **secret は有効で API が応答した** → `business_success` を当該 generation に記録し `operational`。
   - `invalid-input-secret` / `missing-input-secret` = `configuration_invalid` (準備済みにならない)。
-  - 429/5xx/timeout/接続失敗・不正な本文・**secret の有効性を示さない応答 (`bad-request` だけ・未知の error code) = `temporarily_unavailable`**。HTTP 200 だけを根拠にしない。
+  - 429/5xx/timeout/接続失敗・不正な本文・**secret の有効性を示さない応答 (`bad-request` だけ・未知の error code。既知の code に未知の code が混在する応答も同様) = `temporarily_unavailable`** (secret の error が混在する場合は設定不正が優先)。HTTP 200 だけを根拠にしない。
   周期の probe は新しい generation を bootstrap できない (管理者の検証を済ませた generation の鮮度更新だけ)。
 - **bootstrap (入力なしの管理者 [再検証])**: 管理者が `POST .../protections/email/verify` `{}` を実行すると、**固定の承認済み canary 宛へ実際に送信**し、SMTP の **DATA 受理** を `business_success` として当該 generation に記録する (`operational`)。canary の受信確認 (code の入力) は求めない。宛先は固定で、登録者の入力を宛先にしない。challenge も proof も作らない。各段階 (接続・STARTTLS・認証・MAIL FROM・RCPT・DATA) の失敗は分類して記録し、準備済みにならない。MAIL FROM までの受理や接続 probe だけでは business success にならない。canary 未設定なら接続 probe の結果だけを記録し `unverified` のまま (`canary_not_configured`)。
 - **継続検証**: 接続・認証・MAIL FROM の probe (`run_registration_protection_probe`) と canary の配送 (宛先を伴う RCPT/DATA の再検証)。登録者の code 確認の成功 (配送と確認の end-to-end の business success) は鮮度を更新するだけで、障害を解除しない。

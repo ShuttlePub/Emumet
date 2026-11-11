@@ -441,6 +441,10 @@ fn the_negative_probe_decides_secret_validity_from_real_siteverify_responses() {
         failure_body(&["bad-request"]),
         failure_body(&[]),
         failure_body(&["something-new"]),
+        // 既知の secret 有効 code に未知の code が混在しても準備済みにならない。
+        failure_body(&["invalid-input-response", "something-new"]),
+        failure_body(&["something-new", "timeout-or-duplicate"]),
+        failure_body(&["bad-request", "something-new"]),
         "not json".to_string(),
         "{}".to_string(),
     ] {
@@ -454,6 +458,40 @@ fn the_negative_probe_decides_secret_validity_from_real_siteverify_responses() {
             result.outcome,
             ProviderOutcome::TemporarilyUnavailable,
             "{body}"
+        );
+    }
+    // secret の error は他の code が混在しても設定不正が優先 (準備済みにならない)。
+    for codes in [
+        &["invalid-input-response", "invalid-input-secret"][..],
+        &["something-new", "missing-input-secret"][..],
+    ] {
+        assert_eq!(
+            classify_probe_response(
+                200,
+                failure_body(codes).as_bytes(),
+                &expectation(),
+                OffsetDateTime::now_utc(),
+            )
+            .outcome,
+            ProviderOutcome::ConfigurationInvalid,
+            "{codes:?}"
+        );
+    }
+    // 既知の拒否 code の組み合わせ (bad-request の併記を含む) は secret 有効の証拠のまま。
+    for codes in [
+        &["invalid-input-response", "bad-request"][..],
+        &["missing-input-response", "invalid-input-response"][..],
+    ] {
+        assert_eq!(
+            classify_probe_response(
+                200,
+                failure_body(codes).as_bytes(),
+                &expectation(),
+                OffsetDateTime::now_utc(),
+            )
+            .outcome,
+            ProviderOutcome::AttemptRejected,
+            "{codes:?}"
         );
     }
     // 一時障害はそのまま。
@@ -1044,6 +1082,8 @@ async fn live_turnstile_official_test_keys() {
         invalid.verify(&check(dummy)).await,
         ProviderResult::configuration_invalid(ReasonCode::InvalidSecret, TransportClass::Http4xx)
     );
+    // 検証順序は公式に保証されないため実測で確認する: 無効な secret は probe と同じダミー token でも
+    // invalid-input-secret になり、response エラーに隠れて Accepted になることはない。
     assert_eq!(
         invalid.probe_secret().await.outcome,
         ProviderOutcome::ConfigurationInvalid
