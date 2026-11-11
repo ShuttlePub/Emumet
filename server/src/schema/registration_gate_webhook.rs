@@ -193,6 +193,7 @@ pub struct WebhookTestResponse {
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct WebhookFailuresQuery {
     /// 送信先 ID で絞り込む。
     pub endpoint_id: Option<String>,

@@ -1586,27 +1586,21 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "1〜100 (既定 50)。",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "before",
-            "in": "path",
+            "in": "query",
             "description": "前ページ最後の通知イベント ID。これより古いものを返す。",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -2295,39 +2289,30 @@
         "parameters": [
           {
             "name": "endpoint_id",
-            "in": "path",
+            "in": "query",
             "description": "送信先 ID で絞り込む。",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "1〜100 (既定 50)。",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "before",
-            "in": "path",
+            "in": "query",
             "description": "前ページの `next_cursor` (不透明な文字列)。これより古い failed を返す。",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
