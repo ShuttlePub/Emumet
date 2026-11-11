@@ -1,12 +1,15 @@
 //! 外部 Webhook への HTTPS 送信 (署名・宛先検査・接続固定・リダイレクト禁止)。
 
 use super::endpoint::{
-    is_forbidden_ip, load_secret, parse_endpoint, EndpointHost, EndpointMode, WebhookEndpoint,
-    WebhookSecret, ENV_SECRET, ENV_SECRET_FILE, ENV_URL,
+    is_forbidden_ip, load_secret, parse_endpoint, parse_registration_endpoint, EndpointHost,
+    EndpointMode, WebhookEndpoint, WebhookSecret, ENV_SECRET, ENV_SECRET_FILE, ENV_URL,
 };
 use super::signature;
 use kernel::interfaces::repository::{WebhookRequest, WebhookSender};
-use kernel::prelude::entity::{WebhookConfigIssue, WebhookConfigStatus, WebhookSendObservation};
+use kernel::prelude::entity::{
+    ValidatedWebhookUrl, WebhookConfigIssue, WebhookConfigStatus, WebhookDestination,
+    WebhookEndpointRejection, WebhookSecret as KernelWebhookSecret, WebhookSendObservation,
+};
 use reqwest::header::{CONTENT_TYPE, RETRY_AFTER, USER_AGENT};
 use std::future::Future;
 use std::net::SocketAddr;
@@ -78,6 +81,8 @@ enum ConfigState {
 #[derive(Clone)]
 pub struct HttpWebhookSender {
     state: ConfigState,
+    /// 管理者 API で登録した送信先の宛先検査の厳しさ。production は常に `Strict`。
+    endpoint_mode: EndpointMode,
     settings: WebhookNetworkSettings,
     resolver: Arc<dyn HostResolver>,
     #[cfg(any(test, feature = "test-mode"))]
@@ -127,6 +132,7 @@ impl HttpWebhookSender {
     fn with_state(state: ConfigState) -> Self {
         Self {
             state,
+            endpoint_mode: EndpointMode::Strict,
             settings: WebhookNetworkSettings::default(),
             resolver: Arc::new(SystemResolver),
             #[cfg(any(test, feature = "test-mode"))]
@@ -157,6 +163,20 @@ impl HttpWebhookSender {
             None,
             EndpointMode::AllowInsecureLoopback,
         ))
+        .allowing_insecure_loopback_destinations()
+    }
+
+    /// 環境変数の送信先なし (無効) のまま、管理者 API で登録する送信先に http・loopback 宛先を許す。
+    /// `cfg(test)` / `test-mode` ビルドにだけ存在し、設定・API からは到達できない。
+    #[cfg(any(test, feature = "test-mode"))]
+    pub fn disabled_allowing_insecure_loopback_destinations() -> Self {
+        Self::disabled().allowing_insecure_loopback_destinations()
+    }
+
+    #[cfg(any(test, feature = "test-mode"))]
+    fn allowing_insecure_loopback_destinations(mut self) -> Self {
+        self.endpoint_mode = EndpointMode::AllowInsecureLoopback;
+        self
     }
 
     /// 検証用に信頼する追加ルート証明書 (PEM)。TLS fixture テスト専用で、`cfg(test)` / `test-mode`
@@ -180,10 +200,11 @@ impl HttpWebhookSender {
 
     async fn resolve_and_check(
         &self,
-        config: &EnabledConfig,
+        endpoint: &WebhookEndpoint,
+        mode: EndpointMode,
     ) -> Result<Vec<SocketAddr>, WebhookSendObservation> {
-        let port = config.endpoint.port;
-        let addresses = match &config.endpoint.host {
+        let port = endpoint.port;
+        let addresses = match &endpoint.host {
             EndpointHost::Ip(ip) => vec![SocketAddr::new(*ip, port)],
             EndpointHost::Domain(domain) => {
                 let resolved = tokio::time::timeout(
@@ -197,7 +218,7 @@ impl HttpWebhookSender {
                 }
             }
         };
-        if config.mode.is_strict()
+        if mode.is_strict()
             && addresses
                 .iter()
                 .any(|address| is_forbidden_ip(address.ip()))
@@ -262,11 +283,71 @@ impl WebhookSender for HttpWebhookSender {
         }
     }
 
+    fn environment_destination(&self) -> Option<WebhookDestination> {
+        let ConfigState::Enabled(config) = &self.state else {
+            return None;
+        };
+        let secret =
+            KernelWebhookSecret::from_trusted_bytes(config.secret.as_bytes().to_vec()).ok()?;
+        Some(WebhookDestination {
+            url: config.endpoint.url.to_string(),
+            secret,
+        })
+    }
+
+    async fn validate_destination(
+        &self,
+        raw_url: &str,
+    ) -> Result<ValidatedWebhookUrl, WebhookEndpointRejection> {
+        let endpoint = parse_registration_endpoint(raw_url, self.endpoint_mode)?;
+        match self.resolve_and_check(&endpoint, self.endpoint_mode).await {
+            Ok(_) => Ok(ValidatedWebhookUrl::new_checked(endpoint.url.to_string())),
+            Err(WebhookSendObservation::SsrfBlocked) => {
+                Err(WebhookEndpointRejection::ForbiddenDestination)
+            }
+            Err(_) => Err(WebhookEndpointRejection::HostUnresolvable),
+        }
+    }
+
+    async fn send_to(
+        &self,
+        destination: &WebhookDestination,
+        request: &WebhookRequest<'_>,
+    ) -> WebhookSendObservation {
+        let endpoint = match parse_endpoint(&destination.url, self.endpoint_mode) {
+            Ok(endpoint) => endpoint,
+            Err(WebhookConfigIssue::ForbiddenDestination) => {
+                return WebhookSendObservation::SsrfBlocked
+            }
+            Err(_) => return WebhookSendObservation::ConfigInvalid,
+        };
+        let Ok(secret) = WebhookSecret::new(destination.secret.expose_bytes().to_vec()) else {
+            return WebhookSendObservation::ConfigInvalid;
+        };
+        let config = EnabledConfig {
+            endpoint,
+            secret,
+            mode: self.endpoint_mode,
+        };
+        self.send_with_config(&config, request).await
+    }
+
     async fn send(&self, request: &WebhookRequest<'_>) -> WebhookSendObservation {
         let ConfigState::Enabled(config) = &self.state else {
             return WebhookSendObservation::ConfigInvalid;
         };
-        let addresses = match self.resolve_and_check(config).await {
+        self.send_with_config(config, request).await
+    }
+}
+
+impl HttpWebhookSender {
+    /// 接続時の検査 (毎回): 名前解決した全アドレスを再検査し、検査したアドレスへ接続を固定する。
+    async fn send_with_config(
+        &self,
+        config: &EnabledConfig,
+        request: &WebhookRequest<'_>,
+    ) -> WebhookSendObservation {
+        let addresses = match self.resolve_and_check(&config.endpoint, config.mode).await {
             Ok(addresses) => addresses,
             Err(observation) => return observation,
         };

@@ -17,6 +17,7 @@ nanoid = { workspace = true }
 zeroize = "1.7"
 idna = "1"
 url = "2.5"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
 
 error-stack = { workspace = true }
 

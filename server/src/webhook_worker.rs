@@ -1,5 +1,7 @@
 use crate::handler::AppModule;
-use application::service::registration_gate_webhook::DeliverRegistrationGateWebhooksUseCase;
+use application::service::registration_gate_webhook::{
+    DeliverRegistrationGateWebhooksUseCase, ImportEnvironmentWebhookEndpointUseCase,
+};
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::repository::{
     DependOnWebhookDeliveryRepository, DependOnWebhookSender, WebhookDeliveryRepository,
@@ -32,44 +34,54 @@ fn poll_interval_from_env() -> Duration {
     Duration::from_millis(millis)
 }
 
-/// Establish the enable-time baseline before startup producers can emit new gate events.
+/// Import the environment-variable destination (only when an encryption key is configured) and
+/// establish the enable-time baselines before startup producers can emit new gate events.
 /// This performs no external delivery; a spawned worker alone has no scheduling-order guarantee.
 pub async fn prepare_baseline(module: &AppModule) -> error_stack::Result<(), kernel::KernelError> {
-    if matches!(
-        module.webhook_sender().status(),
-        WebhookConfigStatus::Enabled { .. }
-    ) {
-        let mut connection = module.database_connection().connection().await?;
+    match module.import_environment_webhook_endpoint().await {
+        Ok(Some(_)) => tracing::info!(
+            "registration gate webhook: the environment destination was imported as a regular destination"
+        ),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::error!(error = %error, "registration gate webhook: environment destination import failed; it will be retried at the next start");
+        }
+    }
+    let mut connection = module.database_connection().connection().await?;
+    let imported = module
+        .webhook_delivery_repository()
+        .environment_import_done(&mut connection)
+        .await?;
+    if !imported && module.webhook_sender().status().is_enabled() {
         module
             .webhook_delivery_repository()
-            .ingest_gate_events(&mut connection, time::OffsetDateTime::now_utc(), 0)
+            .ingest_gate_events(&mut connection, time::OffsetDateTime::now_utc(), 0, true)
             .await?;
     }
     Ok(())
 }
 
-/// Starts the delivery worker when the webhook is configured. Nothing runs (and nothing is logged
-/// beyond the state) when it is unset or misconfigured, so the gate is never affected.
-pub fn spawn_if_enabled(module: Arc<AppModule>) -> Option<WebhookShutdown> {
+/// Starts the delivery worker. It always runs: destinations are managed through the admin API, so
+/// there may be deliveries to make even when the environment variables are unset. A cycle with no
+/// destination does nothing, and a failing destination never affects the gate.
+pub fn spawn(module: Arc<AppModule>) -> WebhookShutdown {
     match module.webhook_sender().status() {
         WebhookConfigStatus::Disabled => {
-            tracing::info!("registration gate webhook is not configured; delivery worker disabled");
-            return None;
+            tracing::info!("registration gate webhook: no environment destination configured");
         }
         WebhookConfigStatus::Misconfigured { issue } => {
             tracing::warn!(
                 issue = ?issue,
-                "registration gate webhook is misconfigured; delivery worker disabled"
+                "registration gate webhook: the environment destination is misconfigured and is not used"
             );
-            return None;
         }
         WebhookConfigStatus::Enabled { host } => {
-            tracing::info!(destination_host = %host, "registration gate webhook delivery worker starting");
+            tracing::info!(destination_host = %host, "registration gate webhook: environment destination configured");
         }
     }
     let (tx, rx) = watch::channel(false);
     tokio::spawn(run(module, poll_interval_from_env(), rx));
-    Some(WebhookShutdown { tx })
+    WebhookShutdown { tx }
 }
 
 async fn run(module: Arc<AppModule>, interval: Duration, mut shutdown: watch::Receiver<bool>) {

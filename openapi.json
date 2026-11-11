@@ -1991,23 +1991,359 @@
         ]
       }
     },
-    "/api/v1/admin/registration-gate/webhook": {
+    "/api/v1/admin/registration-gate/webhook/endpoints": {
       "get": {
         "tags": [
           "RegistrationGateWebhook"
         ],
-        "description": "Webhook delivery status: whether the external Webhook is configured (`not_configured` means it is disabled, which is not an error: nothing is delivered and the gate is unaffected), a misconfiguration classification, the destination host only (never userinfo, path, query or the signing secret), delivery counts, the last success/failure times and the most recent delivery records. Delivery guarantees: at-least-once (the same event can arrive more than once after a retry, a crash or an admin retry, so receivers must de-duplicate by the stable event ID), no ordering guarantee, signed with HMAC-SHA256 over timestamp and body. The endpoint and secret are server configuration only and cannot be changed through the API. Delivery runs outside the gate state transition: Webhook failures never change the gate and never create new notification events.",
-        "operationId": "get_registration_gate_webhook_status",
+        "description": "List the registration gate Webhook destinations (admin only). The URL is returned only as a partially masked display form (`masked_url`, e.g. `hooks.example.net/••••/a8f2`: host and port, then a mask and — only for a path token of 12+ characters — its last 4 characters); the full URL, path, query, userinfo and the signing secret are never returned. Each destination has a status chip (`healthy` / `failing`), per-destination delivery counts and failed count, and the selected notification categories. `has_failed_deliveries` tells whether any destination has an unresolved failed delivery (for a tab marker). The environment-variable destination of the previous single-destination setup appears as the read-only entry `id = environment` while the encryption key is not configured (it keeps delivering as before and cannot be edited or deleted through the API); it is imported as an ordinary destination at startup once the key is configured. Delivery guarantees: at-least-once (receivers must de-duplicate by the stable event ID), no ordering guarantee, signed per destination with HMAC-SHA256 over timestamp and body. Delivery runs outside the gate state transition: Webhook failures never change the gate and never create new notification events.",
+        "operationId": "list_registration_gate_webhook_endpoints",
         "responses": {
           "200": {
-            "description": "Webhook status",
+            "description": "Destinations and overall state",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WebhookStatusResponse"
+                  "$ref": "#/components/schemas/WebhookEndpointListResponse"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "RegistrationGateWebhook"
+        ],
+        "description": "Register a Webhook destination (admin only; up to 10 destinations). The URL must be HTTPS without userinfo or fragment (max 2048 characters); it is checked at registration (host normalization, numeric/IPv6-zone/trailing-dot forms, `localhost`-style names, literal IPs and every resolved address) and re-checked on every connection. The secret (16-256 bytes) is write-only: it is encrypted (AEAD, bound to the destination ID) before storage and never returned, logged or audited; when the server has no encryption key configured the request is rejected with 409 `encryption_key_not_configured` and nothing is stored. A normalized URL that already exists is rejected with 409 `duplicate_url`; exceeding the limit is 409 `endpoint_limit_reached`. A new destination only receives events that occur after it is created (no backfill). Rejection bodies are fixed codes (`invalid_url`, `unsupported_scheme`, `credentials_in_url`, `fragment_in_url`, `missing_host`, `url_too_long`, `forbidden_destination`, `host_unresolvable`, `secret_too_short`, `secret_too_long`, `no_categories`) that never echo the URL, the secret or the resolved addresses.",
+        "operationId": "create_registration_gate_webhook_endpoint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookEndpointRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Destination created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (fixed rejection code in the body)"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "409": {
+            "description": "Duplicate URL, destination limit reached or encryption key not configured (fixed code in the body)"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/webhook/endpoints/{endpoint_id}": {
+      "get": {
+        "tags": [
+          "RegistrationGateWebhook"
+        ],
+        "description": "Get one Webhook destination (admin only). Same masked shape as the list; never the full URL or the secret.",
+        "operationId": "get_registration_gate_webhook_endpoint",
+        "parameters": [
+          {
+            "name": "endpoint_id",
+            "in": "path",
+            "description": "Destination ID (decimal) or `environment`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Destination",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid destination ID"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "No such destination"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "RegistrationGateWebhook"
+        ],
+        "description": "Update a Webhook destination (admin only; optimistic lock). `revision` is required and must match (409 otherwise); every success increments it. Omitting `url` or `secret` means \"keep as is\" — because neither is ever returned, an edit screen opens those fields empty and sends them only when the admin types a replacement. Omitting `categories` keeps the selection; when given it must have at least one category, and the change only affects events that occur after the update (deliveries already queued keep their state). The environment-variable destination cannot be edited (409 `environment_endpoint_read_only`). A request with nothing to change is 400 `nothing_to_update`.",
+        "operationId": "update_registration_gate_webhook_endpoint",
+        "parameters": [
+          {
+            "name": "endpoint_id",
+            "in": "path",
+            "description": "Destination ID (decimal)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookEndpointRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Destination updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (fixed rejection code in the body)"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "No such destination"
+          },
+          "409": {
+            "description": "Revision conflict, duplicate URL, read-only destination or encryption key not configured"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/webhook/endpoints/{endpoint_id}/delete": {
+      "post": {
+        "tags": [
+          "RegistrationGateWebhook"
+        ],
+        "description": "Delete a Webhook destination (admin only; optimistic lock: `revision` must match, 409 otherwise). The destination's unfinished deliveries and delivery history are removed, so nothing further is delivered to it. This is a POST action (not HTTP DELETE) so the revision travels in the request body like the other admin actions. The environment-variable destination cannot be deleted (409 `environment_endpoint_read_only`).",
+        "operationId": "delete_registration_gate_webhook_endpoint",
+        "parameters": [
+          {
+            "name": "endpoint_id",
+            "in": "path",
+            "description": "Destination ID (decimal)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteWebhookEndpointRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Destination deleted"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "No such destination"
+          },
+          "409": {
+            "description": "Revision conflict or read-only destination"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/webhook/endpoints/{endpoint_id}/test": {
+      "post": {
+        "tags": [
+          "RegistrationGateWebhook"
+        ],
+        "description": "Send one synthetic `webhook_test` event (event ID prefixed `test_`) to this destination through the same path as real deliveries (its own signature, the registration-time destination check, timeout) and return the result. The test is a single attempt: it is not retried and no delivery record is stored. It never changes the gate state, the notification list, unread counts or the destination's status chip. `webhook_test` is not one of the selectable categories. For the read-only `environment` destination, 409 when the environment Webhook is not configured or is misconfigured (nothing is sent). A destination whose secret cannot be decrypted reports `secret_undecryptable` (nothing is sent).",
+        "operationId": "send_registration_gate_webhook_test",
+        "parameters": [
+          {
+            "name": "endpoint_id",
+            "in": "path",
+            "description": "Destination ID (decimal) or `environment`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Test sent; `delivered` tells whether the receiver answered 2xx",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookTestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid destination ID"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "No such destination"
+          },
+          "409": {
+            "description": "Environment Webhook is not configured or misconfigured"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/registration-gate/webhook/failures": {
+      "get": {
+        "tags": [
+          "RegistrationGateWebhook"
+        ],
+        "description": "List failed deliveries with cursor paging (admin only). Ordered by the time the delivery failed, newest first (ties by destination ID and event ID, descending), so the order is stable. Follow `next_cursor` (pass it as `before`) to reach every failed delivery regardless of how many there are — including ones older than the most recent 50 — and retry each one with `POST .../webhook/retry`. Filter by `endpoint_id`. Successful deliveries are never listed. Items carry the destination ID, event ID, event type, category, failure time and a result classification; never the URL, the secret or the payload.",
+        "operationId": "list_registration_gate_webhook_failures",
+        "parameters": [
+          {
+            "name": "endpoint_id",
+            "in": "path",
+            "description": "送信先 ID で絞り込む。",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "description": "1〜100 (既定 50)。",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "path",
+            "description": "前ページの `next_cursor` (不透明な文字列)。これより古い failed を返す。",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of failed deliveries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookFailedDeliveriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
           },
           "401": {
             "description": "Missing or invalid bearer token"
@@ -2028,7 +2364,7 @@
         "tags": [
           "RegistrationGateWebhook"
         ],
-        "description": "Requeue failed deliveries so they are sent again with the same event ID (at-least-once: the receiver may see the event more than once). With `event_id`, only that failed delivery is requeued (404 if it is not currently failed); without it, every failed delivery is requeued. Failed deliveries are never retried automatically.",
+        "description": "Requeue failed deliveries so they are sent again with the same event ID (at-least-once: the receiver may see the event more than once). With `endpoint_id` and `event_id`, exactly that (destination, event) delivery is requeued (404 if it is not currently failed); with only `endpoint_id`, every failed delivery of that destination; with neither, every failed delivery of every destination. `event_id` without `endpoint_id` is 400. Failed deliveries are never retried automatically. Any failed delivery — however old — can be retried one at a time: use `GET .../webhook/failures` to page to it.",
         "operationId": "retry_registration_gate_webhooks",
         "requestBody": {
           "content": {
@@ -2061,42 +2397,7 @@
             "description": "Permission denied"
           },
           "404": {
-            "description": "No failed delivery with that event ID"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/registration-gate/webhook/test": {
-      "post": {
-        "tags": [
-          "RegistrationGateWebhook"
-        ],
-        "description": "Send one synthetic `webhook_test` event (event ID prefixed `test_`) to the configured endpoint through the same path as real deliveries (signature, destination check, timeout) and return the result. The test is a single attempt: it is not retried and no delivery record is stored. It never changes the gate state, the notification list or unread counts. Returns 409 when the Webhook is not configured or misconfigured (nothing is sent).",
-        "operationId": "send_registration_gate_webhook_test",
-        "responses": {
-          "200": {
-            "description": "Test sent; `delivered` tells whether the receiver answered 2xx",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WebhookTestResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid bearer token"
-          },
-          "403": {
-            "description": "Permission denied"
-          },
-          "409": {
-            "description": "Webhook is not configured or misconfigured"
+            "description": "No such destination or no failed delivery with that event ID"
           }
         },
         "security": [
@@ -4736,6 +5037,46 @@
           }
         }
       },
+      "CreateWebhookEndpointRequest": {
+        "type": "object",
+        "required": [
+          "url",
+          "secret",
+          "categories"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookCategoryId"
+            },
+            "description": "送る通知カテゴリ (1 つ以上)。"
+          },
+          "secret": {
+            "type": "string",
+            "format": "password",
+            "description": "署名 secret (書き込み専用。16〜256 バイト)。暗号化して保存し、応答・ログ・監査・通知には出ない。",
+            "writeOnly": true
+          },
+          "url": {
+            "type": "string",
+            "description": "送信先 URL (HTTPS のみ・userinfo と fragment は不可・2048 文字以内)。登録時に宛先検査\n(SSRF 対策) を通す。応答には一切返らず、部分マスク形 (`masked_url`) だけが返る。"
+          }
+        }
+      },
+      "DeleteWebhookEndpointRequest": {
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "取得時の revision (楽観ロック。不一致は 409)。"
+          }
+        }
+      },
       "DomainControlListResponse": {
         "type": "object",
         "description": "CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).",
@@ -6190,6 +6531,45 @@
           }
         }
       },
+      "UpdateWebhookEndpointRequest": {
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "categories": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/WebhookCategoryId"
+            },
+            "description": "省略 = 変更しない。指定する場合は 1 つ以上。変更は変更後に発生したイベントにだけ効く。"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "取得時の revision (楽観ロック。不一致は 409)。成功のたびに増える。"
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "password",
+            "description": "省略 = 変更しない (書き込み専用)。",
+            "writeOnly": true
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "省略 = 変更しない。URL は応答に返らないので、編集画面は空欄で開き、入力したときだけ置き換える。"
+          }
+        }
+      },
       "UploadedImageResponse": {
         "type": "object",
         "required": [
@@ -6335,6 +6715,16 @@
           }
         }
       },
+      "WebhookCategoryId": {
+        "type": "string",
+        "description": "送る通知のカテゴリ (識別子は固定)。",
+        "enum": [
+          "outage",
+          "recovery",
+          "auto_stop",
+          "override"
+        ]
+      },
       "WebhookDeliveryCountsResponse": {
         "type": "object",
         "required": [
@@ -6367,137 +6757,94 @@
           }
         }
       },
-      "WebhookDeliveryResponse": {
+      "WebhookEndpointListResponse": {
         "type": "object",
         "required": [
-          "event_id",
-          "event_type",
-          "status",
-          "attempt_count",
-          "created_at"
+          "endpoints",
+          "has_failed_deliveries",
+          "encryption_key_configured",
+          "max_endpoints"
         ],
         "properties": {
-          "attempt_count": {
-            "type": "integer",
-            "format": "int32",
-            "description": "通算の送信試行回数 (管理者の再試行をまたいで増える)。",
-            "minimum": 0
+          "encryption_key_configured": {
+            "type": "boolean",
+            "description": "暗号鍵がサーバー設定にあるか。false だと送信先の作成・secret 更新は拒否される。"
           },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookEndpointResponse"
+            }
           },
-          "delivered_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
+          "has_failed_deliveries": {
+            "type": "boolean",
+            "description": "どこかの送信先に未解決の failed 配送がある (管理画面のタブの印用)。"
           },
-          "event_id": {
-            "type": "string",
-            "description": "通知イベント ID。Webhook の `X-Emumet-Event-Id` ヘッダーと同じ値 (再試行・再送で不変)。"
-          },
-          "event_type": {
-            "type": "string",
-            "description": "`outage_started` / `outage_recovered` / `protection_degraded` /\n`protection_lost_stopped` / `override_started` / `override_revoked`"
-          },
-          "failure_reason": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "failed のときの理由: `permanent_error` / `retries_exhausted`。"
-          },
-          "last_attempt_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "last_http_status": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
-          },
-          "last_result": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "最後の試行結果の分類。secret・宛先 URL・応答本文・内部エラー詳細を含まない固定語彙\n(`delivered` / `timeout` / `connect_failed` / `dns_failed` / `http_request_timeout` /\n`http_too_many_requests` / `http_server_error` / `http_redirect` / `http_client_error` /\n`http_unexpected_status` / `ssrf_blocked` / `config_invalid` / `lease_expired`)。"
-          },
-          "next_attempt_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "status": {
-            "type": "string",
-            "description": "`pending` / `in_flight` / `retrying` / `delivered` / `failed`"
-          }
-        }
-      },
-      "WebhookRetryRequest": {
-        "type": "object",
-        "properties": {
-          "event_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "再試行する配送の event ID (通知イベント ID)。省略すると failed の配送すべてを再キューする。"
-          }
-        }
-      },
-      "WebhookRetryResponse": {
-        "type": "object",
-        "required": [
-          "requeued"
-        ],
-        "properties": {
-          "requeued": {
+          "max_endpoints": {
             "type": "integer",
             "format": "int64",
-            "description": "再キューした failed 配送の件数。同じ event ID が再送される。",
-            "minimum": 0
+            "description": "登録できる送信先の上限件数。"
           }
         }
       },
-      "WebhookStatusResponse": {
+      "WebhookEndpointResponse": {
         "type": "object",
         "required": [
-          "configuration",
+          "id",
+          "source",
+          "masked_url",
+          "categories",
+          "status",
+          "failing_reasons",
+          "failed_count",
           "counts",
-          "recent_deliveries"
+          "secret_configured",
+          "editable"
         ],
         "properties": {
-          "configuration": {
-            "type": "string",
-            "description": "`not_configured` (未設定 = Webhook 無効。エラーではなく、配送もゲート動作への影響もない) /\n`misconfigured` (設定不備。`issue` を参照。ゲート動作には影響しない) / `configured`"
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookCategoryId"
+            },
+            "description": "送る通知カテゴリ。"
+          },
+          "config_issue": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "環境変数の送信先の設定不備の分類 (`invalid_url` / `unsupported_scheme` / ...)。"
           },
           "counts": {
             "$ref": "#/components/schemas/WebhookDeliveryCountsResponse"
           },
-          "destination_host": {
+          "created_at": {
             "type": [
               "string",
               "null"
             ],
-            "description": "宛先の host 部分のみ (userinfo・port・path・query・secret は出さない)。"
+            "format": "date-time"
           },
-          "issue": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`misconfigured` のときの不備の分類 (`invalid_url` / `unsupported_scheme` /\n`credentials_in_url` / `missing_host` / `forbidden_destination` / `missing_secret` /\n`secret_too_short` / `secret_unreadable` / `ambiguous_secret_source` / `missing_url`)。"
+          "editable": {
+            "type": "boolean",
+            "description": "false = API から編集・削除できない (環境変数の送信先)。"
+          },
+          "failed_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "未解決の failed 配送の件数。"
+          },
+          "failing_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`failing` の理由: `failed_deliveries` / `secret_undecryptable` (secret の再入力で復旧) /\n`config_invalid` (環境変数の設定不備)。"
+          },
+          "id": {
+            "type": "string",
+            "description": "送信先の ID (10 進文字列)。`environment` は環境変数の送信先 (read-only)。"
           },
           "last_failure_at": {
             "type": [
@@ -6513,12 +6860,149 @@
             ],
             "format": "date-time"
           },
-          "recent_deliveries": {
+          "masked_url": {
+            "type": "string",
+            "description": "一覧用の部分マスク URL (例 `hooks.example.net/••••/a8f2`)。host (ポートがあれば含む) と、\npath があるときは伏せ字 + 12 文字以上のトークンの末尾 4 文字だけ。全 URL・path・query・\nuserinfo は返さない。"
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "楽観ロック用 revision。環境変数の送信先にはない (`null`)。"
+          },
+          "secret_configured": {
+            "type": "boolean",
+            "description": "secret が設定済みか (secret の値は返さない)。"
+          },
+          "source": {
+            "type": "string",
+            "description": "`api` (管理者が登録) / `environment_import` (環境変数の 1 件を取り込んだ) /\n`environment` (暗号鍵なしで環境変数のまま配送。API から編集・削除できない)。"
+          },
+          "status": {
+            "type": "string",
+            "description": "状態チップ: `healthy` (正常) / `failing` (配送失敗)。`failing` = 未解決の failed 配送がある、\nまたは復号不可・設定不備などの恒久的な理由がある。failed が再試行で解消されれば `healthy` に戻る。"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "WebhookFailedDeliveriesResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/WebhookDeliveryResponse"
+              "$ref": "#/components/schemas/WebhookFailedDeliveryResponse"
             },
-            "description": "新しい順の直近の配送記録 (本文は含まない)。"
+            "description": "failed になった時刻の新しい順 (同時刻は送信先 ID・event ID の降順)。成功した配送は含まない。"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "次ページがあるときだけ。`before` にそのまま渡す。件数に関わらず古い failed にも到達できる。"
+          }
+        }
+      },
+      "WebhookFailedDeliveryResponse": {
+        "type": "object",
+        "required": [
+          "endpoint_id",
+          "event_id",
+          "event_type",
+          "category",
+          "failed_at",
+          "attempt_count"
+        ],
+        "properties": {
+          "attempt_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "category": {
+            "$ref": "#/components/schemas/WebhookCategoryId"
+          },
+          "endpoint_id": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string",
+            "description": "通知イベント ID。Webhook の `X-Emumet-Event-Id` ヘッダーと同じ値 (再試行・再送で不変)。"
+          },
+          "event_type": {
+            "type": "string",
+            "description": "Webhook の `type` (`outage_started` / ... / `override_revoked`)。"
+          },
+          "failed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`permanent_error` / `retries_exhausted`"
+          },
+          "http_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最後の試行結果の分類 (secret・URL 全体を含まない固定語彙)。"
+          }
+        }
+      },
+      "WebhookRetryRequest": {
+        "type": "object",
+        "properties": {
+          "endpoint_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "再試行する送信先の ID。省略すると全送信先の failed 配送すべてを再キューする。"
+          },
+          "event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "再試行する配送の event ID (通知イベント ID)。`endpoint_id` の指定が必要で、\n(送信先, event ID) の 1 件だけを再キューする。省略するとその送信先の failed すべて。"
+          }
+        }
+      },
+      "WebhookRetryResponse": {
+        "type": "object",
+        "required": [
+          "requeued"
+        ],
+        "properties": {
+          "requeued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "再キューした failed 配送の件数。同じ event ID が再送される。",
+            "minimum": 0
           }
         }
       },
@@ -6553,7 +7037,7 @@
           },
           "result": {
             "type": "string",
-            "description": "結果の分類 (配送記録の `last_result` と同じ語彙)。"
+            "description": "結果の分類 (`delivered` / `timeout` / `connect_failed` / `dns_failed` / `http_request_timeout` /\n`http_too_many_requests` / `http_server_error` / `http_redirect` / `http_client_error` /\n`http_unexpected_status` / `ssrf_blocked` / `config_invalid` / `secret_undecryptable`)。"
           }
         }
       }
@@ -6617,7 +7101,7 @@
     },
     {
       "name": "RegistrationGateWebhook",
-      "description": "External Webhook delivery of registration gate notification events (admin only; E15w). The endpoint URL and the HMAC-SHA256 signing secret are server configuration only (REGISTRATION_WEBHOOK_URL, REGISTRATION_WEBHOOK_SECRET or REGISTRATION_WEBHOOK_SECRET_FILE). When they are unset the Webhook is disabled: nothing is delivered, the status endpoint reports `not_configured`, and the gate is unaffected (this is not an error). Delivery guarantees: at-least-once, so the same event can be delivered more than once (retries, crash recovery, admin retry) and receivers must de-duplicate by the stable event ID (`X-Emumet-Event-Id`); ordering is not guaranteed (order by `occurred_at` if needed). Retries: 408/429/5xx/timeouts/connection failures are retried with exponential backoff and jitter (Retry-After is honored up to a cap) until the attempt or age limit, then the delivery is `failed`; redirects, other 4xx responses and destination-check (SSRF) rejections fail immediately. Failed deliveries are resent only when an admin requests a retry. Webhook trouble never changes the gate state and never creates a new notification event. HTTPS only, no redirects, destinations are checked at connect time and pinned. Receiver documentation: docs/registration-gate-webhook.md."
+      "description": "External Webhook destinations for registration gate notification events (admin only; E15w, E15x). Admins register multiple HTTPS destinations (URL, write-only signing secret, notification categories `outage` / `recovery` / `auto_stop` / `override`). The URL is only ever returned partially masked and the secret is never returned (it is stored encrypted with a server-configured key: REGISTRATION_WEBHOOK_ENCRYPTION_KEY or REGISTRATION_WEBHOOK_ENCRYPTION_KEY_FILE; without a key destinations cannot be created). The single environment-variable destination of E15w (REGISTRATION_WEBHOOK_URL, REGISTRATION_WEBHOOK_SECRET or REGISTRATION_WEBHOOK_SECRET_FILE) keeps delivering as a read-only entry (`id = environment`) until a key is configured, then it is imported once as a regular destination. Delivery guarantees: at-least-once, so the same event can be delivered more than once (retries, crash recovery, admin retry) and receivers must de-duplicate by the stable event ID (`X-Emumet-Event-Id`, identical across destinations and retries); ordering is not guaranteed (order by `occurred_at` if needed). Each destination delivers independently with its own secret signature (HMAC-SHA256 over timestamp and body). Retries: 408/429/5xx/timeouts/connection failures are retried with exponential backoff and jitter (Retry-After is honored up to a cap) until the attempt or age limit, then the delivery is `failed`; redirects, other 4xx responses, destination-check (SSRF) rejections and undecryptable secrets fail immediately. Failed deliveries are resent only when an admin requests a retry, one (destination, event) at a time or in bulk, and the failed list is cursor-paged so old failures are reachable. Webhook trouble never changes the gate state and never creates a new notification event. HTTPS only, no redirects, destinations are checked at registration and again on every connection, and the connection is pinned to the checked addresses. Receiver documentation: docs/registration-gate-webhook.md."
     },
     {
       "name": "RegistrationProtection",

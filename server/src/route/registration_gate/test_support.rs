@@ -64,6 +64,19 @@ impl GateTestApp {
         keto: &MockServer,
         webhook_sender: driver::webhook::HttpWebhookSender,
     ) -> Self {
+        Self::with_webhook_wiring(
+            keto,
+            webhook_sender,
+            driver::webhook::AeadWebhookSecretCipher::not_configured(),
+        )
+        .await
+    }
+
+    pub async fn with_webhook_wiring(
+        keto: &MockServer,
+        webhook_sender: driver::webhook::HttpWebhookSender,
+        webhook_secret_cipher: driver::webhook::AeadWebhookSecretCipher,
+    ) -> Self {
         kernel::ensure_generator_initialized();
         let issuer = format!("https://issuer.example/{}", uuid::Uuid::new_v4());
         let module = AppModule::new_for_test_urls(
@@ -74,7 +87,8 @@ impl GateTestApp {
         )
         .await
         .expect("AppModule init failed (is DATABASE_URL set?)")
-        .with_webhook_sender(webhook_sender);
+        .with_webhook_sender(webhook_sender)
+        .with_webhook_secret_cipher(webhook_secret_cipher);
 
         let mut executor = module
             .database_connection()
@@ -83,6 +97,8 @@ impl GateTestApp {
             .expect("database executor");
         sqlx::query(
             "TRUNCATE registration_gate_webhook_attempts, registration_gate_webhook_deliveries, \
+             registration_gate_webhook_endpoints, registration_gate_webhook_endpoint_audit, \
+             registration_gate_webhook_env_import, \
              registration_gate_webhook_state, registration_gate_event_reads, \
              registration_gate_events, registration_gate_audit, registration_gate_state, \
              registration_enforcement_probe_state, registration_enforcement_probe_schedule, \

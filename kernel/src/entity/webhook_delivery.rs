@@ -13,7 +13,7 @@
 
 use crate::entity::{
     AdminState, GateControlSnapshot, GateEventKind, HealthEpisode, ProbeStatus,
-    ProtectionObservation, RegistrationGateEvent, RegistrationGateEventId,
+    ProtectionObservation, RegistrationGateEvent, RegistrationGateEventId, WebhookEndpointId,
 };
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
@@ -62,6 +62,9 @@ pub enum WebhookResultClass {
     ConfigInvalid,
     /// 送信中に worker が停止し lease が期限切れになった (結果は不明)。
     LeaseExpired,
+    /// 保存済みの送信先 secret を復号できない (鍵の喪失・誤り・変更・未設定)。恒久失敗。
+    /// 管理者が secret を再入力して復旧する。
+    SecretUndecryptable,
 }
 
 /// failed になった理由。
@@ -122,6 +125,8 @@ pub enum WebhookSendObservation {
     SsrfBlocked,
     /// 送信できる設定がない・不正。
     ConfigInvalid,
+    /// 送信先の secret を復号できず、署名を作れない。
+    SecretUnavailable,
 }
 
 /// 1 回の送信結果に対する扱い。
@@ -185,6 +190,7 @@ fn classify(observation: &WebhookSendObservation) -> (Classification, WebhookRes
         WebhookSendObservation::DnsFailed => (Transient, C::DnsFailed),
         WebhookSendObservation::SsrfBlocked => (Permanent, C::SsrfBlocked),
         WebhookSendObservation::ConfigInvalid => (Permanent, C::ConfigInvalid),
+        WebhookSendObservation::SecretUnavailable => (Permanent, C::SecretUndecryptable),
     }
 }
 
@@ -518,6 +524,7 @@ impl NewWebhookDelivery {
 /// worker が lease を取って送信する配送。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimedWebhookDelivery {
+    pub endpoint_id: WebhookEndpointId,
     pub event_id: RegistrationGateEventId,
     pub kind: GateEventKind,
     pub payload_json: String,
@@ -532,6 +539,7 @@ pub struct ClaimedWebhookDelivery {
 /// 管理者 API に出す配送記録 (本文は含めない)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebhookDelivery {
+    pub endpoint_id: WebhookEndpointId,
     pub event_id: RegistrationGateEventId,
     pub kind: GateEventKind,
     pub status: WebhookDeliveryStatus,
