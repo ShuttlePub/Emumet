@@ -228,6 +228,15 @@ pub struct AccountWarningResponse {
 pub struct AccountResponse {
     pub id: String,
     pub name: String,
+    /// Nanoid of the Profile this Account response describes (display_name, summary, icon_url and
+    /// banner_url come from the same Profile). A personal Account has exactly one personal
+    /// Profile. An organization Account may own several Profiles (including ones transferred in);
+    /// it is described by the one with the smallest Profile id. After a Profile transfer the value
+    /// follows the Profile's current owner.
+    pub profile_id: String,
+    /// Username of that Profile; null while the Profile has none (set once via
+    /// `POST /api/v1/profiles/{profile_nanoid}/username`, immutable afterwards).
+    pub profile_username: Option<String>,
     pub display_name: Option<String>,
     pub summary: Option<String>,
     pub icon_url: Option<String>,
@@ -328,6 +337,8 @@ pub fn account_dto_to_response(account: AccountDetailDto) -> AccountResponse {
     AccountResponse {
         id: account.nanoid,
         name: account.name,
+        profile_id: account.profile_id,
+        profile_username: account.profile_username,
         display_name: account.display_name,
         summary: account.summary,
         icon_url: account.icon_url,

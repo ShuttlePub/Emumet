@@ -86,6 +86,8 @@ impl ProfileReadModel for PostgresProfileReadModel {
             r#"
             SELECT id, account_id, display, summary, icon_id, banner_id, version, nanoid, username
             FROM profiles WHERE account_id = $1
+            ORDER BY id
+            LIMIT 1
             "#,
         )
         .bind(account_id.as_ref())

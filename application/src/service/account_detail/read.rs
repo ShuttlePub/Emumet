@@ -1,4 +1,4 @@
-use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto};
+use crate::dto::account::{AccountDetailDto, AccountDto, AccountFieldDto, ProfileIdentityDto};
 use crate::dto::pagination::{apply_pagination, Pagination};
 use crate::permission::{account_view, check_permission};
 use error_stack::Report;
@@ -154,10 +154,16 @@ where
         .into_iter()
         .map(|image| (image.id().clone(), image.url().as_ref().to_string()))
         .collect();
-    let profile_map: HashMap<_, _> = profiles
-        .into_iter()
-        .map(|profile| (profile.account_id().clone(), profile))
-        .collect();
+    // An organization Account can own several Profiles; describe it with the one that has the
+    // smallest Profile id so the choice is deterministic (same rule as the update path).
+    let mut profiles = profiles;
+    profiles.sort_by_key(|profile| *profile.id().as_ref());
+    let mut profile_map: HashMap<_, _> = HashMap::new();
+    for profile in profiles {
+        profile_map
+            .entry(profile.account_id().clone())
+            .or_insert(profile);
+    }
     let mut metadata_map: HashMap<AccountId, Vec<AccountFieldDto>> = HashMap::new();
     for field in metadata {
         metadata_map
@@ -176,6 +182,10 @@ where
                 Report::new(KernelError::NotFound).attach_printable("Profile not found for account")
             })?;
             Ok(AccountDto::from(account).into_detail(
+                ProfileIdentityDto {
+                    nanoid: profile.nanoid().as_ref().to_string(),
+                    username: profile.username().as_ref().map(|u| u.as_ref().to_string()),
+                },
                 profile
                     .display_name()
                     .as_ref()

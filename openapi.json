@@ -4316,6 +4316,7 @@
         "required": [
           "id",
           "name",
+          "profile_id",
           "is_bot",
           "fields",
           "created_at"
@@ -4367,6 +4368,17 @@
           },
           "name": {
             "type": "string"
+          },
+          "profile_id": {
+            "type": "string",
+            "description": "Nanoid of the Profile this Account response describes (display_name, summary, icon_url and\nbanner_url come from the same Profile). A personal Account has exactly one personal\nProfile. An organization Account may own several Profiles (including ones transferred in);\nit is described by the one with the smallest Profile id. After a Profile transfer the value\nfollows the Profile's current owner."
+          },
+          "profile_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Username of that Profile; null while the Profile has none (set once via\n`POST /api/v1/profiles/{profile_nanoid}/username`, immutable afterwards)."
           },
           "summary": {
             "type": [
