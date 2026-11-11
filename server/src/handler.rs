@@ -263,7 +263,7 @@ impl AppModule {
         self
     }
 
-    /// Test wiring: point the module at another (isolated) database, e.g. one with the P2 schema fixture.
+    /// Test wiring: point the module at another (isolated) database, e.g. a per-test database with all production migrations.
     #[cfg(test)]
     pub(crate) fn with_database(mut self, database: PostgresDatabase) -> Self {
         self.pgpool = database;

@@ -21,8 +21,9 @@
 
 ### Account の状態と Profile (切替後の挙動)
 
-- **停止 (suspend)・BAN・無効化中**の Account の Profile は actor ではない: actor 文書・WebFinger は 404、inbox は 404 (相手には「存在しない」と見える)、その Profile からの新規 Follow は 403、停止中の Profile を対象にした Follow は 400。**配送 worker はその Profile の job を取得しない** (キューに残り、試行回数も消費しない)。ルールは `AccountQuery::find_by_id` と同じ (期限付き停止は期限が切れれば自動で解除)。
-- 解除 (unsuspend / unban / 期限切れ / 再有効化) すると、**同じ actor URL・同じ鍵**で復帰し、残っていた job が送られる。
+- **停止 (suspend)・BAN 中**の Account の Profile は actor ではない: actor 文書・WebFinger は 404、inbox は 404 (相手には「存在しない」と見える)、その Profile からの新規 Follow は 403、停止中の Profile を対象にした Follow は 400。**Profile 行・関係・配送 job は残る**: 配送 worker は `claim_due` でその Profile の job を取得しないだけで、キューに待機し (試行回数も消費しない)、解除すると送信される。ルールは `AccountQuery::find_by_id` と同じ (期限付き停止は期限が切れれば自動で解除)。
+- **無効化 (deactivate) 中**は上記に加えて **Profile 行そのものが projection から消える**。`profile_follows` `profile_blocks` `profile_mutes` `profile_delivery_jobs` などは Profile 行への外部キー (ON DELETE CASCADE) で**一緒に消える** (待機ではなく消去)。再有効化で Profile 行は戻るが、消えた関係・未送信の job は戻らない。保持されるのは Profile の identity (id・nanoid・username) と鍵 (`profile_signing_keys` は外部キーを持たない) だけ。
+- 停止・BAN の解除 (unsuspend / unban / 期限切れ) で、**同じ actor URL・同じ鍵**のまま復帰し、待機していた job が送られる。再有効化でも同じ actor URL・鍵で復帰するが、上記のとおり消えた関係・job は戻らない。
 - **無効化→再有効化**: 無効化で Account の projection が `profiles` 行を削除する。再有効化の projection (Account projector) が、その Account が所有する Profile を**全 event 履歴から再 materialize** する (tailing の窓 (直近 100 件) に依存しない)。Profile の id・nanoid・username と鍵は変わらない。
 - Profile 鍵は `profiles` 行の有無と独立に保持される。将来 Profile を恒久削除する経路を作る場合は鍵の**明示的な削除**が必要で、「projection の行がない＝不要な鍵」として掃除してはならない (再有効化で復帰できなくなる)。
 

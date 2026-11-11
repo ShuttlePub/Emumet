@@ -1,10 +1,10 @@
-//! Shared fixtures of the Profile graph tests (P3i): an isolated database that carries the P2
-//! schema fixture, an `AppModule` on it, local Profiles that are actors, and signed requests from
-//! remote peers.
+//! Shared fixtures of the Profile graph tests (P3i): an isolated database, an `AppModule` on it,
+//! local Profiles that are actors, and signed requests from remote peers.
 //!
-//! The P2 tables are not part of the production migrations, so these tests never run on the shared
-//! `DATABASE_URL` database: every world creates its own database (production migrations + the P2
-//! fixture) and drops it afterwards.
+//! The Profile graph tables are part of the production migrations since the P4 cutover (there is no
+//! separate schema fixture any more). The worlds still never run on the shared `DATABASE_URL`
+//! database: every world creates its own database with all production migrations applied and drops
+//! it afterwards, so that tests can truncate and count rows freely.
 
 use crate::auth::{
     auth_middleware, encode_test_jwt, generate_test_keys, AuthClaims, JwksCache, OidcConfig,
