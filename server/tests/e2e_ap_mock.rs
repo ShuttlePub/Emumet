@@ -717,9 +717,24 @@ async fn individual_block_detaches_relations_without_sending_an_activitypub_bloc
     assert_eq!(blocks["items"].as_array().map(Vec::len), Some(1));
     assert_eq!(blocks["items"][0]["target"], peer.actor_url.as_str());
 
-    // While blocked the peer cannot follow again.
-    let refused = post_signed_follow_direct(&peer, &sign_inbox, &send_inbox, &target_actor).await;
+    // While blocked the peer cannot follow again; the refusal is answered with a Reject. Its
+    // delivery is awaited, so that it cannot land in the "removing the block delivers nothing"
+    // window below.
+    peer.clear_inbox();
+    let refused_follow_id = format!("{}/activities/{}", peer.actor_url, uuid::Uuid::new_v4());
+    let refused = post_signed_follow_with_id_direct(
+        &peer,
+        &sign_inbox,
+        &send_inbox,
+        &target_actor,
+        &refused_follow_id,
+    )
+    .await;
     assert_eq!(refused.status(), reqwest::StatusCode::ACCEPTED);
+    let refusal = wait_for_activity(&peer, "Reject", Duration::from_secs(15))
+        .await
+        .expect("Reject(Follow) for the refused Follow");
+    assert_eq!(refusal.body["object"]["id"], refused_follow_id.as_str());
     let followers =
         get_relations(&jwt, &account.profile_id, &cfg.server_base_url, "followers").await;
     assert_eq!(followers["items"].as_array().map(Vec::len), Some(0));
