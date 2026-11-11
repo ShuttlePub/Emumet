@@ -292,13 +292,22 @@ pub struct ProfileDeliveryJob {
     pub failure_reason: Option<DeliveryFailureReason>,
     pub lease_owner: Option<String>,
     pub lease_expires_at: Option<OffsetDateTime>,
-    /// 取消した瞬間の lease の期限 (送信中に取り消した job が相手に着地し得る最後の時刻の下限)。
-    pub cancelled_lease_expires_at: Option<OffsetDateTime>,
     pub delivered_at: Option<OffsetDateTime>,
     pub cancelled_at: Option<OffsetDateTime>,
     pub cancel_reason: Option<String>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
+}
+
+/// 取消した瞬間の job の状態 (取消と同じ行ロックの下で読んだ値)。送信中 (`InFlight`) だった job は、取消後も
+/// `lease_expires_at` まで相手に着地し得るので、後始末はそれより後に始める。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CancelledProfileDeliveryJob {
+    pub id: ProfileDeliveryJobId,
+    pub previous_state: ProfileDeliveryJobState,
+    pub attempt_count: i32,
+    /// 取消の直前の lease の期限 (`InFlight` のときだけ)。取消は lease 列を消す。
+    pub lease_expires_at: Option<OffsetDateTime>,
 }
 
 /// 試行の履歴 1 行。

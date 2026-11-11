@@ -114,7 +114,9 @@ Account 管理 API (作成・取得・更新・無効化・再有効化・組織
 
 個別 actor の block (`POST .../blocks`) は、双方向の Follow 解除と `Undo(Follow)` / `Reject(Follow)` に加えて、remote actor の inbox へ `Block` (`object` = 相手 actor、ID は `{actor}/blocks/{block ID}`) を同一 transaction で予約する。解除 (`DELETE .../blocks/{id}`) は、未送信の `Block` job を取り消す (`Undo` なし)、送信済み・結果不明なら元 Block を埋め込んだ `Undo(Block)` を同じ宛先へ予約する (送信中だった可能性があれば元の送信が届き得る時間の後)。ローカル Profile 相手は配送しない。相手を解決できなくても block と解除は適用され、解除した Follow から分かる inbox があればそこへ、無ければ `Block` だけ予約されない。受信した `Block` / `Undo(Block)` は関係を変えない (P3i)。
 
-block / unblock を繰り返しても最新の意思が相手側で最後になるよう、状態を変える操作 (block・unblock) は先に **同じ actor 対の未配送の `Block` / `Undo(Block)` (配送中・再試行待ちを含む) を取り消す** (相手は actor 対で block を管理し、`Undo(Block)` は Block の ID を見ないため)。取消は actor を解決できたかに依らない (宛先 inbox は解決できたもの → この actor 対の最新 job の inbox → 解除した Follow から分かるもの)。新しい `Block` は、送信中だった可能性のある古い `Undo` が着地し得る時間の後、`Undo(Block)` は古い `Block` / `Undo` が着地し得る時間の後に始める (取消後に取り直した時刻 + 120 秒と、取消時点の lease の期限の遅い方。取消は lease 列を消すので、期限は取消した行の `cancelled_lease_expires_at` に残し、操作の連鎖で短縮しない)。`unblock` は、相手側に block が残り得る (試行済みの `Block` があり、それを打ち消す `Undo` が配送済みでない) ときだけ、最新のその `Block` を埋め込む `Undo(Block)` を予約する。配送 job 種別の DB CHECK への `Block` の追加は migration `20261122000001`。
+block / unblock を繰り返しても最新の意思が相手側で最後になるよう、状態を変える操作 (block・unblock) は先に **同じ actor 対の未配送の `Block` / `Undo(Block)` (配送中・再試行待ちを含む) を取り消す** (相手は actor 対で block を管理し、`Undo(Block)` は Block の ID を見ないため)。actor 対の操作は transaction 内の排他ロックで直列化する。取消は actor を解決できたかに依らない (宛先 inbox は解決できたもの → この actor 対の最新 job の inbox → 解除した Follow から分かるもの)。
+
+取消の瞬間に送信中だった job (取消と同じ行ロックの下で読んだ状態・lease の期限。読取後に claim / renew で延びた期限を含む) があれば、actor 対 (送信元 Profile × 相手 actor) の下限 `profile_block_settle.settle_not_before` を、`max(取消後に取り直した時刻 + 120 秒, 取消時点の lease の期限, 既存値)` まで引き上げる (`GREATEST`。単調非減少)。以後この actor 対に予約する `Block` / `Undo(Block)` は必ずこの下限以上に始めるので、取消に時間が掛かっても・操作を何度繰り返しても前倒しされない。`unblock` は、相手側に block が残り得る (試行済みの `Block` があり、それを打ち消す `Undo` が配送済みでない) ときだけ、最新のその `Block` を埋め込む `Undo(Block)` を予約する。Follow の `Undo` / `Reject` の送信中判定も、同じく取消の瞬間の状態と lease を使う。
 
 ### domain block の既存関係の解除 (D8R)
 

@@ -1791,14 +1791,20 @@ mod block_pair_jobs {
     }
 }
 
-mod cancelled_lease {
+mod cancel_and_settle {
     use super::*;
 
-    /// D8R: a cancel clears the lease columns (the in_flight CHECK) but keeps the lease that was held, so
-    /// the time until which the cancelled send may still land survives a chain of operations.
+    /// PostgreSQL stores microseconds.
+    fn micros(t: OffsetDateTime) -> OffsetDateTime {
+        t.replace_nanosecond(t.nanosecond() / 1000 * 1000).unwrap()
+    }
+
+    /// D8R: `cancel_returning` reports the state and the lease at the moment of the cancel (read under
+    /// the row lock, so a renew that committed meanwhile is included); a job that cannot be cancelled
+    /// yields `None`.
     #[test_with::env(DATABASE_URL)]
     #[tokio::test]
-    async fn a_cancel_keeps_the_lease_that_was_held() {
+    async fn cancel_returning_reports_the_state_and_lease_of_the_cancel() {
         kernel::ensure_generator_initialized();
         let iso = IsolatedDatabase::create().await;
         let db = &iso.database;
@@ -1809,41 +1815,150 @@ mod cancelled_lease {
         let claimed = claim(db, "w", now(), 1).await;
         assert_eq!(claimed.len(), 1);
         enqueue(db, &unsent).await;
+        // A renew that commits after the caller last looked extends the lease.
+        let extended = micros(now() + Duration::seconds(900));
+        sqlx::query("UPDATE profile_delivery_jobs SET lease_expires_at = $2 WHERE id = $1")
+            .bind(claimed[0].id.as_ref())
+            .bind(extended)
+            .execute(&iso.pool)
+            .await
+            .unwrap();
 
         let mut conn = db.connection().await.unwrap();
         let repo = db.profile_delivery_job_repository();
-        let held = repo
-            .find_by_id(&mut conn, &claimed[0].id)
+        let cancelled = repo
+            .cancel_returning(&mut conn, &claimed[0].id, "test", now())
             .await
             .unwrap()
-            .unwrap()
-            .lease_expires_at
-            .expect("in flight has a lease");
-        assert!(repo
-            .cancel(&mut conn, &claimed[0].id, "test", now())
-            .await
-            .unwrap());
-        assert!(repo
-            .cancel(&mut conn, &unsent.id, "test", now())
-            .await
-            .unwrap());
-
-        let sending_after = repo
-            .find_by_id(&mut conn, &claimed[0].id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(sending_after.state, ProfileDeliveryJobState::Cancelled);
-        assert_eq!(sending_after.lease_expires_at, None);
-        assert_eq!(sending_after.cancelled_lease_expires_at, Some(held));
-        let unsent_after = repo
-            .find_by_id(&mut conn, &unsent.id)
+            .expect("an in-flight job is cancellable");
+        assert_eq!(cancelled.previous_state, ProfileDeliveryJobState::InFlight);
+        assert_eq!(cancelled.attempt_count, 1);
+        assert_eq!(cancelled.lease_expires_at, Some(extended));
+        let unsent_cancelled = repo
+            .cancel_returning(&mut conn, &unsent.id, "test", now())
             .await
             .unwrap()
             .unwrap();
         assert_eq!(
-            unsent_after.cancelled_lease_expires_at, None,
-            "no lease, nothing to keep"
+            unsent_cancelled.previous_state,
+            ProfileDeliveryJobState::Pending
+        );
+        assert_eq!(unsent_cancelled.lease_expires_at, None);
+        assert!(
+            repo.cancel_returning(&mut conn, &unsent.id, "again", now())
+                .await
+                .unwrap()
+                .is_none(),
+            "an already cancelled job is not cancelled twice"
+        );
+        let stored = repo
+            .find_by_id(&mut conn, &claimed[0].id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.state, ProfileDeliveryJobState::Cancelled);
+        assert_eq!(stored.lease_expires_at, None);
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn the_bulk_cancel_for_a_follow_reports_each_job() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let bob = remote("bob");
+        let me = local(&p1);
+        let follow = pending(&me, &bob, "f-bulk");
+        begin(db, &follow).await;
+        let sending = job(&p1, "bulk-1", "bob").with_follow(follow.id().clone());
+        enqueue(db, &sending).await;
+        let claimed = claim(db, "w", now(), 1).await;
+        assert_eq!(claimed.len(), 1);
+
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_delivery_job_repository();
+        let cancelled = repo
+            .cancel_undelivered_for_follow_returning(
+                &mut conn,
+                follow.id(),
+                DeliveryActivityType::Follow,
+                "test",
+                now(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cancelled.len(), 1);
+        assert_eq!(
+            cancelled[0].previous_state,
+            ProfileDeliveryJobState::InFlight
+        );
+        assert!(cancelled[0].lease_expires_at.is_some());
+        assert!(repo
+            .cancel_undelivered_for_follow_returning(
+                &mut conn,
+                follow.id(),
+                DeliveryActivityType::Follow,
+                "test",
+                now(),
+            )
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    /// The settle bound of an actor pair only ever grows, is per sender and per actor, and goes away
+    /// with the sender Profile.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn the_block_settle_bound_is_monotonic_and_per_pair() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let (_, p2) = seed_personal_profile(db).await;
+        let bob = "https://remote.example/users/bob";
+        let carol = "https://remote.example/users/carol";
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_delivery_job_repository();
+        assert_eq!(
+            repo.find_block_settle(&mut conn, &p1, bob).await.unwrap(),
+            None
+        );
+
+        let t = micros(now());
+        let late = t + Duration::seconds(600);
+        assert_eq!(
+            repo.raise_block_settle(&mut conn, &p1, bob, late)
+                .await
+                .unwrap(),
+            late
+        );
+        assert_eq!(
+            repo.raise_block_settle(&mut conn, &p1, bob, t + Duration::seconds(120))
+                .await
+                .unwrap(),
+            late,
+            "an earlier bound never shortens the stored one"
+        );
+        let later = t + Duration::seconds(900);
+        assert_eq!(
+            repo.raise_block_settle(&mut conn, &p1, bob, later)
+                .await
+                .unwrap(),
+            later
+        );
+        assert_eq!(
+            repo.find_block_settle(&mut conn, &p1, bob).await.unwrap(),
+            Some(later)
+        );
+        assert_eq!(
+            repo.find_block_settle(&mut conn, &p1, carol).await.unwrap(),
+            None
+        );
+        assert_eq!(
+            repo.find_block_settle(&mut conn, &p2, bob).await.unwrap(),
+            None
         );
     }
 }

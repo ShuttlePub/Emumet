@@ -806,3 +806,136 @@ async fn the_lease_bound_survives_a_chain_of_unblock_reblock_unblock() {
         live[0].next_attempt_at
     );
 }
+
+/// Holds the row lock of one delivery job in an open transaction (a worker that is renewing its lease
+/// or recording a result), optionally with an uncommitted lease extension, so that a cancel of that job
+/// queues behind it.
+async fn hold_job_row(
+    env: &Env,
+    job_id: i64,
+    extend_lease_to: Option<OffsetDateTime>,
+) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut tx = env.iso.pool.begin().await.unwrap();
+    match extend_lease_to {
+        Some(lease) => {
+            sqlx::query("UPDATE profile_delivery_jobs SET lease_expires_at = $2 WHERE id = $1")
+                .bind(job_id)
+                .bind(lease)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+        None => {
+            sqlx::query("SELECT id FROM profile_delivery_jobs WHERE id = $1 FOR UPDATE")
+                .bind(job_id)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        }
+    }
+    tx
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_lease_extended_after_the_read_still_bounds_the_undo() {
+    let env = std::sync::Arc::new(Env::new().await);
+    let alice = env.seed_user().await;
+    env.mount_actor("/users/bob").await;
+    let bob = env.peer_url("/users/bob");
+    let first = block(&env, &alice, &bob).await;
+    claim_one(&env).await;
+    let job_id = *env.jobs_of(&alice.profile_id).await[0].id.as_ref();
+
+    // The worker renews the lease to +900 s (uncommitted: the unblock reads the old value first).
+    let renewed = super::support::round(OffsetDateTime::now_utc() + Duration::seconds(900));
+    let tx = hold_job_row(&env, job_id, Some(renewed)).await;
+    let mut unblocking = tokio::spawn({
+        let env = env.clone();
+        let auth = alice.auth.clone();
+        let nanoid = alice.nanoid.clone();
+        async move {
+            env.module
+                .unblock_actor(&auth, None, &nanoid, &first)
+                .await
+                .unwrap();
+        }
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(1000), &mut unblocking)
+            .await
+            .is_err(),
+        "the unblock waits for the worker's row"
+    );
+    tx.commit().await.unwrap();
+    unblocking.await.unwrap();
+
+    let jobs = env.jobs_of(&alice.profile_id).await;
+    let undo = of_type(&jobs, DeliveryActivityType::Undo)[0];
+    assert!(
+        undo.next_attempt_at >= renewed,
+        "the Undo starts after the renewed lease ({renewed}), not at {}",
+        undo.next_attempt_at
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_slow_cancel_keeps_its_bound_through_a_chain_of_operations() {
+    let env = std::sync::Arc::new(Env::new().await);
+    let alice = env.seed_user().await;
+    env.mount_actor("/users/bob").await;
+    let bob = env.peer_url("/users/bob");
+    let first = block(&env, &alice, &bob).await;
+    // The lease (60 s) is far below the 120 s grace: the grace counted from after the cancel dominates.
+    claim_one(&env).await;
+    let job_id = *env.jobs_of(&alice.profile_id).await[0].id.as_ref();
+
+    let tx = hold_job_row(&env, job_id, None).await;
+    let mut unblocking = tokio::spawn({
+        let env = env.clone();
+        let auth = alice.auth.clone();
+        let nanoid = alice.nanoid.clone();
+        async move {
+            env.module
+                .unblock_actor(&auth, None, &nanoid, &first)
+                .await
+                .unwrap();
+        }
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(2000), &mut unblocking)
+            .await
+            .is_err(),
+        "the cancel waits two seconds for the worker's row"
+    );
+    let released_at = OffsetDateTime::now_utc();
+    tx.commit().await.unwrap();
+    unblocking.await.unwrap();
+
+    let undo_1 = of_type(
+        &env.jobs_of(&alice.profile_id).await,
+        DeliveryActivityType::Undo,
+    )[0]
+    .clone();
+    assert!(
+        undo_1.next_attempt_at >= released_at + Duration::seconds(120),
+        "the first Undo counts the grace from after the slow cancel"
+    );
+
+    // reblock (cancels the unsent Undo) and unblock again: the last Undo is never earlier than the first.
+    let second = block(&env, &alice, &bob).await;
+    unblock(&env, &alice, &second).await;
+    let jobs = env.jobs_of(&alice.profile_id).await;
+    let live: Vec<_> = of_type(&jobs, DeliveryActivityType::Undo)
+        .into_iter()
+        .filter(|job| job.state == ProfileDeliveryJobState::Pending)
+        .collect();
+    assert_eq!(live.len(), 1);
+    assert!(
+        live[0].next_attempt_at >= undo_1.next_attempt_at,
+        "the chain must not move the Undo earlier ({} < {})",
+        live[0].next_attempt_at,
+        undo_1.next_attempt_at
+    );
+}

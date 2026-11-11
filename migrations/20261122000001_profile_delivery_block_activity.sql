@@ -6,7 +6,14 @@ ALTER TABLE "profile_delivery_jobs"
   ADD CONSTRAINT "chk_profile_delivery_jobs_activity_type"
     CHECK (activity_type IN ('Follow', 'Accept', 'Reject', 'Undo', 'Block'));
 
--- 取消した瞬間の lease の期限。取消は lease を消す (state <> 'in_flight' では lease 列が NULL の制約) が、
--- 送信中だった job は取消後も lease の期限まで相手に着地し得る。block / unblock を繰り返すとき、後始末の
--- 開始時刻の下限を取消の連鎖の中でも失わないよう、取消した job に期限を残す。
-ALTER TABLE "profile_delivery_jobs" ADD COLUMN "cancelled_lease_expires_at" TIMESTAMPTZ;
+-- 個別 block の actor 対 (送信元 Profile x 相手 actor) ごとの「後始末・再 block をこれより前に送らない」下限。
+-- block / unblock を繰り返すとき、取消した Block / Undo(Block) が送信中だった可能性があれば、それが相手に着地し
+-- 得る最後の時刻 (取消完了後に取り直した時刻 + 猶予、取消時点の lease の期限の遅い方) まで、次に予約する
+-- Block / Undo(Block) を始めない。値は単調非減少 (GREATEST で更新) で、操作の連鎖で短縮されない。
+CREATE TABLE "profile_block_settle" (
+  "sender_profile_id" BIGINT NOT NULL REFERENCES "profiles" ("id") ON DELETE CASCADE,
+  "target_actor_url" TEXT NOT NULL,
+  "settle_not_before" TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY ("sender_profile_id", "target_actor_url"),
+  CONSTRAINT chk_profile_block_settle_url_length CHECK (octet_length(target_actor_url) <= 1024)
+);
