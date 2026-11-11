@@ -1555,3 +1555,76 @@ async fn rejection_reports_carry_a_fixed_code_for_the_http_layer() {
         .frames()
         .any(|frame| frame.downcast_ref::<String>().map(String::as_str) == Some("duplicate_url")));
 }
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn test_sends_to_the_environment_destination_are_audited_even_when_nothing_is_sent() {
+    // 未設定: 送信せずに NotConfigured を返すが、管理者の操作として監査に残る。
+    let fx = Fixture::with(
+        HttpWebhookSender::disabled(),
+        AeadWebhookSecretCipher::not_configured(),
+    )
+    .await;
+    let admin = fx.admin();
+    assert_eq!(
+        fx.module
+            .send_registration_gate_webhook_test(&admin, WebhookEndpointId::ENVIRONMENT)
+            .await
+            .unwrap(),
+        WebhookTestOutcome::NotConfigured
+    );
+    assert_eq!(
+        fx.audit().await,
+        vec![("test".to_string(), "rejected".to_string(), None)]
+    );
+    drop(fx);
+
+    // 設定不備 (https でも内部宛先でもない) も同様。
+    let fx = Fixture::with(
+        HttpWebhookSender::from_values(Some("http://example.com/hook"), Some(SECRET_A), None),
+        AeadWebhookSecretCipher::not_configured(),
+    )
+    .await;
+    let admin = fx.admin();
+    assert_eq!(
+        fx.module
+            .send_registration_gate_webhook_test(&admin, WebhookEndpointId::ENVIRONMENT)
+            .await
+            .unwrap(),
+        WebhookTestOutcome::Misconfigured
+    );
+    assert_eq!(
+        fx.audit().await,
+        vec![("test".to_string(), "rejected".to_string(), None)]
+    );
+    drop(fx);
+
+    // 取り込み済みで環境変数の送信先が存在しないときは NotFound を返し、監査に NotFound を残す。
+    let server = MockServer::start().await;
+    mount_status(&server, 204).await;
+    let url = format!("{}/env-hook-abcdefghijkl", server.uri());
+    let fx = Fixture::with(
+        env_sender(&url),
+        AeadWebhookSecretCipher::from_key_bytes(KEY_1),
+    )
+    .await;
+    let admin = fx.admin();
+    fx.module
+        .import_environment_webhook_endpoint()
+        .await
+        .unwrap()
+        .expect("imported");
+    assert_eq!(
+        kind_of(
+            fx.module
+                .send_registration_gate_webhook_test(&admin, WebhookEndpointId::ENVIRONMENT)
+                .await
+        ),
+        KernelError::NotFound
+    );
+    assert!(fx
+        .audit()
+        .await
+        .contains(&("test".to_string(), "not_found".to_string(), None)));
+    assert_eq!(request_count(&server).await, 0);
+}

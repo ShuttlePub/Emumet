@@ -21,8 +21,8 @@ use sqlx::{Connection as _, PgConnection};
 
 /// 送信先の作成・環境変数の取り込みを直列化する advisory lock のキー (上限・重複の判定用)。
 const ENDPOINT_WRITE_LOCK: i64 = 0x0E15_0001;
-/// 送信先の更新前に取り込む未取り込みイベントの上限。
-const PRE_UPDATE_INGEST_LIMIT: i64 = 100_000;
+/// 送信先の更新前の取り込みを区切る 1 回あたりの件数 (全件取り込むまで繰り返す)。
+const PRE_UPDATE_INGEST_CHUNK: i64 = 1_000;
 
 fn to_column<T: Serialize>(value: &T) -> error_stack::Result<String, KernelError> {
     match serde_json::to_value(value) {
@@ -305,15 +305,26 @@ async fn insert_attempt(
     Ok(())
 }
 
-/// 1 つの送信先について、baseline より後で選択カテゴリに属し未取り込みの通知イベントを取り込む。
+/// `ingest_for_endpoint` の結果。
+struct IngestOutcome {
+    /// 取り込み候補として読んだ件数 (`limit` 未満なら範囲内に残りはない)。
+    fetched: usize,
+    /// 読んだ最後のイベント ID (次の区間の開始位置)。
+    last_id: i64,
+    ingested: u64,
+}
+
+/// 1 つの送信先について、`after` より後 `upto` 以下で選択カテゴリに属し未取り込みの通知イベントを
+/// 古い順に最大 `limit` 件取り込む。
 async fn ingest_for_endpoint(
     tx: &mut PgConnection,
     endpoint_id: i64,
-    baseline: i64,
+    after: i64,
+    upto: i64,
     kinds: &[String],
     now: OffsetDateTime,
     limit: i64,
-) -> error_stack::Result<u64, KernelError> {
+) -> error_stack::Result<IngestOutcome, KernelError> {
     let rows = sqlx::query_as::<_, IngestRow>(
         //language=postgresql
         r#"
@@ -321,6 +332,7 @@ async fn ingest_for_endpoint(
         FROM registration_gate_events e
         JOIN registration_gate_audit a ON a.revision_after = e.revision
         WHERE e.id > $1
+          AND e.id <= $5
           AND e.kind = ANY($3)
           AND NOT EXISTS (
               SELECT 1 FROM registration_gate_webhook_deliveries d
@@ -330,15 +342,20 @@ async fn ingest_for_endpoint(
         LIMIT $4
         "#,
     )
-    .bind(baseline)
+    .bind(after)
     .bind(endpoint_id)
     .bind(kinds)
     .bind(limit)
+    .bind(upto)
     .fetch_all(&mut *tx)
     .await
     .convert_error()?;
 
-    let mut ingested = 0u64;
+    let fetched = rows.len();
+    let last_id = rows.last().map_or(after, |row| row.id);
+    let mut event_ids: Vec<i64> = Vec::with_capacity(fetched);
+    let mut kind_values: Vec<String> = Vec::with_capacity(fetched);
+    let mut payloads: Vec<String> = Vec::with_capacity(fetched);
     for row in rows {
         let payload: StoredEventPayload = serde_json::from_value(row.payload)
             .map_err(|error| Report::from(error).change_context(KernelError::Internal))?;
@@ -354,27 +371,38 @@ async fn ingest_for_endpoint(
             created_at: row.created_at,
         };
         let delivery = NewWebhookDelivery::from_gate_event(&event, &gate)?;
-        let result = sqlx::query(
-            //language=postgresql
-            r#"
-            INSERT INTO registration_gate_webhook_deliveries (
-                endpoint_id, event_id, kind, payload, status, cycle_started_at, next_attempt_at,
-                created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, 'pending', $5, $5, $5, $5)
-            ON CONFLICT (endpoint_id, event_id) DO NOTHING
-            "#,
-        )
-        .bind(endpoint_id)
-        .bind(delivery.event_id.as_ref())
-        .bind(to_column(&delivery.kind)?)
-        .bind(&delivery.payload_json)
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .convert_error()?;
-        ingested += result.rows_affected();
+        event_ids.push(*delivery.event_id.as_ref());
+        kind_values.push(to_column(&delivery.kind)?);
+        payloads.push(delivery.payload_json);
     }
-    Ok(ingested)
+    // 区間分を 1 回の INSERT で取り込む (大量の未取り込みイベントでも往復回数を押さえる)。
+    let result = sqlx::query(
+        //language=postgresql
+        r#"
+        INSERT INTO registration_gate_webhook_deliveries (
+            endpoint_id, event_id, kind, payload, status, cycle_started_at, next_attempt_at,
+            created_at, updated_at
+        )
+        SELECT $1::bigint, u.event_id, u.kind, u.payload, 'pending', $5::timestamptz, $5::timestamptz,
+               $5::timestamptz, $5::timestamptz
+        FROM UNNEST($2::bigint[], $3::text[], $4::text[]) AS u(event_id, kind, payload)
+        ON CONFLICT (endpoint_id, event_id) DO NOTHING
+        "#,
+    )
+    .bind(endpoint_id)
+    .bind(&event_ids)
+    .bind(&kind_values)
+    .bind(&payloads)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .convert_error()?;
+    let ingested = result.rows_affected();
+    Ok(IngestOutcome {
+        fetched,
+        last_id,
+        ingested,
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -430,6 +458,23 @@ async fn lock_endpoint(
     .transpose()
 }
 
+/// `lock_endpoint` の非ブロッキング版 (更新・削除中の行は `None`)。削除済みも `None`。
+async fn lock_endpoint_skip_locked(
+    tx: &mut PgConnection,
+    id: i64,
+) -> error_stack::Result<Option<StoredWebhookEndpoint>, KernelError> {
+    sqlx::query_as::<_, EndpointRow>(&format!(
+        //language=postgresql
+        "SELECT {ENDPOINT_COLUMNS} FROM registration_gate_webhook_endpoints WHERE id = $1 FOR UPDATE SKIP LOCKED"
+    ))
+    .bind(id)
+    .fetch_optional(tx)
+    .await
+    .convert_error()?
+    .map(StoredWebhookEndpoint::try_from)
+    .transpose()
+}
+
 impl WebhookDeliveryRepository for PostgresWebhookDeliveryRepository {
     type Connection = PostgresConnection;
 
@@ -455,11 +500,13 @@ impl WebhookDeliveryRepository for PostgresWebhookDeliveryRepository {
                     &mut tx,
                     WebhookEndpointId::ENVIRONMENT.as_i64(),
                     baseline,
+                    i64::MAX,
                     &kinds,
                     now,
                     limit,
                 )
-                .await?;
+                .await?
+                .ingested;
             }
         }
         if limit > 0 {
@@ -471,17 +518,23 @@ impl WebhookDeliveryRepository for PostgresWebhookDeliveryRepository {
             .await
             .convert_error()?;
             for row in endpoints {
-                let endpoint = StoredWebhookEndpoint::try_from(row)?;
+                // 送信先の行ロックを取り、ロック後の最新の選択・baseline で取り込む (カテゴリ更新と
+                // 並行して古い選択で取り込まない)。更新中 (ロック中) の送信先は次のサイクルに回す。
+                let Some(endpoint) = lock_endpoint_skip_locked(&mut tx, row.id).await? else {
+                    continue;
+                };
                 let kinds = kind_columns(&endpoint.categories)?;
                 report.ingested += ingest_for_endpoint(
                     &mut tx,
                     endpoint.id.as_i64(),
                     endpoint.baseline_event_id,
+                    i64::MAX,
                     &kinds,
                     now,
                     limit,
                 )
-                .await?;
+                .await?
+                .ingested;
             }
         }
         tx.commit().await.convert_error()?;
@@ -1060,20 +1113,31 @@ impl WebhookDeliveryRepository for PostgresWebhookDeliveryRepository {
         }
         let mut new_baseline: Option<i64> = None;
         if patch.categories.is_some() {
-            // 選択の変更は変更後に発生したイベントにだけ効く: 変更前のカテゴリで、すでに発生している
-            // 未取り込みのイベントを先に取り込み、baseline をその時点まで進める (変更前に発生して
-            // 取り込まれなかったイベントが、新しい選択で後から取り込まれないようにする)。
-            new_baseline = Some(max_event_id(&mut tx).await?.max(current.baseline_event_id));
+            // 選択の変更は変更後に発生したイベントにだけ効く: この transaction で送信先の行ロックを
+            // 保持したまま境界 ID (現在の最新イベント) を決め、境界までの未取り込みイベントを
+            // **変更前のカテゴリで全件** (件数に関わらず区間を繰り返して) 取り込んでから
+            // baseline を境界へ進める。worker の取り込みも同じ行ロックを共有するので、
+            // 境界より後のイベントが変更前の選択で取り込まれることもない。
+            let boundary = max_event_id(&mut tx).await?.max(current.baseline_event_id);
+            new_baseline = Some(boundary);
             let kinds = kind_columns(&current.categories)?;
-            ingest_for_endpoint(
-                &mut tx,
-                id.as_i64(),
-                current.baseline_event_id,
-                &kinds,
-                now,
-                PRE_UPDATE_INGEST_LIMIT,
-            )
-            .await?;
+            let mut cursor = current.baseline_event_id;
+            loop {
+                let outcome = ingest_for_endpoint(
+                    &mut tx,
+                    id.as_i64(),
+                    cursor,
+                    boundary,
+                    &kinds,
+                    now,
+                    PRE_UPDATE_INGEST_CHUNK,
+                )
+                .await?;
+                if i64::try_from(outcome.fetched).unwrap_or(i64::MAX) < PRE_UPDATE_INGEST_CHUNK {
+                    break;
+                }
+                cursor = outcome.last_id;
+            }
         }
         let updated = sqlx::query_as::<_, EndpointRow>(&format!(
             //language=postgresql

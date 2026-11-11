@@ -5,7 +5,7 @@ use application::service::registration_gate_webhook::{
 use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::repository::{
     DependOnWebhookDeliveryRepository, DependOnWebhookSender, WebhookDeliveryRepository,
-    WebhookSender,
+    WebhookInFlight, WebhookSender,
 };
 use kernel::prelude::entity::{WebhookConfigStatus, WebhookDeliveryPolicy};
 use std::sync::Arc;
@@ -85,9 +85,12 @@ pub fn spawn(module: Arc<AppModule>) -> WebhookShutdown {
 }
 
 async fn run(module: Arc<AppModule>, interval: Duration, mut shutdown: watch::Receiver<bool>) {
-    let worker_id = format!("{}-{}", std::process::id(), uuid::Uuid::new_v4());
-    let policy = WebhookDeliveryPolicy::default();
-    let jitter = || rand::random::<f64>();
+    let worker_id = Arc::new(format!("{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+    let policy = Arc::new(WebhookDeliveryPolicy::default());
+    // 送信先ごとの処理中ガード: サイクルを重ねて起動しても同じ送信先は同時に 1 つだけ処理される。
+    // 遅い送信先のサイクルを待たずに、次の tick で正常な送信先の配送が進む。
+    let in_flight = WebhookInFlight::new();
+    let mut cycles = tokio::task::JoinSet::new();
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -96,28 +99,39 @@ async fn run(module: Arc<AppModule>, interval: Duration, mut shutdown: watch::Re
         }
         tokio::select! {
             _ = ticker.tick() => {
-                let stop = || *shutdown.borrow();
-                match module
-                    .deliver_registration_gate_webhooks(&worker_id, &policy, &jitter, &stop)
-                    .await
-                {
-                    Ok(report) => {
-                        if report.attempted > 0 || report.ingested > 0 {
-                            tracing::info!(
-                                ingested = report.ingested,
-                                attempted = report.attempted,
-                                delivered = report.delivered,
-                                retrying = report.retrying,
-                                failed = report.failed,
-                                lease_lost = report.lease_lost,
-                                "registration gate webhook delivery cycle"
-                            );
+                while cycles.try_join_next().is_some() {}
+                let module = module.clone();
+                let worker_id = worker_id.clone();
+                let policy = policy.clone();
+                let in_flight = in_flight.clone();
+                let stop_rx = shutdown.clone();
+                cycles.spawn(async move {
+                    let jitter = || rand::random::<f64>();
+                    let stop = || *stop_rx.borrow();
+                    match module
+                        .deliver_registration_gate_webhooks_guarded(
+                            &worker_id, &policy, &jitter, &stop, &in_flight,
+                        )
+                        .await
+                    {
+                        Ok(report) => {
+                            if report.attempted > 0 || report.ingested > 0 {
+                                tracing::info!(
+                                    ingested = report.ingested,
+                                    attempted = report.attempted,
+                                    delivered = report.delivered,
+                                    retrying = report.retrying,
+                                    failed = report.failed,
+                                    lease_lost = report.lease_lost,
+                                    "registration gate webhook delivery cycle"
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            tracing::error!(error = %error, "registration gate webhook delivery cycle failed");
                         }
                     }
-                    Err(error) => {
-                        tracing::error!(error = %error, "registration gate webhook delivery cycle failed");
-                    }
-                }
+                });
             }
             _ = shutdown.changed() => {
                 if *shutdown.borrow() {
@@ -126,4 +140,5 @@ async fn run(module: Arc<AppModule>, interval: Duration, mut shutdown: watch::Re
             }
         }
     }
+    while cycles.join_next().await.is_some() {}
 }

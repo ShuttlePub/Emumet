@@ -11,10 +11,10 @@ use error_stack::Report;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::permission::DependOnPermissionChecker;
 use kernel::interfaces::repository::{
-    run_webhook_delivery_cycle, send_webhook_test, DependOnWebhookDeliveryRepository,
-    DependOnWebhookSecretCipher, DependOnWebhookSender, WebhookCycleEnv, WebhookCycleReport,
-    WebhookDeliveryRepository, WebhookSecretCipher, WebhookSecretError, WebhookSender,
-    WebhookTestOutcome,
+    run_webhook_delivery_cycle, run_webhook_delivery_cycle_guarded, send_webhook_test,
+    DependOnWebhookDeliveryRepository, DependOnWebhookSecretCipher, DependOnWebhookSender,
+    WebhookCycleEnv, WebhookCycleReport, WebhookDeliveryRepository, WebhookInFlight,
+    WebhookSecretCipher, WebhookSecretError, WebhookSender, WebhookTestOutcome,
 };
 use kernel::prelude::entity::{
     build_failed_page, endpoint_health, mask_webhook_url, AuthAccountId, NewWebhookEndpoint,
@@ -446,16 +446,40 @@ pub trait RegistrationGateWebhookUseCase:
                     .environment_import_done(&mut connection)
                     .await?;
                 if imported {
+                    audit(
+                        self,
+                        &mut connection,
+                        Some(admin),
+                        Some(id),
+                        WebhookAuditOperation::Test,
+                        WebhookAuditOutcome::NotFound,
+                        None,
+                        None,
+                    )
+                    .await?;
                     return Err(not_found());
                 }
-                match self.webhook_sender().status() {
-                    WebhookConfigStatus::Disabled => {
-                        return Ok(WebhookTestOutcome::NotConfigured);
-                    }
+                // 未設定・設定不備は送信せずに返すが、管理者の操作として監査に残す。
+                let early = match self.webhook_sender().status() {
+                    WebhookConfigStatus::Disabled => Some(WebhookTestOutcome::NotConfigured),
                     WebhookConfigStatus::Misconfigured { .. } => {
-                        return Ok(WebhookTestOutcome::Misconfigured);
+                        Some(WebhookTestOutcome::Misconfigured)
                     }
-                    WebhookConfigStatus::Enabled { .. } => {}
+                    WebhookConfigStatus::Enabled { .. } => None,
+                };
+                if let Some(outcome) = early {
+                    audit(
+                        self,
+                        &mut connection,
+                        Some(admin),
+                        Some(id),
+                        WebhookAuditOperation::Test,
+                        WebhookAuditOutcome::Rejected,
+                        None,
+                        None,
+                    )
+                    .await?;
+                    return Ok(outcome);
                 }
                 self.webhook_sender().environment_destination()
             } else {
@@ -817,6 +841,35 @@ pub trait DeliverRegistrationGateWebhooksUseCase:
     + DependOnWebhookSender
     + DependOnWebhookSecretCipher
 {
+    fn deliver_registration_gate_webhooks_guarded<'a>(
+        &'a self,
+        worker_id: &'a str,
+        policy: &'a WebhookDeliveryPolicy,
+        jitter: &'a (dyn Fn() -> f64 + Sync),
+        should_stop: &'a (dyn Fn() -> bool + Sync),
+        in_flight: &'a WebhookInFlight,
+    ) -> impl Future<Output = error_stack::Result<WebhookCycleReport, KernelError>> + Send + 'a
+    {
+        async move {
+            let clock = now;
+            run_webhook_delivery_cycle_guarded(
+                self.database_connection(),
+                self.webhook_delivery_repository(),
+                self.webhook_sender(),
+                self.webhook_secret_cipher(),
+                worker_id,
+                policy,
+                &WebhookCycleEnv {
+                    clock: &clock,
+                    jitter,
+                    should_stop,
+                },
+                in_flight,
+            )
+            .await
+        }
+    }
+
     fn deliver_registration_gate_webhooks<'a>(
         &'a self,
         worker_id: &'a str,

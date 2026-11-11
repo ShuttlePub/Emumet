@@ -424,6 +424,41 @@ where
     Ok(report)
 }
 
+/// 送信先ごとの「処理中」を共有するガード。worker がサイクルを重ねて起動しても、同じ送信先を同時に
+/// 2 つのサイクルが処理しない (遅い送信先のサイクルを待たずに、正常な送信先を次のサイクルで進められる)。
+#[derive(Clone, Default)]
+pub struct WebhookInFlight {
+    ids: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
+}
+
+impl WebhookInFlight {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn try_acquire(&self, id: WebhookEndpointId) -> Option<WebhookInFlightPermit> {
+        let mut ids = self.ids.lock().unwrap_or_else(|e| e.into_inner());
+        ids.insert(id.as_i64()).then(|| WebhookInFlightPermit {
+            ids: self.ids.clone(),
+            id: id.as_i64(),
+        })
+    }
+}
+
+struct WebhookInFlightPermit {
+    ids: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
+    id: i64,
+}
+
+impl Drop for WebhookInFlightPermit {
+    fn drop(&mut self) {
+        self.ids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
+    }
+}
+
 /// 配送サイクル: 取り込み → 送信先ごとに (1 件ずつ) lease 取得 → 送信 → 結果記録。ゲートの
 /// transaction の外で動く。送信先は並行に処理し、ある送信先の遅延・失敗・復号不可は他の送信先を
 /// 止めない。1 サイクルで 1 送信先あたり最大 `policy.batch_size` 件を処理する。
@@ -437,6 +472,38 @@ pub async fn run_webhook_delivery_cycle<D, R, S, C>(
     worker_id: &str,
     policy: &WebhookDeliveryPolicy,
     env: &WebhookCycleEnv<'_>,
+) -> error_stack::Result<WebhookCycleReport, KernelError>
+where
+    D: DatabaseConnection,
+    R: WebhookDeliveryRepository<Connection = D::Connection>,
+    S: WebhookSender,
+    C: WebhookSecretCipher,
+{
+    run_webhook_delivery_cycle_guarded(
+        database,
+        repository,
+        sender,
+        cipher,
+        worker_id,
+        policy,
+        env,
+        &WebhookInFlight::new(),
+    )
+    .await
+}
+
+/// `run_webhook_delivery_cycle` の、サイクルを重ねて起動できる版。`in_flight` で他の
+/// サイクルが処理中の送信先はスキップする (そのサイクルが最後まで面倒を見る)。
+#[allow(clippy::too_many_arguments)]
+pub async fn run_webhook_delivery_cycle_guarded<D, R, S, C>(
+    database: &D,
+    repository: &R,
+    sender: &S,
+    cipher: &C,
+    worker_id: &str,
+    policy: &WebhookDeliveryPolicy,
+    env: &WebhookCycleEnv<'_>,
+    in_flight: &WebhookInFlight,
 ) -> error_stack::Result<WebhookCycleReport, KernelError>
 where
     D: DatabaseConnection,
@@ -476,7 +543,11 @@ where
         return Ok(report);
     }
 
-    let results = futures::future::join_all(endpoint_ids.iter().map(|endpoint_id| {
+    let results = futures::future::join_all(endpoint_ids.iter().map(|endpoint_id| async move {
+        // 他のサイクルが処理中の送信先は待たずに飛ばす。
+        let Some(_permit) = in_flight.try_acquire(*endpoint_id) else {
+            return Ok(WebhookCycleReport::default());
+        };
         deliver_endpoint(
             database,
             repository,
@@ -487,6 +558,7 @@ where
             policy,
             env,
         )
+        .await
     }))
     .await;
     let mut first_error = None;

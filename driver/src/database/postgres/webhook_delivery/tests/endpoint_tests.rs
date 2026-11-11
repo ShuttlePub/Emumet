@@ -4,7 +4,9 @@
 
 use super::*;
 use crate::webhook::signature;
-use kernel::interfaces::repository::WebhookSecretCipher;
+use kernel::interfaces::repository::{
+    run_webhook_delivery_cycle_guarded, WebhookInFlight, WebhookSecretCipher,
+};
 use kernel::prelude::entity::{
     category_of, NewWebhookEndpoint, StoredWebhookEndpoint, ValidatedWebhookUrl, WebhookAuditEntry,
     WebhookAuditOperation, WebhookAuditOutcome, WebhookCategories, WebhookCategory,
@@ -1481,4 +1483,305 @@ async fn the_migration_keeps_every_legacy_delivery_record_and_event_id() {
         .execute(format!("DROP DATABASE {database} WITH (FORCE)").as_str())
         .await
         .unwrap();
+}
+
+/// 既存の `outage_started` イベントとその監査を `count` 件複製し、最新より後の ID・revision で追加する
+/// (大量の未取り込みイベントを実 DB に作るための fixture)。
+async fn clone_outage_events(fx: &Fixture, count: i64) {
+    let mut conn = fx.db.connection().await.unwrap();
+    let con: &mut PgConnection = &mut conn;
+    sqlx::query(
+        r#"
+        WITH tpl AS (
+            SELECT kind, revision, payload, created_at FROM registration_gate_events
+            WHERE kind = 'outage_started' ORDER BY id LIMIT 1
+        ),
+        base AS (
+            SELECT COALESCE(MAX(id), 0) + 1000 AS id_base, COALESCE(MAX(revision), 0) + 1000 AS rev_base
+            FROM registration_gate_events
+        ),
+        abase AS (SELECT COALESCE(MAX(id), 0) + 1000 AS aid_base FROM registration_gate_audit),
+        ins_audit AS (
+            INSERT INTO registration_gate_audit (
+                id, revision_before, revision_after, action, actor_auth_account_id,
+                warning_acknowledged, before_state, after_state, observation, created_at
+            )
+            SELECT abase.aid_base + g, a.revision_before, base.rev_base + g, a.action,
+                   a.actor_auth_account_id, a.warning_acknowledged, a.before_state, a.after_state,
+                   a.observation, a.created_at
+            FROM registration_gate_audit a, tpl, base, abase, generate_series(1::bigint, $1::bigint) g
+            WHERE a.revision_after = tpl.revision
+        )
+        INSERT INTO registration_gate_events (id, kind, revision, payload, created_at)
+        SELECT base.id_base + g, tpl.kind, base.rev_base + g, tpl.payload, tpl.created_at
+        FROM tpl, base, generate_series(1::bigint, $1::bigint) g
+        "#,
+    )
+    .bind(count)
+    .execute(&mut *con)
+    .await
+    .unwrap();
+    // 一括投入した直後は統計が古くて計画が崩れるので、autovacuum 相当の ANALYZE を明示する。
+    sqlx::query("ANALYZE registration_gate_events")
+        .execute(&mut *con)
+        .await
+        .unwrap();
+    sqlx::query("ANALYZE registration_gate_audit")
+        .execute(&mut *con)
+        .await
+        .unwrap();
+}
+
+async fn delivery_count(fx: &Fixture, endpoint: WebhookEndpointId) -> i64 {
+    let mut conn = fx.db.connection().await.unwrap();
+    let con: &mut PgConnection = &mut conn;
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM registration_gate_webhook_deliveries WHERE endpoint_id = $1",
+    )
+    .bind(endpoint.as_i64())
+    .fetch_one(con)
+    .await
+    .unwrap()
+}
+
+async fn max_event_id_of(fx: &Fixture) -> i64 {
+    let mut conn = fx.db.connection().await.unwrap();
+    let con: &mut PgConnection = &mut conn;
+    sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(id), 0) FROM registration_gate_events")
+        .fetch_one(con)
+        .await
+        .unwrap()
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_category_update_ingests_every_pending_event_even_beyond_one_hundred_thousand() {
+    let fx = Fixture::new().await;
+    let cipher = cipher_1();
+    let server = MockServer::start().await;
+    mount_ok(&server).await;
+    fx.emit_all_kinds().await;
+    let endpoint = add_endpoint(
+        &fx,
+        &cipher,
+        &format!("{}/big", server.uri()),
+        SECRET_A,
+        &[WebhookCategory::Outage],
+    )
+    .await;
+    const PENDING: i64 = 100_001;
+    clone_outage_events(&fx, PENDING).await;
+    assert_eq!(delivery_count(&fx, endpoint.id).await, 0);
+
+    // 同じ選択の再指定でも、変更前の選択に属する未取り込みイベントは 1 件も脱落しない。
+    let mut conn = fx.db.connection().await.unwrap();
+    let outcome = PostgresWebhookDeliveryRepository
+        .update_endpoint(
+            &mut conn,
+            endpoint.id,
+            endpoint.revision,
+            WebhookEndpointPatch {
+                categories: WebhookCategories::new([WebhookCategory::Outage]),
+                ..Default::default()
+            },
+            &admin(),
+            now(),
+        )
+        .await
+        .unwrap();
+    let WebhookEndpointWrite::Done(updated) = outcome else {
+        panic!("update failed: {outcome:?}")
+    };
+    assert_eq!(updated.baseline_event_id, max_event_id_of(&fx).await);
+    assert_eq!(delivery_count(&fx, endpoint.id).await, PENDING);
+
+    // その後の選択変更・worker の取り込みで増えも減りもしない。
+    let report = PostgresWebhookDeliveryRepository
+        .ingest_gate_events(&mut conn, now(), 200, false)
+        .await
+        .unwrap();
+    assert_eq!(report.ingested, 0);
+    assert_eq!(delivery_count(&fx, endpoint.id).await, PENDING);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn the_worker_ingest_waits_out_a_category_update_in_progress_and_then_uses_the_new_selection()
+{
+    use sqlx::Connection as _;
+    let fx = Fixture::new().await;
+    let cipher = cipher_1();
+    let server = MockServer::start().await;
+    mount_ok(&server).await;
+    let endpoint = add_endpoint(
+        &fx,
+        &cipher,
+        &format!("{}/race", server.uri()),
+        SECRET_A,
+        &[WebhookCategory::Outage],
+    )
+    .await;
+    fx.emit_all_kinds().await;
+
+    // カテゴリ更新の transaction が送信先の行ロックを持っている間を再現する。
+    let mut lock_conn = fx.db.connection().await.unwrap();
+    let lock_con: &mut PgConnection = &mut lock_conn;
+    let mut tx = lock_con.begin().await.unwrap();
+    sqlx::query("SELECT id FROM registration_gate_webhook_endpoints WHERE id = $1 FOR UPDATE")
+        .bind(endpoint.id.as_i64())
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+
+    let mut conn = fx.db.connection().await.unwrap();
+    let during = PostgresWebhookDeliveryRepository
+        .ingest_gate_events(&mut conn, now(), 200, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        during.ingested, 0,
+        "更新中の送信先は古い選択で取り込まれない"
+    );
+    assert!(deliveries_of(&fx, endpoint.id).await.is_empty());
+
+    // 更新が commit される (選択 = override、baseline = その時点の最新イベント)。
+    sqlx::query(
+        "UPDATE registration_gate_webhook_endpoints SET categories = ARRAY['override'], \
+         baseline_event_id = (SELECT MAX(id) FROM registration_gate_events), \
+         revision = revision + 1 WHERE id = $1",
+    )
+    .bind(endpoint.id.as_i64())
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    // 更新後に発生したイベントは、新しい選択 (override) のものだけが取り込まれる。
+    let known: BTreeSet<i64> = fx
+        .event_ids_and_kinds()
+        .await
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+    fx.command(ACK).await;
+    fx.command(GateCommand::RevokeOverride).await;
+    fx.observe(obs(H, OFF)).await;
+    fx.command(GateCommand::Open).await;
+    fx.observe(obs(DOWN, OFF)).await;
+    let after = fx.event_ids_and_kinds().await;
+    let new_events: Vec<&(i64, String)> =
+        after.iter().filter(|(id, _)| !known.contains(id)).collect();
+    let expected: BTreeSet<i64> = new_events
+        .iter()
+        .filter(|(_, kind)| kind == "override_started" || kind == "override_revoked")
+        .map(|(id, _)| *id)
+        .collect();
+    assert!(!expected.is_empty() && expected.len() < new_events.len());
+    PostgresWebhookDeliveryRepository
+        .ingest_gate_events(&mut conn, now(), 200, false)
+        .await
+        .unwrap();
+    let got: BTreeSet<i64> = deliveries_of(&fx, endpoint.id)
+        .await
+        .iter()
+        .map(|d| *d.event_id.as_ref())
+        .collect();
+    assert_eq!(got, expected);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_slow_endpoint_does_not_hold_back_the_next_batch_of_a_healthy_endpoint() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let fx = Fixture::new().await;
+    let (slow, healthy) = (MockServer::start().await, MockServer::start().await);
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(204).set_delay(Duration::from_secs(10)))
+        .mount(&slow)
+        .await;
+    mount_ok(&healthy).await;
+    let cipher = cipher_1();
+    let sender = HttpWebhookSender::disabled_allowing_insecure_loopback_destinations()
+        .with_settings(WebhookNetworkSettings {
+            resolve_timeout: Duration::from_millis(500),
+            connect_timeout: Duration::from_millis(500),
+            total_timeout: Duration::from_secs(3),
+            max_response_bytes: 64 * 1024,
+        });
+    let all = WebhookCategory::ALL;
+    let slow_endpoint =
+        add_endpoint(&fx, &cipher, &format!("{}/s", slow.uri()), SECRET_A, &all).await;
+    let healthy_endpoint = add_endpoint(
+        &fx,
+        &cipher,
+        &format!("{}/h", healthy.uri()),
+        SECRET_B,
+        &all,
+    )
+    .await;
+    fx.emit_all_kinds().await;
+    let total = i64::try_from(fx.event_ids_and_kinds().await.len()).unwrap();
+    let policy = WebhookDeliveryPolicy {
+        batch_size: 2,
+        ..default_policy()
+    };
+    assert!(total > policy.batch_size * 2);
+
+    let in_flight = WebhookInFlight::new();
+    let first_done = AtomicBool::new(false);
+    let cycle = |label: &'static str| {
+        let (fx, sender, cipher, policy, in_flight) = (&fx, &sender, &cipher, &policy, &in_flight);
+        async move {
+            let clock = now;
+            let jitter = || 1.0;
+            let stop = || false;
+            run_webhook_delivery_cycle_guarded(
+                &fx.db,
+                &PostgresWebhookDeliveryRepository,
+                sender,
+                cipher,
+                label,
+                policy,
+                &WebhookCycleEnv {
+                    clock: &clock,
+                    jitter: &jitter,
+                    should_stop: &stop,
+                },
+                in_flight,
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let (first, ()) = tokio::join!(
+        async {
+            let report = cycle("worker-first").await;
+            first_done.store(true, Ordering::SeqCst);
+            report
+        },
+        async {
+            // 最初のサイクルが遅い送信先の応答待ちの間に、次のサイクルが正常な送信先の続きを配送する。
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            cycle("worker-second").await;
+            assert!(
+                !first_done.load(Ordering::SeqCst),
+                "最初のサイクルは遅い送信先を待っている"
+            );
+            let delivered = deliveries_of(&fx, healthy_endpoint.id)
+                .await
+                .iter()
+                .filter(|d| d.status == WebhookDeliveryStatus::Delivered)
+                .count();
+            assert_eq!(
+                i64::try_from(delivered).unwrap(),
+                policy.batch_size * 2,
+                "正常な送信先は batch_size を超えて配送された"
+            );
+            assert_eq!(
+                deliveries_of(&fx, slow_endpoint.id).await.len(),
+                usize::try_from(total).unwrap()
+            );
+        }
+    );
+    assert_eq!(i64::from(first.delivered), policy.batch_size);
 }
