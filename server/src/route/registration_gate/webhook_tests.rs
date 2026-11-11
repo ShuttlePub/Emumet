@@ -237,7 +237,8 @@ async fn admin_can_inspect_test_and_retry_while_the_gate_and_notifications_stay_
     assert_eq!(first["last_result"], "ssrf_blocked");
     assert_eq!(first["failure_reason"], "permanent_error");
     assert_eq!(first["attempt_count"], 1);
-    for leaked in [SECRET, "urlsecret", "very/secret", "8443", "https://"] {
+    // Match the port as part of a host:port/URL, not inside the numeric snowflake event ID.
+    for leaked in [SECRET, "urlsecret", "very/secret", ":8443", "https://"] {
         assert!(!text.contains(leaked), "status leaks {leaked}: {text}");
     }
 
