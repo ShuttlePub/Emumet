@@ -52,6 +52,16 @@ const RESET_TARGETS: [&str; 6] = [
 
 type Snapshot = BTreeMap<String, (i64, String)>;
 
+/// `apply_reset` applies every remaining production migration, so a migration numbered after the
+/// reset (new tables of a later feature) may add tables; the retained check covers the tables that
+/// existed before the cutover.
+fn only_tables_of(snapshot: Snapshot, reference: &Snapshot) -> Snapshot {
+    snapshot
+        .into_iter()
+        .filter(|(table, _)| reference.contains_key(table))
+        .collect()
+}
+
 struct Rehearsal {
     iso: IsolatedDatabase,
     module: AppModule,
@@ -329,7 +339,7 @@ async fn cutover_rehearsal_resets_only_legacy_data_and_provisions_keys_once() {
 
     assert_eq!(r.legacy_counts().await, vec![0; RESET_TARGETS.len()]);
     assert_eq!(
-        r.retained_snapshot().await,
+        only_tables_of(r.retained_snapshot().await, &before),
         before,
         "no retained table may change"
     );
@@ -341,7 +351,7 @@ async fn cutover_rehearsal_resets_only_legacy_data_and_provisions_keys_once() {
     let keys = r.key_rows().await;
     assert_eq!(keys.len(), 2);
     assert_eq!(
-        r.retained_snapshot().await,
+        only_tables_of(r.retained_snapshot().await, &before),
         before,
         "provisioning only adds keys"
     );

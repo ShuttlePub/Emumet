@@ -299,8 +299,22 @@ async fn reset_clears_only_legacy_federation_data() {
     for table in RESET_TARGETS {
         assert_eq!(count(&iso.pool, table).await, 0, "{table} must be emptied");
     }
+    // `apply_reset` applies every remaining production migration, so migrations numbered after the
+    // reset (new tables of later features) may add tables. Each table that existed before must be
+    // unchanged; a table added by a later migration starts empty.
     let after = retained_snapshot(&iso.pool).await;
-    assert_eq!(before, after, "no retained table may change");
+    let after_existing: Snapshot = after
+        .iter()
+        .filter(|(table, _)| before.contains_key(*table))
+        .map(|(table, state)| (table.clone(), state.clone()))
+        .collect();
+    assert_eq!(before, after_existing, "no retained table may change");
+    for (table, (rows, _)) in after.iter().filter(|(t, _)| !before.contains_key(*t)) {
+        assert_eq!(
+            *rows, 0,
+            "{table} was added by a later migration and starts empty"
+        );
+    }
     assert_eq!(count(&iso.pool, LEDGER).await, 1);
 }
 
