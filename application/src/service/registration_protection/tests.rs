@@ -374,56 +374,30 @@ impl Fixture {
             .unwrap()
     }
 
-    /// 管理者の canary roundtrip でメールを operational にする。
+    /// 管理者の入力なしの再検証 (固定 canary への実送信の DATA 受理) でメールを operational にする。
     async fn bootstrap_email(&self) {
-        let started = self
+        let report = self
             .module
-            .verify_registration_protection(
-                &self.admin(),
-                Protection::Email,
-                AdminVerifyInput::default(),
-            )
+            .verify_registration_protection(&self.admin(), Protection::Email)
             .await
             .unwrap();
-        let VerifyDisposition::PendingConfirmation { challenge_id, .. } = started.disposition
-        else {
-            panic!("expected a pending canary challenge: {started:?}");
-        };
-        let (to, code) = self.last_sent();
-        assert_eq!(to, CANARY);
-        let confirmed = self
-            .module
-            .verify_registration_protection(
-                &self.admin(),
-                Protection::Email,
-                AdminVerifyInput {
-                    challenge_id: Some(challenge_id),
-                    code: Some(code),
-                    ..AdminVerifyInput::default()
-                },
-            )
-            .await
-            .unwrap();
-        assert_eq!(confirmed.result.outcome, ProviderOutcome::BusinessSuccess);
+        assert_eq!(report.disposition, VerifyDisposition::Completed);
+        assert_eq!(report.result.outcome, ProviderOutcome::BusinessSuccess);
         assert_eq!(
-            confirmed.readiness.effective.status,
+            report.readiness.effective.status,
             ReadinessStatus::Operational
         );
+        assert_eq!(self.last_sent().0, CANARY);
     }
 
+    /// 管理者の入力なしの再検証 (Siteverify が secret を有効と応答) で BOT を operational にする。
     async fn bootstrap_bot(&self) {
         let report = self
             .module
-            .verify_registration_protection(
-                &self.admin(),
-                Protection::Bot,
-                AdminVerifyInput {
-                    token: Some("widget-token".to_string()),
-                    ..AdminVerifyInput::default()
-                },
-            )
+            .verify_registration_protection(&self.admin(), Protection::Bot)
             .await
             .unwrap();
+        assert_eq!(report.result.outcome, ProviderOutcome::BusinessSuccess);
         assert_eq!(
             report.readiness.effective.status,
             ReadinessStatus::Operational
@@ -494,14 +468,7 @@ async fn admin_use_cases_reject_non_admins_before_any_provider_call() {
     assert_eq!(
         kind(
             fx.module
-                .verify_registration_protection(
-                    &outsider,
-                    Protection::Bot,
-                    AdminVerifyInput {
-                        token: Some("t".into()),
-                        ..AdminVerifyInput::default()
-                    },
-                )
+                .verify_registration_protection(&outsider, Protection::Bot)
                 .await
         ),
         KernelError::PermissionDenied
@@ -530,161 +497,168 @@ async fn nothing_is_ready_before_a_real_verification() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn bot_becomes_operational_only_through_a_business_success_and_rejections_change_nothing() {
+async fn bot_becomes_operational_through_an_input_less_admin_verification_and_only_by_it() {
     let fx = Fixture::new().await;
-    let probe = fx
-        .module
-        .verify_registration_protection(&fx.admin(), Protection::Bot, AdminVerifyInput::default())
-        .await
-        .unwrap();
-    assert_eq!(probe.result, http_accepted());
-    assert!(probe.recorded);
+    // 設定が有効なだけ (provider の応答を確認していない) では準備済みにならない。
     assert_eq!(
-        probe.readiness.effective.status,
+        fx.bot_view().await.effective.status,
         ReadinessStatus::Unverified
     );
-    assert_eq!(
-        probe.readiness.effective.reason,
-        ReasonCode::NoBusinessSuccess
-    );
     assert!(!fx.gate().await.observation.bot.is_effective());
-
-    *fx.module.turnstile.verify.lock().unwrap() =
-        ProviderResult::attempt_rejected(ReasonCode::TokenRejected, TransportClass::Http2xx);
-    let before = fx.bot_view().await;
-    let rejected = fx
-        .module
-        .verify_registration_protection(
-            &fx.admin(),
-            Protection::Bot,
-            AdminVerifyInput {
-                token: Some("bad".into()),
-                ..AdminVerifyInput::default()
-            },
-        )
+    // 周期の再検証は、管理者の初回検証が無い generation を準備済みにしない。
+    fx.module
+        .run_registration_protection_maintenance(Duration::seconds(30))
         .await
         .unwrap();
-    assert!(!rejected.recorded);
-    assert_eq!(rejected.result.outcome, ProviderOutcome::AttemptRejected);
-    assert_eq!(fx.bot_view().await, before);
+    assert_eq!(
+        fx.bot_view().await.effective.status,
+        ReadinessStatus::Unverified,
+        "periodic evidence cannot bootstrap a generation"
+    );
 
-    *fx.module.turnstile.verify.lock().unwrap() = http_success();
-    fx.bootstrap_bot().await;
+    // 入力なしの管理者検証: provider が (有効な) secret で応答した → business success。
+    let report = fx
+        .module
+        .verify_registration_protection(&fx.admin(), Protection::Bot)
+        .await
+        .unwrap();
+    assert_eq!(report.result.outcome, ProviderOutcome::BusinessSuccess);
+    assert_eq!(report.result.reason, ReasonCode::BusinessSuccess);
+    assert_eq!(report.result.transport, TransportClass::Http2xx);
+    assert!(report.recorded);
+    assert_eq!(report.disposition, VerifyDisposition::Completed);
     let view = fx.bot_view().await;
     let last = view.last_check.unwrap();
     assert_eq!(last.outcome, ProviderOutcome::BusinessSuccess);
-    assert_eq!(last.transport, TransportClass::Http2xx);
     assert!(last.generation_matches);
+    assert_eq!(view.effective.status, ReadinessStatus::Operational);
     assert!(view.effective.valid_until.is_some());
     assert!(fx.gate().await.observation.bot.is_effective());
-
-    let calls = fx.module.turnstile.verify_calls.load(Ordering::SeqCst);
-    assert_eq!(
-        kind(
-            fx.module
-                .verify_registration_protection(
-                    &fx.admin(),
-                    Protection::Bot,
-                    AdminVerifyInput {
-                        token: Some("  ".into()),
-                        ..AdminVerifyInput::default()
-                    },
-                )
-                .await
-        ),
-        KernelError::Validation
-    );
     assert_eq!(
         fx.module.turnstile.verify_calls.load(Ordering::SeqCst),
-        calls
+        0,
+        "no administrator-supplied widget token is verified"
     );
 }
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn email_needs_the_canary_roundtrip_smtp_acceptance_alone_is_not_ready() {
-    let fx = Fixture::new().await;
-    let started = fx
-        .module
-        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
-        .await
-        .unwrap();
-    assert!(matches!(
-        started.disposition,
-        VerifyDisposition::PendingConfirmation { .. }
-    ));
-    assert_eq!(
-        started.readiness.effective.status,
-        ReadinessStatus::Unverified
-    );
-    assert!(!fx.gate().await.observation.email.is_effective());
-    let (to, code) = fx.last_sent();
-    assert_eq!(to, CANARY);
-    let VerifyDisposition::PendingConfirmation { challenge_id, .. } = started.disposition else {
-        unreachable!()
-    };
-
-    let wrong = fx
-        .module
-        .verify_registration_protection(
-            &fx.admin(),
-            Protection::Email,
-            AdminVerifyInput {
-                challenge_id: Some(challenge_id.clone()),
-                code: Some("00000000".into()),
-                ..AdminVerifyInput::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert!(!wrong.recorded);
-    assert_eq!(
-        wrong.readiness.effective.status,
-        ReadinessStatus::Unverified
-    );
-
-    assert_eq!(
-        fx.module
-            .confirm_registration_email_challenge(&challenge_id, &code)
+async fn bot_verification_failures_never_make_the_protection_ready() {
+    // HTTP 200 だけは根拠にならない。secret 不正・一時障害は、その分類で記録され準備済みにならない。
+    for (probe, expected, observation) in [
+        (
+            ProviderResult::configuration_invalid(
+                ReasonCode::InvalidSecret,
+                TransportClass::Http4xx,
+            ),
+            ReadinessStatus::ConfigurationInvalid,
+            ProtectionObservation::UNCONFIGURED,
+        ),
+        (
+            ProviderResult::configuration_invalid(
+                ReasonCode::MissingSecret,
+                TransportClass::Http4xx,
+            ),
+            ReadinessStatus::ConfigurationInvalid,
+            ProtectionObservation::UNCONFIGURED,
+        ),
+        (
+            ProviderResult::temporarily_unavailable(
+                ReasonCode::ProviderServerError,
+                TransportClass::Http5xx,
+            ),
+            ReadinessStatus::TemporarilyUnavailable,
+            ProtectionObservation::new(true, ProbeStatus::Unhealthy),
+        ),
+        (
+            ProviderResult::temporarily_unavailable(
+                ReasonCode::MalformedResponse,
+                TransportClass::MalformedBody,
+            ),
+            ReadinessStatus::TemporarilyUnavailable,
+            ProtectionObservation::new(true, ProbeStatus::Unhealthy),
+        ),
+    ] {
+        let fx = Fixture::new().await;
+        *fx.module.turnstile.probe.lock().unwrap() = probe;
+        let report = fx
+            .module
+            .verify_registration_protection(&fx.admin(), Protection::Bot)
             .await
-            .unwrap(),
-        ConfirmOutcome::Rejected,
-        "a canary challenge is never usable for a registrant"
-    );
+            .unwrap();
+        assert_eq!(report.result.outcome, probe.outcome);
+        assert!(report.recorded);
+        assert_eq!(report.readiness.effective.status, expected);
+        assert_eq!(fx.gate().await.observation.bot, observation);
+    }
+}
 
-    let confirmed = fx
-        .module
-        .verify_registration_protection(
-            &fx.admin(),
-            Protection::Email,
-            AdminVerifyInput {
-                challenge_id: Some(challenge_id.clone()),
-                code: Some(code.clone()),
-                ..AdminVerifyInput::default()
-            },
-        )
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn email_becomes_operational_when_the_canary_delivery_is_accepted_without_any_code() {
+    let fx = Fixture::new().await;
+    // 設定が有効なだけでは準備済みにならない (送信していない)。
+    assert_eq!(
+        fx.email_view().await.effective.status,
+        ReadinessStatus::Unverified
+    );
+    assert_eq!(fx.sent_count(), 0);
+    // 周期の canary 配送再検証は、管理者の初回検証が無い generation を準備済みにしない。
+    fx.module
+        .revalidate_registration_email_delivery()
         .await
         .unwrap();
-    assert_eq!(confirmed.result.outcome, ProviderOutcome::BusinessSuccess);
     assert_eq!(
-        confirmed.readiness.effective.status,
+        fx.email_view().await.effective.status,
+        ReadinessStatus::Unverified,
+        "periodic evidence cannot bootstrap a generation"
+    );
+    fx.reset_sent();
+
+    let report = fx
+        .module
+        .verify_registration_protection(&fx.admin(), Protection::Email)
+        .await
+        .unwrap();
+    assert_eq!(report.disposition, VerifyDisposition::Completed);
+    assert_eq!(report.result.outcome, ProviderOutcome::BusinessSuccess);
+    assert!(report.recorded);
+    assert_eq!(
+        report.readiness.effective.status,
         ReadinessStatus::Operational
     );
     assert!(fx.gate().await.observation.email.is_effective());
-    let again = fx
+    // 実送信は固定 canary 宛の 1 通だけ。code の確認も challenge も proof も存在しない。
+    assert_eq!(fx.sent_count(), 1);
+    assert_eq!(fx.last_sent().0, CANARY);
+    assert_eq!(
+        fx.module.email.purposes.lock().unwrap().last().copied(),
+        Some(SendPurpose::Canary)
+    );
+    assert_eq!(
+        fx.scalar("SELECT COUNT(*) FROM registration_email_challenges")
+            .await,
+        0
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn email_acceptance_short_of_data_is_not_a_business_success() {
+    // MAIL FROM までの受理 (宛先も本文も届いていない) を DATA 受理とは扱わない。
+    let fx = Fixture::new().await;
+    *fx.module.email.canary_send.lock().unwrap() = probe_ok();
+    let report = fx
         .module
-        .verify_registration_protection(
-            &fx.admin(),
-            Protection::Email,
-            AdminVerifyInput {
-                challenge_id: Some(challenge_id),
-                code: Some(code),
-                ..AdminVerifyInput::default()
-            },
-        )
+        .verify_registration_protection(&fx.admin(), Protection::Email)
         .await
         .unwrap();
-    assert_eq!(again.result.outcome, ProviderOutcome::AttemptRejected);
+    assert_eq!(report.result.outcome, ProviderOutcome::Accepted);
+    assert_eq!(
+        report.readiness.effective.status,
+        ReadinessStatus::Unverified
+    );
+    assert!(!fx.gate().await.observation.email.is_effective());
 }
 
 #[test_with::env(DATABASE_URL)]
@@ -694,7 +668,7 @@ async fn email_without_a_canary_mailbox_stays_unverified() {
     fx.module.email.canary = None;
     let report = fx
         .module
-        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .verify_registration_protection(&fx.admin(), Protection::Email)
         .await
         .unwrap();
     assert_eq!(report.disposition, VerifyDisposition::CanaryNotConfigured);
@@ -703,44 +677,6 @@ async fn email_without_a_canary_mailbox_stays_unverified() {
         ReadinessStatus::Unverified
     );
     assert_eq!(fx.sent_count(), 0);
-}
-
-#[test_with::env(DATABASE_URL)]
-#[tokio::test]
-async fn invalid_admin_input_combinations_are_validation_errors() {
-    let fx = Fixture::new().await;
-    for (protection, input) in [
-        (
-            Protection::Bot,
-            AdminVerifyInput {
-                code: Some("1".into()),
-                ..AdminVerifyInput::default()
-            },
-        ),
-        (
-            Protection::Email,
-            AdminVerifyInput {
-                token: Some("t".into()),
-                ..AdminVerifyInput::default()
-            },
-        ),
-        (
-            Protection::Email,
-            AdminVerifyInput {
-                challenge_id: Some("only-id".into()),
-                ..AdminVerifyInput::default()
-            },
-        ),
-    ] {
-        assert_eq!(
-            kind(
-                fx.module
-                    .verify_registration_protection(&fx.admin(), protection, input)
-                    .await
-            ),
-            KernelError::Validation
-        );
-    }
 }
 
 // ---- 分類と E15a 観測入力 ------------------------------------------------------------------------
@@ -1643,7 +1579,7 @@ async fn a_canary_delivery_failure_makes_an_operational_email_unhealthy_while_pu
         classify_smtp_failure(failure, SendPurpose::Canary);
     let report = fx
         .module
-        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .verify_registration_protection(&fx.admin(), Protection::Email)
         .await
         .unwrap();
     assert_eq!(
@@ -1676,7 +1612,7 @@ async fn a_canary_delivery_failure_makes_an_operational_email_unhealthy_while_pu
     );
     let report = fx
         .module
-        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .verify_registration_protection(&fx.admin(), Protection::Email)
         .await
         .unwrap();
     assert_eq!(
@@ -1709,11 +1645,7 @@ async fn a_delivery_failure_survives_connection_probes_until_a_canary_delivery_s
     };
     let verify_start = || async {
         fx.module
-            .verify_registration_protection(
-                &fx.admin(),
-                Protection::Email,
-                AdminVerifyInput::default(),
-            )
+            .verify_registration_protection(&fx.admin(), Protection::Email)
             .await
             .unwrap()
     };
@@ -1814,7 +1746,7 @@ async fn a_known_configuration_loss_survives_a_later_timeout_and_the_latch_needs
     );
     let report = fx
         .module
-        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .verify_registration_protection(&fx.admin(), Protection::Email)
         .await
         .unwrap();
     assert_eq!(
@@ -1843,17 +1775,10 @@ async fn a_known_configuration_loss_survives_a_later_timeout_and_the_latch_needs
     assert!(!fx.gate().await.config_lost_latch, "BOT is still healthy");
 
     // BOT も設定喪失 (無効な secret) になると、両方 configured=false で停止ラッチが成立する。
-    *fx.module.turnstile.verify.lock().unwrap() =
+    *fx.module.turnstile.probe.lock().unwrap() =
         ProviderResult::configuration_invalid(ReasonCode::InvalidSecret, TransportClass::Http4xx);
     fx.module
-        .verify_registration_protection(
-            &fx.admin(),
-            Protection::Bot,
-            AdminVerifyInput {
-                token: Some("widget-token".to_string()),
-                ..AdminVerifyInput::default()
-            },
-        )
+        .verify_registration_protection(&fx.admin(), Protection::Bot)
         .await
         .unwrap();
     let latched = fx.gate().await;
@@ -1863,16 +1788,9 @@ async fn a_known_configuration_loss_survives_a_later_timeout_and_the_latch_needs
     assert_eq!(view.decision, RegistrationDecision::Stopped);
 
     // 復旧 (BOT の成功・接続 probe の成功・canary の配送成功) だけでは再開しない。
-    *fx.module.turnstile.verify.lock().unwrap() = http_success();
+    *fx.module.turnstile.probe.lock().unwrap() = http_accepted();
     fx.module
-        .verify_registration_protection(
-            &fx.admin(),
-            Protection::Bot,
-            AdminVerifyInput {
-                token: Some("widget-token".to_string()),
-                ..AdminVerifyInput::default()
-            },
-        )
+        .verify_registration_protection(&fx.admin(), Protection::Bot)
         .await
         .unwrap();
     *fx.module.email.probe.lock().unwrap() = probe_ok();
@@ -1983,30 +1901,18 @@ async fn a_public_code_confirmation_does_not_clear_a_connection_failure_observed
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn an_older_canary_code_confirmation_does_not_clear_a_later_delivery_failure() {
+async fn a_canary_delivery_that_began_before_a_later_failure_does_not_clear_it() {
     use driver::registration_protection::smtp::SmtpStage;
     let fx = Fixture::new().await;
     fx.bootstrap_bot().await;
-    let first = fx
-        .module
-        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
-        .await
-        .unwrap();
-    let VerifyDisposition::PendingConfirmation {
-        challenge_id: old_id,
-        ..
-    } = first.disposition
-    else {
-        panic!("expected a pending canary challenge");
-    };
-    let (_, old_code) = fx.last_sent();
+    fx.bootstrap_email().await;
 
-    // 新しい canary の送信が宛先拒否で失敗する。古い challenge は新発行では失効しない。
+    // 新しい canary の送信が宛先拒否で失敗する。
     *fx.module.email.canary_send.lock().unwrap() =
         smtp_failure(SmtpStage::Rcpt, 550, SendPurpose::Canary);
     let failed = fx
         .module
-        .verify_registration_protection(&fx.admin(), Protection::Email, AdminVerifyInput::default())
+        .verify_registration_protection(&fx.admin(), Protection::Email)
         .await
         .unwrap();
     assert_eq!(
@@ -2014,31 +1920,26 @@ async fn an_older_canary_code_confirmation_does_not_clear_a_later_delivery_failu
         ReadinessStatus::ConfigurationInvalid
     );
 
+    // 失敗より前に始まった (遅れて届いた) 成功は、DATA 受理でも障害を解除しない。
+    *fx.module.email.canary_send.lock().unwrap() =
+        accepted().observed(now() - Duration::minutes(1));
     let late = fx
         .module
-        .verify_registration_protection(
-            &fx.admin(),
-            Protection::Email,
-            AdminVerifyInput {
-                challenge_id: Some(old_id),
-                code: Some(old_code),
-                ..AdminVerifyInput::default()
-            },
-        )
+        .verify_registration_protection(&fx.admin(), Protection::Email)
         .await
         .unwrap();
     assert_eq!(late.result.outcome, ProviderOutcome::BusinessSuccess);
     assert_eq!(
         late.readiness.effective.status,
         ReadinessStatus::ConfigurationInvalid,
-        "a code confirmation is not an SMTP exchange"
+        "evidence older than the failure cannot clear it"
     );
     assert_eq!(
         fx.gate().await.observation.email,
         ProtectionObservation::UNCONFIGURED
     );
 
-    // 新しい canary の配送成功 (DATA 受理) と確認で回復する。
+    // 失敗より後の canary の配送成功 (DATA 受理) で回復する。
     *fx.module.email.canary_send.lock().unwrap() = accepted();
     fx.bootstrap_email().await;
     assert_eq!(

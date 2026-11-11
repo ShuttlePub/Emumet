@@ -3,8 +3,8 @@ use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
 use application::service::registration_enforcement_probe::RegistrationEnforcementMonitorUseCase;
 use application::service::registration_protection::{
-    AdminRegistrationProtectionUseCase, AdminVerifyInput, AdminVerifyReport, ConfirmOutcome,
-    IssueOutcome, IssueRequest, ProtectionReadinessView, RegistrationEmailChallengeUseCase,
+    AdminRegistrationProtectionUseCase, AdminVerifyReport, ConfirmOutcome, IssueOutcome,
+    IssueRequest, ProtectionReadinessView, RegistrationEmailChallengeUseCase,
 };
 use axum::extract::FromRef;
 use kernel::prelude::entity::{AuthAccountId, Protection};
@@ -85,10 +85,9 @@ impl AdminRegistrationProtectionApi {
         &self,
         admin: &AuthAccountId,
         protection: Protection,
-        input: AdminVerifyInput,
     ) -> error_stack::Result<AdminVerifyReport, KernelError> {
         self.module
-            .verify_registration_protection(admin, protection, input)
+            .verify_registration_protection(admin, protection)
             .await
     }
 }

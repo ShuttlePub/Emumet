@@ -18,7 +18,7 @@ Each checkpoint printed below is a scenario in that single ordered integration t
 | q02 | `q02_config_loss_stops`: configurations disabled, registration denied, reopen rejected |
 | q03 | `q03_manual_reopen_and_old_flow_closure`: restored configuration stays latched; explicit reopen; pre-existing flow denied after closure; recovery never removes manual closure |
 | q04 | `q04_no_public_invitation_bypass_no_invitation_feature`: no invitation feature added; public registration has no claimed invitation/override exemption. Targeted invitation workflow remains outside this unit |
-| q05 | `q05_api_verified_readiness`: populated configuration without business verification cannot open/register; real SMTP canary confirmation and Siteverify bootstrap precede successful registration |
+| q05 | `q05_api_verified_readiness`: populated configuration without business verification cannot open/register; neither configuration nor the periodic worker opens the gate or registration; the administrator's **input-less** verification (real SMTP canary DATA acceptance, Siteverify rejecting the dummy token as `invalid-input-response`) precedes successful registration; the retired token/code inputs are 400 |
 | q06 | `q06_temporary_outage_auto_resume`: both providers temporarily fail, registration denied; response evidence restores acceptance without an admin reopen |
 | q07 | `q07_single_provider_outage_continues`: failure in either direction enforces only the working side, never no protection |
 | q08 | `q08_login_and_authenticated_account_additions`: actual password login while closed; two authenticated Account creates |

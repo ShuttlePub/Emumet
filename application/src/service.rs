@@ -13,6 +13,7 @@ pub mod profile_follow_list;
 pub mod profile_relationship;
 pub mod profile_transfer;
 pub mod profile_username;
+pub mod profile_username_availability;
 pub mod registration_enforcement;
 pub mod registration_enforcement_probe;
 pub mod registration_gate;

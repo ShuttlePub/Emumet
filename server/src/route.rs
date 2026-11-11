@@ -12,6 +12,7 @@ pub mod profile_follow_list;
 pub mod profile_policy;
 pub mod profile_relationship;
 pub mod profile_transfer;
+pub mod profile_username_availability;
 pub mod registration_gate;
 pub mod registration_gate_webhook;
 pub mod registration_protection;

@@ -16,6 +16,7 @@ pub(crate) mod profile_delivery_worker;
 pub(crate) mod profile_follow_list;
 pub(crate) mod profile_relationship;
 pub(crate) mod profile_transfer;
+pub(crate) mod profile_username_availability;
 pub(crate) mod registration_gate;
 pub(crate) mod registration_gate_webhook;
 pub(crate) mod registration_protection;

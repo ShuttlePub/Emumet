@@ -24,7 +24,7 @@ readiness から観測入力を導く評価」「proof の照合・消費 (内�
 | `REGISTRATION_SMTP_TLS` | `starttls` (既定。STARTTLS を必須にし、平文へ降格しない) または `tls` (implicit TLS)。**平文は本番の読込では選べない** (テストビルドのみ)。 |
 | `REGISTRATION_SMTP_USERNAME` / `_PASSWORD` / `_PASSWORD_FILE` | 認証。username と password は両方指定するか、両方省略 (認証なしの内部 relay)。 |
 | `REGISTRATION_EMAIL_FROM` | 差出人 (`no-reply@example.com` または `Name <addr>`)。 |
-| `REGISTRATION_EMAIL_CANARY_ADDRESS` | 承認済み canary mailbox (管理者の roundtrip 検証用)。未設定ならメールは `unverified` のまま。 |
+| `REGISTRATION_EMAIL_CANARY_ADDRESS` | 承認済み canary mailbox (管理者の入力なし検証の送信先。受信確認は求めない)。未設定ならメールは `unverified` のまま。 |
 | `REGISTRATION_EMAIL_ENABLED` | 明示無効。 |
 | `REGISTRATION_PROTECTION_SUCCESS_TTL_SECS` | business success の有効期間 (既定 86400)。 |
 | `REGISTRATION_PROTECTION_PROBE_MAX_AGE_SECS` | 最後の検証からの許容秒数 (既定 600)。 |
@@ -71,7 +71,7 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
 
 - **障害の保持**: 失敗は段階で範囲に分かれる。`connect`〜`mail_from` = 接続範囲 (`connection_failure`)、`rcpt`・`data` = 配送範囲 (`delivery_failure`)。それぞれ分類・理由・失敗した段階・観測時刻を保持する。同じ範囲に複数の失敗が来たら、分類と理由は最も悪い方 (同格なら新しい方)、段階と観測時刻は **最も遅いもの** を保持する (どれも覆う成功だけが解除する)。
 - **解除の規則**: 成功が既知の障害を解除できるのは、**成功の段階が障害の段階を覆い (`success.stage >= failure.stage`)、かつ成功の証拠時刻が障害の観測時刻より後** のときだけ。両方が必要で、記録時刻 (遅れて届いた古い結果) は順序の根拠にならない。
-- **code 確認は SMTP 対話ではない**: 登録者の確認も canary の確認も、business 鮮度 (`success_ttl`) の更新と所有確認にだけ使い、**既知の障害を解除しない** (`without_evidence`)。障害より前に送ったメールに対する確認 (過去のメール所有) は、現在の SMTP の復旧の証拠ではない。
+- **code 確認は SMTP 対話ではない**: 登録者の確認は、business 鮮度 (`success_ttl`) の更新と所有確認にだけ使い、**既知の障害を解除しない** (`without_evidence`)。障害より前に送ったメールに対する確認 (過去のメール所有) は、現在の SMTP の復旧の証拠ではない。
 - **probe**: 宛先を提示せず **MAIL FROM まで** 検証する (接続 → STARTTLS → 認証 → MAIL FROM → RSET → QUIT。メールは送らない)。成功の証拠は `mail_from` 段階・MAIL FROM 成功した対話の開始時刻を保守的下限とする時刻で、接続範囲の障害 (MAIL FROM を含む) を解除できるが、RCPT・DATA の障害は覆えない。
 - **canary の配送成功**: DATA を受理された時刻を証拠時刻とし、`data` 段階 (全段階) を覆う。**RCPT・DATA の障害は canary の新規送信の成功 (DATA 受理) でのみ解除される。**
 - `attempt_rejected` は何も変えず、記録もしない。
@@ -116,11 +116,15 @@ fingerprint から **決定的に** 導く (SHA-256 の先頭 128 bit。値は�
 
 ### bot (Turnstile)
 
-- **bootstrap**: 管理者が、サイトキーの widget が発行した**有効な token** を `POST .../protections/bot/verify` `{"token": "..."}` に渡す。Siteverify の `success:true` かつ
-  hostname/action/token の期限が合致して初めて `business_success` が当該 generation に記録され `operational` になる。dummy token・空 response の失敗だけでは operational にならない。
+- **bootstrap (入力なしの管理者 [再検証])**: 管理者が `POST .../protections/bot/verify` `{}` を実行する (d15-q05: 設定が有効なだけでは足りず、有効な保護について実際に検証 API が応答することを確認して初めて準備済み)。widget の token も canary の code も要らない。Emumet は **有効でない固定のダミー token** で Siteverify を呼び、応答の本文 (HTTP status ではなく) で判定する (有効でないダミー token + 有効 secret → `invalid-input-response`、無効 secret → `invalid-input-secret` は E15b の実応答と公式テストキーでの**実測上の前提**で、公式ドキュメントは secret と response の検証順序を保証していない。live テストで継続確認する):
+  - `invalid-input-response` (・`missing-input-response`・`timeout-or-duplicate`、または成功) = **secret は有効で API が応答した** → `business_success` を当該 generation に記録し `operational`。
+  - `invalid-input-secret` / `missing-input-secret` = `configuration_invalid` (準備済みにならない)。
+  - 429/5xx/timeout/接続失敗・不正な本文・**secret の有効性を示さない応答 (`bad-request` だけ・未知の error code。既知の code に未知の code が混在する応答も同様) = `temporarily_unavailable`** (secret の error が混在する場合は設定不正が優先)。HTTP 200 だけを根拠にしない。
+  周期の probe は新しい generation を bootstrap できない (管理者の検証を済ませた generation の鮮度更新だけ)。
+- **bootstrap (入力なしの管理者 [再検証])**: 管理者が `POST .../protections/email/verify` `{}` を実行すると、**固定の承認済み canary 宛へ実際に送信**し、SMTP の **DATA 受理** を `business_success` として当該 generation に記録する (`operational`)。canary の受信確認 (code の入力) は求めない。宛先は固定で、登録者の入力を宛先にしない。challenge も proof も作らない。各段階 (接続・STARTTLS・認証・MAIL FROM・RCPT・DATA) の失敗は分類して記録し、準備済みにならない。MAIL FROM までの受理や接続 probe だけでは business success にならない。canary 未設定なら接続 probe の結果だけを記録し `unverified` のまま (`canary_not_configured`)。
 - **継続検証**: 接続・認証・MAIL FROM の probe (`run_registration_protection_probe`) と canary の配送 (宛先を伴う RCPT/DATA の再検証)。登録者の code 確認の成功 (配送と確認の end-to-end の business success) は鮮度を更新するだけで、障害を解除しない。
 - **障害の解除は証拠で決まる** (上の「証拠」): probe は接続範囲 (MAIL FROM まで) の障害だけを、canary の新規送信の成功 (DATA 受理) は RCPT・DATA を含む全段階の障害を、証拠時刻が障害より後のときに解除する。operational へ戻る (BOT のみへの縮退が解除される) のは、保持している障害がすべて解除され、かつ `success_ttl` 内の business success があるとき。設定変更 (generation 変更) で保持された障害は破棄される。
-- canary の確認は **proof を発行せず**、登録者向けの公開確認では使えない。provider の健全性と登録者ごとの所有証明は分離されている。一回の配送成功から全宛先への到達は保証しない。
+- canary は **proof を発行せず**、登録者向けの公開確認では使えない。provider の健全性と登録者ごとの所有証明は分離されている。一回の配送成功から全宛先への到達は保証しない。
 
 ### 周期実行は E15d
 
@@ -192,9 +196,9 @@ lettre の `AsyncSmtpConnection` (tokio + native-tls) で、接続 → STARTTLS 
 | API | 内容 |
 |---|---|
 | `GET /api/v1/admin/registration-gate/protections` | 保護ごとの provider・enabled・generation・fingerprint・status・reason・checked_at・valid_until と、最後の検証 (business 結果・reason・transport 分類・最後の成功・generation 一致) |
-| `POST /api/v1/admin/registration-gate/protections/{protection}/verify` | 実検証の即時実行 (bootstrap・再検証)。`protection` は `email` / `bot`。body は §3 のとおり。business 結果と transport 分類の両方を返し記録する。`attempt_rejected` は記録しない |
+| `POST /api/v1/admin/registration-gate/protections/{protection}/verify` | 実検証の即時実行 (初回 bootstrap・再検証)。`protection` は `email` / `bot`。**body は空の `{}` だけ** (旧 `token` / `challenge_id` / `code` は廃止。未知のフィールドは 400)。business 結果と transport 分類の両方を返し記録する。応答の `pending_challenge` は互換のため残るが常に `null`、`disposition` は `completed` / `canary_not_configured` |
 
-運用手順の例: サーバー設定を投入して再起動 → `GET .../protections` で generation と `unverified` を確認 → bot は widget の token で `verify` → email は `verify {}` → canary の code で `verify {challenge_id, code}` →
+運用手順の例: サーバー設定を投入して再起動 → `GET .../protections` で generation と `unverified` を確認 → bot は `verify {}` → email は `verify {}` (どちらも入力なし。canary への実送信の DATA 受理と、Siteverify の secret 有効の応答が証拠) →
 両方 `operational` を確認 → gate を開く (`/registration-gate/open`)。設定を変更したら generation が変わり `unverified` に戻るので再検証する。
 
 ## 8. E15d への引き渡し
@@ -210,7 +214,7 @@ lettre の `AsyncSmtpConnection` (tokio + native-tls) で、接続 → STARTTLS 
 - driver (実 DB): readiness 記録・並行書込、challenge/proof の原子性 (並行確認・並行消費・並行発行)、期限境界、rate limit、E15a 観測入力の反復で revision・通知が増えないこと。
   adapter: 設定読込・generation、Turnstile の分類 (実応答 fixture)・wiremock 経由の実 HTTP (timeout・429/5xx・redirect・本文上限)、SMTP のローカル模擬サーバー経由の実送信
   (認証失敗・宛先拒否・一時障害・接続失敗・timeout・STARTTLS 必須)。
-- application (実 DB・fake provider): bootstrap・canary roundtrip・鮮度 (注入時刻)・設定変更・復旧・一方故障・challenge→proof→照合の end-to-end。
+- application (実 DB・fake provider): 入力なし bootstrap・鮮度 (注入時刻)・設定変更・復旧・一方故障・challenge→proof→照合の end-to-end。
 - server (実 DB): 認証・認可・入力検証・応答の秘匿・proof 照合が HTTP に出ないこと・OpenAPI。
 - 実行: `DATABASE_URL=... cargo test --workspace`。実 Turnstile (公式テストキー): `cargo test -p driver live_turnstile -- --ignored`。
 
@@ -224,7 +228,7 @@ lettre の `AsyncSmtpConnection` (tokio + native-tls) で、接続 → STARTTLS 
 
 ## E15d periodic maintenance refinement
 
-The initial generation bootstrap above is unchanged. After it succeeds, periodic
+The initial generation bootstrap (the administrator's input-less verification) is unchanged. After it succeeds, periodic
 fixed-canary SMTP DATA acceptance / interpreted Siteverify probe responses may
 renew readiness and recover even after business TTL expiry. MAIL FROM alone and
 public recipient attempts cannot do so. Successful exchange evidence uses its
