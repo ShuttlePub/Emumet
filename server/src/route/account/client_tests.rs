@@ -617,5 +617,8 @@ async fn create_account_with_invalid_username_returns_400_before_any_side_effect
 #[path = "client_username_tests.rs"]
 mod username;
 
+#[path = "client_username_availability_tests.rs"]
+mod username_availability;
+
 #[path = "client_profile_identity_tests.rs"]
 mod profile_identity;

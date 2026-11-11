@@ -13,6 +13,7 @@ use crate::route::me::MeRouter;
 use crate::route::media::MediaRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile_transfer::ProfileTransferRouter;
+use crate::route::profile_username_availability::ProfileUsernameAvailabilityRouter;
 use crate::route::registration_gate::AdminRegistrationGateRouter;
 use crate::route::registration_gate_webhook::AdminRegistrationGateWebhookRouter;
 use crate::route::registration_protection::{
@@ -58,6 +59,19 @@ pub(crate) fn build_root_router(
             api::organization_context::organization_context_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
+            (oidc_config.clone(), jwks_cache.clone()),
+            auth::auth_middleware,
+        ));
+
+    // JWT auth only, deliberately NOT behind the organization context middleware: that middleware
+    // resolves the caller's auth account (find-or-create) when X-Organization-Id is present, and
+    // the read-only username availability check must never create anything.
+    let authed_without_organization_context = axum::Router::new()
+        .nest(
+            "/api/v1",
+            axum::Router::new().route_profile_username_availability(),
+        )
+        .layer(axum::middleware::from_fn_with_state(
             (oidc_config, jwks_cache),
             auth::auth_middleware,
         ));
@@ -74,6 +88,7 @@ pub(crate) fn build_root_router(
     let public_routes = public_routes.route_test_mode();
 
     authed_routes
+        .merge(authed_without_organization_context)
         .merge(public_routes)
         .layer(build_cors_layer())
         .with_state(app)

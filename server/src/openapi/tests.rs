@@ -438,13 +438,27 @@ fn username_is_optional_nullable_stored_once_and_has_no_update_api() {
         );
     }
 
-    // The one-time setter is the only username route: POST only, never PUT/PATCH/DELETE.
+    // The one-time setter is the only username write route: POST only, never PUT/PATCH/DELETE.
+    // The availability check is the only other username route and is read-only.
+    const AVAILABILITY_PATH: &str = "/api/v1/profiles/username-availability";
     let paths = spec["paths"].as_object().unwrap();
-    let username_paths: Vec<_> = paths.keys().filter(|p| p.contains("username")).collect();
+    let username_paths: Vec<_> = paths
+        .keys()
+        .filter(|p| p.contains("username") && p.as_str() != AVAILABILITY_PATH)
+        .collect();
     assert_eq!(
         username_paths,
         ["/api/v1/profiles/{profile_nanoid}/username"],
-        "username must only have the one-time setter route"
+        "username must only have the one-time setter route (plus the availability check)"
+    );
+    assert_eq!(
+        paths[AVAILABILITY_PATH]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["get"],
+        "the availability check is read-only"
     );
     let setter = paths["/api/v1/profiles/{profile_nanoid}/username"]
         .as_object()
