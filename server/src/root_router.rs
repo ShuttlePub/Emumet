@@ -13,6 +13,7 @@ use crate::route::me::MeRouter;
 use crate::route::media::MediaRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile_transfer::ProfileTransferRouter;
+use crate::route::profile_username_availability::ProfileUsernameAvailabilityRouter;
 use crate::route::registration_gate::AdminRegistrationGateRouter;
 use crate::route::registration_gate_webhook::AdminRegistrationGateWebhookRouter;
 use crate::route::registration_protection::{
@@ -36,6 +37,7 @@ pub(crate) fn build_root_router(
     let api_v1 = axum::Router::new()
         .route_account()
         .route_org_account()
+        .route_profile_username_availability()
         .route_profile_transfers()
         .route_reports()
         .route_me()

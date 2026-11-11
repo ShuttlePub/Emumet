@@ -4,6 +4,7 @@ use error_stack::Report;
 use kernel::interfaces::event_store::{DependOnProfileEventStore, ProfileEventStore};
 use kernel::prelude::entity::{
     CommandEnvelope, EventEnvelope, EventId, EventVersion, ExpectedVersion, Profile, ProfileEvent,
+    ProfileUsername,
 };
 use kernel::KernelError;
 use serde_json;
@@ -102,6 +103,28 @@ impl ProfileEventStore for PostgresProfileEventStore {
         rows.into_iter()
             .map(|row| row.try_into())
             .collect::<error_stack::Result<Vec<_>, KernelError>>()
+    }
+
+    async fn username_exists(
+        &self,
+        executor: &mut Self::Connection,
+        username: &ProfileUsername,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        // The predicate is the expression and the implied `IS NOT NULL` of the partial unique
+        // index `profile_events_username_unique`, so this is an index lookup.
+        sqlx::query_scalar::<_, bool>(
+            //language=postgresql
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM profile_events WHERE (data ->> 'username') = $1
+            )
+            "#,
+        )
+        .bind(username.as_ref())
+        .fetch_one(con)
+        .await
+        .convert_error()
     }
 
     async fn persist(
@@ -465,6 +488,45 @@ mod username_constraint_tests {
 
     fn is_conflict(result: error_stack::Result<(), KernelError>) -> bool {
         matches!(result, Err(e) if e.current_context() == &KernelError::Concurrency)
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn username_exists_reflects_both_assignment_events_and_agrees_with_the_unique_index() {
+        kernel::ensure_generator_initialized();
+        let db = PostgresDatabase::new().await.unwrap();
+        let exists = |username: ProfileUsername| {
+            let db = &db;
+            async move {
+                let mut conn = db.connection().await.unwrap();
+                db.profile_event_store()
+                    .username_exists(&mut conn, &username)
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let unused = unique_username();
+        assert!(!exists(unused.clone()).await);
+
+        let at_creation = unique_username();
+        create(&db, Some(&at_creation)).await;
+        assert!(exists(at_creation.clone()).await, "Created event");
+
+        let later = unique_username();
+        let unnamed = create(&db, None).await;
+        assert!(!exists(later.clone()).await);
+        set(&db, &unnamed, &later).await.unwrap();
+        assert!(exists(later.clone()).await, "UsernameSet event");
+
+        for taken in [&at_creation, &later] {
+            let other = create(&db, None).await;
+            assert!(is_conflict(set(&db, &other, taken).await), "{taken:?}");
+        }
+        assert!(
+            !exists(ProfileUsername::new(at_creation.as_ref().to_uppercase())).await,
+            "no case folding"
+        );
     }
 
     #[test_with::env(DATABASE_URL)]

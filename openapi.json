@@ -2847,6 +2847,52 @@
         ]
       }
     },
+    "/api/v1/profiles/username-availability": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "description": "Check whether a Profile username could be assigned, for input-time validation. The answer is ADVISORY: it is a snapshot, nothing is reserved (no hold), and another request may take the username before the form is submitted, so the final decision is always made by the create / set username APIs (400 for a malformed or reserved value, 409 when the username is taken).\n\nThe rules are the same as those applied by the create / set username APIs: `^[a-z0-9][a-z0-9._-]{0,63}$` (ASCII lowercase letters, digits, `.`, `_`, `-`; 1-64 characters), a reserved-word list, and no implicit conversion (no trimming or case folding: `Alice` is `invalid_format`, not `alice`). A username is unique across all Profiles, also deleted ones, and is never reused.\n\nAlways 200 for a well-formed request: `available` is true, or false with `reason` = `invalid_format`, `reserved` or `taken`. `taken` covers both \"in use\" and \"used by a deleted Profile\" and does not tell them apart (so the response reveals neither whether a Profile was deleted nor anything else about its owner). A missing `username` parameter is 400. Read-only: nothing is created or stored.\n\nRate limited per authenticated caller (token `iss` + `sub`): 60 requests per minute, then 429 with `Retry-After` (seconds). The limit is kept in memory per server instance and is not shared between instances. Changing a username is not supported.",
+        "operationId": "get_profile_username_availability",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "query",
+            "description": "Username to check, exactly as the user typed it (no trimming or case folding is applied)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Availability result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileUsernameAvailabilityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The username query parameter is missing"
+          },
+          "401": {
+            "description": "Missing or invalid bearer token"
+          },
+          "429": {
+            "description": "Too many checks; see the Retry-After header (seconds)"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/profiles/{profile_nanoid}": {
       "get": {
         "tags": [
@@ -5615,6 +5661,44 @@
             "type": "string"
           }
         }
+      },
+      "ProfileUsernameAvailabilityResponse": {
+        "type": "object",
+        "description": "Result of a username availability check. Advisory only: the create / set username APIs make\nthe final decision.",
+        "required": [
+          "username",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "`true` when the username could be assigned right now."
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProfileUsernameUnavailableReason",
+                "description": "Present only when `available` is `false`."
+              }
+            ]
+          },
+          "username": {
+            "type": "string",
+            "description": "The checked value, exactly as received."
+          }
+        }
+      },
+      "ProfileUsernameUnavailableReason": {
+        "type": "string",
+        "description": "Why a username cannot be used.",
+        "enum": [
+          "invalid_format",
+          "reserved",
+          "taken"
+        ]
       },
       "ProtectionListResponse": {
         "type": "object",
