@@ -22,14 +22,16 @@
 #[allow(dead_code)]
 mod support;
 
+use kernel::interfaces::http_signing::HttpSigningRequest;
 use support::account_helper::{
-    e2e_http_client, fetch_collection, post_block, post_follow, post_unblock,
+    delete_block, e2e_http_client, get_relations, post_block, post_follow,
     setup_test_account_details,
 };
 use support::auth;
 use support::config::ap_e2e_config;
 use support::db;
 use support::iceshrimp_setup;
+use support::profile_signer;
 
 fn init_test_tracing() {
     use std::sync::Once;
@@ -72,7 +74,8 @@ async fn iceshrimp_full_federation_scenario() {
     );
 
     let public_base_url = cfg.public_base_url.trim_end_matches('/');
-    let emumet_actor_url = iceshrimp_setup::emumet_actor_url(public_base_url, &emumet_account.id);
+    let emumet_actor_url =
+        iceshrimp_setup::emumet_actor_url(public_base_url, &emumet_account.profile_id);
 
     // ── S7: Iceshrimp → Emumet Follow ────────────────────────────────
 
@@ -92,7 +95,8 @@ async fn iceshrimp_full_federation_scenario() {
     assert!(
         iceshrimp_setup::wait_for_emumet_collection_count(
             &cfg.server_base_url,
-            &emumet_account.id,
+            &jwt,
+            &emumet_account.profile_id,
             "followers",
             1,
         )
@@ -115,22 +119,23 @@ async fn iceshrimp_full_federation_scenario() {
 
     let follow_resp = post_follow(
         &jwt,
-        &emumet_account.id,
+        &emumet_account.profile_id,
         &cfg.server_base_url,
         &fixture.user.actor_url,
     )
     .await;
 
-    assert!(
-        follow_resp.status().is_success(),
-        "S8: Emumet follow request should succeed: {}",
-        follow_resp.status()
+    assert_eq!(
+        follow_resp.status(),
+        reqwest::StatusCode::CREATED,
+        "S8: Emumet follow request should succeed"
     );
 
     assert!(
         iceshrimp_setup::wait_for_emumet_collection_count(
             &cfg.server_base_url,
-            &emumet_account.id,
+            &jwt,
+            &emumet_account.profile_id,
             "following",
             1,
         )
@@ -140,7 +145,7 @@ async fn iceshrimp_full_federation_scenario() {
 
     let expected_actor_url = iceshrimp_setup::emumet_actor_url(
         cfg.public_base_url.trim_end_matches('/'),
-        &emumet_account.id,
+        &emumet_account.profile_id,
     );
     assert!(
         iceshrimp_setup::wait_for_iceshrimp_followers_contains(
@@ -155,7 +160,10 @@ async fn iceshrimp_full_federation_scenario() {
 
     // ── S9: Emumet → Iceshrimp Signed Create/Note ────────────────────
 
-    let actor_url = format!("{public_base_url}/ap/accounts/{}", emumet_account.id);
+    let actor_url = format!(
+        "{public_base_url}/ap/profiles/{}",
+        emumet_account.profile_id
+    );
     let followers_url = format!("{actor_url}/followers");
 
     let note_id = format!("{actor_url}/statuses/{}", uuid::Uuid::new_v4());
@@ -204,44 +212,26 @@ async fn iceshrimp_full_federation_scenario() {
         Some(p) => format!("{inbox_host}:{p}"),
         None => inbox_host.to_string(),
     };
-    let base64_body = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &body);
-
-    // Sign via Emumet's /internal/v1/accounts/{id}/sign endpoint
-    let sign_resp = e2e_http_client()
-        .post(format!(
-            "{}/internal/v1/accounts/{}/sign",
-            cfg.server_base_url, emumet_account.id
-        ))
-        .bearer_auth(&jwt)
-        .json(&serde_json::json!({
-            "method": "POST",
-            "url": inbox_url,
-            "headers": {
-                "host": host_header,
-                "date": date,
-                "digest": digest,
-                "content-type": "application/activity+json"
-            },
-            "body": base64_body,
-        }))
-        .send()
-        .await
-        .expect("S9: failed to sign Create/Note via /sign endpoint");
-
-    assert!(
-        sign_resp.status().is_success(),
-        "S9: Sign endpoint returned {}",
-        sign_resp.status()
-    );
-
-    let sign_body: serde_json::Value = sign_resp
-        .json()
-        .await
-        .expect("S9: sign response should be valid JSON");
-    let cavage = sign_body["cavage"]
-        .as_object()
-        .expect("S9: sign response should contain 'cavage' object")
-        .clone();
+    // The server has no signing API: sign as the Profile with its own key (test fixture that
+    // decrypts the stored key exactly like the delivery worker does).
+    let cavage = profile_signer::sign_as_profile(
+        &emumet_account.profile_id,
+        &HttpSigningRequest {
+            method: "POST".to_string(),
+            url: inbox_url.clone(),
+            headers: std::collections::HashMap::from([
+                ("host".to_string(), host_header.clone()),
+                ("date".to_string(), date.clone()),
+                ("digest".to_string(), digest.clone()),
+                (
+                    "content-type".to_string(),
+                    "application/activity+json".to_string(),
+                ),
+            ]),
+            body: Some(body.clone()),
+        },
+    )
+    .await;
 
     // Deliver the signed activity to Iceshrimp's inbox
     let mut inbox_req = e2e_http_client()
@@ -254,9 +244,7 @@ async fn iceshrimp_full_federation_scenario() {
     for (name, value) in &cavage {
         let lower = name.to_ascii_lowercase();
         if lower != "host" && lower != "date" && lower != "digest" && lower != "content-type" {
-            if let Some(val) = value.as_str() {
-                inbox_req = inbox_req.header(name.as_str(), val);
-            }
+            inbox_req = inbox_req.header(name.as_str(), value.as_str());
         }
     }
 
@@ -292,31 +280,41 @@ async fn iceshrimp_full_federation_scenario() {
     // dereferencing it.  If Iceshrimp changes to require a resolvable object
     // endpoint, the Note `id` must be updated to a real URL.
 
-    // ── S10: Emumet → Iceshrimp Block / Undo(Block) ──────────────────
+    // ── S10: Emumet → Iceshrimp individual block ─────────────────────
+    // Both follow relations (Iceshrimp → Emumet from S7, Emumet → Iceshrimp from S8) are detached
+    // at once: Iceshrimp learns it from Undo(Follow) / Reject(Follow). No ActivityPub Block is sent.
 
     let block_resp = post_block(
         &jwt,
-        &emumet_account.id,
+        &emumet_account.profile_id,
         &cfg.server_base_url,
         &fixture.user.actor_url,
     )
     .await;
-    assert!(
-        block_resp.status().is_success(),
-        "S10: Emumet block request should succeed: {}",
-        block_resp.status()
+    assert_eq!(
+        block_resp.status(),
+        reqwest::StatusCode::CREATED,
+        "S10: Emumet block request should succeed"
     );
+    let block: serde_json::Value = block_resp
+        .json()
+        .await
+        .expect("S10: block response should be valid JSON");
+    let block_id = block["id"].as_str().expect("S10: block id").to_string();
 
-    let following = fetch_collection(&cfg.server_base_url, &emumet_account.id, "following").await;
-    assert_eq!(
-        following["totalItems"], 0,
-        "S10: Emumet following should be empty after blocking the Iceshrimp user"
-    );
-    let followers = fetch_collection(&cfg.server_base_url, &emumet_account.id, "followers").await;
-    assert_eq!(
-        followers["totalItems"], 0,
-        "S10: Emumet followers should be empty after blocking the Iceshrimp user"
-    );
+    for list in ["following", "followers"] {
+        assert!(
+            iceshrimp_setup::wait_for_emumet_collection_count_at_most(
+                &cfg.server_base_url,
+                &jwt,
+                &emumet_account.profile_id,
+                list,
+                0,
+            )
+            .await,
+            "S10: Emumet {list} should be empty after blocking the Iceshrimp user"
+        );
+    }
 
     assert!(
         iceshrimp_setup::wait_for_iceshrimp_followers_absent(
@@ -326,31 +324,18 @@ async fn iceshrimp_full_federation_scenario() {
             &emumet_actor_url,
         )
         .await,
-        "S10: Iceshrimp followers should drop the Emumet account after receiving Block"
+        "S10: Iceshrimp followers should drop the Emumet account after receiving Undo(Follow)"
     );
 
     assert!(
-        iceshrimp_setup::wait_for_iceshrimp_block_present(
+        iceshrimp_setup::wait_for_iceshrimp_following_absent(
             &fixture.client,
-            &remote_user_id,
+            &fixture.user.user_id,
             &fixture.user.token,
+            &emumet_actor_url,
         )
         .await,
-        "S10: Iceshrimp should report the Emumet account as blocking the local user \
-         after receiving Block (users/show isBlocked == true)"
-    );
-
-    let unblock_resp = post_unblock(
-        &jwt,
-        &emumet_account.id,
-        &cfg.server_base_url,
-        &fixture.user.actor_url,
-    )
-    .await;
-    assert_eq!(
-        unblock_resp.status(),
-        reqwest::StatusCode::NO_CONTENT,
-        "S10: Emumet unblock request should return 204 (signed Undo(Block) delivered)"
+        "S10: Iceshrimp following should drop the Emumet account after receiving Reject(Follow)"
     );
 
     assert!(
@@ -360,7 +345,29 @@ async fn iceshrimp_full_federation_scenario() {
             &fixture.user.token,
         )
         .await,
-        "S10: Iceshrimp should clear the block state after processing Undo(Block) \
-         (users/show isBlocked == false)"
+        "S10: no ActivityPub Block is sent, so Iceshrimp must not report the Emumet account as blocking \
+         the local user (users/show isBlocked == false)"
     );
+
+    let unblock_resp = delete_block(
+        &jwt,
+        &emumet_account.profile_id,
+        &cfg.server_base_url,
+        &block_id,
+    )
+    .await;
+    assert_eq!(
+        unblock_resp.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "S10: Emumet unblock request should return 204"
+    );
+    for list in ["following", "followers"] {
+        let relations =
+            get_relations(&jwt, &emumet_account.profile_id, &cfg.server_base_url, list).await;
+        assert_eq!(
+            relations["items"].as_array().map(Vec::len),
+            Some(0),
+            "S10: removing the block must not restore the relation ({list})"
+        );
+    }
 }

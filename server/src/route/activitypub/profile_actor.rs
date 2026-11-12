@@ -10,9 +10,8 @@
 //! The nanoid (not the username) is the path component, so the actor URI is derived from the
 //! immutable Profile identity and never changes on Profile transfer.
 //!
-//! These handlers are NOT part of the production root router (the production mount, together with
-//! retiring the `/ap/accounts/...` routes, is owned by P4); only tests mount them through
-//! [`ProfileActorRouter`].
+//! These handlers are mounted on the production root router by the P4 cutover (together with the
+//! retirement of the `/ap/accounts/...` routes, see `route::retired`) through [`ProfileActorRouter`].
 
 use super::discovery::parse_webfinger_resource;
 use super::{json_response, ACTIVITY_JSON, JRD_JSON};
@@ -32,8 +31,8 @@ use std::collections::HashMap;
     path = "/ap/profiles/{profile_nanoid}",
     description = "Profile ActivityPub actor document (1 Profile = 1 actor, ADR 0002). \
 Actor id: {PUBLIC_BASE_URL}/ap/profiles/{profile_nanoid}; inbox/outbox/followers/following are that URL plus /inbox, /outbox, /followers, /following; the key id is that URL plus #main-key; preferredUsername is the Profile username. \
-A Profile is only an actor once it has a username and a Profile signing key (404 otherwise). \
-NOT MOUNTED on the production router: the production mount is owned by the P4 cutover; P1 only provides the generation logic.",
+A Profile is only an actor once it has a username and a Profile signing key (404 otherwise); every Profile has both after the cutover. \
+The public key published here is the only way to obtain a Profile key: there is no signing or key-export API.",
     params(("profile_nanoid" = String, Path, description = "Profile nanoid (external ID)")),
     responses(
         (status = 200, description = "ActivityPub actor document", body = kernel::activitypub::Actor, content_type = "application/activity+json"),
@@ -58,9 +57,20 @@ pub(crate) async fn get_profile_actor(
     json_response(&actor, ACTIVITY_JSON)
 }
 
-/// WebFinger for Profile acct names (`acct:username@domain`). Same wire format as the Account
-/// based `/.well-known/webfinger`; it is only mounted by tests until the P4 cutover replaces the
-/// production handler.
+/// WebFinger for Profile acct names (`acct:username@domain`). The Account based WebFinger it
+/// replaced is gone: Account names no longer resolve.
+#[utoipa::path(
+    get,
+    path = "/.well-known/webfinger",
+    description = "WebFinger discovery of a Profile actor by acct name (`acct:username@{PUBLIC_BASE_URL host[:port]}`, domain compared case-insensitively). The `self` link is the Profile actor URL. Account names are not resolvable.",
+    params(("resource" = String, Query, description = "Resource URI (acct:username@domain)")),
+    responses(
+        (status = 200, description = "WebFinger response", body = kernel::activitypub::WebFingerResponse, content_type = "application/jrd+json"),
+        (status = 400, description = "Invalid resource format"),
+        (status = 404, description = "No such Profile actor, or the domain is not this instance"),
+    ),
+    tag = "ProfileActor",
+)]
 pub(crate) async fn profile_webfinger(
     State(api): State<ActivityPubApi>,
     Query(params): Query<HashMap<String, String>>,
@@ -86,13 +96,11 @@ pub(crate) async fn profile_webfinger(
     json_response(&response, JRD_JSON)
 }
 
-/// Mounts the Profile actor handlers. Production code must NOT call this before P4.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Mounts the Profile actor handlers on the production root router.
 pub trait ProfileActorRouter {
     /// Routes relative to `/ap`.
     fn route_profile_actor(self) -> Self;
-    /// Root-level `/.well-known/webfinger` for Profile acct names. Conflicts with the Account
-    /// based production WebFinger route if both are mounted on one router.
+    /// Root-level `/.well-known/webfinger` for Profile acct names.
     fn route_profile_webfinger(self) -> Self;
 }
 

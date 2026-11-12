@@ -171,5 +171,6 @@ fn required_env_keys() -> &'static [&'static str] {
         "REDIS_HOST",
         "WORKER_ID",
         "EMUMET_TEST_MODE_TOKEN",
+        "PROFILE_DELIVERY_POLL_INTERVAL_MS",
     ]
 }

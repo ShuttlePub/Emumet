@@ -21,7 +21,6 @@ pub(crate) mod registration_gate;
 pub(crate) mod registration_gate_webhook;
 pub(crate) mod registration_protection;
 pub(crate) mod report;
-pub(crate) mod signing;
 
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
@@ -48,7 +47,6 @@ pub(crate) use registration_gate::AdminRegistrationGateApi;
 pub(crate) use registration_gate_webhook::AdminRegistrationGateWebhookApi;
 pub(crate) use registration_protection::{AdminRegistrationProtectionApi, RegistrationEmailApi};
 pub(crate) use report::{AdminReportApi, ReportApi};
-pub(crate) use signing::SigningApi;
 
 pub(crate) async fn resolve_auth_account_id(
     app: &AppModule,

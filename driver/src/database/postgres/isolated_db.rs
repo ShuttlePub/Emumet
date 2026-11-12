@@ -2,8 +2,13 @@
 //!
 //! `cfg(test)` または `test-mode` ビルドにだけ存在する。
 //!
-//! テストごとに `CREATE DATABASE` で専用 DB を作り、本番 migrations と P2 の schema fixture を適用する。
+//! テストごとに `CREATE DATABASE` で専用 DB を作り、本番 migrations を適用する。
 //! 共有の `DATABASE_URL` の DB (旧 schema のテストが使う) は変更しない。DB は `Drop` で削除する。
+//!
+//! P4 で Profile social graph の schema と旧連合データの初期化は本番 migrations に入った。
+//! `create()` は全 migration 適用済み (初期化は空の DB に対して実行済み)。初期化の前後を検証する
+//! テストは `create_before_reset()` で初期化 migration の直前の DB を作り、データを入れてから
+//! `apply_reset()` (= 残りの本番 migration の適用) を行う。
 
 use crate::database::env;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -13,10 +18,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::PostgresDatabase;
 
-pub const SCHEMA_SQL: &str =
-    include_str!("../../../fixtures/profile_social_graph/01_profile_social_graph_schema.sql");
+/// 最初の P4 migration (Profile social graph schema + 前提検査) のバージョン。
+pub const CUTOVER_FIRST_MIGRATION_VERSION: i64 = 20261120000001;
+/// 初期化 migration のバージョン。これより前の migration が「初期化直前」の DB を作る。
+pub const RESET_MIGRATION_VERSION: i64 = 20261120000002;
 pub const RESET_SQL: &str =
-    include_str!("../../../fixtures/profile_social_graph/02_reset_legacy_federation.sql");
+    include_str!("../../../../migrations/20261120000002_reset_legacy_federation.sql");
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -28,8 +35,23 @@ pub struct IsolatedDatabase {
 }
 
 impl IsolatedDatabase {
-    /// 本番 migrations だけを適用した独立 DB (P2 の schema fixture は未適用)。
-    pub async fn create_legacy() -> Self {
+    /// 全ての本番 migrations を適用した独立 DB (初期化は空の DB に対して実行済み)。
+    pub async fn create() -> Self {
+        Self::create_with(None).await
+    }
+
+    /// P4 の migration を **1 つも適用していない**独立 DB (切替前の本番の状態)。
+    pub async fn create_before_cutover() -> Self {
+        Self::create_with(Some(CUTOVER_FIRST_MIGRATION_VERSION)).await
+    }
+
+    /// 旧連合データの初期化 migration の**直前**まで (新 Profile schema は適用済み) の独立 DB。
+    /// 旧データを入れてから [`Self::apply_reset`] で切替を実行する。
+    pub async fn create_before_reset() -> Self {
+        Self::create_with(Some(RESET_MIGRATION_VERSION)).await
+    }
+
+    async fn create_with(stop_before: Option<i64>) -> Self {
         let url = env("DATABASE_URL")
             .unwrap()
             .expect("DATABASE_URL must be set for the isolated database tests");
@@ -56,7 +78,24 @@ impl IsolatedDatabase {
             .connect_with(admin_options.clone().database(&name))
             .await
             .unwrap();
-        sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+        let full = sqlx::migrate!("../migrations");
+        match stop_before {
+            None => full.run(&pool).await.unwrap(),
+            Some(version) => {
+                let partial = sqlx::migrate::Migrator {
+                    migrations: std::borrow::Cow::Owned(
+                        full.migrations
+                            .iter()
+                            .filter(|migration| migration.version < version)
+                            .cloned()
+                            .collect(),
+                    ),
+                    ignore_missing: false,
+                    locking: true,
+                };
+                partial.run(&pool).await.unwrap();
+            }
+        }
         let database = PostgresDatabase::from_pool(pool.clone());
         Self {
             database,
@@ -66,18 +105,24 @@ impl IsolatedDatabase {
         }
     }
 
-    /// 本番 migrations と P2 の schema fixture を適用した独立 DB。
-    pub async fn create() -> Self {
-        let isolated = Self::create_legacy().await;
-        isolated.apply_schema().await;
-        isolated
-    }
-
-    pub async fn apply_schema(&self) {
-        self.pool.execute(SCHEMA_SQL).await.unwrap();
+    /// 残りの本番 migrations (= 旧連合データの初期化) を適用する。失敗は `Err` で返す。
+    pub async fn try_apply_reset(&self) -> Result<(), sqlx::migrate::MigrateError> {
+        let mut connection = self.pool.acquire().await?;
+        let result = sqlx::migrate!("../migrations").run(&mut *connection).await;
+        if result.is_err() {
+            // sqlx 0.7 は失敗時に migration の advisory lock を解放せずに接続を返すため、
+            // 後続の migrate が待ち続けないよう、この接続の lock を明示的に解放する。
+            let _ = connection.execute("SELECT pg_advisory_unlock_all()").await;
+        }
+        result
     }
 
     pub async fn apply_reset(&self) {
+        self.try_apply_reset().await.unwrap();
+    }
+
+    /// 初期化 SQL そのものを再実行する (台帳があれば何も消さないことの検証用)。
+    pub async fn rerun_reset_sql(&self) {
         self.pool.execute(RESET_SQL).await.unwrap();
     }
 }

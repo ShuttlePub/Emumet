@@ -1,46 +1,14 @@
-use super::{json_response, JRD_JSON};
-use crate::api::ActivityPubApi;
 use crate::error::ErrorStatus;
-use application::dto::activitypub::GetWebFingerDto;
-use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::response::Response;
-use std::collections::HashMap;
 
-#[utoipa::path(
-    get,
-    path = "/.well-known/webfinger",
-    description = "WebFinger account discovery for ActivityPub.",
-    params(("resource" = String, Query, description = "Resource URI (acct:user@domain)")),
-    responses(
-        (status = 200, description = "WebFinger response", body = kernel::activitypub::WebFingerResponse, content_type = "application/jrd+json"),
-        (status = 400, description = "Invalid resource format"),
-        (status = 404, description = "Account not found"),
-    ),
-    tag = "ActivityPub",
-)]
-pub(crate) async fn webfinger(
-    State(api): State<ActivityPubApi>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Response, ErrorStatus> {
-    let resource = params.get("resource").ok_or_else(|| {
-        ErrorStatus::from((
-            StatusCode::BAD_REQUEST,
-            "Missing resource parameter".to_string(),
-        ))
-    })?;
-    let dto = parse_webfinger_resource(resource)?;
-    let expected_domain = api.public_base_host_header()?;
-    if !dto.domain.eq_ignore_ascii_case(&expected_domain) {
-        tracing::debug!(resource, expected_domain, "WebFinger domain mismatch");
-        return Err(ErrorStatus::from(StatusCode::NOT_FOUND));
-    }
-    let response = api.get_webfinger(dto).await.map_err(ErrorStatus::from)?;
-
-    json_response(&response, JRD_JSON)
+/// A parsed `acct:name@domain` WebFinger resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WebFingerResource {
+    pub account_name: String,
+    pub domain: String,
 }
 
-pub(super) fn parse_webfinger_resource(resource: &str) -> Result<GetWebFingerDto, ErrorStatus> {
+pub(super) fn parse_webfinger_resource(resource: &str) -> Result<WebFingerResource, ErrorStatus> {
     let value = resource
         .strip_prefix("acct:")
         .ok_or_else(invalid_resource)?;
@@ -53,7 +21,7 @@ pub(super) fn parse_webfinger_resource(resource: &str) -> Result<GetWebFingerDto
     {
         return Err(invalid_resource());
     }
-    Ok(GetWebFingerDto {
+    Ok(WebFingerResource {
         account_name: account_name.to_string(),
         domain: domain.to_string(),
     })

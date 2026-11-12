@@ -1,7 +1,6 @@
 use super::support::{Env, User, LOCAL_BASE};
 use crate::dto::profile_inbound::ProfileFollowDirection;
 use crate::dto::profile_relationship::ProfileFollowDto;
-use crate::service::activitypub::GetOutboxUseCase;
 use crate::service::profile_follow_list::ProfileFollowListUseCase;
 use crate::service::profile_relationship::ProfileRelationshipUseCase;
 use kernel::interfaces::database::{
@@ -949,7 +948,7 @@ async fn following_list_paginates_active_follows_only() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn relationship_jobs_never_appear_in_the_public_outbox() {
+async fn relationship_jobs_never_write_the_legacy_outbox() {
     let env = Env::new().await;
     let alice = env.seed_user().await;
     env.create_key(&alice.profile_id, &alice.nanoid).await;
@@ -980,17 +979,8 @@ async fn relationship_jobs_never_appear_in_the_public_outbox() {
         "the block produced both an Undo(Follow) and a Reject(Follow) delivery job: {kinds:?}"
     );
 
-    // 公開 outbox を読む経路 (GetOutboxUseCase) は outbox_activities だけを読む。配送 job は別の保存。
-    let collection = env
-        .module
-        .get_outbox_collection(alice.account.id(), 50, None)
-        .await
-        .unwrap();
-    let rendered = serde_json::to_string(&collection).unwrap();
+    // 配送 job は profile_delivery_jobs だけに保存され、旧 Account 単位の outbox_activities には書かない。
     assert_eq!(env.count("SELECT count(*) FROM outbox_activities").await, 0);
-    assert!(
-        !rendered.contains("Follow") && !rendered.contains("Undo") && !rendered.contains("Reject")
-    );
 }
 
 #[test_with::env(DATABASE_URL)]

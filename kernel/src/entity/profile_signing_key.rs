@@ -58,6 +58,22 @@ pub trait ProfileSigningKeyRepository: Sync + Send + 'static {
         executor: &mut Self::Connection,
         id: &SigningKeyId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    /// Serializes concurrent key provisioning (transaction-scoped advisory lock, released on
+    /// commit / rollback). Call first inside the provisioning transaction.
+    fn lock_provisioning(
+        &self,
+        executor: &mut Self::Connection,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    /// Profiles that currently have no active key, oldest first (`(profile id, nanoid)`).
+    /// Profiles that already have an active key are never returned, so provisioning can never
+    /// regenerate or replace an existing identity key.
+    fn find_profiles_without_active_key(
+        &self,
+        executor: &mut Self::Connection,
+        limit: i64,
+    ) -> impl Future<Output = error_stack::Result<Vec<(ProfileId, String)>, KernelError>> + Send;
 }
 
 pub trait DependOnProfileSigningKeyRepository: Sync + Send + DependOnDatabaseConnection {

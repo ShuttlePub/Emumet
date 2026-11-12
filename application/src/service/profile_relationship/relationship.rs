@@ -23,6 +23,7 @@ use super::activity::{
 use crate::dto::profile_relationship::{ProfileFollowDto, ProfileRelationDto};
 use crate::service::domain_control::require_profile_owner;
 use crate::service::domain_follow_guard::domain_blocks_actor;
+use crate::service::profile_owner_status::owner_account_is_active;
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
@@ -171,6 +172,10 @@ async fn resolve_target<T: RelationshipDeps>(
                 .find_by_nanoid(executor, &Nanoid::new(nanoid.clone()))
                 .await?
                 .ok_or_else(|| validation("target is not a known local Profile"))?;
+            // A Profile whose owner is not active is not an actor, so it cannot be followed.
+            if !owner_account_is_active(deps, executor, profile.account_id()).await? {
+                return Err(validation("target is not a known local Profile"));
+            }
             Ok(ResolvedTarget {
                 actor: ProfileGraphActor::Local(profile.id().clone()),
                 url: profile_actor_url(deps.public_base_url(), nanoid),
@@ -465,6 +470,18 @@ pub trait ProfileRelationshipUseCase: RelationshipDeps + DependOnRemoteActorReso
                         )
                         .await?;
                         let now = now();
+                        // A suspended / banned owner does not start new Follows.
+                        let owner = deps
+                            .profile_read_model()
+                            .find_by_id(executor, &profile_id)
+                            .await?
+                            .ok_or_else(|| not_found("Profile not found"))?;
+                        if !owner_account_is_active(&deps, executor, owner.account_id()).await? {
+                            return Err(Report::new(KernelError::PermissionDenied)
+                                .attach_printable(
+                                    "the owner account is suspended, banned or deactivated",
+                                ));
+                        }
                         let me = ProfileGraphActor::Local(profile_id.clone());
                         let target = resolve_target(&deps, executor, &kind).await?;
                         if target.actor == me {

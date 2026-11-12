@@ -1,5 +1,5 @@
 //! Real-database tests for the Profile relationship routes (P3o), run against an isolated database
-//! that has the P2 schema fixture applied, with a fake peer (HTTP mock).
+//! that has all production migrations applied, with a fake peer (HTTP mock).
 
 use super::ProfileRelationshipRouter;
 use crate::api::profile_delivery_worker::spawn_profile_delivery_worker;

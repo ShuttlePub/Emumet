@@ -1,32 +1,28 @@
-//! Shared fixtures of the Profile graph tests (P3i): an isolated database that carries the P2
-//! schema fixture, an `AppModule` on it, local Profiles that are actors, and signed requests from
-//! remote peers.
+//! Shared fixtures of the Profile graph tests (P3i): an isolated database, an `AppModule` on it,
+//! local Profiles that are actors, and signed requests from remote peers.
 //!
-//! The P2 tables are not part of the production migrations, so these tests never run on the shared
-//! `DATABASE_URL` database: every world creates its own database (production migrations + the P2
-//! fixture) and drops it afterwards.
+//! The Profile graph tables are part of the production migrations since the P4 cutover (there is no
+//! separate schema fixture any more). The worlds still never run on the shared `DATABASE_URL`
+//! database: every world creates its own database with all production migrations applied and drops
+//! it afterwards, so that tests can truncate and count rows freely.
 
 use crate::auth::{
     auth_middleware, encode_test_jwt, generate_test_keys, AuthClaims, JwksCache, OidcConfig,
 };
 use crate::handler::AppModule;
 use application::dto::account::CreateAccountDto;
-use application::profile_signing_key::CreateProfileSigningKeyUseCase;
 use application::service::account::CreateAccountUseCase;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::SigningAlgorithm;
-use kernel::interfaces::database::{
-    DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
-};
+use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
 use kernel::interfaces::http_signing::{HttpSigner, HttpSigningRequest};
 use kernel::interfaces::repository::{
     BeginFollowOutcome, DependOnProfileFollowRepository, ProfileFollowRepository,
 };
 use kernel::prelude::entity::{
-    AuthAccountId, GraphActivityId, Nanoid, Profile, ProfileFollow, ProfileFollowId,
-    ProfileGraphActor, ProfileId,
+    AuthAccountId, GraphActivityId, ProfileFollow, ProfileFollowId, ProfileGraphActor, ProfileId,
 };
 use serde_json::{json, Value};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -43,13 +39,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 pub(crate) const AUDIENCE: &str = "emumet";
 
-const GRAPH_SCHEMA_SQL: &str = include_str!(
-    "../../../driver/fixtures/profile_social_graph/01_profile_social_graph_schema.sql"
-);
-
 static DATABASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// A throw-away database with the production migrations and the P2 schema fixture.
+/// A throw-away database with all production migrations applied.
 pub(crate) struct IsolatedDatabase {
     pub pool: PgPool,
     name: String,
@@ -83,7 +75,6 @@ impl IsolatedDatabase {
             .await
             .unwrap();
         sqlx::migrate!("../migrations").run(&pool).await.unwrap();
-        pool.execute(GRAPH_SCHEMA_SQL).await.unwrap();
         Self {
             pool,
             name,
@@ -232,6 +223,21 @@ impl GraphWorld {
         }
     }
 
+    /// Lets the permission mock (Keto) allow every check and accept relation deletions, for tests
+    /// that run the real use cases (deactivate / reactivate) instead of building rows by hand.
+    pub async fn allow_all_permissions(&self) {
+        Mock::given(method("POST"))
+            .and(path("/relation-tuples/check"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"allowed": true})))
+            .mount(&self._keto)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/admin/relation-tuples"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&self._keto)
+            .await;
+    }
+
     pub fn pool(&self) -> &PgPool {
         &self.database.pool
     }
@@ -269,6 +275,15 @@ impl GraphWorld {
         )
     }
 
+    /// The production root router on a module whose outgoing fetches may reach loopback fake peers.
+    pub fn loopback_root_router(&self) -> axum::Router {
+        crate::root_router::build_root_router(
+            self.module.clone().with_loopback_profile_delivery(),
+            self.oidc_config.clone(),
+            self.jwks_cache.clone(),
+        )
+    }
+
     pub async fn new_user(&self) -> User {
         let auth_account_id = AuthAccountId::default();
         let client_id = format!("client-{}", uuid::Uuid::new_v4());
@@ -296,12 +311,13 @@ impl GraphWorld {
     }
 
     /// A Profile of a new personal Account of `user`. With `actor` it has a username and an
-    /// active signing key (an actor), otherwise neither.
+    /// active signing key (an actor, as every Profile created through the API), otherwise
+    /// neither (a stripped, pre-cutover shaped Profile).
     pub async fn create_profile(&self, user: &User, actor: bool) -> LocalProfile {
         let name = kernel::test_utils::unique_account_name()
             .as_ref()
             .to_string();
-        let username = actor.then(|| format!("u{}", uuid::Uuid::new_v4().simple()));
+        let username = format!("u{}", uuid::Uuid::new_v4().simple());
         self.module
             .create_account_with_profile_username(
                 user.auth_account_id.clone(),
@@ -325,31 +341,21 @@ impl GraphWorld {
             actor_url: format!("{}/ap/profiles/{nanoid}", self.base_url),
             nanoid,
         };
-        if actor {
-            self.create_key(&profile).await;
+        if !actor {
+            // Creation always gives a Profile its username and key; tests that need a Profile
+            // that is not an actor (a pre-cutover Profile) strip both.
+            sqlx::query("DELETE FROM profile_signing_keys WHERE profile_id = $1")
+                .bind(profile.id.as_ref())
+                .execute(self.pool())
+                .await
+                .unwrap();
+            sqlx::query("UPDATE profiles SET username = NULL WHERE id = $1")
+                .bind(profile.id.as_ref())
+                .execute(self.pool())
+                .await
+                .unwrap();
         }
         profile
-    }
-
-    pub async fn create_key(&self, profile: &LocalProfile) {
-        let deps = self.module.clone();
-        let profile_id = profile.id.clone();
-        let nanoid = Nanoid::<Profile>::new(profile.nanoid.clone());
-        self.module
-            .transaction_manager()
-            .transaction(move |executor| {
-                Box::pin(async move {
-                    deps.create_profile_signing_key(
-                        executor,
-                        profile_id,
-                        &nanoid,
-                        SigningAlgorithm::Rsa2048,
-                    )
-                    .await
-                })
-            })
-            .await
-            .unwrap();
     }
 
     /// An actor Profile owned by a fresh user.
@@ -470,9 +476,7 @@ impl RemotePeer {
     pub fn register_actor_document(&self) {
         application::service::activitypub::inject_test_remote_actor(
             &self.actor_url,
-            "peer",
             &self.inbox_url,
-            &PEER_KEYS.public_pem,
         );
     }
 
@@ -568,6 +572,44 @@ impl RemotePeer {
         signing: Option<(&[u8], &str)>,
         tampered_body: Option<Vec<u8>>,
     ) -> StatusCode {
+        self.post_raw_via(
+            world.inbox_router(),
+            world,
+            profile_nanoid,
+            body,
+            signing,
+            tampered_body,
+        )
+        .await
+    }
+
+    /// Signed Follow (or any activity) sent through the **production** root router.
+    pub async fn post_via_root(
+        &self,
+        world: &GraphWorld,
+        profile_nanoid: &str,
+        body: &Value,
+    ) -> StatusCode {
+        self.post_raw_via(
+            world.root_router(),
+            world,
+            profile_nanoid,
+            serde_json::to_vec(body).unwrap(),
+            Some((&PEER_KEYS.private_pem, &self.key_id)),
+            None,
+        )
+        .await
+    }
+
+    async fn post_raw_via(
+        &self,
+        router: axum::Router,
+        world: &GraphWorld,
+        profile_nanoid: &str,
+        body: Vec<u8>,
+        signing: Option<(&[u8], &str)>,
+        tampered_body: Option<Vec<u8>>,
+    ) -> StatusCode {
         let base = world.base_url.clone();
         let host_header = world.host_header.clone();
         let path = format!("/ap/profiles/{profile_nanoid}/inbox");
@@ -620,8 +662,7 @@ impl RemotePeer {
         for (name, value) in &headers {
             builder = builder.header(name, value);
         }
-        let response = world
-            .inbox_router()
+        let response = router
             .oneshot(
                 builder
                     .body(Body::from(tampered_body.unwrap_or(body)))

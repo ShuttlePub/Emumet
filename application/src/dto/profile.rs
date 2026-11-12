@@ -5,8 +5,8 @@ use kernel::prelude::entity::FieldAction;
 pub struct CreateProfileDto {
     pub display_name: Option<String>,
     pub summary: Option<String>,
-    /// Optional one-time username (validated by the use case, never derived from other fields).
-    pub username: Option<String>,
+    /// Required one-time username (validated by the use case, never derived from other fields).
+    pub username: String,
 }
 
 #[derive(Debug)]

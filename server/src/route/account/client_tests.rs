@@ -308,7 +308,10 @@ async fn create_profile_with_organization_context_uses_organization_account_id()
             "/api/v1/profiles",
             &fixture.token,
             Some(fixture.organization.nanoid().as_ref()),
-            Body::from(r#"{"display_name":"Org profile","summary":"Summary"}"#),
+            Body::from(format!(
+                r#"{{"display_name":"Org profile","summary":"Summary","username":"org{}"}}"#,
+                uuid::Uuid::new_v4().simple()
+            )),
         ))
         .await
         .unwrap();
@@ -348,14 +351,20 @@ async fn create_second_profile_for_same_organization_succeeds() {
         "/api/v1/profiles",
         &fixture.token,
         Some(&organization_nanoid),
-        Body::from(r#"{"display_name":"First"}"#),
+        Body::from(format!(
+            r#"{{"display_name":"First","username":"first{}"}}"#,
+            uuid::Uuid::new_v4().simple()
+        )),
     );
     let second = request(
         "POST",
         "/api/v1/profiles",
         &fixture.token,
         Some(&organization_nanoid),
-        Body::from(r#"{"display_name":"Second"}"#),
+        Body::from(format!(
+            r#"{{"display_name":"Second","username":"second{}"}}"#,
+            uuid::Uuid::new_v4().simple()
+        )),
     );
     let router = fixture.router;
     let first_response = router.clone().oneshot(first).await.unwrap();
@@ -388,7 +397,10 @@ async fn update_profile_with_organization_context_allows_active_member_without_k
             "/api/v1/profiles",
             &fixture.token,
             Some(&organization_nanoid),
-            Body::from(r#"{"display_name":"Before"}"#),
+            Body::from(format!(
+                r#"{{"display_name":"Before","username":"before{}"}}"#,
+                uuid::Uuid::new_v4().simple()
+            )),
         ))
         .await
         .unwrap();
@@ -509,61 +521,37 @@ fn ensure_master_key_password_file() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn create_account_legacy_payload_without_username_still_succeeds() {
+async fn create_account_without_username_is_a_validation_error_and_creates_nothing() {
     ensure_master_key_password_file();
     let keto = keto_with_writes().await;
     let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
-    let name = format!("legacy-{}", uuid::Uuid::new_v4());
-    let response = fixture
-        .router
-        .clone()
-        .oneshot(request(
-            "POST",
-            "/api/v1/accounts",
-            &fixture.token,
-            None,
-            Body::from(format!(r#"{{"name":"{name}","is_bot":false}}"#)),
-        ))
-        .await
-        .unwrap();
+    for (label, extra) in [("omitted", ""), ("null", r#","profile_username":null"#)] {
+        let name = format!("no-username-{label}-{}", uuid::Uuid::new_v4());
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/v1/accounts",
+                &fixture.token,
+                None,
+                Body::from(format!(r#"{{"name":"{name}","is_bot":false{extra}}}"#)),
+            ))
+            .await
+            .unwrap();
 
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let json = response_json(response).await;
-    assert_eq!(json["name"].as_str(), Some(name.as_str()));
-    assert_eq!(
-        count_rows(
-            &fixture.module,
-            "SELECT count(*) FROM accounts WHERE name = $1",
-            &name,
-        )
-        .await,
-        1
-    );
-}
-
-#[test_with::env(DATABASE_URL)]
-#[tokio::test]
-async fn create_account_with_null_username_behaves_like_omitted() {
-    ensure_master_key_password_file();
-    let keto = keto_with_writes().await;
-    let fixture = fixture_with_keto_write(&keto.uri(), &keto.uri(), None).await;
-    let name = format!("null-username-{}", uuid::Uuid::new_v4());
-    let response = fixture
-        .router
-        .clone()
-        .oneshot(request(
-            "POST",
-            "/api/v1/accounts",
-            &fixture.token,
-            None,
-            Body::from(format!(
-                r#"{{"name":"{name}","is_bot":false,"profile_username":null}}"#
-            )),
-        ))
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{label}");
+        assert_eq!(
+            count_rows(
+                &fixture.module,
+                "SELECT count(*) FROM accounts WHERE name = $1",
+                &name,
+            )
+            .await,
+            0,
+            "{label}: nothing may be created before the username is validated"
+        );
+    }
 }
 
 #[test_with::env(DATABASE_URL)]

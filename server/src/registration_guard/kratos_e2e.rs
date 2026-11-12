@@ -928,7 +928,11 @@ async fn real_kratos_d15_q01_through_q11() {
         for name in ["First", "Second"] {
             app.post(
                 "/api/v1/accounts",
-                json!({"name":format!("e15d-{name}-{}",uuid::Uuid::new_v4()),"is_bot":false}),
+                json!({
+                    "name": format!("e15d-{name}-{}", uuid::Uuid::new_v4()),
+                    "is_bot": false,
+                    "profile_username": format!("u{}", uuid::Uuid::new_v4().simple()),
+                }),
                 HttpStatus::CREATED,
             )
             .await;

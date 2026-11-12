@@ -1,6 +1,6 @@
 //! Profile social graph の実 DB テストが使う seed 関数。独立 DB 自体は `isolated_db` にある。
 
-pub(crate) use super::isolated_db::{IsolatedDatabase, RESET_SQL, SCHEMA_SQL};
+pub(crate) use super::isolated_db::{IsolatedDatabase, RESET_SQL};
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::read_model::{
     AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,

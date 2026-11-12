@@ -8,9 +8,9 @@ use kernel::interfaces::projection::{
     ProfileProjectionWriter, ProjectionCheckpointStore, SeqEvent,
 };
 use kernel::prelude::entity::{
-    Account, AccountEvent, AccountKind, AccountStatus, EventEnvelope, EventId, EventVersion,
-    ImageId, Metadata, MetadataEvent, MetadataId, Profile, ProfileDisplayName, ProfileEvent,
-    ProfileId, ProfileSummary, ProfileUsername,
+    Account, AccountEvent, AccountId, AccountKind, AccountStatus, EventEnvelope, EventId,
+    EventVersion, ImageId, Metadata, MetadataEvent, MetadataId, Profile, ProfileDisplayName,
+    ProfileEvent, ProfileId, ProfileSummary, ProfileUsername,
 };
 use kernel::KernelError;
 use serde_json;
@@ -266,6 +266,35 @@ impl kernel::interfaces::projection::ProfileEventLog for PostgresProfileEventLog
         )
         .bind(from_seq_exclusive)
         .bind(limit)
+        .fetch_all(con)
+        .await
+        .convert_error()?;
+        rows.into_iter()
+            .map(TryFrom::try_from)
+            .collect::<error_stack::Result<Vec<_>, KernelError>>()
+    }
+
+    async fn find_streams_touching_account(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
+    ) -> error_stack::Result<Vec<SeqEvent<ProfileEvent, Profile>>, KernelError> {
+        let con: &mut PgConnection = executor;
+        // `data` is the serde form of `ProfileEvent` (internally tagged by `type`, ids as numbers).
+        let rows = sqlx::query_as::<_, SeqEventRow>(
+            //language=postgresql
+            r#"
+            SELECT seq, version, id, event_name, data
+            FROM profile_events
+            WHERE id IN (
+                SELECT id FROM profile_events
+                WHERE (data ->> 'type' = 'created' AND data ->> 'account_id' = $1::text)
+                   OR (data ->> 'type' = 'account_transferred' AND data ->> 'to_account_id' = $1::text)
+            )
+            ORDER BY id, version
+            "#,
+        )
+        .bind(account_id.as_ref())
         .fetch_all(con)
         .await
         .convert_error()?;

@@ -1,6 +1,7 @@
 use super::ap_peer::{generate_cavage_signature, ApPeer, ReceivedActivity};
 use super::auth;
-use super::config::ap_e2e_config;
+use super::config::{ap_e2e_config, ApE2eConfig};
+use super::db;
 use super::server::EmumetServer;
 
 /// Build an HTTP client suitable for E2E test requests to the Emumet server.
@@ -16,12 +17,33 @@ pub fn e2e_http_client() -> reqwest::Client {
     builder.build().expect("failed to build E2E HTTP client")
 }
 
+/// An Account of the E2E user together with its Profile (the ActivityPub actor).
 pub struct TestAccount {
+    /// Account nanoid (management API).
     pub id: String,
     pub name: String,
+    /// Profile nanoid: the path component of the actor URL and of every `/api/v1/profiles/...` route.
+    pub profile_id: String,
+    /// Profile username (the acct name of the actor).
+    pub username: String,
+}
+
+/// A Profile username that uses every character the format allows beyond letters and digits
+/// (`.`, `_` and `-`), unique per call. Mastodon and Iceshrimp must federate with such names.
+pub fn unique_username(prefix: &str) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let salt = uuid::Uuid::new_v4().simple().to_string();
+    format!("{prefix}.e2e_{millis}-{}", &salt[..6])
 }
 
 pub async fn setup_test_account_details() -> TestAccount {
+    setup_test_account_with_username(&unique_username("ap")).await
+}
+
+pub async fn setup_test_account_with_username(username: &str) -> TestAccount {
     let cfg = ap_e2e_config();
     let jwt = auth::get_jwt_for_test_user().await;
     let client = e2e_http_client();
@@ -35,7 +57,11 @@ pub async fn setup_test_account_details() -> TestAccount {
     let resp = client
         .post(format!("{}/api/v1/accounts", cfg.server_base_url))
         .bearer_auth(&jwt)
-        .json(&serde_json::json!({"name": name, "is_bot": false}))
+        .json(&serde_json::json!({
+            "name": name,
+            "is_bot": false,
+            "profile_username": username,
+        }))
         .send()
         .await
         .expect("failed to create test account");
@@ -48,12 +74,16 @@ pub async fn setup_test_account_details() -> TestAccount {
     );
     let account: serde_json::Value =
         serde_json::from_str(&body).expect("failed to parse account response");
+    let id = account["id"]
+        .as_str()
+        .expect("account response missing id")
+        .to_string();
+    let profile_id = db::profile_nanoid_of_account(&id).await;
     TestAccount {
-        id: account["id"]
-            .as_str()
-            .expect("account response missing id")
-            .to_string(),
+        id,
         name,
+        profile_id,
+        username: username.to_string(),
     }
 }
 
@@ -74,16 +104,50 @@ pub async fn start_server_with_peer(peer: &ApPeer) -> EmumetServer {
     EmumetServer::start_with_ap_test(&peer.address().ip().to_string()).await
 }
 
+// ── URL builders ──────────────────────────────────────────────────
+
+/// `{PUBLIC_BASE_URL}/ap/profiles/{profile_nanoid}`: the actor id.
+pub fn profile_actor_url(cfg: &ApE2eConfig, profile_id: &str) -> String {
+    format!(
+        "{}/ap/profiles/{profile_id}",
+        cfg.public_base_url.trim_end_matches('/')
+    )
+}
+
+/// `(sign_inbox, send_inbox, target_actor)` for signed requests to the Profile inbox: the
+/// signature covers the public URL while the request goes to the direct server URL.
+pub fn profile_inbox_urls(cfg: &ApE2eConfig, profile_id: &str) -> (String, String, String) {
+    (
+        format!(
+            "{}/ap/profiles/{profile_id}/inbox",
+            cfg.public_base_url.trim_end_matches('/')
+        ),
+        format!(
+            "{}/ap/profiles/{profile_id}/inbox",
+            cfg.server_base_url.trim_end_matches('/')
+        ),
+        profile_actor_url(cfg, profile_id),
+    )
+}
+
+// ── Profile relationship API ──────────────────────────────────────
+
+fn profile_url(base_url: &str, profile_id: &str, tail: &str) -> String {
+    format!(
+        "{}/api/v1/profiles/{profile_id}{tail}",
+        base_url.trim_end_matches('/')
+    )
+}
+
+/// `POST /api/v1/profiles/{profile}/follows` (201 on success).
 pub async fn post_follow(
     jwt: &str,
-    account_nanoid: &str,
+    profile_id: &str,
     base_url: &str,
     target: &str,
 ) -> reqwest::Response {
     e2e_http_client()
-        .post(format!(
-            "{base_url}/api/v1/accounts/{account_nanoid}/follow"
-        ))
+        .post(profile_url(base_url, profile_id, "/follows"))
         .bearer_auth(jwt)
         .json(&serde_json::json!({"target": target}))
         .send()
@@ -91,31 +155,55 @@ pub async fn post_follow(
         .expect("follow request failed")
 }
 
-pub async fn post_unfollow(
+/// `DELETE /api/v1/profiles/{profile}/follows/{follow_id}` (204 on success).
+pub async fn delete_follow(
     jwt: &str,
-    account_nanoid: &str,
+    profile_id: &str,
     base_url: &str,
-    target: &str,
+    follow_id: &str,
 ) -> reqwest::Response {
     e2e_http_client()
-        .post(format!(
-            "{base_url}/api/v1/accounts/{account_nanoid}/unfollow"
+        .delete(profile_url(
+            base_url,
+            profile_id,
+            &format!("/follows/{follow_id}"),
         ))
         .bearer_auth(jwt)
-        .json(&serde_json::json!({"target": target}))
         .send()
         .await
         .expect("unfollow request failed")
 }
 
+/// Follows the target and returns the follow id (asserts 201).
+pub async fn follow_and_get_id(
+    jwt: &str,
+    profile_id: &str,
+    base_url: &str,
+    target: &str,
+) -> String {
+    let resp = post_follow(jwt, profile_id, base_url, target).await;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::CREATED,
+        "follow failed: {body}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&body).expect("follow response JSON");
+    json["id"]
+        .as_str()
+        .expect("follow response missing id")
+        .to_string()
+}
+
 pub async fn post_block(
     jwt: &str,
-    account_nanoid: &str,
+    profile_id: &str,
     base_url: &str,
     target: &str,
 ) -> reqwest::Response {
     e2e_http_client()
-        .post(format!("{base_url}/api/v1/accounts/{account_nanoid}/block"))
+        .post(profile_url(base_url, profile_id, "/blocks"))
         .bearer_auth(jwt)
         .json(&serde_json::json!({"target": target}))
         .send()
@@ -123,44 +211,36 @@ pub async fn post_block(
         .expect("block request failed")
 }
 
-pub async fn post_unblock(
+pub async fn delete_block(
     jwt: &str,
-    account_nanoid: &str,
+    profile_id: &str,
     base_url: &str,
-    target: &str,
+    block_id: &str,
 ) -> reqwest::Response {
     e2e_http_client()
-        .post(format!(
-            "{base_url}/api/v1/accounts/{account_nanoid}/unblock"
+        .delete(profile_url(
+            base_url,
+            profile_id,
+            &format!("/blocks/{block_id}"),
         ))
         .bearer_auth(jwt)
-        .json(&serde_json::json!({"target": target}))
         .send()
         .await
         .expect("unblock request failed")
 }
 
-pub async fn get_blocks(jwt: &str, account_nanoid: &str, base_url: &str) -> serde_json::Value {
-    let resp = e2e_http_client()
-        .get(format!(
-            "{base_url}/api/v1/accounts/{account_nanoid}/blocks"
-        ))
-        .bearer_auth(jwt)
-        .send()
-        .await
-        .expect("get blocks request failed");
-    assert_eq!(resp.status(), reqwest::StatusCode::OK);
-    resp.json().await.expect("blocks response not valid JSON")
+pub async fn get_blocks(jwt: &str, profile_id: &str, base_url: &str) -> serde_json::Value {
+    get_list(jwt, profile_id, base_url, "/blocks").await
 }
 
 pub async fn post_mute(
     jwt: &str,
-    account_nanoid: &str,
+    profile_id: &str,
     base_url: &str,
     target: &str,
 ) -> reqwest::Response {
     e2e_http_client()
-        .post(format!("{base_url}/api/v1/accounts/{account_nanoid}/mute"))
+        .post(profile_url(base_url, profile_id, "/mutes"))
         .bearer_auth(jwt)
         .json(&serde_json::json!({"target": target}))
         .send()
@@ -168,15 +248,97 @@ pub async fn post_mute(
         .expect("mute request failed")
 }
 
-pub async fn get_mutes(jwt: &str, account_nanoid: &str, base_url: &str) -> serde_json::Value {
+pub async fn get_mutes(jwt: &str, profile_id: &str, base_url: &str) -> serde_json::Value {
+    get_list(jwt, profile_id, base_url, "/mutes").await
+}
+
+/// `GET /api/v1/profiles/{profile}/following` or `/followers` (owner only).
+pub async fn get_relations(
+    jwt: &str,
+    profile_id: &str,
+    base_url: &str,
+    list: &str,
+) -> serde_json::Value {
+    get_list(jwt, profile_id, base_url, &format!("/{list}")).await
+}
+
+async fn get_list(jwt: &str, profile_id: &str, base_url: &str, tail: &str) -> serde_json::Value {
     let resp = e2e_http_client()
-        .get(format!("{base_url}/api/v1/accounts/{account_nanoid}/mutes"))
+        .get(profile_url(base_url, profile_id, tail))
         .bearer_auth(jwt)
         .send()
         .await
-        .expect("get mutes request failed");
-    assert_eq!(resp.status(), reqwest::StatusCode::OK);
-    resp.json().await.expect("mutes response not valid JSON")
+        .unwrap_or_else(|e| panic!("GET {tail} failed: {e}"));
+    assert_eq!(resp.status(), reqwest::StatusCode::OK, "GET {tail}");
+    resp.json()
+        .await
+        .unwrap_or_else(|e| panic!("GET {tail} response not valid JSON: {e}"))
+}
+
+fn relation_count(list: &serde_json::Value) -> usize {
+    list["items"].as_array().map(Vec::len).unwrap_or(0)
+}
+
+/// Poll `following` / `followers` of the Profile until it has at least `min_items` entries
+/// (timeout after ~15 s).
+pub async fn wait_for_relation_count(
+    jwt: &str,
+    profile_id: &str,
+    base_url: &str,
+    list: &str,
+    min_items: usize,
+) -> bool {
+    for _ in 1..=30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if relation_count(&get_relations(jwt, profile_id, base_url, list).await) >= min_items {
+            return true;
+        }
+    }
+    false
+}
+
+/// Poll `following` / `followers` of the Profile until it has at most `max_items` entries.
+pub async fn wait_for_relation_count_at_most(
+    jwt: &str,
+    profile_id: &str,
+    base_url: &str,
+    list: &str,
+    max_items: usize,
+) -> bool {
+    for _ in 1..=30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if relation_count(&get_relations(jwt, profile_id, base_url, list).await) <= max_items {
+            return true;
+        }
+    }
+    false
+}
+
+/// Verifies the HTTP Signature of an activity received by the mock peer against `public_key_pem`
+/// (the key published in the Profile's actor document) and returns the key id it was signed with.
+pub async fn verify_activity_signature(
+    activity: &ReceivedActivity,
+    key_id: &str,
+    public_key_pem: &str,
+) -> kernel::interfaces::http_signing::SignatureVerificationResult {
+    use kernel::interfaces::http_signing::{HttpSignatureVerificationInput, HttpSignatureVerifier};
+    let mut verifier =
+        driver::http_signing::HttpSignatureVerifierImpl::new().expect("signature verifier");
+    verifier.cache_actor_key(key_id, public_key_pem.to_string());
+    let headers = activity
+        .headers
+        .iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), value.clone()))
+        .collect();
+    verifier
+        .verify(&HttpSignatureVerificationInput {
+            method: "POST".to_string(),
+            url: activity.url.clone(),
+            headers,
+            body: Some(activity.raw_body.clone()),
+        })
+        .await
+        .expect("signature verification")
 }
 
 pub fn assert_signature_header(activity: &ReceivedActivity) {
@@ -190,84 +352,30 @@ pub fn assert_signature_header(activity: &ReceivedActivity) {
     );
 }
 
-pub async fn fetch_collection(
-    base_url: &str,
-    account_nanoid: &str,
-    collection: &str,
-) -> serde_json::Value {
+/// The Profile actor document (public, ActivityPub media type).
+pub async fn fetch_profile_actor(base_url: &str, profile_id: &str) -> serde_json::Value {
     let resp = e2e_http_client()
         .get(format!(
-            "{base_url}/ap/accounts/{account_nanoid}/{collection}"
+            "{}/ap/profiles/{profile_id}",
+            base_url.trim_end_matches('/')
         ))
         .header(reqwest::header::ACCEPT, "application/activity+json")
         .send()
         .await
-        .unwrap_or_else(|e| panic!("{collection} request failed: {e}"));
+        .expect("actor request failed");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
-    resp.json()
-        .await
-        .unwrap_or_else(|e| panic!("{collection} response not valid JSON: {e}"))
+    resp.json().await.expect("actor response not valid JSON")
 }
 
-pub fn assert_collection_has_items(collection: &serde_json::Value, min: u64) {
-    assert_eq!(collection["type"], "OrderedCollection");
-    assert!(
-        collection["totalItems"].as_u64().unwrap_or(0) >= min,
-        "collection should have at least {min} items"
-    );
-}
+// ── Signed requests from a remote peer to the Profile inbox ───────
 
-pub async fn post_signed_follow(
-    peer: &ApPeer,
-    target_inbox: &str,
-    target_actor: &str,
-) -> reqwest::Response {
-    let follow_activity = serde_json::json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "type": "Follow",
-        "actor": peer.actor_url,
-        "object": target_actor,
-        "id": format!("{}/activities/{}", peer.actor_url, uuid::Uuid::new_v4()),
-    });
-    let body_bytes = serde_json::to_vec(&follow_activity).expect("serialize follow activity");
-    let key_id = format!("{}#main-key", peer.actor_url);
-    let signature_headers = generate_cavage_signature(
-        "POST",
-        target_inbox,
-        &body_bytes,
-        &peer.private_key_pem,
-        &key_id,
-    )
-    .await;
-    let mut request = e2e_http_client().post(target_inbox);
-    for (k, v) in &signature_headers {
-        request = request.header(k.as_str(), v.as_str());
-    }
-    request
-        .body(body_bytes)
-        .send()
-        .await
-        .expect("signed inbox POST failed")
-}
-
-/// Like [`post_signed_follow`] but sends the request to a different URL than
-/// the one used for signing.  The signing uses `signing_inbox` (should match
-/// PUBLIC_BASE_URL for correct Host in signature), while the actual HTTP
-/// request goes to `send_inbox` (e.g. a direct localhost URL bypassing nginx).
-pub async fn post_signed_follow_direct(
+async fn post_signed_activity(
     peer: &ApPeer,
     sign_inbox: &str,
     send_inbox: &str,
-    target_actor: &str,
+    activity: serde_json::Value,
 ) -> reqwest::Response {
-    let follow_activity = serde_json::json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "type": "Follow",
-        "actor": peer.actor_url,
-        "object": target_actor,
-        "id": format!("{}/activities/{}", peer.actor_url, uuid::Uuid::new_v4()),
-    });
-    let body_bytes = serde_json::to_vec(&follow_activity).expect("serialize follow activity");
+    let body_bytes = serde_json::to_vec(&activity).expect("serialize activity");
     let key_id = format!("{}#main-key", peer.actor_url);
     let signature_headers = generate_cavage_signature(
         "POST",
@@ -288,43 +396,64 @@ pub async fn post_signed_follow_direct(
         .expect("signed inbox POST failed")
 }
 
-pub async fn post_signed_accept(
+/// A signed Follow from `peer` to the Profile.
+pub async fn post_signed_follow_direct(
     peer: &ApPeer,
-    target_inbox: &str,
-    follow_activity_id: &str,
+    sign_inbox: &str,
+    send_inbox: &str,
     target_actor: &str,
 ) -> reqwest::Response {
-    let accept_activity = serde_json::json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "type": "Accept",
-        "actor": peer.actor_url,
-        "object": {
+    let follow_id = format!("{}/activities/{}", peer.actor_url, uuid::Uuid::new_v4());
+    post_signed_follow_with_id_direct(peer, sign_inbox, send_inbox, target_actor, &follow_id).await
+}
+
+pub async fn post_signed_follow_with_id_direct(
+    peer: &ApPeer,
+    sign_inbox: &str,
+    send_inbox: &str,
+    target_actor: &str,
+    follow_id: &str,
+) -> reqwest::Response {
+    post_signed_activity(
+        peer,
+        sign_inbox,
+        send_inbox,
+        serde_json::json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
             "type": "Follow",
-            "id": follow_activity_id,
-            "actor": target_actor,
-            "object": peer.actor_url,
-        },
-        "id": format!("{}/activities/accept/{}", peer.actor_url, uuid::Uuid::new_v4()),
-    });
-    let body_bytes = serde_json::to_vec(&accept_activity).expect("serialize accept activity");
-    let key_id = format!("{}#main-key", peer.actor_url);
-    let signature_headers = generate_cavage_signature(
-        "POST",
-        target_inbox,
-        &body_bytes,
-        &peer.private_key_pem,
-        &key_id,
+            "actor": peer.actor_url,
+            "object": target_actor,
+            "id": follow_id,
+        }),
     )
-    .await;
-    let mut request = e2e_http_client().post(target_inbox);
-    for (k, v) in &signature_headers {
-        request = request.header(k.as_str(), v.as_str());
-    }
-    request
-        .body(body_bytes)
-        .send()
-        .await
-        .expect("signed Accept POST failed")
+    .await
+}
+
+pub async fn post_signed_undo_follow_direct(
+    peer: &ApPeer,
+    sign_inbox: &str,
+    send_inbox: &str,
+    target_actor: &str,
+    follow_id: &str,
+) -> reqwest::Response {
+    post_signed_activity(
+        peer,
+        sign_inbox,
+        send_inbox,
+        serde_json::json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Undo",
+            "actor": peer.actor_url,
+            "id": format!("{follow_id}/undo"),
+            "object": {
+                "type": "Follow",
+                "id": follow_id,
+                "actor": peer.actor_url,
+                "object": target_actor,
+            },
+        }),
+    )
+    .await
 }
 
 pub async fn post_signed_accept_direct(
@@ -334,37 +463,24 @@ pub async fn post_signed_accept_direct(
     follow_activity_id: &str,
     target_actor: &str,
 ) -> reqwest::Response {
-    let accept_activity = serde_json::json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "type": "Accept",
-        "actor": peer.actor_url,
-        "object": {
-            "type": "Follow",
-            "id": follow_activity_id,
-            "actor": target_actor,
-            "object": peer.actor_url,
-        },
-        "id": format!("{}/activities/accept/{}", peer.actor_url, uuid::Uuid::new_v4()),
-    });
-    let body_bytes = serde_json::to_vec(&accept_activity).expect("serialize accept activity");
-    let key_id = format!("{}#main-key", peer.actor_url);
-    let signature_headers = generate_cavage_signature(
-        "POST",
+    post_signed_activity(
+        peer,
         sign_inbox,
-        &body_bytes,
-        &peer.private_key_pem,
-        &key_id,
+        send_inbox,
+        serde_json::json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Accept",
+            "actor": peer.actor_url,
+            "object": {
+                "type": "Follow",
+                "id": follow_activity_id,
+                "actor": target_actor,
+                "object": peer.actor_url,
+            },
+            "id": format!("{}/activities/accept/{}", peer.actor_url, uuid::Uuid::new_v4()),
+        }),
     )
-    .await;
-    let mut request = e2e_http_client().post(send_inbox);
-    for (k, v) in &signature_headers {
-        request = request.header(k.as_str(), v.as_str());
-    }
-    request
-        .body(body_bytes)
-        .send()
-        .await
-        .expect("signed Accept POST failed")
+    .await
 }
 
 pub async fn post_signed_block_direct(
@@ -373,69 +489,17 @@ pub async fn post_signed_block_direct(
     send_inbox: &str,
     target_actor: &str,
 ) -> reqwest::Response {
-    let block_activity = serde_json::json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "type": "Block",
-        "actor": peer.actor_url,
-        "object": target_actor,
-        "id": format!("{}/activities/block/{}", peer.actor_url, uuid::Uuid::new_v4()),
-    });
-    let body_bytes = serde_json::to_vec(&block_activity).expect("serialize block activity");
-    let key_id = format!("{}#main-key", peer.actor_url);
-    let signature_headers = generate_cavage_signature(
-        "POST",
+    post_signed_activity(
+        peer,
         sign_inbox,
-        &body_bytes,
-        &peer.private_key_pem,
-        &key_id,
-    )
-    .await;
-    let mut request = e2e_http_client().post(send_inbox);
-    for (k, v) in &signature_headers {
-        request = request.header(k.as_str(), v.as_str());
-    }
-    request
-        .body(body_bytes)
-        .send()
-        .await
-        .expect("signed Block POST failed")
-}
-
-pub async fn post_signed_undo_block_direct(
-    peer: &ApPeer,
-    sign_inbox: &str,
-    send_inbox: &str,
-    target_actor: &str,
-) -> reqwest::Response {
-    let undo_activity = serde_json::json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "type": "Undo",
-        "actor": peer.actor_url,
-        "object": {
+        send_inbox,
+        serde_json::json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
             "type": "Block",
-            "id": format!("{}/activities/block/{}", peer.actor_url, uuid::Uuid::new_v4()),
             "actor": peer.actor_url,
             "object": target_actor,
-        },
-        "id": format!("{}/activities/undo-block/{}", peer.actor_url, uuid::Uuid::new_v4()),
-    });
-    let body_bytes = serde_json::to_vec(&undo_activity).expect("serialize undo block activity");
-    let key_id = format!("{}#main-key", peer.actor_url);
-    let signature_headers = generate_cavage_signature(
-        "POST",
-        sign_inbox,
-        &body_bytes,
-        &peer.private_key_pem,
-        &key_id,
+            "id": format!("{}/activities/block/{}", peer.actor_url, uuid::Uuid::new_v4()),
+        }),
     )
-    .await;
-    let mut request = e2e_http_client().post(send_inbox);
-    for (k, v) in &signature_headers {
-        request = request.header(k.as_str(), v.as_str());
-    }
-    request
-        .body(body_bytes)
-        .send()
-        .await
-        .expect("signed Undo Block POST failed")
+    .await
 }

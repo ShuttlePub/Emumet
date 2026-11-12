@@ -229,8 +229,20 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
             r#"
             SELECT id, state, attempt_count, last_attempt_at
             FROM profile_delivery_jobs
-            WHERE (state IN ('pending', 'retrying') AND next_attempt_at <= $1)
-               OR (state = 'in_flight' AND lease_expires_at <= $1)
+            WHERE ((state IN ('pending', 'retrying') AND next_attempt_at <= $1)
+               OR (state = 'in_flight' AND lease_expires_at <= $1))
+              -- A Profile whose owner Account is suspended, banned or deactivated sends nothing: its
+              -- jobs stay queued (no attempt is consumed) and are delivered once the restriction
+              -- ends. The rule is the one `AccountQuery::find_by_id` applies.
+              AND EXISTS (
+                  SELECT 1 FROM profiles p
+                  JOIN accounts a ON a.id = p.account_id
+                  WHERE p.id = profile_delivery_jobs.sender_profile_id
+                    AND a.deleted_at IS NULL
+                    AND a.banned_at IS NULL
+                    AND (a.suspended_at IS NULL
+                         OR (a.suspend_expires_at IS NOT NULL AND a.suspend_expires_at <= now()))
+              )
             ORDER BY next_attempt_at ASC, id ASC
             LIMIT $2
             FOR UPDATE SKIP LOCKED

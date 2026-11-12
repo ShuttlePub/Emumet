@@ -221,6 +221,8 @@ wait_for_service "mastodon-sidekiq" "$COMPOSE_CMD exec -T mastodon-sidekiq pgrep
 # These override any values from .env
 export AP_TEST_ALLOWED_FETCH_HOSTS="127.0.0.1,iceshrimp.127.0.0.1.nip.io,mastodon.127.0.0.1.nip.io"
 export AP_TEST_ACCEPT_INVALID_CERTS="1"
+# The Profile delivery worker polls its queue at this interval (default 2s).
+export PROFILE_DELIVERY_POLL_INTERVAL_MS="${PROFILE_DELIVERY_POLL_INTERVAL_MS:-500}"
 export EMUMET_E2E_EXTERNAL_SERVER="1"
 # Use direct HTTP for the server API (bypasses nginx to avoid potential
 # HTTPS proxy issues), while using the public HTTPS URL for ActivityPub

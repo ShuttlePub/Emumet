@@ -88,6 +88,17 @@ where
                 .transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
+                        // Serialize with every other writer of this Profile (edits, username) before
+                        // the event stream is read: the aggregate is then rebuilt from all committed
+                        // events, so the projection row written below can never lose a concurrent
+                        // change (the P1 `FOR NO KEY UPDATE` convention).
+                        deps.profile_read_model()
+                            .lock_by_id_for_update(executor, &profile_id)
+                            .await?
+                            .ok_or_else(|| {
+                                Report::new(KernelError::NotFound)
+                                    .attach_printable("Profile no longer exists")
+                            })?;
                         let (request, current_version) = deps
                             .profile_transfer_request_repository()
                             .load(executor, &request_id)

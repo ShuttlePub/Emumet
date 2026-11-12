@@ -18,13 +18,15 @@
 #[allow(dead_code)]
 mod support;
 
+use kernel::interfaces::http_signing::HttpSigningRequest;
 use support::account_helper::{
-    e2e_http_client, post_follow, post_unfollow, setup_test_account_details,
+    delete_follow, e2e_http_client, post_follow, setup_test_account_details,
 };
 use support::auth;
 use support::config::ap_e2e_config;
 use support::db;
 use support::mastodon_setup;
+use support::profile_signer;
 
 fn init_test_tracing() {
     use std::sync::Once;
@@ -68,7 +70,8 @@ async fn mastodon_full_federation_scenario() {
     );
 
     let public_base_url = cfg.public_base_url.trim_end_matches('/');
-    let emumet_actor_url = mastodon_setup::emumet_actor_url(public_base_url, &emumet_account.id);
+    let emumet_actor_url =
+        mastodon_setup::emumet_actor_url(public_base_url, &emumet_account.profile_id);
 
     // ── S7: Mastodon → Emumet Follow ─────────────────────────────────
 
@@ -90,7 +93,8 @@ async fn mastodon_full_federation_scenario() {
     assert!(
         mastodon_setup::wait_for_emumet_collection_count(
             &cfg.server_base_url,
-            &emumet_account.id,
+            &jwt,
+            &emumet_account.profile_id,
             "followers",
             1,
         )
@@ -113,22 +117,31 @@ async fn mastodon_full_federation_scenario() {
 
     let follow_resp = post_follow(
         &jwt,
-        &emumet_account.id,
+        &emumet_account.profile_id,
         &cfg.server_base_url,
         &fixture.user.actor_url,
     )
     .await;
 
-    assert!(
-        follow_resp.status().is_success(),
-        "S8: Emumet follow request should succeed: {}",
-        follow_resp.status()
+    assert_eq!(
+        follow_resp.status(),
+        reqwest::StatusCode::CREATED,
+        "S8: Emumet follow request should succeed"
     );
+    let follow_body: serde_json::Value = follow_resp
+        .json()
+        .await
+        .expect("S8: follow response should be valid JSON");
+    let follow_id = follow_body["id"]
+        .as_str()
+        .expect("S8: follow response should contain the follow id")
+        .to_string();
 
     assert!(
         mastodon_setup::wait_for_emumet_collection_count(
             &cfg.server_base_url,
-            &emumet_account.id,
+            &jwt,
+            &emumet_account.profile_id,
             "following",
             1,
         )
@@ -138,7 +151,7 @@ async fn mastodon_full_federation_scenario() {
 
     let expected_actor_url = mastodon_setup::emumet_actor_url(
         cfg.public_base_url.trim_end_matches('/'),
-        &emumet_account.id,
+        &emumet_account.profile_id,
     );
     assert!(
         mastodon_setup::wait_for_mastodon_followers_contains(
@@ -153,7 +166,10 @@ async fn mastodon_full_federation_scenario() {
 
     // ── S9: Emumet → Mastodon Signed Create/Note ──────────────────────
 
-    let actor_url = format!("{public_base_url}/ap/accounts/{}", emumet_account.id);
+    let actor_url = format!(
+        "{public_base_url}/ap/profiles/{}",
+        emumet_account.profile_id
+    );
     let followers_url = format!("{actor_url}/followers");
 
     let note_id = format!("{actor_url}/statuses/{}", uuid::Uuid::new_v4());
@@ -202,44 +218,26 @@ async fn mastodon_full_federation_scenario() {
         Some(p) => format!("{inbox_host}:{p}"),
         None => inbox_host.to_string(),
     };
-    let base64_body = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &body);
-
-    // Sign via Emumet's /internal/v1/accounts/{id}/sign endpoint
-    let sign_resp = e2e_http_client()
-        .post(format!(
-            "{}/internal/v1/accounts/{}/sign",
-            cfg.server_base_url, emumet_account.id
-        ))
-        .bearer_auth(&jwt)
-        .json(&serde_json::json!({
-            "method": "POST",
-            "url": inbox_url,
-            "headers": {
-                "host": host_header,
-                "date": date,
-                "digest": digest,
-                "content-type": "application/activity+json"
-            },
-            "body": base64_body,
-        }))
-        .send()
-        .await
-        .expect("S9: failed to sign Create/Note via /sign endpoint");
-
-    assert!(
-        sign_resp.status().is_success(),
-        "S9: Sign endpoint returned {}",
-        sign_resp.status()
-    );
-
-    let sign_body: serde_json::Value = sign_resp
-        .json()
-        .await
-        .expect("S9: sign response should be valid JSON");
-    let cavage = sign_body["cavage"]
-        .as_object()
-        .expect("S9: sign response should contain 'cavage' object")
-        .clone();
+    // The server has no signing API: sign as the Profile with its own key (test fixture that
+    // decrypts the stored key exactly like the delivery worker does).
+    let cavage = profile_signer::sign_as_profile(
+        &emumet_account.profile_id,
+        &HttpSigningRequest {
+            method: "POST".to_string(),
+            url: inbox_url.clone(),
+            headers: std::collections::HashMap::from([
+                ("host".to_string(), host_header.clone()),
+                ("date".to_string(), date.clone()),
+                ("digest".to_string(), digest.clone()),
+                (
+                    "content-type".to_string(),
+                    "application/activity+json".to_string(),
+                ),
+            ]),
+            body: Some(body.clone()),
+        },
+    )
+    .await;
 
     // Deliver the signed activity to Mastodon's inbox
     let mut inbox_req = e2e_http_client()
@@ -252,9 +250,7 @@ async fn mastodon_full_federation_scenario() {
     for (name, value) in &cavage {
         let lower = name.to_ascii_lowercase();
         if lower != "host" && lower != "date" && lower != "digest" && lower != "content-type" {
-            if let Some(val) = value.as_str() {
-                inbox_req = inbox_req.header(name.as_str(), val);
-            }
+            inbox_req = inbox_req.header(name.as_str(), value.as_str());
         }
     }
 
@@ -297,11 +293,11 @@ async fn mastodon_full_federation_scenario() {
     // ── S10: Bidirectional Undo(Follow) ──────────────────────────────
 
     // S10a: Emumet → Mastodon — local unfollow delivers Undo(Follow)
-    let unfollow_resp = post_unfollow(
+    let unfollow_resp = delete_follow(
         &jwt,
-        &emumet_account.id,
+        &emumet_account.profile_id,
         &cfg.server_base_url,
-        &fixture.user.actor_url,
+        &follow_id,
     )
     .await;
     assert_eq!(
@@ -324,7 +320,8 @@ async fn mastodon_full_federation_scenario() {
     assert!(
         mastodon_setup::wait_for_emumet_collection_count_at_most(
             &cfg.server_base_url,
-            &emumet_account.id,
+            &jwt,
+            &emumet_account.profile_id,
             "following",
             0,
         )
@@ -343,7 +340,8 @@ async fn mastodon_full_federation_scenario() {
     assert!(
         mastodon_setup::wait_for_emumet_collection_count_at_most(
             &cfg.server_base_url,
-            &emumet_account.id,
+            &jwt,
+            &emumet_account.profile_id,
             "followers",
             0,
         )

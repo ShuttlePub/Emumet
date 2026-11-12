@@ -1,8 +1,9 @@
 -- Profile 単位の social graph の保存スキーマ (PF / P2)。
 --
--- これは **隔離 DB 用の fixture** で、本番の migrations/ には配置しない。本番 migration の採番と配置は
--- P4 (profile-federation-in-place-cutover) が所有する。適用の前提は、本番 migrations/ を全て適用した DB
--- (profiles テーブルが存在すること)。旧 Account 単位のテーブルには触れない。
+-- P2 (profile-social-graph-storage) の設計を、P4 (profile-federation-in-place-cutover) が本番 migration として
+-- 採番・配置したもの。非破壊の追加 (新テーブルのみ) で、旧 Account 単位のテーブルには触れない。
+-- 旧連合データの初期化は次の migration (20261120000002_reset_legacy_federation.sql) が行う。
+-- 前提: profiles テーブルが存在すること。
 --
 -- URL 系の列 (actor_url / activity_id / target_inbox) は 1024 バイト以下に制限する (kernel の検証と同じ上限)。
 -- 複合 B-tree 索引 (URL 2 列 + 数値列) の 1 エントリが PostgreSQL の上限 (約 2.7KB) を超えないようにするため。
@@ -10,7 +11,32 @@
 -- 設計:
 --   * 関係の主体はローカル Profile (profiles.id)。リモート側は canonical actor URL だけを持つ。
 --   * ローカル側の外部キーは profiles への ON DELETE CASCADE のみ。旧テーブル (remote_accounts 等) を
---     参照しないので、旧連合データの初期化 (02_reset_legacy_federation.sql) と独立している。
+--     参照しないので、旧連合データの初期化 (20261120000002_reset_legacy_federation.sql) と独立している。
+
+-- 切替の前提検査 (旧連合データの初期化と同じ検査) を、最初の P4 migration の先頭にも置く。
+-- username 未設定の Profile が残っていると、ここで abort する。P4 の migration が 1 つも適用されないので、
+-- DB は切替を試みる前と同じ状態のまま (旧バイナリがそのまま起動でき、username を設定して再試行できる)。
+-- 初期化済み (台帳に記録済み) の DB では検査しない。
+DO $precheck$
+DECLARE
+  already_reset BOOLEAN := FALSE;
+  missing_username BIGINT;
+BEGIN
+  IF to_regclass('public.profile_federation_resets') IS NOT NULL THEN
+    EXECUTE 'SELECT EXISTS (SELECT 1 FROM profile_federation_resets WHERE reset_id = ''legacy-account-federation-v1'')'
+      INTO already_reset;
+  END IF;
+  IF NOT already_reset THEN
+    SELECT count(*) INTO missing_username FROM profiles WHERE username IS NULL;
+    IF missing_username > 0 THEN
+      RAISE EXCEPTION
+        'profile federation cutover refused: % profile(s) have no username. Set a username for every existing Profile (POST /api/v1/profiles/{profile_nanoid}/username, with the pre-cutover server) and start again. Nothing was changed.',
+        missing_username
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
+END
+$precheck$;
 
 CREATE TABLE "profile_follows" (
   "id" BIGINT PRIMARY KEY,

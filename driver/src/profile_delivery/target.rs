@@ -117,6 +117,12 @@ pub(crate) fn build_client(
         .timeout(settings.total_timeout)
         .pool_max_idle_per_host(0)
         .https_only(mode.is_strict());
+    // E2E peers (Iceshrimp / Mastodon behind nginx) use a self-signed certificate. Only the
+    // non-strict test construction can ever get here, so production never skips verification.
+    #[cfg(any(test, feature = "test-mode"))]
+    if !mode.is_strict() && std::env::var("AP_TEST_ACCEPT_INVALID_CERTS").as_deref() == Ok("1") {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
     if let Some(domain) = &target.domain {
         builder = builder.resolve_to_addrs(domain, &target.addresses);
     }

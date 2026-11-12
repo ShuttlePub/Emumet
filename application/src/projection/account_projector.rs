@@ -7,7 +7,9 @@ use kernel::interfaces::permission::{
 };
 use kernel::interfaces::projection::{
     AccountEventLog, AccountProjectionWriter, DependOnAccountEventLog,
-    DependOnAccountProjectionWriter, DependOnProjectionCheckpointStore, ProjectionCheckpointStore,
+    DependOnAccountProjectionWriter, DependOnProfileEventLog, DependOnProfileProjectionWriter,
+    DependOnProjectionCheckpointStore, ProfileEventLog, ProfileProjectionWriter,
+    ProjectionCheckpointStore,
 };
 use kernel::interfaces::read_model::{
     AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
@@ -15,7 +17,8 @@ use kernel::interfaces::read_model::{
 };
 use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
 use kernel::prelude::entity::{
-    Account, AccountEvent, AccountId, AccountKind, EventEnvelope, FollowTargetId,
+    Account, AccountEvent, AccountId, AccountKind, EventEnvelope, FollowTargetId, Profile,
+    ProfileId,
 };
 use kernel::KernelError;
 use std::collections::HashMap;
@@ -48,6 +51,8 @@ pub trait ProjectAccountBatch:
     + DependOnMetadataReadModel
     + DependOnFollowRepository
     + DependOnPermissionWriter
+    + DependOnProfileEventLog
+    + DependOnProfileProjectionWriter
 {
     /// Run one tailing poll. Returns the checkpoint after the poll.
     fn project_batch(
@@ -101,10 +106,14 @@ pub trait ProjectAccountBatch:
                     }
                 });
 
+                // Including deactivated rows: a reactivation of an Account whose earlier events are
+                // outside the tailing window must fold onto the stored (deactivated) row. Without
+                // the row the window holds only the `Reactivated` event, the fold is "incomplete"
+                // and the Account would never come back.
                 let existing = {
                     let executor = transaction.connection();
                     self.account_read_model()
-                        .find_by_id_unfiltered(executor, &account_id)
+                        .find_by_id_including_deleted(executor, &account_id)
                         .await?
                 };
                 let pending: Vec<_> = envelopes
@@ -186,10 +195,18 @@ pub trait ProjectAccountBatch:
                                 // auth_emumet_accounts linkage survives
                                 // deactivation: owners need it to reactivate.
                             }
-                            (Some(account), _) => {
+                            (Some(account), prior) => {
                                 self.account_projection_writer()
                                     .upsert(executor, account)
                                     .await?;
+                                // Reactivation: deactivation deleted the Account's Profile rows, and
+                                // the Profile projector only looks at a window of recent events, so
+                                // a Profile whose events are older than that window would never come
+                                // back. Re-materialize the Profiles the Account owns from their full
+                                // history (Profile id, nanoid, username and key stay the same).
+                                if prior.as_ref().is_some_and(|p| p.deleted_at().is_some()) {
+                                    self.restore_owned_profiles(executor, account_id).await?;
+                                }
                                 if let Some(auth_id) = created_auth_account_id {
                                     self.account_read_model()
                                         .link_auth_account(executor, account_id, &auth_id)
@@ -251,6 +268,63 @@ pub trait ProjectAccountBatch:
             Ok(max_seq)
         }
     }
+
+    /// Re-materializes, from the complete event history, every Profile currently owned by
+    /// `account_id` (used when the Account is reactivated). Streams that were transferred away from
+    /// the Account are skipped. The write is the version-gated upsert, so it cannot overwrite a row
+    /// that is already newer.
+    fn restore_owned_profiles<'a>(
+        &'a self,
+        executor: &'a mut <<Self as DependOnDatabaseConnection>::DatabaseConnection as kernel::interfaces::database::DatabaseConnection>::Connection,
+        account_id: &'a AccountId,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
+        async move {
+            let events = self
+                .profile_event_log()
+                .find_streams_touching_account(executor, account_id)
+                .await?;
+            let mut streams: std::collections::BTreeMap<
+                i64,
+                Vec<EventEnvelope<kernel::prelude::entity::ProfileEvent, Profile>>,
+            > = std::collections::BTreeMap::new();
+            for event in events {
+                streams
+                    .entry(*event.envelope.id.as_ref())
+                    .or_default()
+                    .push(event.envelope);
+            }
+            for (profile_id, mut envelopes) in streams {
+                envelopes.sort_by_key(|event| *event.version.as_ref());
+                let mut entity: Option<Profile> = None;
+                let mut complete = true;
+                for envelope in envelopes {
+                    if let Err(error) = Profile::apply(&mut entity, envelope) {
+                        tracing::warn!(
+                            ?error,
+                            profile_id,
+                            "account reactivation: Profile stream could not be folded; skipped"
+                        );
+                        complete = false;
+                        break;
+                    }
+                }
+                let Some(profile) = entity.filter(|_| complete) else {
+                    continue;
+                };
+                if profile.account_id() != account_id {
+                    continue;
+                }
+                self.profile_projection_writer()
+                    .upsert(executor, &profile)
+                    .await?;
+                tracing::info!(
+                    profile_id = %ProfileId::new(profile_id).as_ref(),
+                    "account reactivation: Profile re-materialized from its full history"
+                );
+            }
+            Ok(())
+        }
+    }
 }
 
 impl<T> ProjectAccountBatch for T where
@@ -263,5 +337,7 @@ impl<T> ProjectAccountBatch for T where
         + DependOnMetadataReadModel
         + DependOnFollowRepository
         + DependOnPermissionWriter
+        + DependOnProfileEventLog
+        + DependOnProfileProjectionWriter
 {
 }

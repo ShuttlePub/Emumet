@@ -137,7 +137,9 @@ async fn create_profile(world: &World, username: Option<&str>) -> Fixture {
                 name: name.clone(),
                 is_bot: false,
             },
-            username.map(str::to_string),
+            username
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("u{}", uuid::Uuid::new_v4().simple())),
         )
         .await
         .unwrap();
@@ -148,6 +150,20 @@ async fn create_profile(world: &World, username: Option<&str>) -> Fixture {
     .fetch_one(&mut *conn)
     .await
     .unwrap();
+    // Creation gives every Profile its key (and a username); these tests start from the stripped
+    // state and add the key (and username) they need.
+    sqlx::query("DELETE FROM profile_signing_keys WHERE profile_id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    if username.is_none() {
+        sqlx::query("UPDATE profiles SET username = NULL WHERE id = $1")
+            .bind(id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
     Fixture {
         profile_id: ProfileId::new(id),
         nanoid,

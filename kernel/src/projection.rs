@@ -1,6 +1,6 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::{
-    Account, AccountEvent, AccountReport, AccountReportEvent, EventEnvelope, Metadata,
+    Account, AccountEvent, AccountId, AccountReport, AccountReportEvent, EventEnvelope, Metadata,
     MetadataEvent, MetadataId, Profile, ProfileEvent, ProfileId,
 };
 use crate::KernelError;
@@ -103,6 +103,18 @@ pub trait ProfileEventLog: Sync + Send + 'static {
         executor: &mut Self::Connection,
         from_seq_exclusive: i64,
         limit: i64,
+    ) -> impl Future<Output = error_stack::Result<Vec<SeqEvent<ProfileEvent, Profile>>, KernelError>>
+           + Send;
+
+    /// The **complete** event history (all versions, in version order per stream) of every Profile
+    /// stream that was created for, or transferred to, `account_id`. It does not depend on the
+    /// tailing window: reactivating an Account re-materializes its Profiles from it, however old
+    /// their events are. The caller folds each stream and keeps those still owned by the Account
+    /// (a stream transferred away again is returned too).
+    fn find_streams_touching_account(
+        &self,
+        executor: &mut Self::Connection,
+        account_id: &AccountId,
     ) -> impl Future<Output = error_stack::Result<Vec<SeqEvent<ProfileEvent, Profile>>, KernelError>>
            + Send;
 }

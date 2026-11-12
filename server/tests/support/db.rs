@@ -18,7 +18,7 @@ pub async fn truncate_tables() {
     const MAX_ATTEMPTS: usize = 5;
     for attempt in 1..=MAX_ATTEMPTS {
         let result = sqlx::query(
-            "TRUNCATE accounts, account_events, auth_accounts, auth_emumet_accounts, profiles, profile_events, metadatas, metadata_events, projection_checkpoints, auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities CASCADE",
+            "TRUNCATE accounts, account_events, auth_accounts, auth_emumet_accounts, profiles, profile_events, metadatas, metadata_events, projection_checkpoints, auth_hosts, follows, remote_accounts, images, signing_keys, outbox_activities, profile_signing_keys, profile_follows, profile_blocks, profile_mutes, profile_inbound_activities, profile_delivery_jobs, profile_delivery_attempts CASCADE",
         )
         .execute(&pool)
         .await;
@@ -41,7 +41,7 @@ pub async fn reset_test_data() {
     truncate_tables().await;
 }
 
-pub async fn count_remote_blocks_against_local_account(account_nanoid: &str) -> i64 {
+async fn connect(purpose: &str) -> sqlx::PgPool {
     dotenvy::dotenv().ok();
 
     let url = std::env::var("DATABASE_URL")
@@ -49,63 +49,102 @@ pub async fn count_remote_blocks_against_local_account(account_nanoid: &str) -> 
 
     validate_database_url(&url);
 
-    let pool = sqlx::PgPool::connect(&url)
+    sqlx::PgPool::connect(&url)
         .await
-        .expect("failed to connect to postgres for block assertion");
+        .unwrap_or_else(|e| panic!("failed to connect to postgres for {purpose}: {e}"))
+}
 
-    let count: i64 = sqlx::query_scalar(
-        r#"
-        SELECT COUNT(*) FROM blocks
-        WHERE blocker_remote_id IS NOT NULL
-          AND blocked_local_id = (SELECT id FROM accounts WHERE nanoid = $1)
-        "#,
+/// The nanoid of the (only) Profile of a personal Account: the path component of its actor URL.
+pub async fn profile_nanoid_of_account(account_nanoid: &str) -> String {
+    let pool = connect("profile lookup").await;
+    let nanoid: String = sqlx::query_scalar(
+        "SELECT p.nanoid FROM profiles p JOIN accounts a ON a.id = p.account_id WHERE a.nanoid = $1",
     )
     .bind(account_nanoid)
     .fetch_one(&pool)
     .await
-    .expect("failed to count remote-to-local blocks");
-
+    .expect("the Account must have a Profile");
     pool.close().await;
-    count
+    nanoid
 }
 
-/// Delivery state of the latest outbox row for the given account and activity
-/// type: `(delivered, attempted, has_error)` derived from the
-/// `delivered_at` / `attempted_at` / `error` columns.  Returns `None` when no
-/// matching row exists.
-pub async fn outbox_delivery_state(
-    account_nanoid: &str,
+/// State of the latest delivery job of the Profile for the given activity type:
+/// `(state, attempt_count)`. `None` when there is no such job.
+pub async fn delivery_job_state(
+    profile_nanoid: &str,
     activity_type: &str,
-) -> Option<(bool, bool, bool)> {
-    dotenvy::dotenv().ok();
-
-    let url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set for E2E tests (refusing to use default to avoid accidental data loss)");
-
-    validate_database_url(&url);
-
-    let pool = sqlx::PgPool::connect(&url)
-        .await
-        .expect("failed to connect to postgres for outbox assertion");
-
-    let row: Option<(bool, bool, bool)> = sqlx::query_as(
+) -> Option<(String, i32)> {
+    let pool = connect("delivery job assertion").await;
+    let row: Option<(String, i32)> = sqlx::query_as(
         r#"
-        SELECT delivered_at IS NOT NULL, attempted_at IS NOT NULL, error IS NOT NULL
-        FROM outbox_activities
-        WHERE account_id = (SELECT id FROM accounts WHERE nanoid = $1)
+        SELECT state, attempt_count
+        FROM profile_delivery_jobs
+        WHERE sender_profile_id = (SELECT id FROM profiles WHERE nanoid = $1)
           AND activity_type = $2
         ORDER BY id DESC
         LIMIT 1
         "#,
     )
-    .bind(account_nanoid)
+    .bind(profile_nanoid)
     .bind(activity_type)
     .fetch_optional(&pool)
     .await
-    .expect("failed to query outbox delivery state");
-
+    .expect("failed to query delivery job state");
     pool.close().await;
     row
+}
+
+/// Number of delivery jobs of the Profile (any state) for the given activity type.
+pub async fn delivery_job_count(profile_nanoid: &str, activity_type: &str) -> i64 {
+    let pool = connect("delivery job count").await;
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT count(*) FROM profile_delivery_jobs
+        WHERE sender_profile_id = (SELECT id FROM profiles WHERE nanoid = $1)
+          AND activity_type = $2
+        "#,
+    )
+    .bind(profile_nanoid)
+    .bind(activity_type)
+    .fetch_one(&pool)
+    .await
+    .expect("failed to count delivery jobs");
+    pool.close().await;
+    count
+}
+
+/// The active key of the Profile: `(key_id_uri, encrypted_private_key JSON, public_key_pem)`.
+pub async fn active_profile_key(profile_nanoid: &str) -> (String, serde_json::Value, String) {
+    let pool = connect("profile key lookup").await;
+    let row: (String, serde_json::Value, String) = sqlx::query_as(
+        r#"
+        SELECT k.key_id_uri, k.encrypted_private_key, k.public_key_pem
+        FROM profile_signing_keys k JOIN profiles p ON p.id = k.profile_id
+        WHERE p.nanoid = $1 AND k.revoked_at IS NULL
+        "#,
+    )
+    .bind(profile_nanoid)
+    .fetch_one(&pool)
+    .await
+    .expect("the Profile must have an active key");
+    pool.close().await;
+    row
+}
+
+/// Rows of the legacy Account federation tables (the cutover emptied them and nothing writes
+/// them any more).
+pub async fn legacy_federation_row_count() -> i64 {
+    let pool = connect("legacy table assertion").await;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM follows) + (SELECT count(*) FROM blocks) \
+         + (SELECT count(*) FROM mutes) + (SELECT count(*) FROM remote_accounts) \
+         + (SELECT count(*) FROM outbox_activities) + (SELECT count(*) FROM signing_keys)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("failed to count legacy rows");
+    pool.close().await;
+    count
 }
 
 fn validate_database_url(url: &str) {

@@ -7,7 +7,7 @@ use crate::schema::account::{
     CreateProfileRequest, GetAllAccountQuery, ProfileResponse, SetProfileUsernameRequest,
     UpdateAccountRequest,
 };
-use crate::schema::profile_username::validate_optional_username;
+use crate::schema::profile_username::{require_username, validate_optional_username};
 use application::dto::pagination::Pagination;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -105,11 +105,11 @@ pub(crate) async fn get_account_by_id(
 #[utoipa::path(
     post,
     path = "/api/v1/accounts",
-    description = "Create a new account with a generated signing key pair. `profile_username` is optional: a valid value is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards); omit it to keep the legacy behaviour.",
+    description = "Create a new account and its Profile. `profile_username` is REQUIRED (400 when omitted): it is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards) and is the acct name of the Profile's actor. The Profile's ActivityPub signing key is generated in the same transaction; no Account-level signing key exists.",
     request_body = CreateAccountRequest,
     responses(
         (status = 201, description = "Account created", body = AccountResponse),
-        (status = 400, description = "Invalid request (including a malformed or reserved profile_username)"),
+        (status = 400, description = "Invalid request (including a missing, malformed or reserved profile_username)"),
         (status = 409, description = "profile_username is already taken; nothing was created"),
     ),
     security(("bearer_auth" = [])),
@@ -122,7 +122,7 @@ pub(crate) async fn create_account(
 ) -> Result<(StatusCode, Json<crate::schema::account::AccountResponse>), ErrorStatus> {
     let auth_info = OidcAuthInfo::from(claims);
 
-    validate_optional_username(request.profile_username.as_deref())?;
+    let profile_username = require_username(request.profile_username.as_deref())?;
 
     if request.name.trim().is_empty() {
         return Err(ErrorStatus::from((
@@ -143,7 +143,6 @@ pub(crate) async fn create_account(
         .await
         .map_err(ErrorStatus::from)?;
 
-    let profile_username = request.profile_username.clone();
     let account = api
         .create_account_with_profile_username(
             auth_account_id.clone(),
@@ -206,12 +205,12 @@ pub(crate) async fn update_account_by_id(
 #[utoipa::path(
     post,
     path = "/api/v1/profiles",
-    description = "Create an organization-owned Profile. `username` is optional: a valid value is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards).",
+    description = "Create an organization-owned Profile. `username` is REQUIRED (400 when omitted): it is stored on the created Profile (unique across all Profiles including deleted ones, immutable afterwards). The Profile's ActivityPub signing key is generated in the same transaction.",
     params(("X-Organization-Id" = String, Header, description = "Organization account nanoid that owns the profile")),
     request_body = CreateProfileRequest,
     responses(
         (status = 201, body = ProfileResponse),
-        (status = 400, description = "Missing organization header or malformed/reserved username"),
+        (status = 400, description = "Missing organization header or missing/malformed/reserved username"),
         (status = 403, description = "Authenticated person is not an active organization member"),
         (status = 404, description = "Organization not found"),
         (status = 409, description = "username is already taken; nothing was created"),
@@ -232,9 +231,9 @@ pub(crate) async fn create_profile(
             format!("{ORGANIZATION_ID_HEADER} header is required"),
         ))
     })?;
-    validate_optional_username(request.username.as_deref())?;
+    let username = require_username(request.username.as_deref())?;
     let profile = api
-        .create_organization_profile(org_context, request.into_dto())
+        .create_organization_profile(org_context, request.into_dto(username))
         .await
         .map_err(ErrorStatus::from)?;
     Ok((StatusCode::CREATED, Json(profile.into())))
@@ -243,7 +242,7 @@ pub(crate) async fn create_profile(
 #[utoipa::path(
     post,
     path = "/api/v1/profiles/{profile_nanoid}/username",
-    description = "Set the username of a Profile that has none, exactly once. This is the only way to set a username after creation: there is no update API, a Profile that already has a username is refused with 409, and the username is unique across all Profiles (also deleted ones). Authorization: only the Profile's current owner (the owning personal Account, or an active member of the owning organization via X-Organization-Id). The username becomes the acct name of the Profile's future ActivityPub actor; the actor itself is not published before the P4 cutover.",
+    description = "Set the username of a Profile that has none, exactly once. This is the only way to set a username after creation: there is no update API, a Profile that already has a username is refused with 409, and the username is unique across all Profiles (also deleted ones). Authorization: only the Profile's current owner (the owning personal Account, or an active member of the owning organization via X-Organization-Id). The username is the acct name of the Profile's ActivityPub actor. Since the P4 cutover every Profile is created with a username, so this only applies to Profiles created before it (a Profile that already has one is refused with 409).",
     params(
         ("profile_nanoid" = String, Path, description = "Profile nanoid"),
         ("X-Organization-Id" = Option<String>, Header, description = "Organization account nanoid when the Profile is organization-owned"),

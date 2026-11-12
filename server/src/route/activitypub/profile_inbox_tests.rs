@@ -1,6 +1,6 @@
 //! Profile inbox over HTTP with signed requests and a real database (P3i).
 //!
-//! Every test runs in its own isolated database (production migrations + the P2 schema fixture)
+//! Every test runs in its own isolated database (all production migrations)
 //! and mounts the inbox on a test-only router, exactly the way P4 will mount it. Remote peers are
 //! fake actors whose keys / actor documents come from the test-mode caches.
 

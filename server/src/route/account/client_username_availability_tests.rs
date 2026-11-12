@@ -91,7 +91,16 @@ async fn create_account_with_username(
         .unwrap()
 }
 
-/// Creates an Account without a username and returns `(account nanoid, profile nanoid)`.
+async fn execute_with_bind(module: &AppModule, sql: &str, bind: &str) {
+    let mut executor = module.database_connection().connection().await.unwrap();
+    let con: &mut sqlx::PgConnection = &mut executor;
+    sqlx::query(sql).bind(bind).execute(con).await.unwrap();
+}
+
+/// An Account whose Profile has no username, as every Profile created before the P4 cutover (the
+/// creation API now requires a username): the Account is created with a username, which is then
+/// removed from both the event stream and the row, so that the one-time setter still applies.
+/// Returns `(account nanoid, profile nanoid)`.
 async fn create_unnamed_account(fixture: &Fixture) -> (String, String) {
     let name = format!("availability-unnamed-{}", uuid::Uuid::new_v4());
     let response = fixture
@@ -102,7 +111,14 @@ async fn create_unnamed_account(fixture: &Fixture) -> (String, String) {
             "/api/v1/accounts",
             &fixture.token,
             None,
-            Body::from(serde_json::json!({"name": name, "is_bot": false}).to_string()),
+            Body::from(
+                serde_json::json!({
+                    "name": name,
+                    "is_bot": false,
+                    "profile_username": unique_username(),
+                })
+                .to_string(),
+            ),
         ))
         .await
         .unwrap();
@@ -111,6 +127,20 @@ async fn create_unnamed_account(fixture: &Fixture) -> (String, String) {
         .as_str()
         .unwrap()
         .to_string();
+    execute_with_bind(
+        &fixture.module,
+        "UPDATE profile_events SET data = data - 'username' \
+         WHERE id = (SELECT p.id FROM profiles p JOIN accounts a ON a.id = p.account_id WHERE a.nanoid = $1)",
+        &account,
+    )
+    .await;
+    execute_with_bind(
+        &fixture.module,
+        "UPDATE profiles SET username = NULL \
+         WHERE account_id = (SELECT id FROM accounts WHERE nanoid = $1)",
+        &account,
+    )
+    .await;
     let profile = scalar_string(
         &fixture.module,
         "SELECT p.nanoid FROM profiles p JOIN accounts a ON a.id = p.account_id WHERE a.name = $1",

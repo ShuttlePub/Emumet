@@ -126,23 +126,34 @@ Iceshrimp のテストユーザー認証情報は `run-ap-e2e.sh` の出力か�
 
 ### テスト一覧
 
-| ID | テスト | 説明 |
-|----|--------|------|
-| S1 | `webfinger_resolves_account` | WebFinger アカウント解決 |
-| S2 | `actor_document_is_valid_activitypub` | Actor 文書 + publicKey |
-| S3 | `outbound_follow_sends_activity_to_remote_inbox` | Mock peer への Follow 配送 |
-| S4 | `inbound_follow_creates_follower_and_sends_accept` | Cavage 署名 Follow → followers 反映 |
-| S5 | `followers_and_following_collections_are_accurate` | コレクション整合性 |
-| S6 | `inbox_rejects_unsigned_requests` | 未署名リクエスト拒否 |
-| S7-S9 | `iceshrimp_full_federation_scenario` | クロスインスタンス連携統合: Iceshrimp → Emumet Follow → Emumet → Iceshrimp Follow → 署名付きCreate/Note配送 |
-| S7-S10 | `mastodon_full_federation_scenario` | クロスインスタンス連携統合 (Mastodon): Mastodon → Emumet Follow → Emumet → Mastodon Follow → 署名付きCreate/Note配送 → 双方向 Undo(Follow) |
+連合は Profile 単位 (1 Profile = 1 actor, `{PUBLIC_BASE_URL}/ap/profiles/{nanoid}`) です。切替手順は [docs/profile-federation-cutover.md](docs/profile-federation-cutover.md)。
+
+| テスト | 説明 |
+|--------|------|
+| `webfinger_resolves_the_profile_actor_by_username` | username 基準の WebFinger (Account 名は 404) |
+| `actor_document_publishes_the_profile_key` | Profile actor 文書・公開鍵 (DB の鍵と一致) |
+| `retired_account_federation_surface_answers_gone` | `/ap/accounts/...`・署名 API・Account 単位 Follow 等は 410 |
+| `outbound_follow_delivers_a_follow_signed_with_the_profile_key` | Mock peer への Follow 配送、actor 文書の公開鍵で署名検証 |
+| `follow_by_acct_resolves_the_peer_over_webfinger` | `acct:` 指定の Follow (peer の WebFinger を実 HTTP で解決) |
+| `unfollow_delivers_undo_and_a_failing_peer_does_not_undo_the_unfollow` | Undo(Follow) 配送、peer 失敗でも unfollow は戻らず再試行待ち |
+| `inbound_follow_creates_a_follower_and_delivers_a_verifiable_accept` | Cavage 署名 Follow (実 HTTP で peer 鍵を取得) → followers・Accept 配送・重複・Undo |
+| `inbox_rejects_unsigned_requests` | 未署名リクエスト拒否 |
+| `inbox_refuses_to_fetch_keys_from_internal_hosts_directly_or_by_redirect` | 鍵取得の SSRF 対策 (内部 host への直接指定・redirect) |
+| `individual_block_detaches_relations_without_sending_an_activitypub_block` | 個別 block: 双方向解除 (Undo/Reject)、AP Block は送らない、解除しても復元しない |
+| `inbound_activitypub_block_is_acknowledged_and_changes_nothing` | 受信 Block は 202 で無変更 |
+| `mute_is_idempotent_per_target_and_changes_no_relation` | mute (409 重複、配送なし) |
+| `usernames_with_dot_underscore_and_hyphen_are_actors` | `.` `_` `-` を含む username |
+| `iceshrimp_full_federation_scenario` (S7-S10) | Iceshrimp → Emumet Follow → Emumet → Iceshrimp Follow → Profile 鍵で署名した Create/Note 配送 → 個別 block (Undo/Reject、AP Block なし) |
+| `mastodon_full_federation_scenario` (S7-S10) | Mastodon → Emumet Follow → Emumet → Mastodon Follow → Profile 鍵で署名した Create/Note 配送 → 双方向 Undo(Follow) |
+
+Create/Note の署名はサーバーに署名 API が無いため、テスト fixture (`support/profile_signer.rs`) が DB の Profile 鍵を master key password で復号して行います (配送 worker と同じ手順)。
 
 ### ファイル構成
 
 ```
 server/tests/
-├── e2e_ap_mock.rs          # S1-S6 Mock peer テスト
-├── e2e_ap_iceshrimp.rs     # S7-S9 Iceshrimp 連携テスト
+├── e2e_ap_mock.rs          # Mock peer テスト (Profile 連合)
+├── e2e_ap_iceshrimp.rs     # S7-S10 Iceshrimp 連携テスト
 ├── e2e_ap_mastodon.rs      # S7-S10 Mastodon 連携テスト
 └── support/
     ├── ap_peer.rs           # Mock AP peer + HTTP Signature

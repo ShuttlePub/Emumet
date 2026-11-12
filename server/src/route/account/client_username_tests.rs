@@ -30,6 +30,27 @@ async fn scalar_string(module: &AppModule, sql: &str, bind: &str) -> Option<Stri
         .flatten()
 }
 
+/// Turns a Profile into the pre-cutover shape (no username anywhere: neither in the projection nor
+/// in its events), so the one-time setter can be exercised. Every Profile created through the API
+/// has a username since the P4 cutover.
+async fn strip_profile_username(module: &AppModule, profile_nanoid: &str) {
+    let mut executor = module.database_connection().connection().await.unwrap();
+    let con: &mut sqlx::PgConnection = &mut executor;
+    sqlx::query(
+        "UPDATE profile_events SET data = data - 'username' \
+         WHERE id = (SELECT id FROM profiles WHERE nanoid = $1)",
+    )
+    .bind(profile_nanoid)
+    .execute(&mut *con)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE profiles SET username = NULL WHERE nanoid = $1")
+        .bind(profile_nanoid)
+        .execute(con)
+        .await
+        .unwrap();
+}
+
 async fn scalar_i64(module: &AppModule, sql: &str, bind: &str) -> i64 {
     let mut executor = module.database_connection().connection().await.unwrap();
     let con: &mut sqlx::PgConnection = &mut executor;
@@ -240,21 +261,35 @@ async fn create_profile_with_username_stores_and_returns_it() {
         "rejected usernames must not create a Profile"
     );
 
-    // The legacy payload keeps working and reads back as an unset username.
-    let response = fixture
-        .router
-        .clone()
-        .oneshot(request(
-            "POST",
-            "/api/v1/profiles",
-            &fixture.token,
-            Some(&organization_nanoid),
-            Body::from(r#"{"display_name":"Legacy payload"}"#),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
-    assert!(response_json(response).await["username"].is_null());
+    // The username is required (P4): omitted or null is a validation error and creates nothing.
+    for body in [
+        r#"{"display_name":"No username"}"#,
+        r#"{"display_name":"Null username","username":null}"#,
+    ] {
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/v1/profiles",
+                &fixture.token,
+                Some(&organization_nanoid),
+                Body::from(body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+    }
+    assert_eq!(
+        scalar_i64(
+            &fixture.module,
+            "SELECT count(*) FROM profiles WHERE account_id = (SELECT id FROM accounts WHERE nanoid = $1)",
+            &organization_nanoid,
+        )
+        .await,
+        profiles_before,
+        "a missing username must not create a Profile"
+    );
 }
 
 #[test_with::env(DATABASE_URL)]
@@ -269,7 +304,7 @@ async fn owner_sets_username_once_and_cannot_change_it() {
     let response = post_account(
         &fixture,
         &fixture.token,
-        serde_json::json!({"name": name, "is_bot": false}),
+        serde_json::json!({"name": name, "is_bot": false, "profile_username": unique_username()}),
     )
     .await;
     assert_eq!(response.status(), StatusCode::CREATED);
@@ -280,6 +315,7 @@ async fn owner_sets_username_once_and_cannot_change_it() {
     )
     .await
     .unwrap();
+    strip_profile_username(&fixture.module, &profile_nanoid).await;
     let owner_auth_id = scalar_i64(
         &fixture.module,
         "SELECT auth_id FROM auth_emumet_accounts WHERE emumet_id = (SELECT id FROM accounts WHERE name = $1)",
@@ -352,7 +388,7 @@ async fn owner_sets_username_once_and_cannot_change_it() {
     let response = post_account(
         &fixture,
         &fixture.token,
-        serde_json::json!({"name": name2, "is_bot": false}),
+        serde_json::json!({"name": name2, "is_bot": false, "profile_username": unique_username()}),
     )
     .await;
     assert_eq!(response.status(), StatusCode::CREATED);
@@ -363,6 +399,7 @@ async fn owner_sets_username_once_and_cannot_change_it() {
     )
     .await
     .unwrap();
+    strip_profile_username(&fixture.module, &profile2).await;
     let response = post_username(&fixture, &fixture.token, None, &profile2, &username).await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert!(scalar_string(
@@ -389,7 +426,10 @@ async fn organization_member_sets_the_username_of_an_organization_profile() {
             "/api/v1/profiles",
             &fixture.token,
             Some(&organization_nanoid),
-            Body::from(r#"{"display_name":"No username yet"}"#),
+            Body::from(
+                serde_json::json!({"display_name":"No username yet","username":unique_username()})
+                    .to_string(),
+            ),
         ))
         .await
         .unwrap();
@@ -398,6 +438,7 @@ async fn organization_member_sets_the_username_of_an_organization_profile() {
         .as_str()
         .unwrap()
         .to_string();
+    strip_profile_username(&fixture.module, &profile_nanoid).await;
     let username = unique_username();
 
     // Without the organization header the caller acts as a person (Keto denies everybody here).

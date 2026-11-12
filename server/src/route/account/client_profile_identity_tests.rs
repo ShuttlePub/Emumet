@@ -103,6 +103,32 @@ async fn create_account(
     (reply.json["id"].as_str().unwrap().to_string(), reply.json)
 }
 
+/// An Account whose Profile has no username, as every Profile created before the P4 cutover (the
+/// API now requires a username): the username is removed from both the event stream and the row, so
+/// the one-time setter still works on it. The returned body is the reply of the creation call with
+/// `profile_username` shown as the stored state (null).
+async fn create_account_without_username(
+    fixture: &Fixture,
+    token: &str,
+) -> (String, serde_json::Value) {
+    let (nanoid, mut created) = create_account(fixture, token, Some(&unique_username())).await;
+    execute(
+        &fixture.module,
+        "UPDATE profile_events SET data = data - 'username' \
+         WHERE id = (SELECT id FROM profiles WHERE account_id = (SELECT id FROM accounts WHERE nanoid = $1))",
+        &nanoid,
+    )
+    .await;
+    execute(
+        &fixture.module,
+        "UPDATE profiles SET username = NULL WHERE account_id = (SELECT id FROM accounts WHERE nanoid = $1)",
+        &nanoid,
+    )
+    .await;
+    created["profile_username"] = serde_json::Value::Null;
+    (nanoid, created)
+}
+
 async fn owner_auth_id(module: &AppModule, account_nanoid: &str) -> String {
     let mut executor = module.database_connection().connection().await.unwrap();
     let con: &mut sqlx::PgConnection = &mut executor;
@@ -169,7 +195,7 @@ async fn every_account_response_route_returns_the_profile_identity() {
     assert!(created["moderation"].is_null());
     assert!(created["fields"].is_array());
     assert!(created["created_at"].is_string());
-    let (without_name, created) = create_account(&fixture, &token, None).await;
+    let (without_name, created) = create_account_without_username(&fixture, &token).await;
     let profile_without_name = profile_nanoid_of_account(&fixture.module, &without_name).await;
     assert_identity(&created, &profile_without_name, None);
 
@@ -330,7 +356,7 @@ async fn deactivated_suspended_and_banned_accounts_keep_their_existing_visibilit
     let (active, _) = create_account(&fixture, &token, Some(&unique_username())).await;
     let (deactivated, _) = create_account(&fixture, &token, Some(&unique_username())).await;
     let (suspended, _) = create_account(&fixture, &token, Some(&unique_username())).await;
-    let (banned, _) = create_account(&fixture, &token, None).await;
+    let (banned, _) = create_account_without_username(&fixture, &token).await;
 
     // Deactivation is projected asynchronously by the tailing projector, which these route tests do
     // not run; apply the projection state it produces (deleted_at) directly.
@@ -468,17 +494,20 @@ async fn organization_with_several_profiles_is_described_by_the_lowest_profile_i
     let keto = keto_with_writes().await;
     let fixture = fixture(&keto.uri(), Some(OrgRole::Member)).await;
     let organization = fixture.organization.nanoid().as_ref().to_string();
+    let mut usernames = Vec::new();
     for display_name in ["First", "Second", "Third"] {
+        let username = unique_username();
         let reply = send(
             &fixture,
             "POST",
             "/api/v1/profiles",
             &fixture.token,
             Some(&organization),
-            serde_json::json!({"display_name": display_name}),
+            serde_json::json!({"display_name": display_name, "username": username}),
         )
         .await;
         assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.raw);
+        usernames.push(username);
     }
     let lowest = scalar_string(
         &fixture.module,
@@ -514,7 +543,7 @@ async fn organization_with_several_profiles_is_described_by_the_lowest_profile_i
         )
         .await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.raw);
-        assert_identity(&reply.json, &lowest, None);
+        assert_identity(&reply.json, &lowest, Some(&usernames[0]));
         assert_eq!(
             reply.json["display_name"].as_str(),
             Some(lowest_display.as_str())
@@ -530,7 +559,7 @@ async fn organization_with_several_profiles_is_described_by_the_lowest_profile_i
     )
     .await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.raw);
-    assert_identity(&reply.json, &lowest, None);
+    assert_identity(&reply.json, &lowest, Some(&usernames[0]));
     assert_eq!(
         reply.json["display_name"].as_str(),
         Some(lowest_display.as_str())

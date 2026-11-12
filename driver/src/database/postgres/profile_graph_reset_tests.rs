@@ -1,9 +1,8 @@
-//! 旧連合データだけを初期化する fixture (02_reset_legacy_federation.sql) の実 DB テスト。
-//! 独立 DB で、初期化の前後に対象外データが一切変わらないことを照合する。
+//! 旧連合データだけを初期化する本番 migration (20261120000002_reset_legacy_federation.sql) の実 DB テスト。
+//! 独立 DB で「初期化直前の DB に旧データを入れ、残りの本番 migration を適用する」実切替を再現し、
+//! 初期化の前後に対象外データが一切変わらないことを照合する。
 
-use super::profile_graph_test_support::{
-    seed_personal_profile, IsolatedDatabase, RESET_SQL, SCHEMA_SQL,
-};
+use super::profile_graph_test_support::{seed_personal_profile, IsolatedDatabase, RESET_SQL};
 use super::PostgresDatabase;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::repository::{
@@ -19,7 +18,7 @@ use sqlx::{Executor, Pool, Postgres};
 use std::collections::BTreeMap;
 use time::OffsetDateTime;
 
-/// P4 へ渡す初期化対象。fixture の TRUNCATE と一致していなければならない。
+/// 初期化対象。migration の TRUNCATE と一致していなければならない。
 const RESET_TARGETS: [&str; 6] = [
     "follows",
     "blocks",
@@ -44,7 +43,8 @@ async fn table_names(pool: &Pool<Postgres>) -> Vec<String> {
 async fn retained_snapshot(pool: &Pool<Postgres>) -> Snapshot {
     let mut snapshot = Snapshot::new();
     for table in table_names(pool).await {
-        if RESET_TARGETS.contains(&table.as_str()) || table == LEDGER {
+        if RESET_TARGETS.contains(&table.as_str()) || table == LEDGER || table == "_sqlx_migrations"
+        {
             continue;
         }
         let (count, digest): (i64, String) = sqlx::query_as(&format!(
@@ -244,7 +244,16 @@ async fn seed_retained(
             .await
             .unwrap();
     }
+    assign_usernames(pool).await;
     account
+}
+
+/// 切替の前提 (全 Profile が username 設定済み) を満たす。
+async fn assign_usernames(pool: &Pool<Postgres>) {
+    sqlx::query("UPDATE profiles SET username = 'seed-' || id WHERE username IS NULL")
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 fn executable_sql(sql: &str) -> String {
@@ -259,7 +268,7 @@ fn executable_sql(sql: &str) -> String {
 #[tokio::test]
 async fn reset_clears_only_legacy_federation_data() {
     kernel::ensure_generator_initialized();
-    let iso = IsolatedDatabase::create().await;
+    let iso = IsolatedDatabase::create_before_reset().await;
     let account = seed_retained(&iso.database, &iso.pool, true).await;
     seed_legacy_federation(&iso.pool, account).await;
     for table in RESET_TARGETS {
@@ -290,36 +299,147 @@ async fn reset_clears_only_legacy_federation_data() {
     for table in RESET_TARGETS {
         assert_eq!(count(&iso.pool, table).await, 0, "{table} must be emptied");
     }
+    // `apply_reset` applies every remaining production migration, so migrations numbered after the
+    // reset (new tables of later features) may add tables. Each table that existed before must be
+    // unchanged; a table added by a later migration starts empty.
     let after = retained_snapshot(&iso.pool).await;
-    assert_eq!(before, after, "no retained table may change");
+    let after_existing: Snapshot = after
+        .iter()
+        .filter(|(table, _)| before.contains_key(*table))
+        .map(|(table, state)| (table.clone(), state.clone()))
+        .collect();
+    assert_eq!(before, after_existing, "no retained table may change");
+    for (table, (rows, _)) in after.iter().filter(|(t, _)| !before.contains_key(*t)) {
+        assert_eq!(
+            *rows, 0,
+            "{table} was added by a later migration and starts empty"
+        );
+    }
     assert_eq!(count(&iso.pool, LEDGER).await, 1);
 }
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn reset_runs_before_the_new_schema_exists() {
+async fn cutover_is_refused_while_a_profile_has_no_username() {
     kernel::ensure_generator_initialized();
-    let iso = IsolatedDatabase::create_legacy().await;
-    let account = seed_retained(&iso.database, &iso.pool, false).await;
+    let iso = IsolatedDatabase::create_before_reset().await;
+    let account = seed_retained(&iso.database, &iso.pool, true).await;
     seed_legacy_federation(&iso.pool, account).await;
-    let before = retained_snapshot(&iso.pool).await;
+    let (_, unnamed) = seed_personal_profile(&iso.database).await;
+    let before_retained = retained_snapshot(&iso.pool).await;
+    let before_legacy: Vec<i64> = {
+        let mut counts = Vec::new();
+        for table in RESET_TARGETS {
+            counts.push(count(&iso.pool, table).await);
+        }
+        counts
+    };
+    assert!(before_legacy.iter().all(|c| *c > 0));
 
+    let refused = iso.try_apply_reset().await;
+    let message = format!(
+        "{:?}",
+        refused.expect_err("a Profile without username must refuse")
+    );
+    assert!(
+        message.contains("no username"),
+        "the refusal must say why: {message}"
+    );
+
+    // 拒否は何も変えない: 旧データも保持データも台帳も migration 記録も残らない。
+    let after_legacy: Vec<i64> = {
+        let mut counts = Vec::new();
+        for table in RESET_TARGETS {
+            counts.push(count(&iso.pool, table).await);
+        }
+        counts
+    };
+    assert_eq!(before_legacy, after_legacy);
+    assert_eq!(before_retained, retained_snapshot(&iso.pool).await);
+    assert!(!table_names(&iso.pool).await.contains(&LEDGER.to_string()));
+    let applied: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM _sqlx_migrations WHERE version = 20261120000002",
+    )
+    .fetch_one(&iso.pool)
+    .await
+    .unwrap();
+    assert_eq!(applied, 0);
+
+    // username を設定すれば切替できる。
+    sqlx::query("UPDATE profiles SET username = 'late-name' WHERE id = $1")
+        .bind(*unnamed.as_ref())
+        .execute(&iso.pool)
+        .await
+        .unwrap();
     iso.apply_reset().await;
     for table in RESET_TARGETS {
         assert_eq!(count(&iso.pool, table).await, 0);
     }
-    assert_eq!(before, retained_snapshot(&iso.pool).await);
+    assert_eq!(count(&iso.pool, LEDGER).await, 1);
+}
 
-    // 後から新 schema fixture を適用しても初期化は影響しない (適用順序に依存しない)。
-    iso.pool.execute(SCHEMA_SQL).await.unwrap();
-    assert_eq!(count(&iso.pool, "profile_follows").await, 0);
+/// 本番と同じ「P4 migration を 1 つも適用していない」DB で username 未設定の Profile が残っていると、
+/// 最初の P4 migration が拒否し、新 schema も作られず DB は切替前のまま (旧バイナリで復旧できる)。
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn precheck_refuses_before_any_p4_migration_is_applied() {
+    kernel::ensure_generator_initialized();
+    let iso = IsolatedDatabase::create_before_cutover().await;
+    let account = seed_retained(&iso.database, &iso.pool, false).await;
+    seed_legacy_federation(&iso.pool, account).await;
+    let (_, unnamed) = seed_personal_profile(&iso.database).await;
+    let before_retained = retained_snapshot(&iso.pool).await;
+    let tables_before = table_names(&iso.pool).await;
+
+    let message = format!(
+        "{:?}",
+        iso.try_apply_reset()
+            .await
+            .expect_err("a Profile without username must refuse the cutover")
+    );
+    assert!(
+        message.contains("no username"),
+        "the refusal must say why: {message}"
+    );
+
+    // 何も適用されない: 新 schema も台帳もなく、旧データ・保持データも変わらない。
+    assert_eq!(tables_before, table_names(&iso.pool).await);
+    assert!(!table_names(&iso.pool)
+        .await
+        .contains(&"profile_follows".to_string()));
+    let applied: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM _sqlx_migrations WHERE version >= 20261120000001",
+    )
+    .fetch_one(&iso.pool)
+    .await
+    .unwrap();
+    assert_eq!(applied, 0);
+    for table in RESET_TARGETS {
+        assert!(
+            count(&iso.pool, table).await > 0,
+            "{table} must be untouched"
+        );
+    }
+    assert_eq!(before_retained, retained_snapshot(&iso.pool).await);
+
+    // 旧バイナリ相当で username を設定すれば、そのまま切替できる。
+    sqlx::query("UPDATE profiles SET username = 'late-name' WHERE id = $1")
+        .bind(*unnamed.as_ref())
+        .execute(&iso.pool)
+        .await
+        .unwrap();
+    iso.apply_reset().await;
+    for table in RESET_TARGETS {
+        assert_eq!(count(&iso.pool, table).await, 0);
+    }
+    assert_eq!(count(&iso.pool, LEDGER).await, 1);
 }
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
 async fn reset_is_not_repeated() {
     kernel::ensure_generator_initialized();
-    let iso = IsolatedDatabase::create().await;
+    let iso = IsolatedDatabase::create_before_reset().await;
     let account = seed_retained(&iso.database, &iso.pool, true).await;
     seed_legacy_federation(&iso.pool, account).await;
     iso.apply_reset().await;
@@ -328,6 +448,7 @@ async fn reset_is_not_repeated() {
     seed_legacy_federation(&iso.pool, account).await;
     let (_, extra_profile) = seed_personal_profile(&iso.database).await;
     let _: ProfileId = extra_profile;
+    assign_usernames(&iso.pool).await;
     let before = retained_snapshot(&iso.pool).await;
     let legacy_counts: Vec<i64> = {
         let mut counts = Vec::new();
@@ -339,7 +460,8 @@ async fn reset_is_not_repeated() {
     assert!(legacy_counts.iter().all(|c| *c > 0));
 
     iso.apply_reset().await;
-    iso.apply_reset().await;
+    iso.rerun_reset_sql().await;
+    iso.rerun_reset_sql().await;
 
     let after_counts: Vec<i64> = {
         let mut counts = Vec::new();
@@ -357,7 +479,7 @@ async fn reset_is_not_repeated() {
 }
 
 #[test]
-fn reset_fixture_never_uses_cascade_and_lists_exact_targets() {
+fn reset_migration_never_uses_cascade_and_lists_exact_targets() {
     let sql = executable_sql(RESET_SQL);
     assert!(
         !sql.contains("cascade"),
@@ -408,7 +530,7 @@ async fn no_retained_table_references_a_reset_target() {
 #[tokio::test]
 async fn reset_fails_instead_of_cascading_into_a_dependent_table() {
     kernel::ensure_generator_initialized();
-    let iso = IsolatedDatabase::create().await;
+    let iso = IsolatedDatabase::create_before_reset().await;
     let account = seed_retained(&iso.database, &iso.pool, false).await;
     seed_legacy_federation(&iso.pool, account).await;
     iso.pool
@@ -428,7 +550,7 @@ async fn reset_fails_instead_of_cascading_into_a_dependent_table() {
         .unwrap();
     let before_legacy = count(&iso.pool, "follows").await;
 
-    assert!(iso.pool.execute(RESET_SQL).await.is_err());
+    assert!(iso.try_apply_reset().await.is_err());
 
     // 失敗は全体が rollback され、何も消えず、台帳にも残らない。
     assert_eq!(count(&iso.pool, "future_dependent").await, 1);

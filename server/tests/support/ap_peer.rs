@@ -21,6 +21,10 @@ pub struct ApPeer {
 pub struct ReceivedActivity {
     pub body: serde_json::Value,
     pub headers: Vec<(String, String)>,
+    /// The exact request bytes (the HTTP Signature digest covers them).
+    pub raw_body: Vec<u8>,
+    /// The request URL as the peer saw it.
+    pub url: String,
 }
 
 fn generate_rsa_keypair_bytes() -> (Vec<u8>, String) {
@@ -124,6 +128,8 @@ impl ApPeer {
             .respond_with(move |req: &Request| {
                 let act = ReceivedActivity {
                     body: req.body_json().unwrap_or(serde_json::Value::Null),
+                    raw_body: req.body.clone(),
+                    url: req.url.to_string(),
                     headers: req
                         .headers
                         .iter()

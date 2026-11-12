@@ -1,20 +1,10 @@
-//! Profile identity / relationship / domain-controls contract schemas (E8).
-//!
-//! **Contract only.** The routes that use these schemas are described in OpenAPI
-//! but are NOT mounted on the production root router; storage and relationship
-//! processing arrive in later units (P1, P2, P3o/P3i, D8P, D8G, D8R) and the
-//! production mount happens in P4. All external IDs are nanoids.
-//!
-//! Nothing constructs or reads these types yet (they only feed OpenAPI generation), hence the
-//! module-wide `dead_code` allowance, to be dropped once P1/P2/D8P implement the handlers.
-#![allow(dead_code)]
+//! Profile identity / relationship / domain-controls schemas (E8 contract, served since the P4
+//! cutover except domain-controls, which stay unmounted until D8R). All external IDs are nanoids.
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// Request to follow a target from a Profile.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateProfileFollowRequest {
@@ -23,8 +13,6 @@ pub struct CreateProfileFollowRequest {
     pub target: String,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// Lifecycle state of a Profile follow.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -35,8 +23,6 @@ pub enum ProfileFollowState {
     Accepted,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// A Profile-scoped follow relationship (the Profile is the follower).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileFollowResponse {
@@ -51,8 +37,6 @@ pub struct ProfileFollowResponse {
     pub created_at: OffsetDateTime,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// Profiles/actors followed by a Profile (the "following" list).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileFollowListResponse {
@@ -61,8 +45,6 @@ pub struct ProfileFollowListResponse {
     pub next_cursor: Option<String>,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// Reference to a follower or target actor, local or remote.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileActorRef {
@@ -73,8 +55,6 @@ pub struct ProfileActorRef {
     pub profile_id: Option<String>,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// Whether an actor lives on this server or on a remote server.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -85,8 +65,6 @@ pub enum ProfileActorKind {
     Remote,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// A follow relationship in which the Profile is the followed party (the follower is the actor).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileFollowerResponse {
@@ -101,8 +79,6 @@ pub struct ProfileFollowerResponse {
     pub created_at: OffsetDateTime,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// Actors following a Profile (the "followers" list).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileFollowerListResponse {
@@ -111,8 +87,6 @@ pub struct ProfileFollowerListResponse {
     pub next_cursor: Option<String>,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// Request to block or mute one target (individual actor) from a Profile.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateProfileRelationRequest {
@@ -120,10 +94,8 @@ pub struct CreateProfileRelationRequest {
     pub target: String,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// Kind of individual (non-domain) relation setting.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileRelationKind {
     /// Suppress display only; existing relationships are kept.
@@ -133,8 +105,6 @@ pub enum ProfileRelationKind {
     Block,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
-///
 /// An individual block or mute setting owned by one Profile.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileRelationResponse {
@@ -149,7 +119,6 @@ pub struct ProfileRelationResponse {
     pub created_at: OffsetDateTime,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); handlers answer 501.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileRelationListResponse {
     pub items: Vec<ProfileRelationResponse>,
@@ -157,7 +126,7 @@ pub struct ProfileRelationListResponse {
     pub next_cursor: Option<String>,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).
+/// Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.
 ///
 /// Treatment applied to every actor whose canonical actor-ID host equals the domain.
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -170,7 +139,7 @@ pub enum DomainControlMode {
     Block,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).
+/// Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.
 ///
 /// A Profile x exact-match domain control.
 ///
@@ -192,13 +161,13 @@ pub struct DomainControlResponse {
     pub updated_at: OffsetDateTime,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).
+/// Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DomainControlListResponse {
     pub items: Vec<DomainControlResponse>,
 }
 
-/// CONTRACT ONLY: not mounted on the production router (mounted in P4 at the earliest); implemented by D8P (handlers are real but only mounted in tests).
+/// Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.
 ///
 /// Create or replace the control for one domain.
 #[derive(Debug, Deserialize, ToSchema)]

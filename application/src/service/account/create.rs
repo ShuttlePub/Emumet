@@ -1,5 +1,5 @@
 use crate::dto::account::{AccountDto, CreateAccountDto};
-use crate::signing_key::CreateSigningKeyUseCase;
+use crate::profile_signing_key::CreateProfileSigningKeyUseCase;
 use error_stack::Report;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{
@@ -15,7 +15,7 @@ use kernel::interfaces::read_model::{
 };
 use kernel::interfaces::repository::{
     AggregateRepository, DependOnAccountRepository, DependOnProfileRepository,
-    DependOnSigningKeyRepository,
+    DependOnProfileSigningKeyRepository,
 };
 use kernel::prelude::entity::{
     Account, AccountId, AccountIsBot, AccountName, AuthAccountId, Nanoid, Profile,
@@ -36,28 +36,23 @@ pub trait CreateAccountUseCase:
     + DependOnPasswordProvider
     + DependOnSigningKeyGenerator
     + DependOnPermissionWriter
-    + DependOnSigningKeyRepository
+    + DependOnProfileSigningKeyRepository
     + DependOnPublicBaseUrl
     + DependOnTransactionManager
 {
-    fn create_account(
-        &self,
-        auth_account_id: AuthAccountId,
-        dto: CreateAccountDto,
-    ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send + '_ {
-        self.create_account_with_profile_username(auth_account_id, dto, None)
-    }
-
-    /// Creates the Account and its Profile; a given `profile_username` is stored on the Profile in
-    /// the same transaction (duplicate username rolls the whole creation back with a 409-class error).
+    /// Creates the Account and its Profile. The Profile's `profile_username` is required (P4):
+    /// it is validated before any side effect and stored on the Profile in the same transaction
+    /// (a duplicate username rolls the whole creation back with a 409-class error). The Profile's
+    /// actor signing key is generated in that transaction too, so a Profile never exists without
+    /// one. No Account-level signing key is created any more.
     fn create_account_with_profile_username(
         &self,
         auth_account_id: AuthAccountId,
         dto: CreateAccountDto,
-        profile_username: Option<String>,
+        profile_username: String,
     ) -> impl Future<Output = error_stack::Result<AccountDto, KernelError>> + Send + '_ {
         async move {
-            let profile_username = profile_username.map(ProfileUsername::parse).transpose()?;
+            let profile_username = Some(ProfileUsername::parse(profile_username)?);
             let account_name = AccountName::new(dto.name);
             let account_is_bot = AccountIsBot::new(dto.is_bot);
             let display_name = ProfileDisplayName::new(account_name.as_ref().to_string());
@@ -128,10 +123,10 @@ pub trait CreateAccountUseCase:
                             return Err(e);
                         }
 
-                        deps.create(
+                        deps.create_profile_signing_key(
                             executor,
-                            account.id().clone(),
-                            account.nanoid(),
+                            profile.id().clone(),
+                            profile.nanoid(),
                             SigningAlgorithm::Rsa2048,
                         )
                         .await?;
@@ -166,7 +161,7 @@ impl<T> CreateAccountUseCase for T where
         + DependOnPasswordProvider
         + DependOnSigningKeyGenerator
         + DependOnPermissionWriter
-        + DependOnSigningKeyRepository
+        + DependOnProfileSigningKeyRepository
         + DependOnPublicBaseUrl
         + DependOnTransactionManager
 {
