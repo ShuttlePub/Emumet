@@ -5,6 +5,8 @@ mod block;
 mod event;
 mod follow;
 mod image;
+#[cfg(feature = "test-utils")]
+mod log_capture;
 mod metadata;
 mod mute;
 mod profile;
@@ -17,6 +19,8 @@ pub use self::block::*;
 pub use self::event::*;
 pub use self::follow::*;
 pub use self::image::*;
+#[cfg(feature = "test-utils")]
+pub use self::log_capture::LogCapture;
 pub use self::metadata::*;
 pub use self::mute::*;
 pub use self::profile::*;

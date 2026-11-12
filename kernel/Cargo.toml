@@ -22,12 +22,14 @@ futures = { version = "0.3", default-features = false, features = ["alloc"] }
 error-stack = { workspace = true }
 
 utoipa = { version = "5.4.0", optional = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 
 [features]
 interfaces = []
 prelude = []
 default = ["prelude", "interfaces"]
-test-utils = []
+test-utils = ["dep:tracing", "dep:tracing-subscriber"]
 openapi = ["dep:utoipa"]
 
 [dev-dependencies]

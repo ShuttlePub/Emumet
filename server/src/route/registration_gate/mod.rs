@@ -53,6 +53,10 @@ impl AdminRegistrationGateRouter for Router<AppModule> {
 }
 
 #[cfg(test)]
+mod log_leak_tests;
+#[cfg(test)]
+mod shutdown_tests;
+#[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;

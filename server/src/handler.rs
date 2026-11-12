@@ -249,6 +249,15 @@ impl AppModule {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_enforcement_probe(
+        mut self,
+        probe: driver::registration_enforcement_probe::HttpKratosEnforcementProbe,
+    ) -> Self {
+        self.enforcement_probe = probe;
+        self
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_webhook_sender(mut self, webhook_sender: HttpWebhookSender) -> Self {
         self.webhook_sender = webhook_sender;
         self
