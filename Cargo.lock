@@ -2349,6 +2349,8 @@ dependencies = [
  "serde",
  "serde_json",
  "time",
+ "tracing",
+ "tracing-subscriber",
  "url",
  "utoipa",
  "vodca",

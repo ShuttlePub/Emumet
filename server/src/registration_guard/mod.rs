@@ -43,12 +43,12 @@ enum FlowType {
     Api,
 }
 
-trait GuardService: Clone + Send + Sync + 'static {
+pub(crate) trait GuardService: Clone + Send + Sync + 'static {
     fn check(&self, context: HookContext) -> impl Future<Output = RegistrationVerdict> + Send;
 }
 
 #[derive(Clone)]
-struct GuardApi(Arc<crate::handler::AppModule>);
+pub(crate) struct GuardApi(pub(crate) Arc<crate::handler::AppModule>);
 impl GuardService for GuardApi {
     async fn check(&self, context: HookContext) -> RegistrationVerdict {
         if kernel::interfaces::repository::EnforcementProbeId::is_reserved_email(&context.email) {
@@ -118,7 +118,7 @@ fn denied(temporary: bool) -> Response {
         .into_response()
 }
 
-fn router<S: GuardService>(config: GuardConfig, service: S) -> Router {
+pub(crate) fn router<S: GuardService>(config: GuardConfig, service: S) -> Router {
     Router::new()
         .route("/registration/pre-persist", any(handle::<S>))
         .fallback(|| async { denied(false) })
@@ -251,3 +251,5 @@ pub fn spawn_monitor(module: Arc<crate::handler::AppModule>) -> GuardShutdown {
     tokio::spawn(probe::run(module, rx));
     GuardShutdown { tx }
 }
+#[cfg(test)]
+mod probe_worker_tests;

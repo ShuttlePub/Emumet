@@ -142,7 +142,14 @@ async fn main() -> Result<(), StackTrace> {
         shutdown.trigger();
     }
     profile_delivery_shutdown.trigger();
-    webhook_shutdown.trigger();
+    // Returning right after the trigger drops the runtime and cancels an in-flight delivery between
+    // the send and recording its result; the event would then be sent again after the lease expires.
+    if !webhook_shutdown
+        .stop_and_wait(webhook_worker::STOP_GRACE)
+        .await
+    {
+        tracing::warn!("registration gate webhook worker did not stop in time");
+    }
 
     Ok(())
 }

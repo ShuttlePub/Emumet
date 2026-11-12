@@ -12,15 +12,27 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
+/// How long process shutdown waits for in-flight deliveries to be recorded. A sender's total
+/// timeout is 15s, so an in-flight send always finishes (and its result is recorded) within this.
+pub const STOP_GRACE: Duration = Duration::from_secs(20);
+
 /// Cooperative shutdown handle for the webhook delivery worker.
-#[derive(Clone)]
 pub struct WebhookShutdown {
     tx: watch::Sender<bool>,
+    handle: tokio::task::JoinHandle<()>,
 }
 
 impl WebhookShutdown {
     pub fn trigger(&self) {
         let _ = self.tx.send(true);
+    }
+
+    /// Requests a stop and waits (at most `grace`) for the worker to finish its in-flight
+    /// deliveries, so that a send that already reached the receiver is also recorded and is not
+    /// sent again after a restart. Returns whether the worker stopped within `grace`.
+    pub async fn stop_and_wait(self, grace: Duration) -> bool {
+        self.trigger();
+        tokio::time::timeout(grace, self.handle).await.is_ok()
     }
 }
 
@@ -80,11 +92,15 @@ pub fn spawn(module: Arc<AppModule>) -> WebhookShutdown {
         }
     }
     let (tx, rx) = watch::channel(false);
-    tokio::spawn(run(module, poll_interval_from_env(), rx));
-    WebhookShutdown { tx }
+    let handle = tokio::spawn(run(module, poll_interval_from_env(), rx));
+    WebhookShutdown { tx, handle }
 }
 
-async fn run(module: Arc<AppModule>, interval: Duration, mut shutdown: watch::Receiver<bool>) {
+pub(crate) async fn run(
+    module: Arc<AppModule>,
+    interval: Duration,
+    mut shutdown: watch::Receiver<bool>,
+) {
     let worker_id = Arc::new(format!("{}-{}", std::process::id(), uuid::Uuid::new_v4()));
     let policy = Arc::new(WebhookDeliveryPolicy::default());
     // 送信先ごとの処理中ガード: サイクルを重ねて起動しても同じ送信先は同時に 1 つだけ処理される。

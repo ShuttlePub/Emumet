@@ -2,6 +2,7 @@
 //! fixture 化)・実 HTTP 経路 (wiremock) ・SMTP の実送信経路 (ローカル SMTP 模擬)。
 //! 外部ネットワークを使うのは `#[ignore]` の live テストだけ (README / docs 参照)。
 
+mod log_leak;
 mod smtp_mock;
 
 use super::config::{secret_fingerprint, ProcessEnv, ValueSource};

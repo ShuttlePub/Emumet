@@ -13,16 +13,16 @@ use tower::ServiceExt;
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const GATE: &str = "/api/v1/admin/registration-gate";
-const WEBHOOK: &str = "/api/v1/admin/registration-gate/webhook";
-const ENDPOINTS: &str = "/api/v1/admin/registration-gate/webhook/endpoints";
-const SECRET: &str = "whsec_route_test_secret_0123456789";
-const SECRET_2: &str = "whsec_route_second_secret_9876543210";
+pub(super) const GATE: &str = "/api/v1/admin/registration-gate";
+pub(super) const WEBHOOK: &str = "/api/v1/admin/registration-gate/webhook";
+pub(super) const ENDPOINTS: &str = "/api/v1/admin/registration-gate/webhook/endpoints";
+pub(super) const SECRET: &str = "whsec_route_test_secret_0123456789";
+pub(super) const SECRET_2: &str = "whsec_route_second_secret_9876543210";
 const URL_SECRET_PATH: &str = "/very/secret/path/abcdefghij-a8f2";
 const URL: &str =
     "https://hooks.example.com:8443/very/secret/path/abcdefghij-a8f2?token=QueryTokZk9";
 
-struct InternalResolver;
+pub(super) struct InternalResolver;
 
 impl HostResolver for InternalResolver {
     fn resolve<'a>(
@@ -36,22 +36,22 @@ impl HostResolver for InternalResolver {
     }
 }
 
-fn key() -> AeadWebhookSecretCipher {
+pub(super) fn key() -> AeadWebhookSecretCipher {
     AeadWebhookSecretCipher::from_key_bytes([5u8; 32])
 }
 
 /// 環境変数の送信先なし + loopback を許す test 用の宛先検査。
-fn loopback_sender() -> HttpWebhookSender {
+pub(super) fn loopback_sender() -> HttpWebhookSender {
     HttpWebhookSender::disabled_allowing_insecure_loopback_destinations()
 }
 
 /// 名前が内部アドレスに解決される (本番と同じ厳格な宛先検査の) sender。
-fn blocked_env_sender() -> HttpWebhookSender {
+pub(super) fn blocked_env_sender() -> HttpWebhookSender {
     HttpWebhookSender::from_values(Some(URL), Some(SECRET), None)
         .with_resolver(Arc::new(InternalResolver))
 }
 
-async fn call(
+pub(super) async fn call(
     app: &GateTestApp,
     user: Option<&TestUser>,
     method: Method,
@@ -239,7 +239,9 @@ async fn misconfigured_environment_destination_is_listed_read_only_without_value
     }
 }
 
-async fn run_cycle(app: &GateTestApp) -> kernel::interfaces::repository::WebhookCycleReport {
+pub(super) async fn run_cycle(
+    app: &GateTestApp,
+) -> kernel::interfaces::repository::WebhookCycleReport {
     let jitter = || 1.0;
     let stop = || false;
     app.module

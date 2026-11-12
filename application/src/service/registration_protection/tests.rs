@@ -26,7 +26,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use time::Duration;
 
+mod cancel_sweep;
 mod enforcement;
+mod log_leak;
 
 static DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

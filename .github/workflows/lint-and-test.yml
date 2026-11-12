@@ -85,6 +85,44 @@ jobs:
             webhook-driver-db.log
             webhook-application-db.log
             webhook-server-db.log
+  hardening-db:
+    name: Registration gate log leak and worker shutdown with PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hardening_test
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 2s --health-timeout 2s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tracing secret-leak and worker shutdown tests against a real database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/hardening_test
+        run: |
+          set -o pipefail
+          cargo test -p driver log_leak | tee hardening-driver.log
+          cargo test -p application registration_protection::tests::log_leak | tee hardening-application-leak.log
+          cargo test -p application registration_protection::tests::cancel_sweep | tee hardening-application-sweep.log
+          cargo test -p server log_leak_tests -- --test-threads=4 | tee hardening-server-leak.log
+          cargo test -p server shutdown_tests -- --test-threads=4 | tee hardening-server-shutdown.log
+          cargo test -p server probe_worker_tests -- --test-threads=4 | tee hardening-server-probe.log
+          for log in hardening-*.log; do
+            # every test must really run: at least one passed, none failed, none ignored (skipped)
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"
+            ! grep -E 'test result: .* [1-9][0-9]* ignored;' "$log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardening-db
+          path: hardening-*.log
   openapi-check:
     name: Check openapi.json is up-to-date
     runs-on: ubuntu-latest
