@@ -21,6 +21,14 @@ pub trait ProfileBlockRepository: Sync + Send + 'static {
         target: &ProfileGraphActor,
     ) -> impl Future<Output = error_stack::Result<Option<ProfileBlock>, KernelError>> + Send;
 
+    /// owner 自身の設定を nanoid で引く (解除時に block の ID と相手を知るため)。
+    fn find_by_nanoid(
+        &self,
+        executor: &mut Self::Connection,
+        owner: &ProfileId,
+        nanoid: &Nanoid<ProfileBlock>,
+    ) -> impl Future<Output = error_stack::Result<Option<ProfileBlock>, KernelError>> + Send;
+
     /// owner が target を block しているか。受信・送信の拒否判定は両方向で呼ぶ。
     fn is_blocked(
         &self,

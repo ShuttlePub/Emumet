@@ -1,5 +1,5 @@
 //! Profile identity / relationship / domain-controls schemas (E8 contract, served since the P4
-//! cutover except domain-controls, which stay unmounted until D8R). All external IDs are nanoids.
+//! cutover; the domain-controls routes since D8R). All external IDs are nanoids.
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -126,8 +126,6 @@ pub struct ProfileRelationListResponse {
     pub next_cursor: Option<String>,
 }
 
-/// Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.
-///
 /// Treatment applied to every actor whose canonical actor-ID host equals the domain.
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -139,8 +137,6 @@ pub enum DomainControlMode {
     Block,
 }
 
-/// Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.
-///
 /// A Profile x exact-match domain control.
 ///
 /// Matching is exact: `example.com` does not cover `sub.example.com`.
@@ -161,14 +157,11 @@ pub struct DomainControlResponse {
     pub updated_at: OffsetDateTime,
 }
 
-/// Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DomainControlListResponse {
     pub items: Vec<DomainControlResponse>,
 }
 
-/// Domain-controls (D8P): implemented but NOT MOUNTED on the production router until D8R enables block writes.
-///
 /// Create or replace the control for one domain.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PutDomainControlRequest {

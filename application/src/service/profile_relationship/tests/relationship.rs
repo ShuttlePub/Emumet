@@ -457,7 +457,10 @@ async fn profiles_of_one_account_do_not_share_follows_blocks_or_mutes() {
         .follow_profile(&caller.auth, Some(&org_context), &second_nanoid, &target)
         .await
         .expect("the second Profile of the same Account is not affected by the first one's block");
-    assert!(env.jobs_of(&first).await.is_empty());
+    // The first Profile's block of the remote actor is announced with an AP Block; nothing else.
+    let first_jobs = env.jobs_of(&first).await;
+    assert_eq!(first_jobs.len(), 1);
+    assert_eq!(first_jobs[0].activity_type, DeliveryActivityType::Block);
     assert_eq!(env.jobs_of(&second).await.len(), 1);
     let list = env
         .module
@@ -625,7 +628,7 @@ async fn following_a_local_profile_completes_in_one_transaction_without_http() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn blocking_ends_both_follow_directions_and_tells_the_peer_without_an_ap_block() {
+async fn blocking_ends_both_follow_directions_and_tells_the_peer_with_undo_reject_and_block() {
     let env = Env::new().await;
     let alice = env.seed_user().await;
     env.create_key(&alice.profile_id, &alice.nanoid).await;
@@ -642,6 +645,7 @@ async fn blocking_ends_both_follow_directions_and_tells_the_peer_without_an_ap_b
         ProfileFollowId::new(id)
     };
     accept(&env, &outgoing_id).await;
+    env.mount_actor("/users/bob").await;
 
     let (incoming, incoming_activity) = seed_incoming_follow(&env, &alice, &bob_url).await;
 
@@ -671,7 +675,11 @@ async fn blocking_ends_both_follow_directions_and_tells_the_peer_without_an_ap_b
     };
     let undo = by_type(DeliveryActivityType::Undo);
     let reject = by_type(DeliveryActivityType::Reject);
-    assert_eq!((undo.len(), reject.len()), (1, 1));
+    let block_jobs = by_type(DeliveryActivityType::Block);
+    assert_eq!((undo.len(), reject.len(), block_jobs.len()), (1, 1, 1));
+    assert_eq!(body(block_jobs[0])["type"], "Block");
+    assert_eq!(body(block_jobs[0])["object"], bob_url);
+    assert_eq!(body(block_jobs[0])["actor"], actor_url(&alice));
     assert_eq!(body(undo[0])["object"]["id"], jobs[0].activity_id.as_str());
     assert_eq!(body(reject[0])["type"], "Reject");
     assert_eq!(body(reject[0])["object"]["id"], incoming_activity.as_str());
@@ -681,11 +689,8 @@ async fn blocking_ends_both_follow_directions_and_tells_the_peer_without_an_ap_b
         ProfileDeliveryJobState::Cancelled,
         "an unsent Accept is cancelled"
     );
-    for job in &jobs {
-        assert_ne!(body(job)["type"], "Block", "no AP Block is ever created");
-    }
 
-    // 配送すると peer には Undo と Reject だけが届く。
+    // 配送すると peer には Undo(Follow)・Reject(Follow) と Block が届く。
     deliver_all(&env).await;
     let mut types: Vec<String> = env
         .inbox_requests()
@@ -699,9 +704,16 @@ async fn blocking_ends_both_follow_directions_and_tells_the_peer_without_an_ap_b
         })
         .collect();
     types.sort();
-    assert_eq!(types, vec!["Reject".to_string(), "Undo".to_string()]);
+    assert_eq!(
+        types,
+        vec![
+            "Block".to_string(),
+            "Reject".to_string(),
+            "Undo".to_string()
+        ]
+    );
 
-    // 二重 block は 409。解除しても関係は復元せず、何も配送しない。
+    // 二重 block は 409。解除しても関係は復元せず、送った Block だけを Undo(Block) で取り消す。
     assert_eq!(
         context(
             env.module
@@ -715,6 +727,16 @@ async fn blocking_ends_both_follow_directions_and_tells_the_peer_without_an_ap_b
         .unblock_actor(&alice.auth, None, &alice.nanoid, &block.nanoid)
         .await
         .unwrap();
+    let after_unblock = env.jobs_of(&alice.profile_id).await;
+    assert_eq!(
+        after_unblock.len(),
+        job_count + 1,
+        "exactly one Undo(Block)"
+    );
+    let undo_block = after_unblock.last().unwrap();
+    assert_eq!(undo_block.activity_type, DeliveryActivityType::Undo);
+    assert_eq!(body(undo_block)["object"]["type"], "Block");
+    assert_eq!(body(undo_block)["object"]["id"], body(block_jobs[0])["id"]);
     assert_eq!(
         context(
             env.module
@@ -723,7 +745,7 @@ async fn blocking_ends_both_follow_directions_and_tells_the_peer_without_an_ap_b
         ),
         KernelError::NotFound
     );
-    assert_eq!(env.jobs_of(&alice.profile_id).await.len(), job_count);
+    assert_eq!(env.jobs_of(&alice.profile_id).await.len(), job_count + 1);
     assert_eq!(
         follow_row(&env, &outgoing.nanoid).await.1.as_deref(),
         Some("blocked"),
@@ -747,8 +769,11 @@ async fn blocking_before_the_follow_was_ever_sent_only_cancels_it() {
         .unwrap();
 
     let jobs = env.jobs_of(&alice.profile_id).await;
-    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs.len(), 2, "the unsent Follow and the Block");
+    assert_eq!(jobs[0].activity_type, DeliveryActivityType::Follow);
     assert_eq!(jobs[0].state, ProfileDeliveryJobState::Cancelled);
+    assert_eq!(jobs[1].activity_type, DeliveryActivityType::Block);
+    assert_eq!(jobs[1].state, ProfileDeliveryJobState::Pending);
 }
 
 #[test_with::env(DATABASE_URL)]

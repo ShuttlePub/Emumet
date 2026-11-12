@@ -10,14 +10,19 @@ const MAX_PAYLOAD_BYTES: usize = 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Fromln, AsRefln, Newln, Serialize, Deserialize)]
 pub struct ProfileDeliveryJobId(i64);
 
-/// 配送する Activity の種類 (D08 で Profile が送る関係 activity)。AP Block は送らない。
+/// 配送する Activity の種類 (D08 で Profile が送る関係 activity)。
+///
+/// `Block` は **個別 actor の block だけ**が送る (ユーザー決定。解除は元 Block を埋め込んだ `Undo`)。domain block は
+/// `Block` を送らない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DeliveryActivityType {
     Follow,
     Accept,
     Reject,
-    /// 元 Follow を参照する `Undo`。
+    /// 元の Follow または Block を埋め込む `Undo`。
     Undo,
+    /// 個別 actor の block (`object` = 相手 actor)。
+    Block,
 }
 
 impl DeliveryActivityType {
@@ -27,6 +32,7 @@ impl DeliveryActivityType {
             Self::Accept => "Accept",
             Self::Reject => "Reject",
             Self::Undo => "Undo",
+            Self::Block => "Block",
         }
     }
 
@@ -36,6 +42,7 @@ impl DeliveryActivityType {
             "Accept" => Ok(Self::Accept),
             "Reject" => Ok(Self::Reject),
             "Undo" => Ok(Self::Undo),
+            "Block" => Ok(Self::Block),
             other => Err(Report::new(KernelError::Internal)
                 .attach_printable(format!("unknown delivery activity type: {other}"))),
         }
@@ -290,6 +297,17 @@ pub struct ProfileDeliveryJob {
     pub cancel_reason: Option<String>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
+}
+
+/// 取消した瞬間の job の状態 (取消と同じ行ロックの下で読んだ値)。送信中 (`InFlight`) だった job は、取消後も
+/// `lease_expires_at` まで相手に着地し得るので、後始末はそれより後に始める。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CancelledProfileDeliveryJob {
+    pub id: ProfileDeliveryJobId,
+    pub previous_state: ProfileDeliveryJobState,
+    pub attempt_count: i32,
+    /// 取消の直前の lease の期限 (`InFlight` のときだけ)。取消は lease 列を消す。
+    pub lease_expires_at: Option<OffsetDateTime>,
 }
 
 /// 試行の履歴 1 行。

@@ -1,6 +1,7 @@
 //! Domain `block` applied to **Follow** (D8G): the shared decision helper and the lock convention.
 //!
-//! What is enforced (Follow only; posts are ShuttlePub's, bulk relation removal is D8R's):
+//! What is enforced (Follow only; posts are ShuttlePub's; bulk removal of existing relations is
+//! D8R's, see `profile_relationship::domain_block`):
 //!
 //! | place | decision |
 //! |---|---|
@@ -92,8 +93,9 @@ where
 }
 
 /// Write side of the lock convention: take the owning Profile's relationship lock in the
-/// transaction that creates / replaces / deletes a domain control. D8R's "apply a block and end
-/// the relations" transaction calls this (once, before reading or ending any relation).
+/// transaction that creates / replaces / deletes a domain control. D8R's block write goes through
+/// `profile_relationship::domain_block::lock_for_block_write`, which calls this for a plain write and
+/// takes the same lock together with the local counterparts for a block.
 pub async fn lock_profile_for_domain_control_write<T>(
     deps: &T,
     executor: &mut Conn<T>,

@@ -40,6 +40,7 @@ async fn table_names(pool: &Pool<Postgres>) -> Vec<String> {
 }
 
 /// 初期化対象と台帳を除く全テーブルの (行数, 内容の hash)。将来の新テーブルも自動的に対象外として検査される。
+/// NULL の列は hash から除く (後続の migration が足す nullable 列で、保持した行の内容が変わったことにしない)。
 async fn retained_snapshot(pool: &Pool<Postgres>) -> Snapshot {
     let mut snapshot = Snapshot::new();
     for table in table_names(pool).await {
@@ -48,7 +49,8 @@ async fn retained_snapshot(pool: &Pool<Postgres>) -> Snapshot {
             continue;
         }
         let (count, digest): (i64, String) = sqlx::query_as(&format!(
-            "SELECT count(*)::bigint, coalesce(md5(string_agg(t::text, '|' ORDER BY t::text)), '') \
+            "SELECT count(*)::bigint, coalesce(md5(string_agg(jsonb_strip_nulls(to_jsonb(t))::text, '|' \
+                                         ORDER BY jsonb_strip_nulls(to_jsonb(t))::text)), '') \
              FROM \"{table}\" t"
         ))
         .fetch_one(pool)
@@ -448,6 +450,16 @@ async fn reset_is_not_repeated() {
     seed_legacy_federation(&iso.pool, account).await;
     let (_, extra_profile) = seed_personal_profile(&iso.database).await;
     let _: ProfileId = extra_profile;
+    // The settle bound of an individual block (a later feature's table) is retained data: a repeated
+    // reset run must leave it alone (it is part of the retained snapshot compared below).
+    sqlx::query(
+        "INSERT INTO profile_block_settle (sender_profile_id, target_actor_url, settle_not_before) \
+         VALUES ($1, 'https://remote.example/users/bob', now() + interval '10 minutes')",
+    )
+    .bind(extra_profile.as_ref())
+    .execute(&iso.pool)
+    .await
+    .unwrap();
     assign_usernames(&iso.pool).await;
     let before = retained_snapshot(&iso.pool).await;
     let legacy_counts: Vec<i64> = {
@@ -475,6 +487,7 @@ async fn reset_is_not_repeated() {
         "a repeated run must not erase again"
     );
     assert_eq!(before, retained_snapshot(&iso.pool).await);
+    assert_eq!(count(&iso.pool, "profile_block_settle").await, 1);
     assert_eq!(count(&iso.pool, LEDGER).await, 1);
 }
 

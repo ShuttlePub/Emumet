@@ -1,8 +1,9 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::{
-    ClaimedProfileDeliveryJob, DeliveryActivityType, DeliveryAttemptOutcome, DeliveryClaimPolicy,
-    EnqueueOutcome, GraphActivityId, GraphInboxUrl, NewProfileDeliveryJob, ProfileDeliveryAttempt,
-    ProfileDeliveryJob, ProfileDeliveryJobId, ProfileFollowId, ProfileId, RecordAttemptOutcome,
+    CancelledProfileDeliveryJob, ClaimedProfileDeliveryJob, DeliveryActivityType,
+    DeliveryAttemptOutcome, DeliveryClaimPolicy, EnqueueOutcome, GraphActivityId, GraphInboxUrl,
+    NewProfileDeliveryJob, ProfileDeliveryAttempt, ProfileDeliveryJob, ProfileDeliveryJobId,
+    ProfileFollowId, ProfileId, RecordAttemptOutcome,
 };
 use crate::KernelError;
 use std::future::Future;
@@ -96,6 +97,57 @@ pub trait ProfileDeliveryJobRepository: Sync + Send + 'static {
         now: OffsetDateTime,
     ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
 
+    /// **transaction 内で呼ぶこと** (行ロックは transaction の終了まで保持される。取消の戻り値と、その後の下限の更新
+    /// (`raise_block_settle`) を同じ transaction にするため)。
+    ///
+    /// `cancel` と同じ取消を行い、取り消した job の取消直前の状態 (状態・試行回数・lease の期限) を返す。job の行を
+    /// ロックして読み直してから取り消すので、読取後に claim / renew で状態や期限が変わっても、返す値は取消の
+    /// 瞬間のもの。取り消せなかった (配送済み・失敗・取消済み) ときは `None`。
+    fn cancel_returning(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileDeliveryJobId,
+        reason: &str,
+        now: OffsetDateTime,
+    ) -> impl Future<Output = error_stack::Result<Option<CancelledProfileDeliveryJob>, KernelError>> + Send;
+
+    /// `cancel_undelivered_for_follow` と同じ取消を行い、取り消した各 job の取消直前の状態を返す
+    /// (`cancel_returning` と同じ規則)。
+    fn cancel_undelivered_for_follow_returning(
+        &self,
+        executor: &mut Self::Connection,
+        follow_id: &ProfileFollowId,
+        activity_type: DeliveryActivityType,
+        reason: &str,
+        now: OffsetDateTime,
+    ) -> impl Future<Output = error_stack::Result<Vec<CancelledProfileDeliveryJob>, KernelError>> + Send;
+
+    /// 個別 block の actor 対 (送信元 x 相手 actor) の操作を直列化する transaction 内の排他ロック
+    /// (transaction 終了で解放)。block / unblock は、この actor 対の job と下限を読み書きする前に取る。
+    fn lock_block_pair(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    /// actor 対の「Block / Undo(Block) をこれより前に送らない」下限 (無ければ `None`)。
+    fn find_block_settle(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+    ) -> impl Future<Output = error_stack::Result<Option<OffsetDateTime>, KernelError>> + Send;
+
+    /// 下限を `not_before` まで引き上げる (既存値との `GREATEST`。単調非減少で、短縮されない)。更新後の値を返す。
+    fn raise_block_settle(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+        not_before: OffsetDateTime,
+    ) -> impl Future<Output = error_stack::Result<OffsetDateTime, KernelError>> + Send;
+
     /// `follow_id` に紐づく未配送の `activity_type` の job をまとめて取り消す。取り消した件数を返す。
     /// 例: unfollow 時に未送信の Follow job を取り消す。
     fn cancel_undelivered_for_follow(
@@ -120,6 +172,25 @@ pub trait ProfileDeliveryJobRepository: Sync + Send + 'static {
         activity_id: &GraphActivityId,
         target_inbox: &GraphInboxUrl,
     ) -> impl Future<Output = error_stack::Result<Option<ProfileDeliveryJob>, KernelError>> + Send;
+
+    /// 送信元と activity ID が一致する job を古い順に返す (宛先 inbox・状態は問わない)。個別 block の `Block` job を
+    /// block から引く (activity ID が block ID から決まる) ために使う。
+    fn find_by_activity(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        activity_id: &GraphActivityId,
+    ) -> impl Future<Output = error_stack::Result<Vec<ProfileDeliveryJob>, KernelError>> + Send;
+
+    /// 送信元の、ある相手 actor (`target_actor_url`) との個別 block に関する job (`Block` と、`Block` を埋め込んだ
+    /// `Undo`) を ID 昇順 (作成順) で返す。状態は問わない。block / unblock を繰り返したとき、相手側から見て
+    /// 最新の意思が勝つよう、同じ actor 対の未配送 job を取り消し、相手側に残り得る block を判断するために使う。
+    fn list_block_pair_jobs(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+    ) -> impl Future<Output = error_stack::Result<Vec<ProfileDeliveryJob>, KernelError>> + Send;
 
     /// `follow_id` に紐づく `activity_type` の job を古い順に返す (状態は問わない。終端状態を含む)。
     /// 関係の終了時に、既に予約済みの Follow / Accept job の宛先 inbox と状態を知るために使う

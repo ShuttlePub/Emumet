@@ -5,11 +5,11 @@
 //!
 //! - mounted: Profile actor document, Profile WebFinger and Profile inbox (P1/P3i), the Profile
 //!   identity read, Follow / unfollow, individual block / mute and the followers / following
-//!   reads (E8/P3o/P3i), the one-time username setter and the Account management API;
+//!   reads (E8/P3o/P3i), the domain-controls routes (D8P storage; D8R enables block writes, which
+//!   detach the existing relations with the blocked domain in the same transaction), the one-time
+//!   username setter and the Account management API;
 //! - retired (explicit `410 Gone`, `route::retired`): `/ap/accounts/...`, the Account signing and
-//!   public-key endpoints, and the Account scoped Follow / block / mute operations;
-//! - NOT mounted: the domain-controls routes (D8P). Their block writes would store a block
-//!   without detaching existing relations, so they wait for D8R.
+//!   public-key endpoints, and the Account scoped Follow / block / mute operations.
 
 use crate::api;
 use crate::auth::{self, JwksCache, OidcConfig};
@@ -20,6 +20,7 @@ use crate::route::activitypub::profile_inbox::ProfileInboxRouter;
 use crate::route::me::MeRouter;
 use crate::route::media::MediaRouter;
 use crate::route::oauth2::OAuth2Router;
+use crate::route::profile_domain_control::DomainControlRouter;
 use crate::route::profile_follow_list::ProfileFollowListRouter;
 use crate::route::profile_relationship::ProfileRelationshipRouter;
 use crate::route::profile_transfer::ProfileTransferRouter;
@@ -53,6 +54,7 @@ pub(crate) fn build_root_router(
         .route_media()
         .route_profile_relationships()
         .route_profile_follow_lists()
+        .route_domain_controls()
         .route_retired_account_relations()
         .nest(
             "/admin",
@@ -115,7 +117,11 @@ pub(crate) fn build_root_router(
 }
 
 fn build_cors_layer() -> CorsLayer {
-    match std::env::var("CORS_ALLOWED_ORIGINS").ok().as_deref() {
+    cors_layer_for(std::env::var("CORS_ALLOWED_ORIGINS").ok().as_deref())
+}
+
+fn cors_layer_for(allowed_origins: Option<&str>) -> CorsLayer {
+    match allowed_origins {
         None | Some("*") => CorsLayer::permissive(),
         Some(origins) => {
             let origins: Vec<HeaderValue> = origins
@@ -125,12 +131,81 @@ fn build_cors_layer() -> CorsLayer {
             CorsLayer::new()
                 .allow_origin(origins)
                 .allow_credentials(true)
-                .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+                .allow_methods([
+                    Method::GET,
+                    Method::POST,
+                    Method::PUT,
+                    Method::PATCH,
+                    Method::DELETE,
+                ])
                 .allow_headers([
                     header::AUTHORIZATION,
                     header::CONTENT_TYPE,
                     header::HeaderName::from_static("x-organization-id"),
                 ])
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn preflight(layer: CorsLayer, method: &str) -> axum::http::Response<Body> {
+        axum::Router::new()
+            .route("/api/v1/x", axum::routing::put(|| async { "ok" }))
+            .layer(layer)
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/v1/x")
+                    .header("origin", "https://app.example")
+                    .header("access-control-request-method", method)
+                    .header(
+                        "access-control-request-headers",
+                        "authorization,content-type,x-organization-id",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    /// The domain-controls routes use `PUT` and `DELETE`: both must pass a browser preflight in the
+    /// restricted-origin configuration (the permissive default allows every method).
+    #[tokio::test]
+    async fn cors_allows_put_and_delete_for_the_configured_origins() {
+        for method in ["PUT", "DELETE", "GET", "POST", "PATCH"] {
+            let response = preflight(cors_layer_for(Some("https://app.example")), method).await;
+            assert_eq!(response.status(), StatusCode::OK, "{method}");
+            let allowed = response
+                .headers()
+                .get("access-control-allow-methods")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            assert!(
+                allowed.contains(method),
+                "{method} must be allowed, got {allowed}"
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("access-control-allow-origin")
+                    .map(|v| v.as_bytes()),
+                Some(b"https://app.example".as_slice())
+            );
+        }
+        let denied = preflight(cors_layer_for(Some("https://other.example")), "PUT").await;
+        assert!(denied
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none());
+        let permissive = preflight(cors_layer_for(None), "PUT").await;
+        assert_eq!(permissive.status(), StatusCode::OK);
     }
 }

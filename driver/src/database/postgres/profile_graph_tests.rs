@@ -1632,3 +1632,333 @@ mod url_limits {
         assert!(job.is_err());
     }
 }
+
+mod block_activity {
+    use super::*;
+
+    /// D8R: the `Block` job type is stored (migration `20261122000001`), found by sender + activity
+    /// ID regardless of the inbox, and an unknown type is still rejected by the CHECK.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn a_block_job_is_stored_and_found_by_its_activity_id() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let (_, p2) = seed_personal_profile(db).await;
+        let block_job = NewProfileDeliveryJob::new(
+            p1.clone(),
+            DeliveryActivityType::Block,
+            activity("block-1"),
+            GraphInboxUrl::new("https://remote.example/bob/inbox").unwrap(),
+            "{\"type\":\"Block\"}",
+            now(),
+        )
+        .unwrap();
+        assert!(enqueue(db, &block_job).await.is_newly_enqueued());
+
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_delivery_job_repository();
+        let found = repo
+            .find_by_activity(&mut conn, &p1, &activity("block-1"))
+            .await
+            .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].activity_type, DeliveryActivityType::Block);
+        assert_eq!(found[0].follow_id, None);
+        assert!(repo
+            .find_by_activity(&mut conn, &p2, &activity("block-1"))
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(repo
+            .find_by_activity(&mut conn, &p1, &activity("other"))
+            .await
+            .unwrap()
+            .is_empty());
+
+        let rejected = sqlx::query(
+            "UPDATE profile_delivery_jobs SET activity_type = 'Create' WHERE activity_id = $1",
+        )
+        .bind(activity("block-1").as_str())
+        .execute(&iso.pool)
+        .await;
+        assert!(rejected.is_err(), "unknown activity types stay refused");
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn a_block_is_found_by_nanoid_only_for_its_owner() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let (_, p2) = seed_personal_profile(db).await;
+        let bob = remote("bob");
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_block_repository();
+        let block = ProfileBlock::new(
+            ProfileBlockId::new(kernel::generate_id()),
+            p1.clone(),
+            bob.clone(),
+            now(),
+        )
+        .unwrap();
+        assert!(repo.insert_if_absent(&mut conn, &block).await.unwrap());
+
+        let found = repo
+            .find_by_nanoid(&mut conn, &p1, block.nanoid())
+            .await
+            .unwrap()
+            .expect("owner finds it");
+        assert_eq!(found.id(), block.id());
+        assert_eq!(found.target(), &bob);
+        assert!(repo
+            .find_by_nanoid(&mut conn, &p2, block.nanoid())
+            .await
+            .unwrap()
+            .is_none());
+    }
+}
+
+mod block_pair_jobs {
+    use super::*;
+
+    fn pair_job(
+        sender: &ProfileId,
+        kind: DeliveryActivityType,
+        id: &str,
+        payload: &str,
+    ) -> NewProfileDeliveryJob {
+        NewProfileDeliveryJob::new(
+            sender.clone(),
+            kind,
+            activity(id),
+            GraphInboxUrl::new("https://remote.example/bob/inbox").unwrap(),
+            payload,
+            now(),
+        )
+        .unwrap()
+    }
+
+    /// D8R: the Block and the Undo(Block) of one actor pair are found together, in creation order;
+    /// other actors, other senders and Undo(Follow) are not.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn the_jobs_of_one_actor_pair_are_listed_in_creation_order() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let (_, p2) = seed_personal_profile(db).await;
+        let bob = "https://remote.example/users/bob";
+        let carol = "https://remote.example/users/carol";
+        let block = |target: &str| format!("{{\"type\":\"Block\",\"object\":\"{target}\"}}");
+        let undo = |target: &str| {
+            format!(
+                "{{\"type\":\"Undo\",\"object\":{{\"type\":\"Block\",\"object\":\"{target}\"}}}}"
+            )
+        };
+        let undo_follow = format!(
+            "{{\"type\":\"Undo\",\"object\":{{\"type\":\"Follow\",\"object\":\"{bob}\"}}}}"
+        );
+        for job in [
+            pair_job(&p1, DeliveryActivityType::Block, "b1", &block(bob)),
+            pair_job(&p1, DeliveryActivityType::Block, "c1", &block(carol)),
+            pair_job(&p1, DeliveryActivityType::Undo, "b1/undo", &undo(bob)),
+            pair_job(&p1, DeliveryActivityType::Undo, "f1/undo", &undo_follow),
+            pair_job(&p2, DeliveryActivityType::Block, "b2", &block(bob)),
+            pair_job(&p1, DeliveryActivityType::Block, "b3", &block(bob)),
+        ] {
+            assert!(enqueue(db, &job).await.is_newly_enqueued());
+        }
+
+        let mut conn = db.connection().await.unwrap();
+        let listed = db
+            .profile_delivery_job_repository()
+            .list_block_pair_jobs(&mut conn, &p1, bob)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = listed.iter().map(|job| job.activity_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "https://activities.example/b1",
+                "https://activities.example/b1/undo",
+                "https://activities.example/b3"
+            ]
+        );
+    }
+}
+
+mod cancel_and_settle {
+    use super::*;
+
+    /// PostgreSQL stores microseconds.
+    fn micros(t: OffsetDateTime) -> OffsetDateTime {
+        t.replace_nanosecond(t.nanosecond() / 1000 * 1000).unwrap()
+    }
+
+    /// D8R: `cancel_returning` reports the state and the lease at the moment of the cancel (read under
+    /// the row lock, so a renew that committed meanwhile is included); a job that cannot be cancelled
+    /// yields `None`.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn cancel_returning_reports_the_state_and_lease_of_the_cancel() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let sending = job(&p1, "sending", "bob");
+        let unsent = job(&p1, "unsent", "bob");
+        enqueue(db, &sending).await;
+        let claimed = claim(db, "w", now(), 1).await;
+        assert_eq!(claimed.len(), 1);
+        enqueue(db, &unsent).await;
+        // A renew that commits after the caller last looked extends the lease.
+        let extended = micros(now() + Duration::seconds(900));
+        sqlx::query("UPDATE profile_delivery_jobs SET lease_expires_at = $2 WHERE id = $1")
+            .bind(claimed[0].id.as_ref())
+            .bind(extended)
+            .execute(&iso.pool)
+            .await
+            .unwrap();
+
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_delivery_job_repository();
+        let cancelled = repo
+            .cancel_returning(&mut conn, &claimed[0].id, "test", now())
+            .await
+            .unwrap()
+            .expect("an in-flight job is cancellable");
+        assert_eq!(cancelled.previous_state, ProfileDeliveryJobState::InFlight);
+        assert_eq!(cancelled.attempt_count, 1);
+        assert_eq!(cancelled.lease_expires_at, Some(extended));
+        let unsent_cancelled = repo
+            .cancel_returning(&mut conn, &unsent.id, "test", now())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            unsent_cancelled.previous_state,
+            ProfileDeliveryJobState::Pending
+        );
+        assert_eq!(unsent_cancelled.lease_expires_at, None);
+        assert!(
+            repo.cancel_returning(&mut conn, &unsent.id, "again", now())
+                .await
+                .unwrap()
+                .is_none(),
+            "an already cancelled job is not cancelled twice"
+        );
+        let stored = repo
+            .find_by_id(&mut conn, &claimed[0].id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.state, ProfileDeliveryJobState::Cancelled);
+        assert_eq!(stored.lease_expires_at, None);
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn the_bulk_cancel_for_a_follow_reports_each_job() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let bob = remote("bob");
+        let me = local(&p1);
+        let follow = pending(&me, &bob, "f-bulk");
+        begin(db, &follow).await;
+        let sending = job(&p1, "bulk-1", "bob").with_follow(follow.id().clone());
+        enqueue(db, &sending).await;
+        let claimed = claim(db, "w", now(), 1).await;
+        assert_eq!(claimed.len(), 1);
+
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_delivery_job_repository();
+        let cancelled = repo
+            .cancel_undelivered_for_follow_returning(
+                &mut conn,
+                follow.id(),
+                DeliveryActivityType::Follow,
+                "test",
+                now(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cancelled.len(), 1);
+        assert_eq!(
+            cancelled[0].previous_state,
+            ProfileDeliveryJobState::InFlight
+        );
+        assert!(cancelled[0].lease_expires_at.is_some());
+        assert!(repo
+            .cancel_undelivered_for_follow_returning(
+                &mut conn,
+                follow.id(),
+                DeliveryActivityType::Follow,
+                "test",
+                now(),
+            )
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    /// The settle bound of an actor pair only ever grows, is per sender and per actor, and goes away
+    /// with the sender Profile.
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn the_block_settle_bound_is_monotonic_and_per_pair() {
+        kernel::ensure_generator_initialized();
+        let iso = IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (_, p1) = seed_personal_profile(db).await;
+        let (_, p2) = seed_personal_profile(db).await;
+        let bob = "https://remote.example/users/bob";
+        let carol = "https://remote.example/users/carol";
+        let mut conn = db.connection().await.unwrap();
+        let repo = db.profile_delivery_job_repository();
+        assert_eq!(
+            repo.find_block_settle(&mut conn, &p1, bob).await.unwrap(),
+            None
+        );
+
+        let t = micros(now());
+        let late = t + Duration::seconds(600);
+        assert_eq!(
+            repo.raise_block_settle(&mut conn, &p1, bob, late)
+                .await
+                .unwrap(),
+            late
+        );
+        assert_eq!(
+            repo.raise_block_settle(&mut conn, &p1, bob, t + Duration::seconds(120))
+                .await
+                .unwrap(),
+            late,
+            "an earlier bound never shortens the stored one"
+        );
+        let later = t + Duration::seconds(900);
+        assert_eq!(
+            repo.raise_block_settle(&mut conn, &p1, bob, later)
+                .await
+                .unwrap(),
+            later
+        );
+        assert_eq!(
+            repo.find_block_settle(&mut conn, &p1, bob).await.unwrap(),
+            Some(later)
+        );
+        assert_eq!(
+            repo.find_block_settle(&mut conn, &p1, carol).await.unwrap(),
+            None
+        );
+        assert_eq!(
+            repo.find_block_settle(&mut conn, &p2, bob).await.unwrap(),
+            None
+        );
+    }
+}

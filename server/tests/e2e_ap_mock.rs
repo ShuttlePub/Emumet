@@ -632,7 +632,7 @@ async fn inbox_refuses_to_fetch_keys_from_internal_hosts_directly_or_by_redirect
 
 #[tokio::test]
 #[ignore]
-async fn individual_block_detaches_relations_without_sending_an_activitypub_block() {
+async fn individual_block_detaches_relations_and_announces_an_activitypub_block() {
     let peer = ApPeer::new("remote-block").await;
     let _server = start_server_with_peer(&peer).await;
     db::reset_test_data().await;
@@ -689,7 +689,8 @@ async fn individual_block_detaches_relations_without_sending_an_activitypub_bloc
     let block_id = block["id"].as_str().expect("block id").to_string();
 
     // Both relations are detached at once and the peer is told only what is needed: the Profile
-    // stops following (Undo) and refuses the peer's Follow (Reject). No ActivityPub Block exists.
+    // stops following (Undo) and refuses the peer's Follow (Reject); an individual block also
+    // announces an ActivityPub Block whose object is the peer actor (a domain block would not).
     let undo = wait_for_activity(&peer, "Undo", Duration::from_secs(15))
         .await
         .expect("Undo(Follow) for the Profile's own Follow");
@@ -698,12 +699,20 @@ async fn individual_block_detaches_relations_without_sending_an_activitypub_bloc
         .await
         .expect("Reject(Follow) for the peer's Follow");
     assert_eq!(reject.body["object"]["id"], peer_follow_id.as_str());
+    let block_activity = wait_for_activity(&peer, "Block", Duration::from_secs(15))
+        .await
+        .expect("ActivityPub Block for the individually blocked actor");
+    assert_eq!(block_activity.body["actor"], target_actor.as_str());
+    assert_eq!(block_activity.body["object"], peer.actor_url.as_str());
+    assert_signature_header(&block_activity);
     tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(
+    assert_eq!(
         peer.received_activities()
             .iter()
-            .all(|activity| activity.body["type"] != "Block"),
-        "no ActivityPub Block is sent for an individual block"
+            .filter(|activity| activity.body["type"] == "Block")
+            .count(),
+        1,
+        "exactly one Block is delivered"
     );
     for list in ["following", "followers"] {
         let relations = get_relations(&jwt, &account.profile_id, &cfg.server_base_url, list).await;
@@ -739,12 +748,24 @@ async fn individual_block_detaches_relations_without_sending_an_activitypub_bloc
         get_relations(&jwt, &account.profile_id, &cfg.server_base_url, "followers").await;
     assert_eq!(followers["items"].as_array().map(Vec::len), Some(0));
 
-    // Removing the block restores nothing and delivers nothing.
+    // Removing the block restores nothing; the only thing delivered is the Undo of the Block.
     peer.clear_inbox();
     let response = delete_block(&jwt, &account.profile_id, &cfg.server_base_url, &block_id).await;
     assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    let undo_block = wait_for_activity(&peer, "Undo", Duration::from_secs(15))
+        .await
+        .expect("Undo(Block) for the removed block");
+    assert_eq!(undo_block.body["actor"], target_actor.as_str());
+    assert_eq!(undo_block.body["object"]["type"], "Block");
+    assert_eq!(undo_block.body["object"]["id"], block_activity.body["id"]);
+    assert_eq!(undo_block.body["object"]["object"], peer.actor_url.as_str());
+    assert_signature_header(&undo_block);
     tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(peer.received_activities().is_empty());
+    assert_eq!(
+        peer.received_activities().len(),
+        1,
+        "nothing but the Undo(Block) is delivered"
+    );
     for list in ["following", "followers"] {
         let relations = get_relations(&jwt, &account.profile_id, &cfg.server_base_url, list).await;
         assert_eq!(

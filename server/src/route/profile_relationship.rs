@@ -3,8 +3,8 @@
 //! The following / followers reads are in `route::profile_follow_list`; both mount functions are
 //! combined on the production root router (the paths do not overlap).
 //!
-//! These routes are mounted on the production router by the P4 cutover (`root_router`). The
-//! domain-controls routes are NOT (they wait for D8R). Authorization (current owner only), the
+//! These routes are mounted on the production router by the P4 cutover (`root_router`); the
+//! domain-controls routes by D8R (`route::profile_domain_control`). Authorization (current owner only), the
 //! transaction that couples a relationship change with its delivery job, and block / mute
 //! semantics live in `application::service::profile_relationship`.
 
@@ -128,7 +128,7 @@ pub(crate) async fn unfollow_profile(
     post,
     path = "/api/v1/profiles/{profile_nanoid}/blocks",
     description = "Block one target (individual actor) as the Profile. \
-Semantics: display suppression, detaches existing follow relations in both directions and rejects new follows/interactions in both directions. No ActivityPub Block is sent. Removing the block never restores detached relations. \
+Semantics: display suppression, detaches existing follow relations in both directions and rejects new follows/interactions in both directions. In the same transaction the detached follows are announced to a remote actor with Undo(Follow) (your Follow) / Reject(Follow) (their Follow) and an ActivityPub `Block` (object = the blocked actor) is delivered to its inbox; a local target needs no delivery and a peer that cannot be resolved does not fail the block. (A domain block sends no ActivityPub Block.) Removing the block never restores detached relations. \
 Authorization: only the Profile's current owner. Settings never propagate to other Profiles or Accounts.",
     params(("profile_nanoid" = String, Path, description = "Blocking Profile nanoid")),
     request_body = CreateProfileRelationRequest,
@@ -168,7 +168,7 @@ pub(crate) async fn block_actor(
 #[utoipa::path(
     delete,
     path = "/api/v1/profiles/{profile_nanoid}/blocks/{block_id}",
-    description = "Remove an individual block. Detached follow relations are NOT restored and no restore list is kept. Authorization: only the Profile's current owner.",
+    description = "Remove an individual block. Detached follow relations are NOT restored and no restore list is kept. A `Block` already delivered to a remote actor is taken back with an `Undo(Block)` that embeds it; a `Block` not yet sent is cancelled and no Undo is sent. Authorization: only the Profile's current owner.",
     params(
         ("profile_nanoid" = String, Path, description = "Blocking Profile nanoid"),
         ("block_id" = String, Path, description = "Block setting nanoid"),

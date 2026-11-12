@@ -1,8 +1,9 @@
-//! Profile domain-controls routes (D8P): owner-only storage of exact-match domain mute/block.
+//! Profile domain-controls routes (D8P storage, D8R mount): owner-only exact-match domain
+//! mute/block.
 //!
-//! The handlers are real, but the routes are intentionally NOT part of the production root
-//! router: [`DomainControlRouter`] is only used by tests until the production mount (P4, block
-//! writes after D8R). Authorization, normalization and revision control live in
+//! Mounted on the production root router (`root_router`) by D8R, which also made a block write
+//! detach the existing relations with that domain in the same transaction. Authorization,
+//! normalization, revision control and the detachment live in
 //! `application::service::domain_control`.
 
 use crate::api::domain_control::DomainControlApi;
@@ -60,7 +61,7 @@ pub(crate) struct DeleteDomainControlQuery {
 #[utoipa::path(
     get,
     path = "/api/v1/profiles/{profile_nanoid}/domain-controls",
-    description = "List the Profile's domain mute/block controls (ordered by domain). NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R). \
+    description = "List the Profile's domain mute/block controls (ordered by domain). \
 Domains match exactly (`example.com` does not cover `sub.example.com`). Controls are per Profile: they never apply to other Profiles of the same Account or to other Accounts, and are unrelated to server-wide HostModeration. \
 Authorization: only the Profile's current owner (after a Profile transfer, the new owner; the controls stay attached to the Profile).",
     params(("profile_nanoid" = String, Path, description = "Profile nanoid")),
@@ -95,7 +96,7 @@ pub(crate) async fn list_domain_controls(
 #[utoipa::path(
     get,
     path = "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
-    description = "Read the control for one exact domain. NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R). \
+    description = "Read the control for one exact domain. \
 The `domain` is normalized before lookup (case, trailing dot, IDNA): `Example.COM.` and `example.com` address the same control. Authorization: only the Profile's current owner.",
     params(
         ("profile_nanoid" = String, Path, description = "Profile nanoid"),
@@ -132,9 +133,9 @@ pub(crate) async fn get_domain_control(
 #[utoipa::path(
     put,
     path = "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
-    description = "Create or replace the mute/block control for one exact domain. NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R, block writes stay unmounted until D8R). \
+    description = "Create or replace the mute/block control for one exact domain. \
 Revision: `expected_revision` omitted creates (409 if the control already exists); `expected_revision` = current revision replaces (409 on mismatch, including a control deleted meanwhile). Every successful write increments the revision, which never repeats for a Profile x domain even across delete and re-create. Concurrent writers: exactly one succeeds, the others get 409. \
-mute = display suppression only. block = display suppression, bidirectional follow detachment and rejection of new follows; no ActivityPub Block is sent and removing the block does not restore relations (D8P only stores the setting; applying it is D8G/D8R). \
+mute = display suppression only. block = display suppression, rejection of new follows (D8G) and, in the same transaction as the write, detachment of every existing follow relation (pending included, both directions) with an actor of that exact domain: your own Follow is retracted with an Undo(Follow) that references the original Follow, a Follow the other side sent is rejected with Reject(Follow), unsent deliveries are cancelled. Remote delivery failures never undo the write. No ActivityPub Block is sent; removing the block does not restore relations. \
 Authorization: only the Profile's current owner.",
     params(
         ("profile_nanoid" = String, Path, description = "Profile nanoid"),
@@ -177,7 +178,7 @@ pub(crate) async fn put_domain_control(
 #[utoipa::path(
     delete,
     path = "/api/v1/profiles/{profile_nanoid}/domain-controls/{domain}",
-    description = "Remove the control for one exact domain. Detached follow relations are NOT restored and no restore list is kept. NOT MOUNTED in production (implemented by D8P; the route is mounted only in tests until P4/D8R). \
+    description = "Remove the control for one exact domain. Detached follow relations are NOT restored and no restore list is kept. \
 `expected_revision` is required: 409 if it does not match the current revision. Authorization: only the Profile's current owner.",
     params(
         ("profile_nanoid" = String, Path, description = "Profile nanoid"),
@@ -219,9 +220,8 @@ pub(crate) async fn delete_domain_control(
 #[path = "profile_domain_control_tests.rs"]
 mod tests;
 
-/// Mounts the domain-controls routes. Production code must NOT call this: the production mount
-/// is owned by P4 (block writes by D8R). Only tests use it.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Mounts the domain-controls routes. The production root router calls it (D8R), and so do the
+/// route tests.
 pub trait DomainControlRouter {
     /// Routes relative to `/api/v1`.
     fn route_domain_controls(self) -> Self;

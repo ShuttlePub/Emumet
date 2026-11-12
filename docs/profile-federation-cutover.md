@@ -106,10 +106,33 @@ Account 管理 API (作成・取得・更新・無効化・再有効化・組織
 | `GET /api/v1/profiles/{profile_nanoid}` | Profile identity (所有者のみ) |
 | `POST /api/v1/profiles/{profile_nanoid}/follows`、`DELETE .../follows/{follow_id}` | Follow / unfollow |
 | `GET .../following`、`GET .../followers` | 所有者のみ |
-| `GET|POST .../blocks`、`DELETE .../blocks/{id}`、`GET|POST .../mutes`、`DELETE .../mutes/{id}` | 個別 actor の block / mute (AP `Block` は送らない) |
+| `GET|POST .../blocks`、`DELETE .../blocks/{id}`、`GET|POST .../mutes`、`DELETE .../mutes/{id}` | 個別 actor の block / mute (個別 block は remote actor へ AP `Block` を送り、解除は `Undo(Block)`。domain block は送らない) |
+| `GET .../domain-controls`、`GET|PUT|DELETE .../domain-controls/{domain}` | domain 単位の mute / block (D8P の保存 + D8R の mount)。block の PUT は同一 transaction で対象 domain の既存関係を解除する (下記) |
 | `POST /api/v1/profiles/{profile_nanoid}/username` | 一回限りの username 設定 (切替前の既存 Profile 用。切替後は全 Profile が設定済みなので 409) |
 
-**未 mount**: `/api/v1/profiles/{profile_nanoid}/domain-controls...` (D8P)。block の書込を D8R が有効化するまで本番で受け付けない (block を保存するだけで関係解除をしない中途状態を作らない)。
+### 個別 actor の block の AP `Block` (D8R、ユーザー決定)
+
+個別 actor の block (`POST .../blocks`) は、双方向の Follow 解除と `Undo(Follow)` / `Reject(Follow)` に加えて、remote actor の inbox へ `Block` (`object` = 相手 actor、ID は `{actor}/blocks/{block ID}`) を同一 transaction で予約する。解除 (`DELETE .../blocks/{id}`) は、未送信の `Block` job を取り消す (`Undo` なし)、送信済み・結果不明なら元 Block を埋め込んだ `Undo(Block)` を同じ宛先へ予約する (送信中だった可能性があれば元の送信が届き得る時間の後)。ローカル Profile 相手は配送しない。相手を解決できなくても block と解除は適用され、解除した Follow から分かる inbox があればそこへ、無ければ `Block` だけ予約されない。受信した `Block` / `Undo(Block)` は関係を変えない (P3i)。
+
+block / unblock を繰り返しても最新の意思が相手側で最後になるよう、状態を変える操作 (block・unblock) は先に **同じ actor 対の未配送の `Block` / `Undo(Block)` (配送中・再試行待ちを含む) を取り消す** (相手は actor 対で block を管理し、`Undo(Block)` は Block の ID を見ないため)。actor 対の操作は transaction 内の排他ロックで直列化する。取消は actor を解決できたかに依らない (宛先 inbox は解決できたもの → この actor 対の最新 job の inbox → 解除した Follow から分かるもの)。
+
+取消の瞬間に送信中だった job (取消と同じ行ロックの下で読んだ状態・lease の期限。読取後に claim / renew で延びた期限を含む) があれば、actor 対 (送信元 Profile × 相手 actor) の下限 `profile_block_settle.settle_not_before` を、`max(取消後に取り直した時刻 + 120 秒, 取消時点の lease の期限, 既存値)` まで引き上げる (`GREATEST`。単調非減少)。以後この actor 対に予約する `Block` / `Undo(Block)` は必ずこの下限以上に始めるので、取消に時間が掛かっても・操作を何度繰り返しても前倒しされない。`unblock` は、相手側に block が残り得る (試行済みの `Block` があり、それを打ち消す `Undo` が配送済みでない) ときだけ、最新のその `Block` を埋め込む `Undo(Block)` を予約する。Follow の `Undo` / `Reject` の送信中判定も、同じく取消の瞬間の状態と lease を使う。
+
+### domain block の既存関係の解除 (D8R)
+
+`PUT .../domain-controls/{domain}` で mode=block を保存する (新規作成・mute からの置換・block の再保存) と、**同一 transaction** で、その Profile の対象 domain (完全一致) の actor との有効な関係 (pending 含む・following / followers 両方向) を `blocked` で終了し、必要最小限の後始末を配送 job として予約する。途中で失敗すれば block も含めて全体が rollback される。
+
+| 関係の作者 | 未送信 job | 送信済み・結果不明 |
+|---|---|---|
+| 自分の Follow | Follow job を取消 (相手は Follow を知らないので何も送らない) | 元 Follow を埋め込んだ `Undo(Follow)`。送信中だった可能性があれば 120 秒後に回す |
+| 相手の Follow | Accept job を取消し、`Reject(Follow)` (元 Follow を参照) を予約 | 同上 (送信中の Accept があれば Reject を 120 秒後に回す) |
+
+- 相手の Follow を自分が作者であるかのように Undo しない。**domain block は AP `Block` を送らない** (個別 actor の block は送る。下記)。外部配送の成否は block・解除のローカル適用に影響しない。
+- block を解除 (DELETE) しても関係は復元せず、何も配送しない。復元用の一覧も持たない。
+- 自 instance の host を block した場合は、同じ host のローカル Profile との関係も解除する (配送なし)。ロックはその相手 Profile も含めて昇順の単一呼び出しで取る。
+- ロック順: Profile 行 FOR SHARE → advisory (`lock_profiles`) → block 保存 → Follow 行 (`end_active_between`) → job 行 (取消・予約)。配送前ガードは job → Follow の順に更新するが、同じ Profile の advisory ロックを先に取るため、この解除 (と unfollow) とは直列化され行ロックは循環しない。`renew_lease` / `record_attempt` は job 行だけを触る。
+- 後始末 (Undo / Reject) の配送開始は、元 job の取消が済んだ後に取り直した時刻 + 120 秒 (lease の期限が分かればそれ以降)。解除バッチや transaction の開始時刻から数えない (取消までに時間が掛かると、元の送信より先に後始末が着地し得るため)。
+- CORS (`CORS_ALLOWED_ORIGINS` 指定時) は PUT / DELETE を許可する。
 
 ## 6. ロールバック・運用上の注意
 

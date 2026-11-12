@@ -3,12 +3,13 @@
 //! 本文は job にバイト列として保存され、HTTP 署名の digest もそのバイト列から作られる。
 //! activity ID は決定的 (Follow は Follow 世代 ID、Undo / Reject は元の Follow から導出) なので、
 //! 同じ関係の再処理は冪等キー `(sender, activity_id, target_inbox)` で重複 job にならない。
-//! AP `Block` は組み立てない (D08「AP Block は送らない」)。
+//! AP `Block` は **個別 actor の block だけ**が組み立てる (ユーザー決定。解除は元 Block を埋め込んだ
+//! `Undo(Block)`)。domain block は `Block` を作らない。
 
 use error_stack::Report;
 use kernel::activitypub::ActorUrlBuilder;
 use kernel::interfaces::config::PublicBaseUrl;
-use kernel::prelude::entity::{GraphActivityId, ProfileFollowId};
+use kernel::prelude::entity::{GraphActivityId, ProfileBlockId, ProfileFollowId};
 use kernel::KernelError;
 use serde_json::{json, Value};
 
@@ -62,6 +63,19 @@ pub fn undo_activity_id(
     activity_id(format!("{}/undo", follow_activity_id.as_str()))
 }
 
+/// 個別 block の `Block` activity の ID。block ID から決まる (同じ block の再処理は冪等キーで重複 job にならない)。
+pub fn block_activity_id(
+    public_base_url: &PublicBaseUrl,
+    sender_nanoid: &str,
+    block_id: &ProfileBlockId,
+) -> error_stack::Result<GraphActivityId, KernelError> {
+    activity_id(format!(
+        "{}/blocks/{}",
+        profile_actor_url(public_base_url, sender_nanoid),
+        block_id.as_ref()
+    ))
+}
+
 /// Follow 世代に対する Reject の ID。
 pub fn reject_activity_id(
     public_base_url: &PublicBaseUrl,
@@ -93,6 +107,32 @@ pub fn follow_body(
         "object": target,
         "to": [target],
     }))
+}
+
+/// `Block` activity の本文 (`object` = 相手 actor)。
+pub fn block_body(
+    id: &GraphActivityId,
+    actor: &str,
+    target: &str,
+) -> error_stack::Result<String, KernelError> {
+    to_body(json!({
+        "@context": ACTIVITYSTREAMS_CONTEXT,
+        "id": id.as_str(),
+        "type": "Block",
+        "actor": actor,
+        "object": target,
+        "to": [target],
+    }))
+}
+
+/// 元 Block の本文 (JSON) を `object` に埋め込んだ `Undo(Block)` の本文 (`@context` は埋め込みから除く)。
+pub fn undo_block_body(
+    id: &GraphActivityId,
+    actor: &str,
+    target: &str,
+    original_block_body: &str,
+) -> error_stack::Result<String, KernelError> {
+    undo_follow_body(id, actor, target, original_block_body)
 }
 
 /// 元 Follow の本文 (JSON) を `object` に埋め込んだ `Undo(Follow)` の本文。

@@ -4,11 +4,13 @@
 
 pub mod activity;
 mod delivery;
+pub(crate) mod domain_block;
 mod relationship;
 
 pub use delivery::{
     DeliverProfileActivitiesUseCase, ProfileDeliveryCycleReport, ProfileDeliveryEnv,
 };
+pub(crate) use relationship::Conn;
 pub use relationship::{ProfileRelationshipUseCase, RelationshipDeps};
 
 #[cfg(test)]

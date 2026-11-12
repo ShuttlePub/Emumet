@@ -3,7 +3,9 @@
 //! 各テストは専用の独立 DB を作るので、互いに干渉せず TRUNCATE も要らない。DB 部分は
 //! `DATABASE_URL` を設定した実 DB が必要 (`test_with::env`)。
 
+mod block_activity;
 mod delivery;
+mod domain_block;
 mod domain_guard;
 mod relationship;
 mod support;

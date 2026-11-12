@@ -6,10 +6,11 @@ use kernel::interfaces::repository::{
     ProfileDeliveryJobRepository,
 };
 use kernel::prelude::entity::{
-    ClaimedProfileDeliveryJob, DeliveryActivityType, DeliveryAttemptOutcome, DeliveryClaimPolicy,
-    DeliveryFailureReason, DeliveryResultClass, EnqueueOutcome, GraphActivityId, GraphInboxUrl,
-    NewProfileDeliveryJob, ProfileDeliveryAttempt, ProfileDeliveryJob, ProfileDeliveryJobId,
-    ProfileDeliveryJobState, ProfileFollowId, ProfileId, RecordAttemptOutcome,
+    CancelledProfileDeliveryJob, ClaimedProfileDeliveryJob, DeliveryActivityType,
+    DeliveryAttemptOutcome, DeliveryClaimPolicy, DeliveryFailureReason, DeliveryResultClass,
+    EnqueueOutcome, GraphActivityId, GraphInboxUrl, NewProfileDeliveryJob, ProfileDeliveryAttempt,
+    ProfileDeliveryJob, ProfileDeliveryJobId, ProfileDeliveryJobState, ProfileFollowId, ProfileId,
+    RecordAttemptOutcome,
 };
 use kernel::KernelError;
 use sqlx::{Connection, PgConnection, PgExecutor};
@@ -153,6 +154,31 @@ async fn find_job_id_by_key(
     .fetch_optional(con)
     .await
     .convert_error()
+}
+
+/// 行をロックした後の取消 (`cancel_returning` 系が使う)。
+async fn cancel_row(
+    con: &mut PgConnection,
+    id: i64,
+    reason: &str,
+    now: OffsetDateTime,
+) -> error_stack::Result<(), KernelError> {
+    sqlx::query(
+        //language=postgresql
+        r#"
+        UPDATE profile_delivery_jobs SET
+            state = 'cancelled', cancelled_at = $3, cancel_reason = $2,
+            lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = $3
+        WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .bind(reason)
+    .bind(now)
+    .execute(con)
+    .await
+    .convert_error()?;
+    Ok(())
 }
 
 pub struct PostgresProfileDeliveryRepository;
@@ -451,6 +477,142 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    async fn cancel_returning(
+        &self,
+        executor: &mut Self::Connection,
+        id: &ProfileDeliveryJobId,
+        reason: &str,
+        now: OffsetDateTime,
+    ) -> error_stack::Result<Option<CancelledProfileDeliveryJob>, KernelError> {
+        let con: &mut PgConnection = executor;
+        // Lock and read the row as it is now (a claim / renew that committed meanwhile is visible), then
+        // cancel it in the same transaction: the returned state and lease are those of the cancel.
+        let row: Option<(i64, String, i32, Option<OffsetDateTime>)> = sqlx::query_as(
+            //language=postgresql
+            r#"
+            SELECT id, state, attempt_count, lease_expires_at FROM profile_delivery_jobs
+            WHERE id = $1 AND state IN ('pending', 'in_flight', 'retrying')
+            FOR UPDATE
+            "#,
+        )
+        .bind(id.as_ref())
+        .fetch_optional(&mut *con)
+        .await
+        .convert_error()?;
+        let Some((job_id, state, attempt_count, lease_expires_at)) = row else {
+            return Ok(None);
+        };
+        cancel_row(con, job_id, reason, now).await?;
+        Ok(Some(CancelledProfileDeliveryJob {
+            id: ProfileDeliveryJobId::new(job_id),
+            previous_state: ProfileDeliveryJobState::parse(&state)?,
+            attempt_count,
+            lease_expires_at,
+        }))
+    }
+
+    async fn cancel_undelivered_for_follow_returning(
+        &self,
+        executor: &mut Self::Connection,
+        follow_id: &ProfileFollowId,
+        activity_type: DeliveryActivityType,
+        reason: &str,
+        now: OffsetDateTime,
+    ) -> error_stack::Result<Vec<CancelledProfileDeliveryJob>, KernelError> {
+        let con: &mut PgConnection = executor;
+        let rows: Vec<(i64, String, i32, Option<OffsetDateTime>)> = sqlx::query_as(
+            //language=postgresql
+            r#"
+            SELECT id, state, attempt_count, lease_expires_at FROM profile_delivery_jobs
+            WHERE follow_id = $1 AND activity_type = $2
+              AND state IN ('pending', 'in_flight', 'retrying')
+            ORDER BY id
+            FOR UPDATE
+            "#,
+        )
+        .bind(follow_id.as_ref())
+        .bind(activity_type.as_str())
+        .fetch_all(&mut *con)
+        .await
+        .convert_error()?;
+        let mut cancelled = Vec::with_capacity(rows.len());
+        for (job_id, state, attempt_count, lease_expires_at) in rows {
+            cancel_row(con, job_id, reason, now).await?;
+            cancelled.push(CancelledProfileDeliveryJob {
+                id: ProfileDeliveryJobId::new(job_id),
+                previous_state: ProfileDeliveryJobState::parse(&state)?,
+                attempt_count,
+                lease_expires_at,
+            });
+        }
+        Ok(cancelled)
+    }
+
+    async fn lock_block_pair(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!(
+                "emumet.profile_block_pair:{}:{target_actor_url}",
+                sender.as_ref()
+            ))
+            .execute(con)
+            .await
+            .convert_error()?;
+        Ok(())
+    }
+
+    async fn find_block_settle(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+    ) -> error_stack::Result<Option<OffsetDateTime>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_scalar(
+            //language=postgresql
+            r#"
+            SELECT settle_not_before FROM profile_block_settle
+            WHERE sender_profile_id = $1 AND target_actor_url = $2
+            "#,
+        )
+        .bind(sender.as_ref())
+        .bind(target_actor_url)
+        .fetch_optional(con)
+        .await
+        .convert_error()
+    }
+
+    async fn raise_block_settle(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+        not_before: OffsetDateTime,
+    ) -> error_stack::Result<OffsetDateTime, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_scalar(
+            //language=postgresql
+            r#"
+            INSERT INTO profile_block_settle (sender_profile_id, target_actor_url, settle_not_before)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (sender_profile_id, target_actor_url) DO UPDATE
+              SET settle_not_before = GREATEST(profile_block_settle.settle_not_before, EXCLUDED.settle_not_before)
+            RETURNING settle_not_before
+            "#,
+        )
+        .bind(sender.as_ref())
+        .bind(target_actor_url)
+        .bind(not_before)
+        .fetch_one(con)
+        .await
+        .convert_error()
+    }
+
     async fn cancel_undelivered_for_follow(
         &self,
         executor: &mut Self::Connection,
@@ -517,6 +679,53 @@ impl ProfileDeliveryJobRepository for PostgresProfileDeliveryRepository {
         .convert_error()?
         .map(ProfileDeliveryJob::try_from)
         .transpose()
+    }
+
+    async fn find_by_activity(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        activity_id: &GraphActivityId,
+    ) -> error_stack::Result<Vec<ProfileDeliveryJob>, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_as::<_, JobRow>(&format!(
+            "SELECT {COLUMNS} FROM profile_delivery_jobs \
+             WHERE sender_profile_id = $1 AND activity_id = $2 ORDER BY id ASC"
+        ))
+        .bind(sender.as_ref())
+        .bind(activity_id.as_str())
+        .fetch_all(con)
+        .await
+        .convert_error()?
+        .into_iter()
+        .map(ProfileDeliveryJob::try_from)
+        .collect()
+    }
+
+    async fn list_block_pair_jobs(
+        &self,
+        executor: &mut Self::Connection,
+        sender: &ProfileId,
+        target_actor_url: &str,
+    ) -> error_stack::Result<Vec<ProfileDeliveryJob>, KernelError> {
+        let con: &mut PgConnection = executor;
+        // Every payload is a JSON object (enforced at enqueue), so the cast cannot fail.
+        sqlx::query_as::<_, JobRow>(&format!(
+            "SELECT {COLUMNS} FROM profile_delivery_jobs \
+             WHERE sender_profile_id = $1 AND ( \
+               (activity_type = 'Block' AND payload::jsonb ->> 'object' = $2) \
+               OR (activity_type = 'Undo' AND payload::jsonb -> 'object' ->> 'type' = 'Block' \
+                   AND payload::jsonb -> 'object' ->> 'object' = $2)) \
+             ORDER BY id ASC"
+        ))
+        .bind(sender.as_ref())
+        .bind(target_actor_url)
+        .fetch_all(con)
+        .await
+        .convert_error()?
+        .into_iter()
+        .map(ProfileDeliveryJob::try_from)
+        .collect()
     }
 
     async fn find_by_follow(
