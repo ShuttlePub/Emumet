@@ -2,7 +2,7 @@
 //!
 //! local の対象は Profile から直接、remote の対象は永続キャッシュ (`profile_remote_actor_cache`) から
 //! 返す。**表示情報の取得 (リモートへの接続) は一覧・作成の処理中には行わない**: 一覧は未取得・期限切れの
-//! 対象を `refresh` として返し、呼び出し側が応答の後に [`ProfileRelationActorUseCase::refresh_remote_actor_profiles`]
+//! 対象を `refresh` として返し、呼び出し側が応答本体を取り出し終えた後に [`ProfileRelationActorUseCase::refresh_remote_actor_profiles`]
 //! を (バックグラウンドで) 呼ぶ。取得の前に DB のリース (`try_claim_refresh`) を原子的に確保するので、同じ
 //! actor を複数のリクエスト・プロセスが同時に要求しても取得は 1 回。
 
@@ -292,7 +292,7 @@ pub trait ProfileRelationActorUseCase:
         }
     }
 
-    /// remote actor の表示情報を取得してキャッシュを更新する (best-effort、応答の後に呼ぶ)。各 actor は
+    /// remote actor の表示情報を取得してキャッシュを更新する (best-effort、応答本体を取り出し終えた後に呼ぶ)。各 actor は
     /// DB のリースを確保できたときだけ取得し、失敗は記録するだけで呼び出し元に返さない。
     fn refresh_remote_actor_profiles<'a>(
         &'a self,

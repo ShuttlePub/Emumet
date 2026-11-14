@@ -21,6 +21,7 @@ pub(crate) mod registration_gate;
 pub(crate) mod registration_gate_webhook;
 pub(crate) mod registration_protection;
 pub(crate) mod report;
+pub(crate) mod start_after_body;
 
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;

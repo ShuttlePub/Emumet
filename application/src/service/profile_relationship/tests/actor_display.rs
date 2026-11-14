@@ -1,6 +1,6 @@
 //! 個別 block・mute 一覧の対象 actor の表示情報 (D08 ui-spec 1-6) の受け入れテスト。実 DB と fake peer。
 //!
-//! 一覧・作成の処理中はリモートに接続せず、取得は `refresh_remote_actor_profiles` (応答の後に呼ぶ) だけが行う。
+//! 一覧・作成の処理中はリモートに接続せず、取得は `refresh_remote_actor_profiles` (応答本体を取り出し終えた後に呼ぶ) だけが行う。
 
 use super::support::{Env, User, LOCAL_BASE};
 use crate::dto::profile_relationship::{

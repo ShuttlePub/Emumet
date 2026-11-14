@@ -927,7 +927,8 @@ async fn local_targets_are_described_in_the_same_shape_and_lists_stay_owner_only
 }
 
 impl Harness {
-    /// 応答 (ヘッダ) だけを受け取り、本体はまだ読まない。本体を読み切る (`finish`) まで応答は完了しない。
+    /// 応答 (ヘッダ) だけを受け取り、本体はまだ取り出さない。本体を取り出し終える (`finish`)・破棄するまで、
+    /// バックグラウンドの取得は始まらない (ソケットへの書き込み完了は保証の対象外)。
     async fn call_deferred(
         &self,
         http_method: Method,
@@ -974,12 +975,12 @@ async fn finish(response: axum::response::Response) -> (StatusCode, Value) {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn the_background_fetch_starts_only_after_the_response_has_been_sent() {
+async fn the_background_fetch_starts_only_after_the_response_body_has_been_taken() {
     let h = Harness::new().await;
     let alice = h.user().await;
     let bob = h.mount_person("/users/bob", "bob", "Bob").await;
 
-    // 作成: 応答を受け取った後も、本体を読み切るまで peer への接続は 0 件。
+    // 作成: 応答を受け取った後も、本体を取り出し終えるまで peer への接続は 0 件。
     let response = h
         .call_deferred(
             Method::POST,
@@ -993,7 +994,7 @@ async fn the_background_fetch_starts_only_after_the_response_has_been_sent() {
     assert_eq!(
         h.actor_gets("/users/bob").await,
         0,
-        "no peer connection before the response is complete"
+        "no peer connection before the response body has been taken"
     );
     let (_, created) = finish(response).await;
     assert_eq!(created["target_actor"]["status"], "pending");
@@ -1021,10 +1022,41 @@ async fn the_background_fetch_starts_only_after_the_response_has_been_sent() {
     assert_eq!(
         h.actor_gets("/users/bob").await,
         fetched,
-        "the list never waits for or starts the fetch before its response is complete"
+        "the list never starts the fetch before its response body has been taken"
     );
     let (_, list) = finish(response).await;
-    // 古い (期限切れの) データはそのまま返り、取得は応答の後に走る。
+    // 古い (期限切れの) データはそのまま返り、取得は本体を取り出し終えた後に走る。
     assert_eq!(list["items"][0]["target_actor"]["status"], "resolved");
     h.wait_for_actor_gets("/users/bob", fetched + 1).await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_partly_taken_body_does_not_start_the_fetch_until_it_is_dropped() {
+    use http_body_util::BodyExt;
+
+    let h = Harness::new().await;
+    let alice = h.user().await;
+    let bob = h.mount_person("/users/bob", "bob", "Bob").await;
+    let response = h
+        .call_deferred(
+            Method::POST,
+            &uri(&alice.profile, "mutes"),
+            &alice.token,
+            Some(json!({"target": bob})),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    // The only data frame is taken and held: the body has not returned None and is not dropped.
+    let mut body = response.into_body();
+    let frame = body.frame().await.expect("a data frame").unwrap();
+    assert!(frame.is_data());
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        h.actor_gets("/users/bob").await,
+        0,
+        "taking the last data frame does not start the fetch"
+    );
+    drop(body);
+    h.wait_for_actor_gets("/users/bob", 1).await;
 }
