@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::PostgresDatabase;
 
-/// 最初の P4 migration (Profile social graph schema + 前提検査) のバージョン。
-pub const CUTOVER_FIRST_MIGRATION_VERSION: i64 = 20261120000001;
+/// 全既存 Profile の前提検査を含む、最初の切替 migration のバージョン。
+pub const CUTOVER_FIRST_MIGRATION_VERSION: i64 = 20261120000000;
 /// 初期化 migration のバージョン。これより前の migration が「初期化直前」の DB を作る。
 pub const RESET_MIGRATION_VERSION: i64 = 20261120000002;
 pub const RESET_SQL: &str =
@@ -108,7 +108,7 @@ impl IsolatedDatabase {
     /// 残りの本番 migrations (= 旧連合データの初期化) を適用する。失敗は `Err` で返す。
     pub async fn try_apply_reset(&self) -> Result<(), sqlx::migrate::MigrateError> {
         let mut connection = self.pool.acquire().await?;
-        let result = sqlx::migrate!("../migrations").run(&mut *connection).await;
+        let result = PostgresDatabase::migrate(&mut connection).await;
         if result.is_err() {
             // sqlx 0.7 は失敗時に migration の advisory lock を解放せずに接続を返すため、
             // 後続の migrate が待ち続けないよう、この接続の lock を明示的に解放する。
