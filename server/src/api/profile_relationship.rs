@@ -2,7 +2,10 @@ use super::resolve_auth_account_id;
 use crate::auth::OidcAuthInfo;
 use crate::handler::AppModule;
 use application::dto::profile::ProfileDto;
-use application::dto::profile_relationship::{ProfileFollowDto, ProfileRelationDto};
+use application::dto::profile_relationship::{
+    ProfileFollowDto, ProfileRelationDto, ProfileRelationItemDto,
+};
+use application::service::profile_relation_actor::ProfileRelationActorUseCase;
 use application::service::profile_relation_list::{
     ProfileRelationListKind, ProfileRelationListUseCase, ProfileRelationPageDto,
 };
@@ -56,11 +59,13 @@ impl ProfileRelationshipApi {
         org_context: Option<&OrganizationContext>,
         profile_nanoid: &str,
         target: &str,
-    ) -> error_stack::Result<ProfileRelationDto, KernelError> {
+    ) -> error_stack::Result<ProfileRelationItemDto, KernelError> {
         let auth_account_id = resolve_auth_account_id(&self.module, auth_info).await?;
-        self.module
+        let relation = self
+            .module
             .block_actor(&auth_account_id, org_context, profile_nanoid, target)
-            .await
+            .await?;
+        Ok(self.with_target_actor(relation).await)
     }
 
     pub async fn unblock(
@@ -82,11 +87,13 @@ impl ProfileRelationshipApi {
         org_context: Option<&OrganizationContext>,
         profile_nanoid: &str,
         target: &str,
-    ) -> error_stack::Result<ProfileRelationDto, KernelError> {
+    ) -> error_stack::Result<ProfileRelationItemDto, KernelError> {
         let auth_account_id = resolve_auth_account_id(&self.module, auth_info).await?;
-        self.module
+        let relation = self
+            .module
             .mute_actor(&auth_account_id, org_context, profile_nanoid, target)
-            .await
+            .await?;
+        Ok(self.with_target_actor(relation).await)
     }
 
     pub async fn unmute(
@@ -104,6 +111,30 @@ impl ProfileRelationshipApi {
 }
 
 impl ProfileRelationshipApi {
+    /// Attaches the display data of the new relation's target (from the Profile or the cache, no
+    /// remote access) and schedules a background fetch for a remote target that is not cached yet.
+    async fn with_target_actor(&self, relation: ProfileRelationDto) -> ProfileRelationItemDto {
+        let (mut actors, refresh) = self
+            .module
+            .describe_relation_targets(std::slice::from_ref(&relation.target))
+            .await;
+        self.spawn_actor_refresh(refresh);
+        ProfileRelationItemDto {
+            target_actor: actors.remove(0),
+            relation,
+        }
+    }
+
+    fn spawn_actor_refresh(&self, actor_urls: Vec<String>) {
+        if actor_urls.is_empty() {
+            return;
+        }
+        let module = self.module.clone();
+        tokio::spawn(async move {
+            module.refresh_remote_actor_profiles(&actor_urls).await;
+        });
+    }
+
     pub async fn profile_identity(
         &self,
         auth_info: OidcAuthInfo,
@@ -126,7 +157,8 @@ impl ProfileRelationshipApi {
         limit: Option<u32>,
     ) -> error_stack::Result<ProfileRelationPageDto, KernelError> {
         let auth_account_id = resolve_auth_account_id(&self.module, auth_info).await?;
-        self.module
+        let page = self
+            .module
             .list_profile_relations(
                 &auth_account_id,
                 org_context,
@@ -135,7 +167,11 @@ impl ProfileRelationshipApi {
                 cursor,
                 limit,
             )
-            .await
+            .await?;
+        // The response never waits for a remote server: actors without (fresh) display data are
+        // fetched in the background and show up on a later read.
+        self.spawn_actor_refresh(page.refresh.clone());
+        Ok(page)
     }
 }
 

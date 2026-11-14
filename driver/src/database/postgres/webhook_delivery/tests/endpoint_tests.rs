@@ -1370,19 +1370,18 @@ async fn the_migration_keeps_every_legacy_delivery_record_and_event_id() {
         .unwrap();
 
     let all = sqlx::migrate!("../migrations");
-    let new_version = all
+    // 複数エンドポイント化の migration の直前までを適用する (後続の migration があっても動く)。
+    let new_version = 20261123000001_i64;
+    assert!(all
         .migrations
         .iter()
-        .map(|migration| migration.version)
-        .max()
-        .unwrap();
+        .any(|migration| migration.version == new_version));
     let before: Vec<_> = all
         .migrations
         .iter()
         .filter(|migration| migration.version < new_version)
         .cloned()
         .collect();
-    assert!(before.len() + 1 == all.migrations.len());
     Migrator {
         migrations: std::borrow::Cow::Owned(before),
         ignore_missing: false,

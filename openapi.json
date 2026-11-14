@@ -2490,7 +2490,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Individual blocks owned by the Profile. Authorization: only the Profile's current owner.",
+        "description": "Individual blocks owned by the Profile. Authorization: only the Profile's current owner. Each item carries `target_actor` (name, icon, acct) served from the Profile or a server-side cache; the list never contacts a remote server, so a remote target not yet fetched is `pending` (a background fetch is started) and a failed one `unavailable`: fall back to `target`.",
         "operationId": "list_profile_blocks",
         "parameters": [
           {
@@ -3160,7 +3160,7 @@
         "tags": [
           "ProfilePolicy"
         ],
-        "description": "Individual mutes owned by the Profile. Authorization: only the Profile's current owner.",
+        "description": "Individual mutes owned by the Profile. Authorization: only the Profile's current owner. Each item carries `target_actor` (name, icon, acct) served from the Profile or a server-side cache; the list never contacts a remote server, so a remote target not yet fetched is `pending` (a background fetch is started) and a failed one `unavailable`: fall back to `target`.",
         "operationId": "list_profile_mutes",
         "parameters": [
           {
@@ -4886,6 +4886,77 @@
           }
         }
       },
+      "ProfileRelationActor": {
+        "type": "object",
+        "description": "Display information of the target of a block or mute, served from the Profile (local) or a\nserver-side cache of the remote actor document (remote). Text fields are plain text, never HTML.",
+        "required": [
+          "kind",
+          "actor_url",
+          "status"
+        ],
+        "properties": {
+          "acct": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`preferred_username@host` without a leading `@` (host includes a non-default port)."
+          },
+          "actor_url": {
+            "type": "string",
+            "description": "Canonical actor URL; always equal to `target`."
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "icon_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absolute http(s) URL of the avatar as published by the actor (remote) or stored for the\nProfile (local). The browser loads it directly."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProfileRelationActorKind"
+          },
+          "preferred_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Profile nanoid; present only when kind is `local`."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProfileRelationActorStatus"
+          }
+        }
+      },
+      "ProfileRelationActorKind": {
+        "type": "string",
+        "description": "Whether the target of a block or mute lives on this server or a remote server.",
+        "enum": [
+          "local",
+          "remote"
+        ]
+      },
+      "ProfileRelationActorStatus": {
+        "type": "string",
+        "description": "Whether display information of a target actor is available.",
+        "enum": [
+          "resolved",
+          "pending",
+          "unavailable"
+        ]
+      },
       "ProfileRelationKind": {
         "type": "string",
         "description": "Kind of individual (non-domain) relation setting.",
@@ -4923,7 +4994,8 @@
           "profile_id",
           "kind",
           "target",
-          "created_at"
+          "created_at",
+          "target_actor"
         ],
         "properties": {
           "created_at": {
@@ -4944,6 +5016,10 @@
           "target": {
             "type": "string",
             "description": "Canonical actor URL of the target."
+          },
+          "target_actor": {
+            "$ref": "#/components/schemas/ProfileRelationActor",
+            "description": "Display information of the target actor (name, icon, acct) for the account list.\nNever contacts the remote server while serving this response; see\n`ProfileRelationActor.status` for the fallback."
           }
         }
       },

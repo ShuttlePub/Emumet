@@ -1,3 +1,4 @@
+use super::profile_remote_actor_cache::RemoteActorProfile;
 use crate::entity::{GraphActorUrl, GraphInboxUrl, ProfileSendObservation};
 use crate::KernelError;
 use error_stack::Report;
@@ -109,6 +110,15 @@ pub trait RemoteActorResolver: Sync + Send + 'static {
         &self,
         actor_url: &GraphActorUrl,
     ) -> impl Future<Output = error_stack::Result<RemoteActorInfo, KernelError>> + Send;
+
+    /// actor 文書から表示用情報 (`preferredUsername` / `name` / `icon`) を取得して検証・正規化する。宛先検査・
+    /// `id` の一致検査は `resolve` と同じ。失敗は `Rejected` (不正・許可されない宛先・`id` 不一致・
+    /// `preferredUsername` が使えない)、`NotFound`、`Timeout`、`Internal`。表示情報の取得は
+    /// 一覧の応答の外 (バックグラウンド) で呼ぶこと。
+    fn fetch_profile(
+        &self,
+        actor_url: &GraphActorUrl,
+    ) -> impl Future<Output = error_stack::Result<RemoteActorProfile, KernelError>> + Send;
 }
 
 pub trait DependOnRemoteActorResolver: Sync + Send {

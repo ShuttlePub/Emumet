@@ -14,9 +14,13 @@ use crate::error::ErrorStatus;
 use crate::schema::account::ProfileResponse;
 use crate::schema::profile_policy::{
     CreateProfileFollowRequest, CreateProfileRelationRequest, ProfileFollowResponse,
-    ProfileFollowState, ProfileRelationKind, ProfileRelationListResponse, ProfileRelationResponse,
+    ProfileFollowState, ProfileRelationActor, ProfileRelationActorKind, ProfileRelationActorStatus,
+    ProfileRelationKind, ProfileRelationListResponse, ProfileRelationResponse,
 };
-use application::dto::profile_relationship::{ProfileFollowDto, ProfileRelationDto};
+use application::dto::profile_relationship::{
+    ProfileFollowDto, ProfileRelationItemDto, RelationActorDto, RelationActorKind,
+    RelationActorStatus,
+};
 use application::service::profile_relation_list::ProfileRelationListKind;
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::StatusCode;
@@ -39,16 +43,38 @@ fn follow_response(dto: ProfileFollowDto) -> ProfileFollowResponse {
     }
 }
 
+fn actor_response(actor: RelationActorDto) -> ProfileRelationActor {
+    ProfileRelationActor {
+        kind: match actor.kind {
+            RelationActorKind::Local => ProfileRelationActorKind::Local,
+            RelationActorKind::Remote => ProfileRelationActorKind::Remote,
+        },
+        actor_url: actor.actor_url,
+        profile_id: actor.profile_nanoid,
+        status: match actor.status {
+            RelationActorStatus::Resolved => ProfileRelationActorStatus::Resolved,
+            RelationActorStatus::Pending => ProfileRelationActorStatus::Pending,
+            RelationActorStatus::Unavailable => ProfileRelationActorStatus::Unavailable,
+        },
+        acct: actor.acct,
+        preferred_username: actor.preferred_username,
+        display_name: actor.display_name,
+        icon_url: actor.icon_url,
+    }
+}
+
 fn relation_response(
-    dto: ProfileRelationDto,
+    item: ProfileRelationItemDto,
     kind: ProfileRelationKind,
 ) -> ProfileRelationResponse {
+    let dto = item.relation;
     ProfileRelationResponse {
         id: dto.nanoid,
         profile_id: dto.profile_nanoid,
         kind,
         target: dto.target,
         created_at: dto.created_at,
+        target_actor: actor_response(item.target_actor),
     }
 }
 
@@ -348,7 +374,7 @@ async fn list_relations(
 #[utoipa::path(
     get,
     path = "/api/v1/profiles/{profile_nanoid}/blocks",
-    description = "Individual blocks owned by the Profile. Authorization: only the Profile's current owner.",
+    description = "Individual blocks owned by the Profile. Authorization: only the Profile's current owner. Each item carries `target_actor` (name, icon, acct) served from the Profile or a server-side cache; the list never contacts a remote server, so a remote target not yet fetched is `pending` (a background fetch is started) and a failed one `unavailable`: fall back to `target`.",
     params(
         ("profile_nanoid" = String, Path, description = "Profile nanoid"),
         ("limit" = Option<u32>, Query, description = "Pagination limit"),
@@ -385,7 +411,7 @@ pub(crate) async fn list_profile_blocks(
 #[utoipa::path(
     get,
     path = "/api/v1/profiles/{profile_nanoid}/mutes",
-    description = "Individual mutes owned by the Profile. Authorization: only the Profile's current owner.",
+    description = "Individual mutes owned by the Profile. Authorization: only the Profile's current owner. Each item carries `target_actor` (name, icon, acct) served from the Profile or a server-side cache; the list never contacts a remote server, so a remote target not yet fetched is `pending` (a background fetch is started) and a failed one `unavailable`: fall back to `target`.",
     params(
         ("profile_nanoid" = String, Path, description = "Profile nanoid"),
         ("limit" = Option<u32>, Query, description = "Pagination limit"),
