@@ -166,10 +166,10 @@ async fn old_dormant_transferred_profile_is_diagnosed_and_fixed_without_restorin
         "actual P4 refuses the missing username"
     );
     let req = request(&iso, id, "recovered-profile").await;
-    assert_eq!(
-        set_username(&iso.pool, &req, false).await.unwrap().status,
-        "dry_run"
-    );
+    let dry_run = set_username(&iso.pool, &req, false).await.unwrap();
+    assert_eq!(dry_run.status, "dry_run");
+    assert_eq!(dry_run.request_id, req.request_id);
+    assert_eq!(dry_run.requested_username, req.username);
     assert_eq!(
         snapshot(&iso).await,
         before,
@@ -234,6 +234,31 @@ async fn active_projection_and_audit_are_atomic_and_request_identity_is_immutabl
         set_username(&iso.pool, &changed, true).await.is_err(),
         "username remains immutable even with the latest version"
     );
+    assert_eq!(snapshot(&iso).await, before);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn pre_preview_audit_replay_enriches_output_without_rewriting_history() {
+    let iso = IsolatedDatabase::create_before_cutover().await;
+    let owner = account(&iso, true).await;
+    let id = profile(&iso, &owner, false, None).await;
+    let req = request(&iso, id, "previous-release").await;
+    let applied = set_username(&iso.pool, &req, true).await.unwrap();
+    sqlx::query(
+        "UPDATE profile_cutover_recovery_audit
+         SET result = result - 'request_id' - 'requested_username' WHERE request_id = $1",
+    )
+    .bind(&req.request_id)
+    .execute(&iso.pool)
+    .await
+    .unwrap();
+    let before = snapshot(&iso).await;
+    let replay = set_username(&iso.pool, &req, true).await.unwrap();
+    assert_eq!(replay.status, "already_applied");
+    assert_eq!(replay.request_id, req.request_id);
+    assert_eq!(replay.requested_username, req.username);
+    assert_eq!(replay.new_version, applied.new_version);
     assert_eq!(snapshot(&iso).await, before);
 }
 
