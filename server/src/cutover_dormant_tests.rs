@@ -2,10 +2,12 @@
 use super::*;
 use application::projection::{ProjectAccountBatch, ProjectProfileBatch};
 use application::service::account::{DeactivateAccountUseCase, ReactivateAccountUseCase};
+use driver::profile_cutover_recovery::{diagnose, set_username, UsernameRecoveryRequest};
 use kernel::interfaces::repository::{
     AggregateRepository, DependOnAccountRepository, DependOnProfileRepository,
 };
 use kernel::prelude::entity::{AccountIsBot, ProfileUsername};
+use sqlx::Executor;
 
 const PRECHECK_VERSION: i64 = 20261120000000;
 
@@ -229,33 +231,104 @@ async fn dormant_unnamed_profile_refuses_before_p4_and_can_be_recovered() {
             .unwrap();
     assert!(ledger.is_none(), "no reset ledger on refused cutover");
 
-    // Recovery on the pre-P4 schema using the current full-history projector: reactivate,
-    // assign username, and optionally disable again. This does NOT claim an old binary can
-    // restore old streams outside its tailing window (see the runbook stop boundary).
-    reactivate(&r, &local).await;
+    // Reproduce old dormant streams outside both tailing windows and the legacy lookup bug.
+    // No current projector/server is invoked anywhere in the recovery below.
     let mut conn = r.module.database_connection().connection().await.unwrap();
-    r.module
-        .profile_repository()
-        .save(
-            &mut conn,
-            Profile::set_username(
-                local.profile.id().clone(),
-                ProfileUsername::new("recovered-profile"),
-            ),
+    assert!(r
+        .module
+        .account_read_model()
+        .find_by_id_unfiltered(&mut conn, local.account.id())
+        .await
+        .unwrap()
+        .is_none());
+    drop(conn);
+    r.iso
+        .pool
+        .execute(
+            "UPDATE projection_checkpoints SET last_seq = 10000;
+         SELECT setval(pg_get_serial_sequence('account_events', 'seq'), 10000);
+         SELECT setval(pg_get_serial_sequence('profile_events', 'seq'), 10000)",
         )
         .await
         .unwrap();
-    drop(conn);
-    project(&r).await;
-    deactivate(&r, &local).await;
+    let before_recovery = r.retained_snapshot().await;
+    let diagnostic = diagnose(&r.iso.pool).await.unwrap();
+    assert_eq!(diagnostic.missing_usernames, 1);
+    assert_eq!(diagnostic.problems, 0);
+    let target = &diagnostic.profiles[0];
+    assert_eq!(target.account_deactivated, Some(true));
+    assert!(!target.profile_projection_exists);
+    let request = UsernameRecoveryRequest {
+        request_id: "cutover-rehearsal-recovery".into(),
+        operator: "rehearsal-operator".into(),
+        reason: "owner approved permanent username".into(),
+        profile_id: target.profile_id.parse().unwrap(),
+        expected_version: target.profile_version.as_ref().unwrap().parse().unwrap(),
+        username: "recovered-profile".into(),
+    };
+    assert_eq!(
+        set_username(&r.iso.pool, &request, false)
+            .await
+            .unwrap()
+            .status,
+        "dry_run"
+    );
+    assert_eq!(r.retained_snapshot().await, before_recovery);
+    assert_eq!(
+        set_username(&r.iso.pool, &request, true)
+            .await
+            .unwrap()
+            .status,
+        "applied"
+    );
+    let mut after_recovery = r.retained_snapshot().await;
+    after_recovery.remove("profile_events");
+    after_recovery.remove("profile_cutover_recovery_audit");
+    let mut expected = before_recovery;
+    expected.remove("profile_events");
+    assert_eq!(
+        after_recovery, expected,
+        "only the username event and audit changed"
+    );
+    let recovered = r.retained_snapshot().await;
+    assert_eq!(
+        set_username(&r.iso.pool, &request, true)
+            .await
+            .unwrap()
+            .status,
+        "already_applied"
+    );
+    assert_eq!(r.retained_snapshot().await, recovered);
+    assert_eq!(
+        r.legacy_counts().await,
+        legacy,
+        "recovery never touches old federation/keys"
+    );
+    assert_eq!(diagnose(&r.iso.pool).await.unwrap().missing_usernames, 0);
+    assert_eq!(
+        r.count("profiles").await,
+        0,
+        "no reactivation or projection restoration"
+    );
     r.iso.apply_reset().await;
     assert_eq!(provision_profile_keys(&r.module).await.unwrap().created, 1);
+    let keys = r.key_rows().await;
+    assert_eq!(
+        r.get_json(&format!("/ap/profiles/{}", local.profile.nanoid().as_ref()))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(provision_profile_keys(&r.module).await.unwrap().created, 0);
+    assert_eq!(r.key_rows().await, keys);
+    // Only after cutover does the current full-history projector handle reactivation.
     reactivate(&r, &local).await;
     let (status, actor) = r
         .get_json(&format!("/ap/profiles/{}", local.profile.nanoid().as_ref()))
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(actor["preferredUsername"], "recovered-profile");
+    assert_eq!(r.key_rows().await, keys);
 }
 
 #[test_with::env(DATABASE_URL)]

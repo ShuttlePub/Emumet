@@ -3,6 +3,7 @@ pub mod database;
 mod error;
 pub mod http_signing;
 pub mod keto;
+pub mod profile_cutover_recovery;
 pub mod profile_delivery;
 pub mod registration_enforcement_probe;
 pub mod registration_protection;
