@@ -441,3 +441,117 @@ async fn the_production_resolver_refuses_internal_acct_domains() {
         assert_eq!(error.current_context(), &KernelError::Rejected, "{handle}");
     }
 }
+
+#[tokio::test]
+async fn the_resolver_fetches_the_display_profile_of_the_actor_document() {
+    let server = MockServer::start().await;
+    let id = format!("{}/users/alice", server.uri());
+    actor(
+        &server,
+        "/users/alice",
+        serde_json::json!({
+            "id": id,
+            "inbox": format!("{}/users/alice/inbox", server.uri()),
+            "preferredUsername": "alice",
+            "name": "Alice\u{0} in Wonderland",
+            "icon": {"type": "Image", "url": "https://cdn.example/alice.png"},
+        }),
+    )
+    .await;
+    // No `name` and no `icon`: both are null, not a failure.
+    let bare_id = format!("{}/users/bare", server.uri());
+    actor(
+        &server,
+        "/users/bare",
+        serde_json::json!({"id": bare_id, "preferredUsername": "bare"}),
+    )
+    .await;
+    let resolver = HttpRemoteActorResolver::allowing_insecure_loopback();
+
+    let profile = resolver.fetch_profile(&url(id)).await.unwrap();
+    assert_eq!(profile.preferred_username(), "alice");
+    assert_eq!(profile.display_name(), Some("Alice in Wonderland"));
+    assert_eq!(profile.icon_url(), Some("https://cdn.example/alice.png"));
+
+    let bare = resolver.fetch_profile(&url(bare_id)).await.unwrap();
+    assert_eq!(bare.preferred_username(), "bare");
+    assert_eq!(bare.display_name(), None);
+    assert_eq!(bare.icon_url(), None);
+}
+
+#[tokio::test]
+async fn the_display_profile_fetch_fails_for_unusable_documents_and_unknown_actors() {
+    let server = MockServer::start().await;
+    actor(
+        &server,
+        "/users/impostor",
+        serde_json::json!({"id": "https://elsewhere.example/users/real", "preferredUsername": "real"}),
+    )
+    .await;
+    actor(
+        &server,
+        "/users/no-name",
+        serde_json::json!({"id": format!("{}/users/no-name", server.uri())}),
+    )
+    .await;
+    actor(
+        &server,
+        "/users/bad-name",
+        serde_json::json!({"id": format!("{}/users/bad-name", server.uri()), "preferredUsername": "a b@c"}),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path("/users/text"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/users/gone"))
+        .respond_with(ResponseTemplate::new(410))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/users/broken"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    let resolver = HttpRemoteActorResolver::allowing_insecure_loopback();
+
+    for actor_path in [
+        "/users/impostor",
+        "/users/no-name",
+        "/users/bad-name",
+        "/users/text",
+        "/users/broken",
+    ] {
+        let error = resolver
+            .fetch_profile(&url(format!("{}{actor_path}", server.uri())))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.current_context(),
+            &KernelError::Rejected,
+            "{actor_path}"
+        );
+    }
+    for actor_path in ["/users/gone", "/users/missing"] {
+        let error = resolver
+            .fetch_profile(&url(format!("{}{actor_path}", server.uri())))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.current_context(),
+            &KernelError::NotFound,
+            "{actor_path}"
+        );
+    }
+    // The production resolver keeps the destination checks of `resolve`.
+    let production = HttpRemoteActorResolver::new();
+    for target in ["https://127.0.0.1/users/a", "http://example.com/users/a"] {
+        let error = production
+            .fetch_profile(&url(target.to_string()))
+            .await
+            .unwrap_err();
+        assert_eq!(error.current_context(), &KernelError::Rejected, "{target}");
+    }
+}

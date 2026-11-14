@@ -6,8 +6,9 @@
 //! is serialized with the read). Settings of other Profiles and Accounts are never returned.
 
 use crate::dto::profile::ProfileDto;
-use crate::dto::profile_relationship::ProfileRelationDto;
+use crate::dto::profile_relationship::{ProfileRelationDto, ProfileRelationItemDto};
 use crate::service::domain_control::require_profile_owner;
+use crate::service::profile_relation_actor::{describe_actors, ActorToDescribe};
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
 use kernel::activitypub::ActorUrlBuilder;
@@ -18,7 +19,8 @@ use kernel::interfaces::read_model::{
 };
 use kernel::interfaces::repository::{
     DependOnDomainControlRepository, DependOnImageRepository, DependOnProfileBlockRepository,
-    DependOnProfileMuteRepository, ImageRepository, ProfileBlockRepository, ProfileMuteRepository,
+    DependOnProfileMuteRepository, DependOnProfileRemoteActorCacheRepository, ImageRepository,
+    ProfileBlockRepository, ProfileMuteRepository,
 };
 use kernel::prelude::entity::{AuthAccountId, ProfileBlockId, ProfileGraphActor, ProfileMuteId};
 use kernel::KernelError;
@@ -30,8 +32,11 @@ pub const MAX_PAGE_SIZE: u32 = 100;
 /// One page of individual block / mute settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileRelationPageDto {
-    pub items: Vec<ProfileRelationDto>,
+    pub items: Vec<ProfileRelationItemDto>,
     pub next_cursor: Option<String>,
+    /// 表示情報が未取得・期限切れの remote actor の URL (最大 `REMOTE_ACTOR_REFRESH_BATCH` 件)。応答を返した後に
+    /// `ProfileRelationActorUseCase::refresh_remote_actor_profiles` へ渡す (一覧の処理中にはリモートへ接続しない)。
+    pub refresh: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +67,7 @@ pub trait ProfileRelationListUseCase:
     + DependOnProfileMuteRepository
     + DependOnProfileReadModel
     + DependOnImageRepository
+    + DependOnProfileRemoteActorCacheRepository
     + DependOnTransactionManager
     + DependOnPublicBaseUrl
 {
@@ -145,10 +151,13 @@ pub trait ProfileRelationListUseCase:
                             .flatten();
 
                         let base = deps.public_base_url().as_str().to_string();
-                        let mut items = Vec::with_capacity(rows.len());
+                        let mut relations = Vec::with_capacity(rows.len());
+                        let mut targets = Vec::with_capacity(rows.len());
                         for (_, nanoid, target, created_at) in rows {
-                            let target = match target {
-                                ProfileGraphActor::Remote(url) => url.as_str().to_string(),
+                            let (url, to_describe) = match target {
+                                ProfileGraphActor::Remote(url) => {
+                                    (url.as_str().to_string(), ActorToDescribe::Remote(url))
+                                }
                                 ProfileGraphActor::Local(local_id) => {
                                     let Some(local) = deps
                                         .profile_read_model()
@@ -157,18 +166,49 @@ pub trait ProfileRelationListUseCase:
                                     else {
                                         continue;
                                     };
-                                    ActorUrlBuilder::for_profile(&base, local.nanoid().as_ref())
-                                        .actor_id()
+                                    (
+                                        ActorUrlBuilder::for_profile(
+                                            &base,
+                                            local.nanoid().as_ref(),
+                                        )
+                                        .actor_id(),
+                                        ActorToDescribe::Local(local),
+                                    )
                                 }
                             };
-                            items.push(ProfileRelationDto {
+                            relations.push(ProfileRelationDto {
                                 nanoid,
                                 profile_nanoid: profile_nanoid.clone(),
-                                target,
+                                target: url,
                                 created_at,
                             });
+                            targets.push(to_describe);
                         }
-                        Ok(ProfileRelationPageDto { items, next_cursor })
+                        // Display data comes from the Profile (local) or the cache (remote); this never
+                        // contacts a remote server.
+                        let (actors, refresh) = describe_actors(
+                            &deps,
+                            executor,
+                            targets,
+                            time::OffsetDateTime::now_utc(),
+                        )
+                        .await?;
+                        let items = relations
+                            .into_iter()
+                            .zip(actors)
+                            .map(|(relation, target_actor)| ProfileRelationItemDto {
+                                relation,
+                                target_actor,
+                            })
+                            .collect();
+                        Ok(ProfileRelationPageDto {
+                            items,
+                            next_cursor,
+                            refresh: refresh
+                                .into_iter()
+                                .map(|url| url.as_str().to_string())
+                                .collect(),
+                        })
                     })
                 })
                 .await
@@ -261,6 +301,7 @@ impl<T> ProfileRelationListUseCase for T where
         + DependOnProfileMuteRepository
         + DependOnProfileReadModel
         + DependOnImageRepository
+        + DependOnProfileRemoteActorCacheRepository
         + DependOnTransactionManager
         + DependOnPublicBaseUrl
 {

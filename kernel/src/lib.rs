@@ -439,6 +439,13 @@ macro_rules! impl_database_delegation {
             }
         }
 
+        impl $crate::interfaces::repository::DependOnProfileRemoteActorCacheRepository for $impl_type {
+            type ProfileRemoteActorCacheRepository = <$db_type as $crate::interfaces::repository::DependOnProfileRemoteActorCacheRepository>::ProfileRemoteActorCacheRepository;
+            fn profile_remote_actor_cache_repository(&self) -> &Self::ProfileRemoteActorCacheRepository {
+                $crate::interfaces::repository::DependOnProfileRemoteActorCacheRepository::profile_remote_actor_cache_repository(&self.$field)
+            }
+        }
+
         impl $crate::interfaces::repository::DependOnProfileDeliveryJobRepository for $impl_type {
             type ProfileDeliveryJobRepository = <$db_type as $crate::interfaces::repository::DependOnProfileDeliveryJobRepository>::ProfileDeliveryJobRepository;
             fn profile_delivery_job_repository(&self) -> &Self::ProfileDeliveryJobRepository {

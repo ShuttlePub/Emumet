@@ -616,6 +616,59 @@ fn followers_contract_identifies_local_and_remote_followers() {
 }
 
 #[test]
+fn relation_responses_add_the_target_actor_without_changing_existing_fields() {
+    let spec = generated_spec();
+    let schemas = &spec["components"]["schemas"];
+    let response = &schemas["ProfileRelationResponse"];
+    let properties = response["properties"].as_object().unwrap();
+    let mut names: Vec<&str> = properties.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "created_at",
+            "id",
+            "kind",
+            "profile_id",
+            "target",
+            "target_actor"
+        ]
+    );
+    assert_eq!(
+        properties["target_actor"]["$ref"],
+        "#/components/schemas/ProfileRelationActor"
+    );
+    let required = response["required"].as_array().unwrap();
+    assert!(required.iter().any(|f| f == "target_actor"));
+    // The list and both creates serve the same response type.
+    assert_eq!(
+        schemas["ProfileRelationListResponse"]["properties"]["items"]["items"]["$ref"],
+        "#/components/schemas/ProfileRelationResponse"
+    );
+    let actor = &schemas["ProfileRelationActor"];
+    for field in [
+        "kind",
+        "actor_url",
+        "profile_id",
+        "status",
+        "acct",
+        "preferred_username",
+        "display_name",
+        "icon_url",
+    ] {
+        assert!(actor["properties"].get(field).is_some(), "{field}");
+    }
+    assert_eq!(
+        schemas["ProfileRelationActorStatus"]["enum"],
+        serde_json::json!(["resolved", "pending", "unavailable"])
+    );
+    assert_eq!(
+        schemas["ProfileRelationActorKind"]["enum"],
+        serde_json::json!(["local", "remote"])
+    );
+}
+
+#[test]
 fn no_schema_states_it_is_not_mounted() {
     let spec = generated_spec();
     let schemas = spec["components"]["schemas"].as_object().unwrap();

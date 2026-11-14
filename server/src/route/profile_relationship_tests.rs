@@ -653,3 +653,410 @@ async fn following_a_local_profile_completes_through_the_routes_without_a_delive
     );
     let _ = (&alice.account, &bob.account);
 }
+
+impl Harness {
+    /// An actor document that carries the display data (`preferredUsername`, `name`, `icon`).
+    async fn mount_person(&self, actor_path: &str, username: &str, name: &str) -> String {
+        let id = format!("{}{actor_path}", self.peer.uri());
+        Mock::given(method("GET"))
+            .and(path(actor_path))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": id,
+                "type": "Person",
+                "inbox": format!("{}/inbox", self.peer.uri()),
+                "preferredUsername": username,
+                "name": name,
+                "icon": {"type": "Image", "url": format!("https://cdn.example/{username}.png")},
+            })))
+            .mount(&self.peer)
+            .await;
+        id
+    }
+
+    async fn actor_gets(&self, actor_path: &str) -> usize {
+        self.peer
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|request| request.method.as_str() == "GET" && request.url.path() == actor_path)
+            .count()
+    }
+
+    /// Reads the list until the first item's `target_actor.status` is `status` (the fetch runs in
+    /// the background after a response), or fails after a few seconds.
+    async fn list_until(&self, user: &User, tail: &str, index: usize, status: &str) -> Value {
+        for _ in 0..100 {
+            let (code, body) = self
+                .call(
+                    Method::GET,
+                    &uri(&user.profile, tail),
+                    Some(&user.token),
+                    None,
+                )
+                .await;
+            assert_eq!(code, StatusCode::OK, "{body}");
+            if body["items"][index]["target_actor"]["status"] == status {
+                return body;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("the target_actor status never became {status}");
+    }
+}
+
+fn keys(value: &Value) -> Vec<String> {
+    let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    keys
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn mute_and_block_lists_describe_remote_targets_after_the_background_fetch() {
+    let h = Harness::new().await;
+    let alice = h.user().await;
+    let bob = h.mount_person("/users/bob", "bob", "Bob Builder").await;
+    let carol = h.mount_person("/users/carol", "carol", "Carol").await;
+
+    // Create: the existing fields are intact and target_actor is added, still without data.
+    let (status, mute) = h
+        .call(
+            Method::POST,
+            &uri(&alice.profile, "mutes"),
+            Some(&alice.token),
+            Some(json!({"target": bob})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{mute}");
+    assert_eq!(
+        keys(&mute),
+        [
+            "created_at",
+            "id",
+            "kind",
+            "profile_id",
+            "target",
+            "target_actor"
+        ]
+    );
+    assert_eq!(mute["kind"], "mute");
+    assert_eq!(mute["profile_id"], alice.profile.nanoid().as_ref().as_str());
+    assert_eq!(mute["target"], bob);
+    assert_eq!(
+        mute["target_actor"],
+        json!({
+            "kind": "remote", "actor_url": bob, "profile_id": null, "status": "pending",
+            "acct": null, "preferred_username": null, "display_name": null, "icon_url": null,
+        })
+    );
+
+    // The list: the background fetch started by the create (or by this read) fills the cache and a
+    // later read returns the data.
+    let list = h.list_until(&alice, "mutes", 0, "resolved").await;
+    assert_eq!(keys(&list), ["items", "next_cursor"]);
+    assert_eq!(list["next_cursor"], Value::Null);
+    let item = &list["items"][0];
+    assert_eq!(
+        keys(item),
+        [
+            "created_at",
+            "id",
+            "kind",
+            "profile_id",
+            "target",
+            "target_actor"
+        ]
+    );
+    assert_eq!(item["id"], mute["id"]);
+    assert_eq!(item["created_at"], mute["created_at"]);
+    assert_eq!(item["target"], bob);
+    let host = h.peer.address().to_string();
+    assert_eq!(
+        item["target_actor"],
+        json!({
+            "kind": "remote", "actor_url": bob, "profile_id": null, "status": "resolved",
+            "acct": format!("bob@{host}"), "preferred_username": "bob",
+            "display_name": "Bob Builder", "icon_url": "https://cdn.example/bob.png",
+        })
+    );
+
+    // Reading again never fetches again while the data is fresh.
+    let fetched = h.actor_gets("/users/bob").await;
+    for _ in 0..3 {
+        h.call(
+            Method::GET,
+            &uri(&alice.profile, "mutes"),
+            Some(&alice.token),
+            None,
+        )
+        .await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(h.actor_gets("/users/bob").await, fetched);
+
+    // The block list is described the same way (the block create path also resolves the inbox).
+    let (status, block) = h
+        .call(
+            Method::POST,
+            &uri(&alice.profile, "blocks"),
+            Some(&alice.token),
+            Some(json!({"target": carol})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{block}");
+    assert_eq!(block["kind"], "block");
+    assert_eq!(block["target_actor"]["kind"], "remote");
+    let list = h.list_until(&alice, "blocks", 0, "resolved").await;
+    assert_eq!(list["items"][0]["target"], carol);
+    assert_eq!(list["items"][0]["target_actor"]["display_name"], "Carol");
+    assert_eq!(
+        list["items"][0]["target_actor"]["acct"],
+        format!("carol@{host}")
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn an_unreachable_target_falls_back_to_unavailable_and_the_list_still_works() {
+    let h = Harness::new().await;
+    let alice = h.user().await;
+    // No actor document is mounted: the peer answers 404.
+    let ghost = format!("{}/users/ghost", h.peer.uri());
+    let (status, mute) = h
+        .call(
+            Method::POST,
+            &uri(&alice.profile, "mutes"),
+            Some(&alice.token),
+            Some(json!({"target": ghost})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{mute}");
+    let list = h.list_until(&alice, "mutes", 0, "unavailable").await;
+    assert_eq!(
+        list["items"][0]["target_actor"],
+        json!({
+            "kind": "remote", "actor_url": ghost, "profile_id": null, "status": "unavailable",
+            "acct": null, "preferred_username": null, "display_name": null, "icon_url": null,
+        })
+    );
+    assert_eq!(list["items"][0]["target"], ghost);
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn local_targets_are_described_in_the_same_shape_and_lists_stay_owner_only() {
+    let h = Harness::new().await;
+    let alice = h.user().await;
+    let bob = h.user().await;
+    let mallory = h.user().await;
+    let bob_nanoid = bob.profile.nanoid().as_ref().to_string();
+    let (status, created) = h
+        .call(
+            Method::POST,
+            &uri(&alice.profile, "mutes"),
+            Some(&alice.token),
+            Some(json!({"target": bob_nanoid})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let target_actor = &created["target_actor"];
+    assert_eq!(target_actor["kind"], "local");
+    assert_eq!(target_actor["profile_id"], bob_nanoid);
+    assert_eq!(target_actor["status"], "resolved");
+    assert_eq!(target_actor["actor_url"], created["target"]);
+    // The default test Profile has a display name but no username or icon: resolved, the missing parts are null.
+    assert_eq!(target_actor["acct"], Value::Null);
+    assert_eq!(target_actor["preferred_username"], Value::Null);
+    assert_eq!(
+        target_actor["display_name"],
+        kernel::test_utils::DEFAULT_DISPLAY_NAME
+    );
+    assert_eq!(target_actor["icon_url"], Value::Null);
+
+    let (status, list) = h
+        .call(
+            Method::GET,
+            &uri(&alice.profile, "mutes"),
+            Some(&alice.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["items"][0]["target_actor"], *target_actor);
+
+    for tail in ["mutes", "blocks"] {
+        let (status, _) = h
+            .call(Method::GET, &uri(&alice.profile, tail), None, None)
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{tail}");
+        let (status, body) = h
+            .call(
+                Method::GET,
+                &uri(&alice.profile, tail),
+                Some(&mallory.token),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{tail}");
+        assert!(body.get("items").is_none(), "{tail}: nothing leaks");
+        let (status, own) = h
+            .call(
+                Method::GET,
+                &uri(&mallory.profile, tail),
+                Some(&mallory.token),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            own["items"],
+            json!([]),
+            "{tail}: Alice's settings do not leak"
+        );
+    }
+    let (status, _) = h
+        .call(
+            Method::GET,
+            "/api/v1/profiles/no-such-profile/mutes",
+            Some(&alice.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+impl Harness {
+    /// 応答 (ヘッダ) だけを受け取り、本体はまだ取り出さない。本体を取り出し終える (`finish`)・破棄するまで、
+    /// バックグラウンドの取得は始まらない (ソケットへの書き込み完了は保証の対象外)。
+    async fn call_deferred(
+        &self,
+        http_method: Method,
+        uri: &str,
+        token: &str,
+        body: Option<Value>,
+    ) -> axum::response::Response {
+        let builder = Request::builder()
+            .method(http_method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"));
+        let request = match body {
+            Some(body) => builder
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string())),
+            None => builder.body(Body::empty()),
+        }
+        .expect("valid request");
+        self.router.clone().oneshot(request).await.unwrap()
+    }
+
+    async fn wait_for_actor_gets(&self, actor_path: &str, expected: usize) {
+        for _ in 0..200 {
+            if self.actor_gets(actor_path).await >= expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!(
+            "{actor_path} was fetched {} times, expected {expected}",
+            self.actor_gets(actor_path).await
+        );
+    }
+}
+
+async fn finish(response: axum::response::Response) -> (StatusCode, Value) {
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn the_background_fetch_starts_only_after_the_response_body_has_been_taken() {
+    let h = Harness::new().await;
+    let alice = h.user().await;
+    let bob = h.mount_person("/users/bob", "bob", "Bob").await;
+
+    // 作成: 応答を受け取った後も、本体を取り出し終えるまで peer への接続は 0 件。
+    let response = h
+        .call_deferred(
+            Method::POST,
+            &uri(&alice.profile, "mutes"),
+            &alice.token,
+            Some(json!({"target": bob})),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        h.actor_gets("/users/bob").await,
+        0,
+        "no peer connection before the response body has been taken"
+    );
+    let (_, created) = finish(response).await;
+    assert_eq!(created["target_actor"]["status"], "pending");
+    h.wait_for_actor_gets("/users/bob", 1).await;
+    h.list_until(&alice, "mutes", 0, "resolved").await;
+
+    // 一覧: 期限切れにして再取得を要求させる。同様に応答の完了前は接続しない。
+    sqlx::query(
+        "UPDATE profile_remote_actor_cache SET next_refresh_at = now() - interval '1 minute'",
+    )
+    .execute(&h.iso.pool)
+    .await
+    .unwrap();
+    let fetched = h.actor_gets("/users/bob").await;
+    let response = h
+        .call_deferred(
+            Method::GET,
+            &uri(&alice.profile, "mutes"),
+            &alice.token,
+            None,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        h.actor_gets("/users/bob").await,
+        fetched,
+        "the list never starts the fetch before its response body has been taken"
+    );
+    let (_, list) = finish(response).await;
+    // 古い (期限切れの) データはそのまま返り、取得は本体を取り出し終えた後に走る。
+    assert_eq!(list["items"][0]["target_actor"]["status"], "resolved");
+    h.wait_for_actor_gets("/users/bob", fetched + 1).await;
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_partly_taken_body_does_not_start_the_fetch_until_it_is_dropped() {
+    use http_body_util::BodyExt;
+
+    let h = Harness::new().await;
+    let alice = h.user().await;
+    let bob = h.mount_person("/users/bob", "bob", "Bob").await;
+    let response = h
+        .call_deferred(
+            Method::POST,
+            &uri(&alice.profile, "mutes"),
+            &alice.token,
+            Some(json!({"target": bob})),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    // The only data frame is taken and held: the body has not returned None and is not dropped.
+    let mut body = response.into_body();
+    let frame = body.frame().await.expect("a data frame").unwrap();
+    assert!(frame.is_data());
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        h.actor_gets("/users/bob").await,
+        0,
+        "taking the last data frame does not start the fetch"
+    );
+    drop(body);
+    h.wait_for_actor_gets("/users/bob", 1).await;
+}

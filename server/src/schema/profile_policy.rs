@@ -117,6 +117,56 @@ pub struct ProfileRelationResponse {
     pub target: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    /// Display information of the target actor (name, icon, acct) for the account list.
+    /// Never contacts the remote server while serving this response; see
+    /// `ProfileRelationActor.status` for the fallback.
+    pub target_actor: ProfileRelationActor,
+}
+
+/// Whether the target of a block or mute lives on this server or a remote server.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileRelationActorKind {
+    /// A Profile hosted by this server.
+    Local,
+    /// A remote ActivityPub actor.
+    Remote,
+}
+
+/// Whether display information of a target actor is available.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileRelationActorStatus {
+    /// Display information is available (`acct` and `preferred_username` are set; `display_name` and
+    /// `icon_url` are null when the actor has none). A local target is always resolved. A remote
+    /// target whose earlier fetch succeeded stays resolved with the old data even when a later
+    /// refresh fails.
+    Resolved,
+    /// A remote actor that has not been fetched yet (a fetch is scheduled or running). All display
+    /// fields are null; read the list again later. Fall back to `target`.
+    Pending,
+    /// A remote actor whose last fetch failed (unreachable, gone, malformed). All display fields are
+    /// null and the fetch is retried later. Fall back to `target`.
+    Unavailable,
+}
+
+/// Display information of the target of a block or mute, served from the Profile (local) or a
+/// server-side cache of the remote actor document (remote). Text fields are plain text, never HTML.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProfileRelationActor {
+    pub kind: ProfileRelationActorKind,
+    /// Canonical actor URL; always equal to `target`.
+    pub actor_url: String,
+    /// Profile nanoid; present only when kind is `local`.
+    pub profile_id: Option<String>,
+    pub status: ProfileRelationActorStatus,
+    /// `preferred_username@host` without a leading `@` (host includes a non-default port).
+    pub acct: Option<String>,
+    pub preferred_username: Option<String>,
+    pub display_name: Option<String>,
+    /// Absolute http(s) URL of the avatar as published by the actor (remote) or stored for the
+    /// Profile (local). The browser loads it directly.
+    pub icon_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -4,7 +4,9 @@ use super::target::{
 };
 use crate::webhook::{HostResolver, SystemResolver};
 use error_stack::Report;
-use kernel::interfaces::repository::{AcctHandle, RemoteActorInfo, RemoteActorResolver};
+use kernel::interfaces::repository::{
+    AcctHandle, RemoteActorInfo, RemoteActorProfile, RemoteActorResolver,
+};
 use kernel::prelude::entity::{GraphActorUrl, GraphInboxUrl};
 use kernel::KernelError;
 use reqwest::header::ACCEPT;
@@ -76,6 +78,63 @@ impl Default for HttpRemoteActorResolver {
 
 fn rejected(message: &str) -> Report<KernelError> {
     Report::new(KernelError::Rejected).attach_printable(message.to_string())
+}
+
+impl HttpRemoteActorResolver {
+    /// actor 文書を取得して JSON として返す。文書の `id` が要求した URL と完全一致することまで検査する。
+    async fn fetch_document(
+        &self,
+        actor_url: &GraphActorUrl,
+    ) -> error_stack::Result<serde_json::Value, KernelError> {
+        let target = resolve_target(
+            actor_url.as_str(),
+            self.mode,
+            &self.resolver,
+            &self.settings,
+        )
+        .await
+        .map_err(|error| match error {
+            TargetError::Invalid => rejected("actor URL is not an allowed destination"),
+            TargetError::DnsFailed => Report::new(KernelError::Timeout)
+                .attach_printable("actor host could not be resolved"),
+        })?;
+        let client = build_client(&target, self.mode, &self.settings)
+            .ok_or_else(|| Report::new(KernelError::Internal))?;
+        let mut response = client
+            .get(target.url.clone())
+            .header(ACCEPT, ACTOR_ACCEPT)
+            .send()
+            .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    Report::new(KernelError::Timeout)
+                } else {
+                    rejected("actor fetch failed to connect")
+                }
+            })?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::GONE {
+            return Err(
+                Report::new(KernelError::NotFound).attach_printable("remote actor does not exist")
+            );
+        }
+        if !status.is_success() {
+            return Err(rejected("actor fetch returned an unsuccessful status"));
+        }
+        let body = read_limited(&mut response, self.settings.max_response_bytes).await;
+        let document: serde_json::Value =
+            serde_json::from_slice(&body).map_err(|_| rejected("actor document is not JSON"))?;
+        let id = document
+            .get("id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| rejected("actor document has no id"))?;
+        if id != actor_url.as_str() {
+            return Err(rejected(
+                "actor document id does not match the requested URL",
+            ));
+        }
+        Ok(document)
+    }
 }
 
 impl RemoteActorResolver for HttpRemoteActorResolver {
@@ -176,53 +235,7 @@ impl RemoteActorResolver for HttpRemoteActorResolver {
                 });
             }
         }
-        let target = resolve_target(
-            actor_url.as_str(),
-            self.mode,
-            &self.resolver,
-            &self.settings,
-        )
-        .await
-        .map_err(|error| match error {
-            TargetError::Invalid => rejected("actor URL is not an allowed destination"),
-            TargetError::DnsFailed => Report::new(KernelError::Timeout)
-                .attach_printable("actor host could not be resolved"),
-        })?;
-        let client = build_client(&target, self.mode, &self.settings)
-            .ok_or_else(|| Report::new(KernelError::Internal))?;
-        let mut response = client
-            .get(target.url.clone())
-            .header(ACCEPT, ACTOR_ACCEPT)
-            .send()
-            .await
-            .map_err(|error| {
-                if error.is_timeout() {
-                    Report::new(KernelError::Timeout)
-                } else {
-                    rejected("actor fetch failed to connect")
-                }
-            })?;
-        let status = response.status();
-        if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::GONE {
-            return Err(
-                Report::new(KernelError::NotFound).attach_printable("remote actor does not exist")
-            );
-        }
-        if !status.is_success() {
-            return Err(rejected("actor fetch returned an unsuccessful status"));
-        }
-        let body = read_limited(&mut response, self.settings.max_response_bytes).await;
-        let document: serde_json::Value =
-            serde_json::from_slice(&body).map_err(|_| rejected("actor document is not JSON"))?;
-        let id = document
-            .get("id")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| rejected("actor document has no id"))?;
-        if id != actor_url.as_str() {
-            return Err(rejected(
-                "actor document id does not match the requested URL",
-            ));
-        }
+        let document = self.fetch_document(actor_url).await?;
         let inbox = document
             .get("inbox")
             .and_then(|value| value.as_str())
@@ -232,5 +245,13 @@ impl RemoteActorResolver for HttpRemoteActorResolver {
             actor_url: actor_url.clone(),
             inbox,
         })
+    }
+
+    async fn fetch_profile(
+        &self,
+        actor_url: &GraphActorUrl,
+    ) -> error_stack::Result<RemoteActorProfile, KernelError> {
+        let document = self.fetch_document(actor_url).await?;
+        RemoteActorProfile::from_actor_document(&document)
     }
 }
