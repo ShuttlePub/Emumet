@@ -97,11 +97,35 @@ impl PostgresDatabase {
             )
         };
         let pool = Pool::connect(&url).await.convert_error()?;
-        sqlx::migrate!("../migrations")
-            .run(&pool)
-            .await
-            .change_context_lazy(|| KernelError::Internal)?;
+        {
+            let mut connection = pool.acquire().await.convert_error()?;
+            Self::migrate(&mut connection)
+                .await
+                .change_context_lazy(|| KernelError::Internal)?;
+        }
         Ok(Self { pool })
+    }
+
+    /// Production startup migration path. Recheck all Profile usernames on EVERY attempt, not
+    /// only when the earlier precheck migration is pending: another P4 migration may have failed
+    /// after that precheck succeeded, and pre-cutover recovery can create more Profile events.
+    /// The same SQL is used by the versioned guard, without changing published P4 checksums.
+    pub(crate) async fn migrate(
+        connection: &mut PgConnection,
+    ) -> Result<(), sqlx::migrate::MigrateError> {
+        let has_profile_usernames: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'username') \
+             AND to_regclass('public.profile_events') IS NOT NULL",
+        ).fetch_one(&mut *connection).await?;
+        if has_profile_usernames {
+            sqlx::query(include_str!(
+                "../../../migrations/20261120000000_profile_federation_all_profiles_precheck.sql"
+            ))
+            .execute(&mut *connection)
+            .await?;
+        }
+        sqlx::migrate!("../migrations").run(&mut *connection).await
     }
 
     pub fn from_pool(pool: Pool<Postgres>) -> Self {

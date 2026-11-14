@@ -123,6 +123,42 @@ jobs:
         with:
           name: hardening-db
           path: hardening-*.log
+  profile-cutover-db:
+    name: Profile cutover with PostgreSQL (D08)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cutover_test
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 2s --health-timeout 2s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Rehearse cutover and deactivation against a real database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/cutover_test
+        run: |
+          set -o pipefail
+          cargo test -p driver profile_graph_reset_tests -- --test-threads=4 | tee cutover-reset.log
+          cargo test -p driver provisioning_pages_over_dormant -- --test-threads=4 | tee cutover-paging.log
+          cargo test -p driver --lib profile_cutover_recovery::tests -- --test-threads=4 | tee cutover-recovery.log
+          cargo test -p driver --bin profile-cutover-recovery | tee cutover-recovery-cli.log
+          cargo test -p server cutover:: -- --test-threads=4 | tee cutover-server.log
+          for log in cutover-*.log; do
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"
+            ! grep -E 'test result: .* [1-9][0-9]* ignored;' "$log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: profile-cutover-db
+          path: cutover-*.log
   openapi-check:
     name: Check openapi.json is up-to-date
     runs-on: ubuntu-latest
