@@ -66,7 +66,9 @@ pub trait ProfileSigningKeyRepository: Sync + Send + 'static {
         executor: &mut Self::Connection,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
-    /// Profiles that currently have no active key, oldest first (`(profile id, nanoid)`).
+    /// All existing Profiles without an active key, oldest first (`(profile id, nanoid)`).
+    /// Includes identities retained only in Created events (e.g. a deactivated owner Account),
+    /// not just the current projection rows. id/nanoid are immutable across reactivation/transfer.
     /// Profiles that already have an active key are never returned, so provisioning can never
     /// regenerate or replace an existing identity key.
     fn find_profiles_without_active_key(

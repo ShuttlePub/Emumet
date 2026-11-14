@@ -13,10 +13,11 @@
 
 | 順 | 処理 | 担当 | 失敗時 |
 |---|---|---|---|
+| 0 | `20261120000000_profile_federation_all_profiles_precheck.sql`: **イベント上の全既存 Profile**（無効化・未射影を含む）の username を検査 | migration | 未設定が 1 件でもあれば起動失敗。P4 migration は 1 件も適用されず、旧データ・台帳に変更なし |
 | 1 | `20261120000001_profile_social_graph.sql`: Profile 単位の関係・配送テーブル (`profile_follows` `profile_blocks` `profile_mutes` `profile_inbound_activities` `profile_delivery_jobs` `profile_delivery_attempts`) を追加 (非破壊) | migration | 起動失敗。DB は変わらない (transaction) |
 | 2 | `20261120000002_reset_legacy_federation.sql`: **前提検査** (username 未設定の Profile が 1 件でもあれば `RAISE EXCEPTION`) → 旧連合データの `TRUNCATE` → 台帳 `profile_federation_resets` に `legacy-account-federation-v1` を記録。全て 1 transaction | migration | 起動失敗。**何も消えず台帳も残らない** (切替拒否) |
 | 2b | `20261121000001_profile_signing_keys_survive_deactivation.sql`: `profile_signing_keys.profile_id` の外部キー (ON DELETE CASCADE) を外す (非破壊)。Account 無効化の projection が `profiles` 行を消しても Profile 鍵は保持され、再有効化で行が再 materialize されると同じ鍵で復帰する (下記「Account の状態と Profile」) | migration | 起動失敗。DB は変わらない |
-| 3 | Profile 鍵の一回限り生成 (`server/src/cutover.rs` → `EnsureProfileSigningKeysUseCase`): **有効な鍵を持たない Profile にだけ**鍵を作る。1 transaction・advisory lock で直列化 | 起動処理 (`main`、root router / worker より前) | 起動失敗 (鍵のない Profile を actor として公開しない) |
+| 3 | Profile 鍵の一回限り生成 (`server/src/cutover.rs` → `EnsureProfileSigningKeysUseCase`): **有効な鍵を持たない全既存 Profile（イベントにのみ残る無効化・未射影 Profile も含む）にだけ**鍵を作る。1 transaction・advisory lock で直列化 | 起動処理 (`main`、root router / worker より前) | 起動失敗 (鍵のない Profile を actor として公開しない) |
 | 4 | projection worker・webhook worker・**Profile 配送 worker** を起動し、root router を serve | `main` | — |
 
 ### Account の状態と Profile (切替後の挙動)
@@ -25,6 +26,7 @@
 - **無効化 (deactivate) 中**は上記に加えて **Profile 行そのものが projection から消える**。`profile_follows` `profile_blocks` `profile_mutes` `profile_delivery_jobs` などは Profile 行への外部キー (ON DELETE CASCADE) で**一緒に消える** (待機ではなく消去)。再有効化で Profile 行は戻るが、消えた関係・未送信の job は戻らない。保持されるのは Profile の identity (id・nanoid・username) と鍵 (`profile_signing_keys` は外部キーを持たない) だけ。
 - 停止・BAN の解除 (unsuspend / unban / 期限切れ) で、**同じ actor URL・同じ鍵**のまま復帰し、待機していた job が送られる。再有効化でも同じ actor URL・鍵で復帰するが、上記のとおり消えた関係・job は戻らない。
 - **無効化→再有効化**: 無効化で Account の projection が `profiles` 行を削除する。再有効化の projection (Account projector) が、その Account が所有する Profile を**全 event 履歴から再 materialize** する (tailing の窓 (直近 100 件) に依存しない)。Profile の id・nanoid・username と鍵は変わらない。
+- **切替前から無効化中**の Account も対象: `profile_events` の Created が保持する不変の id・nanoid から、行を復元せず起動時に鍵だけを生成する。username は Created または後続 UsernameSet から検査する。無効化状態を変えたり actor を公開したりしない。再有効化時は全履歴の復元だけで既存鍵に結び付き、再起動・遅延鍵生成は不要。切替後の新規 Profile は作成 transaction 内で鍵を持つため、再有効化 projector に crypto 処理は追加しない。
 - Profile 鍵は `profiles` 行の有無と独立に保持される。将来 Profile を恒久削除する経路を作る場合は鍵の**明示的な削除**が必要で、「projection の行がない＝不要な鍵」として掃除してはならない (再有効化で復帰できなくなる)。
 
 ### 初期化の対象 (`TRUNCATE TABLE` で明示列挙。`CASCADE` なし)
@@ -48,14 +50,37 @@
 ## 2. 事前条件
 
 1. **全既存 Profile に username が設定済み**であること (FN `profile-identity-web-adaptation` のマージ後、`POST /api/v1/profiles/{profile_nanoid}/username` で設定)。
-   未設定が残っていると、**最初の P4 migration (`20261120000001`) の先頭の検査**が `profile federation cutover refused: N profile(s) have no username ...` で abort する (`20261120000002` にも同じ検査があるが、通常は手前で拒否される)。
+   未設定が残っていると、**最初の事前検査 migration (`20261120000000`)**が `profile federation cutover refused: N profile(s) have no username ...` で abort する (`20261120000001`・`20261120000002` の射影行検査も安全弁として維持する)。
    migration は P4 の 1 件も適用されず、DB は切替前のまま・旧データも消えない。ただし**新バイナリは migration に失敗して起動しない**ので、復旧は §3.1 の手順で行う。
-   事前確認 (psql): `SELECT count(*) FROM profiles WHERE username IS NULL;` が 0。
+   **全既存 Profile = `profiles` の行と `profile_events` の全 stream の和集合**。行数だけの確認では無効化 Profile を取りこぼすため、下の事前確認 SQL が 0 行であることを確認する。
    DB の `NOT NULL` 化は行わない (旧イベント列からの projection 再構築で username を持たない Created イベントが残りうるため)。作成 API 側で必須化している。
 2. master key password (`/run/secrets/master-key-password`、開発では `./master-key-password`) が新バイナリから読めること (鍵の生成・署名に使う)。
 3. DB のバックアップを取得済みであること。
 4. `PUBLIC_BASE_URL` が運用値であること (actor URL・key id はこの値から作られ、鍵 id の URI に焼き込まれる)。
-5. projection が追いついていること (`projection_checkpoints`)。追いついていない Profile は鍵生成の対象に入らないが、次回起動の生成処理が拾う。
+5. projection が追いついていること (`projection_checkpoints`)。ただし無効化中の Account の Profile は正常でも行がない。鍵生成はイベント上の identity も対象なので、そのような Profile を次回起動まで取りこぼさない。旧プロセス停止中に migration → 全既存鍵生成を完了してから新 worker・route を開始する。
+
+事前確認 SQL（結果の id・nanoid を復旧対象とする。Created の username と UsernameSet の両方を拾う）:
+
+```sql
+WITH existing_profiles AS (
+  SELECT id FROM profiles
+  UNION
+  SELECT id FROM profile_events
+)
+SELECT p.id, COALESCE(
+  (SELECT r.nanoid FROM profiles r WHERE r.id = p.id),
+  (SELECT e.data ->> 'nanoid' FROM profile_events e
+   WHERE e.id = p.id AND e.data ->> 'type' = 'created')
+) AS nanoid
+FROM existing_profiles p
+WHERE NOT EXISTS (SELECT 1 FROM profiles r WHERE r.id = p.id AND r.username IS NOT NULL)
+  AND NOT EXISTS (SELECT 1 FROM profile_events e
+                  WHERE e.id = p.id AND e.data ->> 'username' IS NOT NULL);
+```
+
+起動時は `PostgresDatabase::migrate` が同じ全既存 Profile 検査を**毎回 migration より前に**実行する（空 DB / username 列導入前は versioned 検査まで待つ）。最初の検査だけ成功して別の migration が失敗した後に、旧バイナリで未設定 Profile が増えた場合も再試行で拒否する。
+
+追加検査は既存 migration の checksum を変えないため P4 より前に採番している。P4 適用済み DB にも sqlx は未適用のこの番号を適用するが、reset 台帳があれば切替専用の検査はスキップし、再消去しない。起動時の鍵生成は引き続き冪等で、既に切替済みの DB に残る鍵なしの無効化 Profile も補完する。
 
 ## 3. 切替手順
 
@@ -63,7 +88,7 @@
 2. バックアップを取り、事前条件を確認する (§2)。
 3. **新バイナリを 1 プロセスだけ起動**する。起動ログで次を確認する:
    - migration の適用 (拒否された場合は `profile federation cutover refused` で終了する。username を設定して再起動する。何も変わっていない)
-   - `generated the one-time actor keys of Profiles that had none` (created = 既存 Profile 数) または `every Profile already has an actor key`
+   - `generated the one-time actor keys of Profiles that had none` (created = 今回新規生成した数。無効化・未射影 Profile も含む) または `every Profile already has an actor key`
 4. **スモーク確認**:
    - `GET /.well-known/webfinger?resource=acct:{username}@{PUBLIC_BASE_URL の host[:port]}` → 200、`self` link が `{PUBLIC_BASE_URL}/ap/profiles/{nanoid}`
    - `GET /ap/profiles/{nanoid}` (Accept: `application/activity+json`) → 200、`publicKey.id` が `{actor}#main-key`
@@ -74,14 +99,16 @@
 
 ### 3.1 username 検査で拒否された場合の復旧
 
-拒否時点で DB は切替前の状態 (P4 の migration は未適用、旧連合データ・鍵・台帳なし) のままなので、**バックアップ復元は不要**。新サーバーは起動できないため、username の設定は**切替前のバイナリ**で行う。
+拒否時点で DB は切替前の状態 (P4 の migration は未適用、旧連合データ・旧鍵は保持、reset 台帳は未作成) のままなので、**バックアップ復元は不要**。新サーバーは起動できないため、username の設定は**切替前のバイナリ**で行う。
 
-1. 新バイナリを停止したまま (起動を繰り返さない)、拒否メッセージの件数を確認する: `SELECT id, nanoid FROM profiles WHERE username IS NULL;`
+1. 新バイナリを停止したまま (起動を繰り返さない)、拒否メッセージの件数と対象を §2 の事前確認 SQL で確認する。
 2. **切替前のバイナリ**を、外部からの受信・配送を再開しないよう (ingress を閉じたまま、管理 API だけに到達できる経路で) 起動する。
    `_sqlx_migrations` には切替前の migration しか入っていないので、旧バイナリはそのまま起動できる。
-3. 該当 Profile の所有者が `POST /api/v1/profiles/{profile_nanoid}/username` で username を設定する (一回限りで変更不可。FN の画面経由でもよい)。
-4. `SELECT count(*) FROM profiles WHERE username IS NULL;` が 0 になったら旧バイナリを停止し、§3 の手順 3 から再試行する。
-5. もし検査後に migration の途中で失敗した場合も、各 migration は 1 transaction なので部分適用は残らない。原因を直して再起動すればよい。それでも戻せない状態になったら (例えば誤って部分的に手で変更した場合) §2.3 のバックアップから復元する。
+3. 該当 Profile の行が無効化で消えていれば、所有者が `POST /api/v1/accounts/{account_nanoid}/reactivate` で Account を再有効化し、projection が Profile を復元するまで待つ。Account の特定には Created の account_id だけでなく、後続 AccountTransferred の移管先も含む全履歴を参照する（移管後も id・nanoid は不変）。手作業で projection 行・イベント・username を書き換えない。
+   **停止条件（未検証境界）**: P4 前の旧バイナリには全履歴からの再 materialize がなく、古い無効化の Profile が tailing の窓の外にあれば、再有効化だけでは戻らない場合がある。**旧バイナリでの再有効化で Profile が戻ることを確認できなければ停止し、手書き SQL や P4 起動で回避しない**。今回の回帰テストは切替前 schema 上で現在の全履歴 projector を使う復旧までを確認したもので、旧バイナリでの全件復旧を検証・保証しない。運用者へ報告し、必要な復旧は別 unit で扱う。本番の切替を先に進めてはならない。
+4. 該当 Profile の所有者が `POST /api/v1/profiles/{profile_nanoid}/username` で username を設定する (一回限りで変更不可。FN の画面経由でもよい)。
+5. §2 の事前確認 SQL が 0 行になったら、必要なら Account を再び無効化してもよい（設定済み username と identity はイベントに残る）。旧バイナリを停止し、§3 の手順 3 から再試行する。
+6. もし検査後に migration の途中で失敗した場合も、各 migration は 1 transaction なので部分適用は残らない。原因を直して再起動すればよい。それでも戻せない状態になったら (例えば誤って部分的に手で変更した場合) §2.3 のバックアップから復元する。
 
 複数プロセス/レプリカで運用する場合も、台帳・advisory lock・unique index により二重初期化・二重鍵生成は起きない (が、切替は 1 プロセスで行うこと)。
 

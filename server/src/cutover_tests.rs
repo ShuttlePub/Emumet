@@ -41,6 +41,9 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[path = "cutover_dormant_tests.rs"]
+mod dormant;
+
 const RESET_TARGETS: [&str; 6] = [
     "follows",
     "blocks",
@@ -79,12 +82,28 @@ struct Local {
 impl Rehearsal {
     async fn new() -> Self {
         kernel::ensure_generator_initialized();
-        let iso = IsolatedDatabase::create_before_reset().await;
+        let iso = IsolatedDatabase::create_before_cutover().await;
         let password = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(password.path(), b"cutover-rehearsal-password").unwrap();
-        let module = AppModule::new_for_oauth2_test(
+        let peer = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/relation-tuples/check"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"allowed": true})))
+            .mount(&peer)
+            .await;
+        for verb in ["PUT", "DELETE"] {
+            Mock::given(method(verb))
+                .and(path("/admin/relation-tuples"))
+                .respond_with(ResponseTemplate::new(204))
+                .mount(&peer)
+                .await;
+        }
+        let module = AppModule::new_for_test_database(
+            iso.database.clone(),
             "http://localhost:65535".to_string(),
             "http://localhost:65535".to_string(),
+            peer.uri(),
+            peer.uri(),
         )
         .await
         .expect("AppModule init failed (is DATABASE_URL set?)")
@@ -111,7 +130,7 @@ impl Rehearsal {
         Self {
             iso,
             module,
-            peer: MockServer::start().await,
+            peer,
             host_id,
             _password: password,
         }

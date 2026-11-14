@@ -224,8 +224,18 @@ impl ProfileSigningKeyRepository for PostgresProfileSigningKeyRepository {
         let rows: Vec<(i64, String)> = sqlx::query_as(
             //language=postgresql
             r#"
+            -- A deactivated Account has no Profile projection row. Created events retain the
+            -- immutable actor identity (id/nanoid), even across transfers and UsernameSet.
+            WITH existing_profiles AS (
+                SELECT id, nanoid FROM profiles
+                UNION ALL
+                SELECT e.id, e.data ->> 'nanoid' AS nanoid
+                FROM profile_events e
+                WHERE e.data ->> 'type' = 'created'
+                  AND NOT EXISTS (SELECT 1 FROM profiles p WHERE p.id = e.id)
+            )
             SELECT p.id, p.nanoid
-            FROM profiles p
+            FROM existing_profiles p
             WHERE NOT EXISTS (
                 SELECT 1 FROM profile_signing_keys k
                 WHERE k.profile_id = p.id AND k.revoked_at IS NULL
@@ -363,6 +373,73 @@ mod test {
         );
         let error = repository.revoke(&mut conn, first.id()).await.unwrap_err();
         assert_eq!(error.current_context(), &KernelError::NotFound);
+    }
+
+    #[test_with::env(DATABASE_URL)]
+    #[tokio::test]
+    async fn provisioning_pages_over_dormant_event_identities_without_replacing_existing_keys() {
+        let iso = crate::database::isolated_db::IsolatedDatabase::create().await;
+        let db = &iso.database;
+        let (profile_id, nanoid) = seed_profile(db).await;
+        let mut conn = db.connection().await.unwrap();
+        let repository = db.profile_signing_key_repository();
+        let retained = key_for(&profile_id, &nanoid);
+        repository.create(&mut conn, &retained).await.unwrap();
+        // The same identity in a row and its event stream must not appear twice. Its active key
+        // must also exclude it from every page. The remaining 502 exist ONLY in the event log.
+        sqlx::query(
+            "INSERT INTO profile_events (id, version, event_name, data) VALUES \
+             ($1, 1, 'profile_created', jsonb_build_object('type', 'created', 'nanoid', $2::text))",
+        )
+        .bind(profile_id.as_ref())
+        .bind(&nanoid)
+        .execute(&iso.pool)
+        .await
+        .unwrap();
+        let base = kernel::generate_id();
+        sqlx::query(
+            "INSERT INTO profile_events (id, version, event_name, data) \
+             SELECT $1::bigint + n, 1, 'profile_created', \
+               jsonb_build_object('type', 'created', 'nanoid', 'dormant-' || n) \
+             FROM generate_series(1, 502) n",
+        )
+        .bind(base)
+        .execute(&iso.pool)
+        .await
+        .unwrap();
+        let first = repository
+            .find_profiles_without_active_key(&mut conn, 500)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 500);
+        for (id, nanoid) in first {
+            repository
+                .create(&mut conn, &key_for(&id, &nanoid))
+                .await
+                .unwrap();
+        }
+        let second = repository
+            .find_profiles_without_active_key(&mut conn, 500)
+            .await
+            .unwrap();
+        assert_eq!(second.len(), 2);
+        for (id, nanoid) in second {
+            repository
+                .create(&mut conn, &key_for(&id, &nanoid))
+                .await
+                .unwrap();
+        }
+        assert!(repository
+            .find_profiles_without_active_key(&mut conn, 500)
+            .await
+            .unwrap()
+            .is_empty());
+        let loaded = repository
+            .find_by_id(&mut conn, retained.id())
+            .await
+            .unwrap();
+        assert_eq!(loaded.public_key_pem, retained.public_key_pem);
+        assert_eq!(loaded.key_id_uri, retained.key_id_uri);
     }
 
     #[test_with::env(DATABASE_URL)]

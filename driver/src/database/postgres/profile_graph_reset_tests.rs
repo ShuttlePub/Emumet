@@ -176,7 +176,7 @@ async fn seed_retained(
     .execute(pool)
     .await
     .unwrap();
-    for table in ["account_events", "profile_events", "account_report_events"] {
+    for table in ["account_events", "account_report_events"] {
         sqlx::query(&format!(
             "INSERT INTO {table} (id, version, event_name, data) VALUES ($1, 1, 'created', '{{}}'::jsonb)"
         ))
@@ -185,6 +185,19 @@ async fn seed_retained(
         .await
         .unwrap();
     }
+    // A retained Profile identity, rather than an unrelated malformed/nameless stream:
+    // the cutover precheck now includes every event stream, not only projection rows.
+    sqlx::query(
+        "INSERT INTO profile_events (id, version, event_name, data) \
+         SELECT id, 1, 'profile_created', \
+           jsonb_build_object('type', 'created', 'account_id', account_id, \
+                              'nanoid', nanoid, 'username', 'seed-' || id) \
+         FROM profiles WHERE id = $1",
+    )
+    .bind(profile_id.as_ref())
+    .execute(pool)
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO account_reports (id, target_account_id, reported_by_account_id, category, version, nanoid) \
          VALUES ($1, $2, $3, 'spam', 1, $4)",
