@@ -11,9 +11,95 @@ use application::service::profile_relation_list::{
 };
 use application::service::profile_relationship::ProfileRelationshipUseCase;
 use application::service::session_context::OrganizationContext;
+use axum::body::{Body, Bytes};
 use axum::extract::FromRef;
+use axum::response::Response;
+use http_body::{Frame, SizeHint};
 use kernel::KernelError;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
+
+/// 応答を返した後に始める remote actor の表示情報の取得 (バックグラウンド、best-effort)。
+///
+/// 一覧・作成の応答はリモートを待たない。取得は [`ActorRefresh::attach`] で応答本体に結び付け、
+/// 本体を最後まで送り終えた (または破棄された) 時点で初めて起動する。
+pub struct ActorRefresh {
+    module: Arc<AppModule>,
+    actor_urls: Vec<String>,
+}
+
+impl ActorRefresh {
+    fn new(module: Arc<AppModule>, actor_urls: Vec<String>) -> Self {
+        Self { module, actor_urls }
+    }
+
+    /// 取得するものがあれば、応答本体の送信完了を契機に起動する形で `response` に結び付ける。
+    pub fn attach(self, response: Response) -> Response {
+        if self.actor_urls.is_empty() {
+            return response;
+        }
+        response.map(|body| {
+            Body::new(StartAfterBody {
+                inner: body,
+                start: Some(self),
+            })
+        })
+    }
+
+    fn start(self) {
+        tokio::spawn(async move {
+            self.module
+                .refresh_remote_actor_profiles(&self.actor_urls)
+                .await;
+        });
+    }
+}
+
+/// 本体を素通しし、最後のフレームを渡した時 (または、その前に破棄された時) に一度だけ取得を起動する。
+struct StartAfterBody {
+    inner: Body,
+    start: Option<ActorRefresh>,
+}
+
+impl StartAfterBody {
+    fn start_once(&mut self) {
+        if let Some(refresh) = self.start.take() {
+            refresh.start();
+        }
+    }
+}
+
+impl http_body::Body for StartAfterBody {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        let poll = Pin::new(&mut this.inner).poll_frame(cx);
+        if matches!(poll, Poll::Ready(None)) || this.inner.is_end_stream() {
+            this.start_once();
+        }
+        poll
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+impl Drop for StartAfterBody {
+    fn drop(&mut self) {
+        self.start_once();
+    }
+}
 
 /// Profile 単位の Follow / 個別 block・mute の送信側 use case への facade (P3o)。
 /// P4 の切替で本番 root router に mount される (Profile identity・Follow・個別 block/mute)。
@@ -59,7 +145,7 @@ impl ProfileRelationshipApi {
         org_context: Option<&OrganizationContext>,
         profile_nanoid: &str,
         target: &str,
-    ) -> error_stack::Result<ProfileRelationItemDto, KernelError> {
+    ) -> error_stack::Result<(ProfileRelationItemDto, ActorRefresh), KernelError> {
         let auth_account_id = resolve_auth_account_id(&self.module, auth_info).await?;
         let relation = self
             .module
@@ -87,7 +173,7 @@ impl ProfileRelationshipApi {
         org_context: Option<&OrganizationContext>,
         profile_nanoid: &str,
         target: &str,
-    ) -> error_stack::Result<ProfileRelationItemDto, KernelError> {
+    ) -> error_stack::Result<(ProfileRelationItemDto, ActorRefresh), KernelError> {
         let auth_account_id = resolve_auth_account_id(&self.module, auth_info).await?;
         let relation = self
             .module
@@ -112,27 +198,23 @@ impl ProfileRelationshipApi {
 
 impl ProfileRelationshipApi {
     /// Attaches the display data of the new relation's target (from the Profile or the cache, no
-    /// remote access) and schedules a background fetch for a remote target that is not cached yet.
-    async fn with_target_actor(&self, relation: ProfileRelationDto) -> ProfileRelationItemDto {
+    /// remote access) and returns the background fetch for a remote target that is not cached yet;
+    /// the caller attaches it to the response so that it starts only after the response is sent.
+    async fn with_target_actor(
+        &self,
+        relation: ProfileRelationDto,
+    ) -> (ProfileRelationItemDto, ActorRefresh) {
         let (mut actors, refresh) = self
             .module
             .describe_relation_targets(std::slice::from_ref(&relation.target))
             .await;
-        self.spawn_actor_refresh(refresh);
-        ProfileRelationItemDto {
-            target_actor: actors.remove(0),
-            relation,
-        }
-    }
-
-    fn spawn_actor_refresh(&self, actor_urls: Vec<String>) {
-        if actor_urls.is_empty() {
-            return;
-        }
-        let module = self.module.clone();
-        tokio::spawn(async move {
-            module.refresh_remote_actor_profiles(&actor_urls).await;
-        });
+        (
+            ProfileRelationItemDto {
+                target_actor: actors.remove(0),
+                relation,
+            },
+            ActorRefresh::new(self.module.clone(), refresh),
+        )
     }
 
     pub async fn profile_identity(
@@ -155,7 +237,7 @@ impl ProfileRelationshipApi {
         kind: ProfileRelationListKind,
         cursor: Option<&str>,
         limit: Option<u32>,
-    ) -> error_stack::Result<ProfileRelationPageDto, KernelError> {
+    ) -> error_stack::Result<(ProfileRelationPageDto, ActorRefresh), KernelError> {
         let auth_account_id = resolve_auth_account_id(&self.module, auth_info).await?;
         let page = self
             .module
@@ -169,9 +251,9 @@ impl ProfileRelationshipApi {
             )
             .await?;
         // The response never waits for a remote server: actors without (fresh) display data are
-        // fetched in the background and show up on a later read.
-        self.spawn_actor_refresh(page.refresh.clone());
-        Ok(page)
+        // fetched in the background (after the response is sent) and show up on a later read.
+        let refresh = ActorRefresh::new(self.module.clone(), page.refresh.clone());
+        Ok((page, refresh))
     }
 }
 

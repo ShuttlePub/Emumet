@@ -29,10 +29,20 @@ fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}')
 }
 
+/// 表示されない書式文字 (ゼロ幅文字・BOM・soft hyphen など)。見た目が同じ別の文字列を作れるので除く。
+fn is_invisible_format(c: char) -> bool {
+    matches!(c, '\u{200B}'..='\u{200D}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{00AD}')
+}
+
+/// 表示の並びを入れ替えたり見えなくしたりする文字 (制御文字・双方向制御文字・不可視の書式文字)。
+fn is_unsafe_display_char(c: char) -> bool {
+    c.is_control() || is_bidi_control(c) || is_invisible_format(c)
+}
+
 fn sanitize_display_name(raw: &str) -> Option<String> {
     let cleaned: String = raw
         .chars()
-        .filter(|c| !c.is_control() && !is_bidi_control(*c))
+        .filter(|c| !is_unsafe_display_char(*c))
         .collect();
     let trimmed = cleaned.trim();
     if trimmed.is_empty() {
@@ -77,7 +87,7 @@ fn collect_icon_candidates<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a s
 }
 
 impl RemoteActorProfile {
-    /// 値から作る。`preferred_username` は空・空白・制御文字・`@`・`/` を含まない 1〜256 文字でなければ
+    /// 値から作る。`preferred_username` は空・空白・制御文字・双方向制御文字・不可視の書式文字・`@`・`/` を含まない 1〜256 文字でなければ
     /// `Rejected`。`display_name` と `icon_url` は不正なら捨てる (null にする。失敗にはしない)。
     pub fn new(
         preferred_username: &str,
@@ -89,7 +99,7 @@ impl RemoteActorProfile {
             || chars > MAX_PREFERRED_USERNAME_CHARS
             || preferred_username
                 .chars()
-                .any(|c| c.is_whitespace() || c.is_control() || c == '@' || c == '/')
+                .any(|c| c.is_whitespace() || is_unsafe_display_char(c) || c == '@' || c == '/')
         {
             return Err(rejected("actor preferredUsername is not usable"));
         }
@@ -326,6 +336,15 @@ mod tests {
             "a/b",
             "a\nb",
             "a\u{0}",
+            // 双方向制御文字・不可視の書式文字は acct の表示を偽装できるので拒否する。
+            "evil\u{202E}gpj",
+            "a\u{202A}b",
+            "a\u{2066}b",
+            "a\u{200F}",
+            "a\u{061C}",
+            "a\u{200B}b",
+            "a\u{FEFF}",
+            "a\u{2060}b",
             &"a".repeat(MAX_PREFERRED_USERNAME_CHARS + 1),
         ] {
             let error = RemoteActorProfile::new(bad, None, None).unwrap_err();

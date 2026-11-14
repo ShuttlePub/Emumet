@@ -24,6 +24,7 @@ use application::dto::profile_relationship::{
 use application::service::profile_relation_list::ProfileRelationListKind;
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Extension, Json, Router};
 use kernel::prelude::entity::ProfileFollowState as KernelFollowState;
@@ -175,8 +176,8 @@ pub(crate) async fn block_actor(
     State(api): State<ProfileRelationshipApi>,
     Path(profile_nanoid): Path<String>,
     Json(request): Json<CreateProfileRelationRequest>,
-) -> Result<(StatusCode, Json<ProfileRelationResponse>), ErrorStatus> {
-    let block = api
+) -> Result<Response, ErrorStatus> {
+    let (block, refresh) = api
         .block(
             OidcAuthInfo::from(claims),
             org_context.as_ref(),
@@ -185,9 +186,12 @@ pub(crate) async fn block_actor(
         )
         .await
         .map_err(ErrorStatus::from)?;
-    Ok((
-        StatusCode::CREATED,
-        Json(relation_response(block, ProfileRelationKind::Block)),
+    Ok(refresh.attach(
+        (
+            StatusCode::CREATED,
+            Json(relation_response(block, ProfileRelationKind::Block)),
+        )
+            .into_response(),
     ))
 }
 
@@ -249,8 +253,8 @@ pub(crate) async fn mute_actor(
     State(api): State<ProfileRelationshipApi>,
     Path(profile_nanoid): Path<String>,
     Json(request): Json<CreateProfileRelationRequest>,
-) -> Result<(StatusCode, Json<ProfileRelationResponse>), ErrorStatus> {
-    let mute = api
+) -> Result<Response, ErrorStatus> {
+    let (mute, refresh) = api
         .mute(
             OidcAuthInfo::from(claims),
             org_context.as_ref(),
@@ -259,9 +263,12 @@ pub(crate) async fn mute_actor(
         )
         .await
         .map_err(ErrorStatus::from)?;
-    Ok((
-        StatusCode::CREATED,
-        Json(relation_response(mute, ProfileRelationKind::Mute)),
+    Ok(refresh.attach(
+        (
+            StatusCode::CREATED,
+            Json(relation_response(mute, ProfileRelationKind::Mute)),
+        )
+            .into_response(),
     ))
 }
 
@@ -345,12 +352,12 @@ async fn list_relations(
     profile_nanoid: String,
     query: RelationListQuery,
     kind: ProfileRelationListKind,
-) -> Result<Json<ProfileRelationListResponse>, ErrorStatus> {
+) -> Result<Response, ErrorStatus> {
     let response_kind = match kind {
         ProfileRelationListKind::Block => ProfileRelationKind::Block,
         ProfileRelationListKind::Mute => ProfileRelationKind::Mute,
     };
-    let page = api
+    let (page, refresh) = api
         .list_relations(
             OidcAuthInfo::from(claims),
             org_context.as_ref(),
@@ -361,14 +368,17 @@ async fn list_relations(
         )
         .await
         .map_err(ErrorStatus::from)?;
-    Ok(Json(ProfileRelationListResponse {
-        items: page
-            .items
-            .into_iter()
-            .map(|item| relation_response(item, response_kind))
-            .collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(refresh.attach(
+        Json(ProfileRelationListResponse {
+            items: page
+                .items
+                .into_iter()
+                .map(|item| relation_response(item, response_kind))
+                .collect(),
+            next_cursor: page.next_cursor,
+        })
+        .into_response(),
+    ))
 }
 
 #[utoipa::path(
@@ -396,7 +406,7 @@ pub(crate) async fn list_profile_blocks(
     State(api): State<ProfileRelationshipApi>,
     Path(profile_nanoid): Path<String>,
     Query(query): Query<RelationListQuery>,
-) -> Result<Json<ProfileRelationListResponse>, ErrorStatus> {
+) -> Result<Response, ErrorStatus> {
     list_relations(
         claims,
         org_context,
@@ -433,7 +443,7 @@ pub(crate) async fn list_profile_mutes(
     State(api): State<ProfileRelationshipApi>,
     Path(profile_nanoid): Path<String>,
     Query(query): Query<RelationListQuery>,
-) -> Result<Json<ProfileRelationListResponse>, ErrorStatus> {
+) -> Result<Response, ErrorStatus> {
     list_relations(
         claims,
         org_context,

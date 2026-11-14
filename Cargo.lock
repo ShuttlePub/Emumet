@@ -3665,6 +3665,7 @@ dependencies = [
  "dotenvy",
  "driver",
  "error-stack",
+ "http-body 1.0.1",
  "http-body-util",
  "httpdate",
  "jsonwebtoken",

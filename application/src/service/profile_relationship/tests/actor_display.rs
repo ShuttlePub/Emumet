@@ -543,3 +543,205 @@ async fn a_block_is_described_like_a_mute_and_keeps_its_fields() {
     assert_eq!(item.target_actor.status, RelationActorStatus::Resolved);
     assert_eq!(item.target_actor.display_name.as_deref(), Some("Bob"));
 }
+
+/// 応答のたびに仮想時計を進める peer の応答 (遅い取得の再現。実時間は待たない)。
+struct AdvanceClock {
+    offset_seconds: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    advance_to: i64,
+    body: serde_json::Value,
+    delay: std::time::Duration,
+}
+
+impl wiremock::Respond for AdvanceClock {
+    fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+        self.offset_seconds
+            .store(self.advance_to, std::sync::atomic::Ordering::SeqCst);
+        ResponseTemplate::new(200)
+            .set_body_json(&self.body)
+            .set_delay(self.delay)
+    }
+}
+
+async fn next_refresh_at(env: &Env, url: &str) -> OffsetDateTime {
+    sqlx::query_scalar(
+        "SELECT next_refresh_at FROM profile_remote_actor_cache WHERE actor_url = $1",
+    )
+    .bind(url)
+    .fetch_one(&env.iso.pool)
+    .await
+    .unwrap()
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn each_actor_uses_the_time_of_its_own_claim_and_record_not_the_start_of_the_batch() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::sync::Arc;
+
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    let first = env.peer_url("/users/first");
+    let second = env.peer_url("/users/second");
+    mute(&env, &alice, &first).await;
+    mute(&env, &alice, &second).await;
+
+    // 仮想時計: 基準時刻 + offset。first の取得で 50 秒、second の取得中に 100 秒まで進む。
+    let base = OffsetDateTime::now_utc();
+    let offset = Arc::new(AtomicI64::new(0));
+    let doc = |url: &str, name: &str| serde_json::json!({"id": url, "type": "Person", "preferredUsername": name, "name": name});
+    Mock::given(method("GET"))
+        .and(path("/users/first"))
+        .respond_with(AdvanceClock {
+            offset_seconds: offset.clone(),
+            advance_to: 50,
+            body: doc(&first, "first"),
+            delay: std::time::Duration::ZERO,
+        })
+        .mount(&env.peer)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/users/second"))
+        .respond_with(AdvanceClock {
+            offset_seconds: offset.clone(),
+            advance_to: 100,
+            body: doc(&second, "second"),
+            delay: std::time::Duration::from_millis(1500),
+        })
+        .mount(&env.peer)
+        .await;
+
+    let urls = vec![first.clone(), second.clone()];
+    let batch = {
+        let module = env.module.clone();
+        let offset = offset.clone();
+        let urls = urls.clone();
+        tokio::spawn(async move {
+            let clock = move || base + Duration::seconds(offset.load(Ordering::SeqCst));
+            module
+                .refresh_remote_actor_profiles_with_clock(&urls, &clock)
+                .await;
+        })
+    };
+    // second の取得が始まる (= first の記録が済み、second のリースが確保された) まで待つ。
+    for _ in 0..200 {
+        if gets(&env, "/users/second").await > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(gets(&env, "/users/second").await, 1);
+
+    // 取得の途中 (仮想時刻 100 秒) で一覧が再読込され、同じ actor が要求される。second のリースは
+    // 確保した時刻 (50 秒) から 60 秒間 = 110 秒まで有効なので、2 回目の取得は始まらない。
+    offset.store(100, Ordering::SeqCst);
+    let mid_batch_clock = || base + Duration::seconds(100);
+    env.module
+        .refresh_remote_actor_profiles_with_clock(std::slice::from_ref(&second), &mid_batch_clock)
+        .await;
+    batch.await.unwrap();
+    assert_eq!(gets(&env, "/users/second").await, 1, "the lease still held");
+    assert_eq!(gets(&env, "/users/first").await, 1);
+
+    // 期限は actor ごとの記録時刻から数える (バッチ開始時刻からではない)。
+    let close = |actual: OffsetDateTime, expected: OffsetDateTime| {
+        (actual - expected).abs() < Duration::seconds(2)
+    };
+    let first_due = next_refresh_at(&env, &first).await;
+    assert!(
+        close(
+            first_due,
+            base + Duration::seconds(50) + REMOTE_ACTOR_REFRESH_TTL
+        ),
+        "{first_due}"
+    );
+    let second_due = next_refresh_at(&env, &second).await;
+    assert!(
+        close(
+            second_due,
+            base + Duration::seconds(100) + REMOTE_ACTOR_REFRESH_TTL
+        ),
+        "{second_due}"
+    );
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_failed_fetch_is_backed_off_from_the_time_it_finished() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::sync::Arc;
+
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    let down = env.peer_url("/users/down");
+    mute(&env, &alice, &down).await;
+    let base = OffsetDateTime::now_utc();
+    let offset = Arc::new(AtomicI64::new(0));
+    // 取得が 40 秒かかって失敗する。
+    Mock::given(method("GET"))
+        .and(path("/users/down"))
+        .respond_with({
+            struct Fail(Arc<AtomicI64>);
+            impl wiremock::Respond for Fail {
+                fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+                    self.0.store(40, Ordering::SeqCst);
+                    ResponseTemplate::new(503)
+                }
+            }
+            Fail(offset.clone())
+        })
+        .mount(&env.peer)
+        .await;
+    let clock = {
+        let offset = offset.clone();
+        move || base + Duration::seconds(offset.load(Ordering::SeqCst))
+    };
+    env.module
+        .refresh_remote_actor_profiles_with_clock(std::slice::from_ref(&down), &clock)
+        .await;
+    let due = next_refresh_at(&env, &down).await;
+    let expected = base + Duration::seconds(40) + REMOTE_ACTOR_RETRY_AFTER;
+    assert!((due - expected).abs() < Duration::seconds(2), "{due}");
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_preferred_username_with_bidi_or_invisible_characters_is_a_failed_fetch() {
+    let env = Env::new().await;
+    let alice = env.seed_user().await;
+    let mut targets = Vec::new();
+    for (index, username) in [
+        "evil\u{202E}gpj",
+        "a\u{2066}b",
+        "a\u{200F}",
+        "a\u{200B}b",
+        "a\u{FEFF}",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let actor_path = format!("/users/bidi{index}");
+        let url = env.peer_url(&actor_path);
+        Mock::given(method("GET"))
+            .and(path(actor_path.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": url, "type": "Person", "preferredUsername": username, "name": "Mallory",
+            })))
+            .mount(&env.peer)
+            .await;
+        mute(&env, &alice, &url).await;
+        targets.push(url);
+    }
+    env.module.refresh_remote_actor_profiles(&targets).await;
+    let page = list_mutes(&env, &alice).await;
+    assert_eq!(page.items.len(), targets.len());
+    for item in &page.items {
+        let actor = &item.target_actor;
+        assert_eq!(actor.status, RelationActorStatus::Unavailable);
+        assert_eq!(
+            (&actor.acct, &actor.preferred_username, &actor.display_name),
+            (&None, &None, &None),
+            "{}",
+            item.relation.target
+        );
+    }
+}

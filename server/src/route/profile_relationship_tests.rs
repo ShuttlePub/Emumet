@@ -925,3 +925,106 @@ async fn local_targets_are_described_in_the_same_shape_and_lists_stay_owner_only
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+impl Harness {
+    /// 応答 (ヘッダ) だけを受け取り、本体はまだ読まない。本体を読み切る (`finish`) まで応答は完了しない。
+    async fn call_deferred(
+        &self,
+        http_method: Method,
+        uri: &str,
+        token: &str,
+        body: Option<Value>,
+    ) -> axum::response::Response {
+        let builder = Request::builder()
+            .method(http_method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"));
+        let request = match body {
+            Some(body) => builder
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string())),
+            None => builder.body(Body::empty()),
+        }
+        .expect("valid request");
+        self.router.clone().oneshot(request).await.unwrap()
+    }
+
+    async fn wait_for_actor_gets(&self, actor_path: &str, expected: usize) {
+        for _ in 0..200 {
+            if self.actor_gets(actor_path).await >= expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!(
+            "{actor_path} was fetched {} times, expected {expected}",
+            self.actor_gets(actor_path).await
+        );
+    }
+}
+
+async fn finish(response: axum::response::Response) -> (StatusCode, Value) {
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn the_background_fetch_starts_only_after_the_response_has_been_sent() {
+    let h = Harness::new().await;
+    let alice = h.user().await;
+    let bob = h.mount_person("/users/bob", "bob", "Bob").await;
+
+    // 作成: 応答を受け取った後も、本体を読み切るまで peer への接続は 0 件。
+    let response = h
+        .call_deferred(
+            Method::POST,
+            &uri(&alice.profile, "mutes"),
+            &alice.token,
+            Some(json!({"target": bob})),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        h.actor_gets("/users/bob").await,
+        0,
+        "no peer connection before the response is complete"
+    );
+    let (_, created) = finish(response).await;
+    assert_eq!(created["target_actor"]["status"], "pending");
+    h.wait_for_actor_gets("/users/bob", 1).await;
+    h.list_until(&alice, "mutes", 0, "resolved").await;
+
+    // 一覧: 期限切れにして再取得を要求させる。同様に応答の完了前は接続しない。
+    sqlx::query(
+        "UPDATE profile_remote_actor_cache SET next_refresh_at = now() - interval '1 minute'",
+    )
+    .execute(&h.iso.pool)
+    .await
+    .unwrap();
+    let fetched = h.actor_gets("/users/bob").await;
+    let response = h
+        .call_deferred(
+            Method::GET,
+            &uri(&alice.profile, "mutes"),
+            &alice.token,
+            None,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        h.actor_gets("/users/bob").await,
+        fetched,
+        "the list never waits for or starts the fetch before its response is complete"
+    );
+    let (_, list) = finish(response).await;
+    // 古い (期限切れの) データはそのまま返り、取得は応答の後に走る。
+    assert_eq!(list["items"][0]["target_actor"]["status"], "resolved");
+    h.wait_for_actor_gets("/users/bob", fetched + 1).await;
+}

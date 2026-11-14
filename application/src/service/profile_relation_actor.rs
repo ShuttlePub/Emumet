@@ -298,21 +298,35 @@ pub trait ProfileRelationActorUseCase:
         &'a self,
         actor_urls: &'a [String],
     ) -> impl Future<Output = ()> + Send + 'a {
-        self.refresh_remote_actor_profiles_at(actor_urls, OffsetDateTime::now_utc())
+        self.refresh_remote_actor_profiles_with_clock(actor_urls, &OffsetDateTime::now_utc)
     }
 
-    /// [`Self::refresh_remote_actor_profiles`] の時刻指定版 (期限の検査用)。
+    /// [`Self::refresh_remote_actor_profiles`] の時刻固定版 (期限の検査用)。
     fn refresh_remote_actor_profiles_at<'a>(
         &'a self,
         actor_urls: &'a [String],
         now: OffsetDateTime,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
+            self.refresh_remote_actor_profiles_with_clock(actor_urls, &|| now)
+                .await
+        }
+    }
+
+    /// [`Self::refresh_remote_actor_profiles`] の時計指定版。時刻は actor ごとにリースの確保の直前と
+    /// 結果の記録の直前に読む (先行 actor の取得に時間がかかっても、後続のリース・TTL・バックオフが
+    /// バッチ開始時の時刻を基準に短くならない)。
+    fn refresh_remote_actor_profiles_with_clock<'a>(
+        &'a self,
+        actor_urls: &'a [String],
+        clock: &'a (dyn Fn() -> OffsetDateTime + Sync),
+    ) -> impl Future<Output = ()> + Send + 'a {
+        async move {
             for raw in actor_urls {
                 let Ok(url) = GraphActorUrl::new(raw.as_str()) else {
                     continue;
                 };
-                if let Err(error) = self.refresh_one(&url, now).await {
+                if let Err(error) = self.refresh_one(&url, clock).await {
                     tracing::warn!(
                         actor_url = %url.as_str(),
                         error = ?error,
@@ -327,9 +341,10 @@ pub trait ProfileRelationActorUseCase:
     fn refresh_one<'a>(
         &'a self,
         url: &'a GraphActorUrl,
-        now: OffsetDateTime,
+        clock: &'a (dyn Fn() -> OffsetDateTime + Sync),
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
         async move {
+            let claim_at = clock();
             let deps = self.clone();
             let claim_url = url.clone();
             let claimed = self
@@ -340,8 +355,8 @@ pub trait ProfileRelationActorUseCase:
                             .try_claim_refresh(
                                 executor,
                                 &claim_url,
-                                now,
-                                now + REMOTE_ACTOR_REFRESH_LEASE,
+                                claim_at,
+                                claim_at + REMOTE_ACTOR_REFRESH_LEASE,
                             )
                             .await
                     })
@@ -352,6 +367,7 @@ pub trait ProfileRelationActorUseCase:
             }
             // The fetch runs outside any transaction.
             let fetched = self.remote_actor_resolver().fetch_profile(url).await;
+            let now = clock();
             let deps = self.clone();
             let record_url = url.clone();
             self.transaction_manager()
