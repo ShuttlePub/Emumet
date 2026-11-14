@@ -63,6 +63,10 @@ pub struct UsernameRecoveryRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecoveryResult {
+    #[serde(default)]
+    pub request_id: String,
+    #[serde(default)]
+    pub requested_username: String,
     pub status: String,
     pub profile: ProfileDiagnostic,
     pub new_version: Option<String>,
@@ -340,6 +344,9 @@ pub async fn set_username(
                 ));
             }
             let mut result: RecoveryResult = serde_json::from_value(old_result).convert_error()?;
+            // Audits written by the original recovery release predate the preview fields.
+            result.request_id = request.request_id.clone();
+            result.requested_username = request.username.clone();
             result.status = "already_applied".into();
             tx.commit().await?;
             return Ok(result);
@@ -372,6 +379,8 @@ pub async fn set_username(
         ));
     }
     let mut result = RecoveryResult {
+        request_id: request.request_id.clone(),
+        requested_username: request.username.clone(),
         status: "dry_run".into(),
         profile: diagnostic,
         new_version: None,

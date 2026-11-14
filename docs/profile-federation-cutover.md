@@ -135,7 +135,8 @@ Profile が戻らない場合があるため、**復旧の前提にしない**�
      --operator "$operator" --reason "$reason" > dry-run.json 2> dry-run.stderr
    ```
 
-   成功（終了 0、`status: dry_run`）と対象/所有者を確認してから、**同じ引数に `--write` だけを追加**する:
+   成功（終了 0、`status: dry_run`）と対象/所有者・`request_id`・`requested_username` を確認してから、
+   **同じ引数に `--write` だけを追加**する（`profile` は設定前の状態）:
 
    ```sh
    ./profile-cutover-recovery set-username \
