@@ -21,7 +21,6 @@ REGISTRY_IMAGE="docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa0
 SUFFIX="$(date +%s)-$$"
 NAME="emumet-publish-test-registry-${SUFFIX}"
 WORK="$(mktemp -d)"
-VERSION="2026.11.17"
 
 log() { printf '[publish-test] %s\n' "$*"; }
 die() { printf '[publish-test] FAIL: %s\n' "$*" >&2; exit 1; }
@@ -35,6 +34,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The tag under test is the version the image itself carries (verify-local checks that label).
+VERSION="$("$ENGINE" image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$IMAGE")"
+case "$VERSION" in
+  "" | "<no value>" | *[!A-Za-z0-9._-]*) die "the image has no usable version label (got '${VERSION}')" ;;
+esac
 REVISION="$("$ENGINE" image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")"
 case "$REVISION" in
   *[!0-9a-f]* | "") die "the image has no 40-hex revision label (got '${REVISION}')" ;;
