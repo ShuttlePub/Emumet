@@ -1,0 +1,111 @@
+name: Release
+
+# A pushed v* tag publishes ghcr.io/shuttlepub/emumet:<tag without v> (linux/amd64 only) and
+# creates a GitHub Release. See docs/releasing.md for the tag rules and for recovery.
+on:
+  push:
+    tags: [ "v*" ]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      commit: ${{ steps.validate.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Script tests
+        working-directory: scripts/tests
+        run: python3 -m unittest discover -s . -p 'test_*.py'
+      - name: Validate the tag (CalVer, existing date, not in the future, on origin/main)
+        id: validate
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 scripts/validate-release.py "$TAG" --github-output "$GITHUB_OUTPUT"
+      - name: The tag must still point at the commit this run was started for
+        env:
+          COMMIT: ${{ steps.validate.outputs.commit }}
+        run: |
+          [ "$COMMIT" = "$GITHUB_SHA" ] || { echo "tag resolves to $COMMIT but the run is for $GITHUB_SHA" >&2; exit 1; }
+
+  image:
+    name: Build, smoke test and publish the image
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      COMMIT: ${{ needs.validate.outputs.commit }}
+      REGISTRY_USERNAME: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      - name: Registry state of this version
+        id: state
+        run: >-
+          python3 scripts/publish-release.py classify
+          --version "$VERSION" --revision "$COMMIT" --github-output "$GITHUB_OUTPUT"
+      - name: Build
+        if: steps.state.outputs.state == 'absent'
+        run: >-
+          docker build
+          --provenance=false --sbom=false
+          --build-arg "EMUMET_VERSION=$VERSION"
+          --build-arg "EMUMET_REVISION=$COMMIT"
+          -t emumet-release:local .
+      - name: Smoke test
+        if: steps.state.outputs.state == 'absent'
+        run: scripts/smoke-container.sh emumet-release:local
+      - name: Log in to GHCR
+        if: steps.state.outputs.state == 'absent'
+        run: printf '%s' "$REGISTRY_PASSWORD" | docker login ghcr.io -u "$REGISTRY_USERNAME" --password-stdin
+      - name: Push the smoke-tested image and verify it in the registry
+        if: steps.state.outputs.state == 'absent'
+        run: >-
+          python3 scripts/publish-release.py push
+          --version "$VERSION" --revision "$COMMIT" --local-image emumet-release:local
+
+  release:
+    name: GitHub Release
+    needs: [validate, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: read
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      COMMIT: ${{ needs.validate.outputs.commit }}
+      TAG: ${{ github.ref_name }}
+      REGISTRY_USERNAME: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      - name: Create the Release from the digest the registry reports
+        run: >-
+          python3 scripts/publish-release.py release
+          --version "$VERSION" --revision "$COMMIT" --tag "$TAG"
+          --github-repository "$GITHUB_REPOSITORY"
