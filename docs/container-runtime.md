@@ -13,11 +13,23 @@ are described in [releasing.md](releasing.md).
 * **Master key**: a file read as the container user. The server reads
   `/run/secrets/master-key-password`, falling back to `./master-key-password` (`/app`). The file
   must not be readable by group/other (mode `0400` or `0600`; any `0o077` bit is rejected) and must
-  be owned by UID 10001 or be otherwise readable by it. Mount it read-only, for example from a
-  Kubernetes Secret with `defaultMode: 0400` and `fsGroup`/`runAsUser: 10001`. Never bake it into
-  an image or pass it as an environment variable. With a plain Docker named volume (as
-  `scripts/smoke-container.sh` does) create the file inside the volume with `chown 10001:10001`
-  and `chmod 0400` using a throw-away container.
+  be readable by the user the container runs as (UID 10001 by default). Mount it read-only; never
+  bake it into an image or pass it as an environment variable. With a plain Docker named volume (as
+  `scripts/smoke-container.sh` does) create the file inside the volume with `chown 10001:10001` and
+  `chmod 0400` using a throw-away container. Three cautions:
+  1. **A wrong key file is not necessarily detected at start-up.** The file is read when a key is
+     first needed (creating or using an account/profile key), not unconditionally when the server
+     starts. A missing, unreadable, empty or too-permissive file can therefore stay unnoticed until
+     the first such operation. The smoke test only proves that the default user can read a `0400`
+     file at OS level, not that the application uses the key correctly.
+  2. **If you override the UID, make the file owner match it.** `runAsUser` and similar options do
+     not change who owns the file, and because group/other permission bits are rejected, granting
+     access through a group (`fsGroup`, mode `0440`) is not an alternative: the file must be owned
+     by the UID that actually runs the server and be `0400`/`0600`.
+  3. **Mounting a Secret directly (for example a Kubernetes Secret volume) is unverified.** Its
+     ownership and mode semantics were not tested with this image. Verify that the server really
+     reads the key (an operation that needs it, such as creating a profile) in the target
+     environment before the production placement.
 * **Health**: `GET /healthz` returns `200 ok\n` (`text/plain`, `Cache-Control: no-store`) without
   authentication. It only tells that the HTTP server is up: it never touches the database, Ory,
   S3 or the key, so it is suitable as a liveness probe, but not as proof of readiness for work.
@@ -27,9 +39,12 @@ are described in [releasing.md](releasing.md).
 * **Stopping**: SIGTERM and SIGINT take the same path: the listener stops accepting, in-flight
   requests finish, then the background workers are stopped in the existing order (the webhook
   worker may wait up to 20 seconds). Give the container a **termination grace period of at least
-  30 seconds** (`docker stop -t 30`, Kubernetes `terminationGracePeriodSeconds: 30` or more). A stop
-  request during the database migration is honoured right after it, before any worker starts.
-  Exit code on a clean stop is 0.
+  30 seconds** (`docker stop -t 30`, Kubernetes `terminationGracePeriodSeconds: 30` or more). The
+  30 seconds is a recommendation, **not a guaranteed upper bound**: in-flight requests have no
+  deadline of their own, and a stop request that arrives during the database migration is honoured
+  only after the migration (which is never interrupted) finishes. If the orchestrator's grace period
+  runs out first, the process is killed (SIGKILL) and the shutdown was not clean. Exit code on a
+  clean stop is 0.
 
 ## Logging
 
@@ -48,7 +63,10 @@ level is also capped at DEBUG.)
 `EMUMET_FILE_LOG_ENABLED` (new): unset or `false` writes no file; `true` additionally writes
 `./logs/debug.log.<date>` (a development convenience, stdout stays on); any other value (empty,
 `TRUE`, `1`) or an unwritable `./logs` is a start-up error, never a silent fallback. It is read from the
-process environment only, never from `.env`.
+process environment only, never from `.env`. The file is split per day but **old files are never
+deleted automatically**, and the file log is not limited by `RUST_LOG`: it records every target at DEBUG and above (including SQL text), so it grows quickly. If you enable it, plan the
+retention period and the disk capacity of the log directory yourself (rotation/cleanup outside the
+container, or a size-limited volume); on a read-only root it needs a writable `/app/logs`.
 
 ## Environment variables
 
@@ -88,10 +106,10 @@ image has none, so provide them in the container environment.
 | `PROJECTION_POLL_INTERVAL_MS` | `100` | Projection worker poll. |
 | `PROFILE_DELIVERY_POLL_INTERVAL_MS` | `2000` | Profile delivery worker poll. |
 | `REGISTRATION_WEBHOOK_POLL_INTERVAL_MS` | `2000` | Webhook worker poll. |
-| `REGISTRATION_WEBHOOK_ENCRYPTION_KEY` / `_FILE` | none | Needed to create or replace webhook secrets. See `docs/registration-gate-webhook.md`. |
-| `REGISTRATION_WEBHOOK_URL`, `REGISTRATION_WEBHOOK_SECRET` / `_FILE` | none | Legacy single webhook destination. |
-| `REGISTRATION_TURNSTILE_*` (`ENABLED`, `SITE_KEY`, `SECRET` / `SECRET_FILE`, `EXPECTED_HOSTNAME`, `EXPECTED_ACTION`, `TOKEN_MAX_AGE_SECS`) | none | Cloudflare Turnstile. See `docs/registration-protection-readiness.md`. |
-| `REGISTRATION_EMAIL_*`, `REGISTRATION_SMTP_*` (`ENABLED`, `FROM`, `CANARY_ADDRESS`, `SMTP_HOST`, `_PORT`, `_TLS`, `_USERNAME`, `_PASSWORD` / `_PASSWORD_FILE`) | none | Email proof. Same document. |
+| `REGISTRATION_WEBHOOK_ENCRYPTION_KEY` / `_FILE` | see the linked document | Needed to create or replace webhook secrets. See `docs/registration-gate-webhook.md`. |
+| `REGISTRATION_WEBHOOK_URL`, `REGISTRATION_WEBHOOK_SECRET` / `_FILE` | unset (feature not used) | Legacy single webhook destination. |
+| `REGISTRATION_TURNSTILE_*` (`ENABLED`, `SITE_KEY`, `SECRET` / `SECRET_FILE`, `EXPECTED_HOSTNAME`, `EXPECTED_ACTION`, `TOKEN_MAX_AGE_SECS`) | see the linked document | Cloudflare Turnstile. See `docs/registration-protection-readiness.md`. |
+| `REGISTRATION_EMAIL_*`, `REGISTRATION_SMTP_*` (`ENABLED`, `FROM`, `CANARY_ADDRESS`, `SMTP_HOST`, `_PORT`, `_TLS`, `_USERNAME`, `_PASSWORD` / `_PASSWORD_FILE`) | see the linked document | Email proof. Same document. |
 | `REGISTRATION_EMAIL_TRUSTED_PROXY_IPS` | empty | Reverse proxies whose forwarded address is trusted. |
 | `REGISTRATION_PROTECTION_SUCCESS_TTL_SECS`, `REGISTRATION_PROTECTION_PROBE_MAX_AGE_SECS`, `REGISTRATION_PROOF_REUSE_WINDOW_SECS`, `REGISTRATION_EMAIL_MAX_PER_SOURCE_HOUR` | built-in policy | Positive integers only; anything else is ignored. |
 | `REGISTRATION_ENFORCEMENT_ENABLED` | `false` | Registration hook listener (preparation only). Needs a hook secret (`REGISTRATION_HOOK_SECRET` or `_FILE`). Also `REGISTRATION_HOOK_LISTEN` (default `127.0.0.1:8081`: unreachable from outside the container unless changed), `REGISTRATION_HOOK_ALLOWED_PEERS` (`127.0.0.1,::1`), `REGISTRATION_PROTECTION_POLL_SECS` (`30`). |

@@ -10,13 +10,22 @@ Subcommands (all of them print what they decided and why; nothing is ever overwr
               stop   -> anything else: other revision/platform, an image index, a registry error,
                         denied/unauthorized, an unparseable answer, a 404 without a structured
                         "unknown" error code. Exit status 1. "Cannot tell" is never "absent".
+  gate      classify, and when the tag is absent also require that NO GitHub Release (draft or
+            not) exists for the tag. "Release without image" is never repaired automatically.
   push      Re-classify right before the push (must still be absent), push the already
             smoke-tested local image WITHOUT rebuilding, then read everything back from the
-            registry and compare it with the local image (revision label, platform and the layer
-            diff-IDs, which do not depend on the engine's image store). Prints the registry digest.
-  release   Require classify == same, take the digest from the registry and create the GitHub
-            Release; an existing Release is a no-op only if tag, commit and digest all match,
-            otherwise stop.
+            registry and compare it with the local image: revision label, platform, the layer
+            diff-IDs and the image CONFIG DIGEST (the sha256 of the config JSON taken from
+            `docker save`, which does not depend on the engine's image store). Prints the registry
+            digest.
+  verify-local
+            For an image that was already published: compare a locally pulled copy (by digest)
+            with the registry (config digest, layers, revision and version labels) and require the
+            registry digest to be the expected one. The smoke test then runs on that copy.
+  release   Require classify == same AND the registry digest == the digest the image job verified
+            (--expected-digest), then create the GitHub Release. An existing Release is a no-op
+            only if its managed metadata block (see METADATA_MARKER) matches image, digest and
+            commit exactly; unknown, duplicated or contradicting metadata stops.
 
 The registry is reached with the OCI distribution API (Bearer token flow, credentials from
 REGISTRY_USERNAME / REGISTRY_PASSWORD). Every registry answer that decides something is logged as
@@ -35,6 +44,7 @@ import os
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.error
 import urllib.parse
@@ -42,7 +52,11 @@ import urllib.request
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 REVISION_LABEL = "org.opencontainers.image.revision"
+VERSION_LABEL = "org.opencontainers.image.version"
 PLATFORM = "linux/amd64"
+METADATA_MARKER = "emumet-release-metadata:v1"
+METADATA_KEYS = ("image", "digest", "commit")
+MAX_CONFIG_BYTES = 4 * 1024 * 1024
 MANIFEST_MEDIA_TYPES = (
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.v2+json",
@@ -260,8 +274,8 @@ def run_command(command: Sequence[str]) -> "subprocess.CompletedProcess[str]":
     return subprocess.run(list(command), capture_output=True, text=True, check=False)
 
 
-def local_image_facts(image: str, run: Runner = run_command) -> Tuple[str, List[str]]:
-    """The OCI revision label and the layer diff-IDs of a local image (independent of the image store)."""
+def local_image_facts(image: str, run: Runner = run_command) -> Tuple[Dict[str, str], List[str]]:
+    """The OCI labels and the layer diff-IDs of a local image (independent of the image store)."""
     result = run(["docker", "image", "inspect", "--format", "{{json .Config.Labels}}|{{json .RootFS.Layers}}", image])
     if result.returncode != 0:
         raise Stop(f"cannot inspect the local image {image}: {result.stderr.strip()}")
@@ -271,7 +285,64 @@ def local_image_facts(image: str, run: Runner = run_command) -> Tuple[str, List[
         layers = json.loads(layers_json)
     except ValueError:
         raise Stop("cannot parse the local image metadata") from None
-    return labels.get(REVISION_LABEL, ""), list(layers)
+    if not isinstance(labels, dict) or not isinstance(layers, list):
+        raise Stop("cannot parse the local image metadata")
+    return labels, list(layers)
+
+
+def config_digest_from_archive(path: str) -> str:
+    """sha256 of the image config JSON inside a `docker save` archive (docker and OCI layouts)."""
+    try:
+        with tarfile.open(path) as archive:
+            manifest_member = archive.extractfile("manifest.json")
+            if manifest_member is None:
+                raise Stop("the saved image has no manifest.json")
+            entries = json.loads(manifest_member.read(MAX_CONFIG_BYTES).decode("utf-8"))
+            if not isinstance(entries, list) or len(entries) != 1:
+                raise Stop("the saved image must contain exactly one image (got "
+                           f"{len(entries) if isinstance(entries, list) else 'an unexpected manifest.json'})")
+            config_name = entries[0].get("Config")
+            if not isinstance(config_name, str) or not config_name:
+                raise Stop("the saved image manifest names no config")
+            config_member = archive.extractfile(config_name)
+            if config_member is None:
+                raise Stop(f"the saved image has no {config_name}")
+            data = config_member.read(MAX_CONFIG_BYTES + 1)
+    except (tarfile.TarError, KeyError, ValueError, OSError) as error:
+        raise Stop(f"cannot read the saved image archive: {error}") from None
+    if len(data) > MAX_CONFIG_BYTES:
+        raise Stop("the saved image config is unexpectedly large")
+    return sha256_digest(data)
+
+
+def local_config_digest(image: str, run: Runner = run_command) -> str:
+    """The config digest of a local image, via `docker save`: no image-store specific field is used.
+
+    (With the classic store the image ID equals the config digest, with the containerd store it is
+    a manifest digest, so the ID cannot be used.)
+    """
+    with tempfile.TemporaryDirectory() as workdir:
+        archive = os.path.join(workdir, "image.tar")
+        saved = run(["docker", "save", "-o", archive, image])
+        if saved.returncode != 0:
+            raise Stop(f"cannot save the local image {image}: {saved.stderr.strip()[-500:]}")
+        return config_digest_from_archive(archive)
+
+
+def compare_with_registry(
+    registry_state: Classification, labels: Dict[str, str], layers: List[str], config_digest: str, what: str
+) -> None:
+    """Stop unless the local image (labels, layers, config digest) is the registry image."""
+    if registry_state.config_digest != config_digest:
+        raise Stop(
+            f"the registry image config {registry_state.config_digest} is not the config {config_digest} of {what} "
+            "(same layers are not enough: entrypoint, user, labels and the rest must be identical)"
+        )
+    if registry_state.diff_ids != layers:
+        raise Stop(
+            f"the registry image does not have the same layers as {what} "
+            f"(registry {registry_state.diff_ids}, local {layers})"
+        )
 
 
 def push_image(
@@ -280,10 +351,15 @@ def push_image(
     version: str,
     revision: str,
     run: Runner = run_command,
+    precheck: Optional[Callable[[], None]] = None,
 ) -> Classification:
-    label, layers = local_image_facts(local_image, run)
+    labels, layers = local_image_facts(local_image, run)
+    label = labels.get(REVISION_LABEL, "")
     if label != revision:
         raise Stop(f"the local image carries revision {label!r}, expected {revision}")
+    local_config = local_config_digest(local_image, run)
+    if precheck is not None:
+        precheck()
     state = registry.classify(version, revision)
     if state.state != "absent":
         raise Stop(f"{registry.image}:{version} appeared before the push; refusing to push over it")
@@ -309,13 +385,65 @@ def push_image(
     after = registry.classify(version, revision)
     if after.state != "same" or after.digest is None:
         raise Stop("after the push the registry does not show the expected image")
-    if after.diff_ids != layers:
-        raise Stop(
-            "the registry image does not have the same layers as the smoke-tested local image "
-            f"(registry {after.diff_ids}, local {layers})"
-        )
-    registry.log(f"push: verified {target}@{after.digest} equals the smoke-tested local image")
+    compare_with_registry(after, labels, layers, local_config, "the smoke-tested local image")
+    registry.log(f"push: verified {target}@{after.digest} equals the smoke-tested local image (config {local_config})")
     return after
+
+
+def verify_local_image(
+    registry: Registry,
+    local_image: str,
+    version: str,
+    revision: str,
+    expected_digest: str,
+    run: Runner = run_command,
+) -> Classification:
+    """A published image, pulled by digest, is exactly what the registry reports for the tag."""
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_digest):
+        raise Stop(f"bad expected digest {expected_digest!r}")
+    state = registry.classify(version, revision)
+    if state.state != "same" or state.digest != expected_digest:
+        raise Stop(f"the registry reports {state.digest} for {registry.image}:{version}, expected {expected_digest}")
+    labels, layers = local_image_facts(local_image, run)
+    if labels.get(REVISION_LABEL) != revision:
+        raise Stop(f"the pulled image carries revision {labels.get(REVISION_LABEL)!r}, expected {revision}")
+    if labels.get(VERSION_LABEL) != version:
+        raise Stop(f"the pulled image carries version {labels.get(VERSION_LABEL)!r}, expected {version!r}")
+    compare_with_registry(state, labels, layers, local_config_digest(local_image, run), "the pulled image")
+    registry.log(f"verify-local: {local_image} is {registry.image}:{version}@{state.digest} (revision, version, layers, config)")
+    return state
+
+
+def render_metadata(image: str, digest: str, commit: str) -> str:
+    """The managed block of a Release body: the only part that is read back and compared."""
+    return f"<!-- {METADATA_MARKER}\nimage={image}\ndigest={digest}\ncommit={commit}\n-->"
+
+
+_METADATA_BLOCK = re.compile(r"<!-- " + re.escape(METADATA_MARKER) + r"\n(.*?)\n-->", re.DOTALL)
+
+
+def parse_metadata(body: str) -> Dict[str, str]:
+    """The values of the managed metadata block. Anything unexpected is a Stop, never a guess."""
+    body = body.replace("\r\n", "\n")
+    mentions = body.count("emumet-release-metadata")
+    blocks = _METADATA_BLOCK.findall(body)
+    if mentions != 1 or len(blocks) != 1:
+        raise Stop(
+            f"the Release body must contain exactly one {METADATA_MARKER} block "
+            f"(found {len(blocks)} well-formed, {mentions} mentions)"
+        )
+    values: Dict[str, str] = {}
+    for line in blocks[0].split("\n"):
+        key, separator, value = line.partition("=")
+        if not separator or key not in METADATA_KEYS or not value or value != value.strip():
+            raise Stop(f"the Release metadata block has an unexpected line {line!r}")
+        if key in values:
+            raise Stop(f"the Release metadata block repeats {key!r}")
+        values[key] = value
+    missing = [key for key in METADATA_KEYS if key not in values]
+    if missing:
+        raise Stop(f"the Release metadata block lacks {', '.join(missing)}")
+    return values
 
 
 def release_notes(registry: Registry, version: str, digest: str, commit: str, repo_url: str) -> str:
@@ -325,12 +453,17 @@ def release_notes(registry: Registry, version: str, digest: str, commit: str, re
         f"- Digest: `{digest}`\n"
         f"- Commit: `{commit}`\n\n"
         f"```sh\ndocker pull {registry.image}@{digest}\n```\n\n"
-        f"Operating instructions: {repo_url}/blob/{commit}/docs/container-runtime.md\n"
+        f"Operating instructions: {repo_url}/blob/{commit}/docs/container-runtime.md\n\n"
+        f"{render_metadata(f'{registry.image}:{version}', digest, commit)}\n"
     )
 
 
 def find_release(run: Runner, repo: str, tag: str) -> Optional[dict]:
-    """The Release (draft or not) for the tag, or None. Any failure to find out is a Stop."""
+    """The Release for the tag, or None. Any failure to find out is a Stop.
+
+    Drafts are only listed to a token that may push (contents: write); with a read-only token a
+    draft is invisible, which is why the gate job runs with write access.
+    """
     result = run(["gh", "api", "--paginate", "--slurp", f"repos/{repo}/releases?per_page=100"])
     if result.returncode != 0:
         raise Stop(f"cannot list the GitHub Releases: {result.stderr.strip()[-500:]}")
@@ -345,6 +478,33 @@ def find_release(run: Runner, repo: str, tag: str) -> Optional[dict]:
     return matches[0] if matches else None
 
 
+def require_no_release(run: Runner, repo: str, tag: str) -> None:
+    """Before anything is pushed: a Release for a tag whose image does not exist is never repaired."""
+    existing = find_release(run, repo, tag)
+    if existing is not None:
+        raise Stop(
+            f"a Release for {tag} already exists (draft={bool(existing.get('draft'))}) but its image is not in the "
+            "registry; refusing to publish an image under an existing Release. A person must decide "
+            "(see 'Recovery' in docs/releasing.md)"
+        )
+
+
+def check_release_matches(release: dict, expected: Dict[str, str], tag: str) -> None:
+    problems = []
+    if release.get("draft"):
+        problems.append("the Release is a draft")
+    try:
+        found = parse_metadata(release.get("body") or "")
+    except Stop as error:
+        problems.append(str(error))
+    else:
+        for key in METADATA_KEYS:
+            if found[key] != expected[key]:
+                problems.append(f"metadata {key} is {found[key]!r}, expected {expected[key]!r}")
+    if problems:
+        raise Stop(f"a Release for {tag} already exists and does not match: {'; '.join(problems)}")
+
+
 def create_or_verify_release(
     registry: Registry,
     repo: str,
@@ -357,18 +517,10 @@ def create_or_verify_release(
 ) -> str:
     assert classification.digest is not None
     digest = classification.digest
+    expected = {"image": f"{registry.image}:{version}", "digest": digest, "commit": commit}
     existing = find_release(run, repo, tag)
     if existing is not None:
-        body = existing.get("body") or ""
-        problems = []
-        if existing.get("draft"):
-            problems.append("the Release is a draft")
-        if digest not in body:
-            problems.append(f"the Release does not mention the registry digest {digest}")
-        if commit not in body:
-            problems.append(f"the Release does not mention commit {commit}")
-        if problems:
-            raise Stop(f"a Release for {tag} already exists and does not match: {'; '.join(problems)}")
+        check_release_matches(existing, expected, tag)
         log(f"release: {tag} already exists with digest {digest} and commit {commit}; nothing to do")
         return "exists"
     notes = release_notes(registry, version, digest, commit, f"https://github.com/{repo}")
@@ -376,14 +528,18 @@ def create_or_verify_release(
         handle.write(notes)
         notes_path = handle.name
     try:
-        created = run([
-            "gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--title", tag,
-            "--generate-notes", "--notes-file", notes_path,
-        ])
+        # No --generate-notes: the body is exactly what is written here, so the managed block
+        # cannot be duplicated by generated text (pull request titles).
+        created = run(["gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--title", tag,
+                       "--notes-file", notes_path])
     finally:
         os.unlink(notes_path)
     if created.returncode != 0:
         raise Stop(f"gh release create failed: {created.stderr.strip()[-500:]}")
+    made = find_release(run, repo, tag)
+    if made is None:
+        raise Stop(f"the Release for {tag} cannot be read back after it was created")
+    check_release_matches(made, expected, tag)
     log(f"release: created {tag} with digest {digest}")
     return "created"
 
@@ -399,7 +555,7 @@ def write_outputs(path: Optional[str], values: Dict[str, str]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("classify", "push", "release"):
+    for name in ("classify", "gate", "push", "verify-local", "release"):
         command = sub.add_parser(name)
         command.add_argument("--version", required=True, help="image tag (the CalVer without the leading v)")
         command.add_argument("--revision", required=True, help="full 40-hex commit SHA the image must carry")
@@ -407,11 +563,13 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--repository", default="shuttlepub/emumet")
         command.add_argument("--insecure-http", action="store_true", help="use http (local test registry only)")
         command.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT"))
-        if name == "push":
-            command.add_argument("--local-image", required=True)
-        if name == "release":
-            command.add_argument("--tag", required=True)
+        if name in ("gate", "push", "release"):
+            command.add_argument("--tag", required=name != "push")
             command.add_argument("--github-repository", default=os.environ.get("GITHUB_REPOSITORY"))
+        if name in ("push", "verify-local"):
+            command.add_argument("--local-image", required=True)
+        if name in ("verify-local", "release"):
+            command.add_argument("--expected-digest", required=True)
     return parser
 
 
@@ -419,6 +577,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     if not re.fullmatch(r"[0-9a-f]{40}", args.revision):
         print("--revision must be a full 40-hex SHA", file=sys.stderr)
+        return 2
+    if args.command in ("gate", "release") and not args.github_repository:
+        print("--github-repository (or GITHUB_REPOSITORY) is required", file=sys.stderr)
         return 2
     registry = Registry(
         args.registry,
@@ -432,16 +593,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "classify":
             state = registry.classify(args.version, args.revision)
             write_outputs(args.github_output, {"state": state.state, "digest": state.digest or ""})
+        elif args.command == "gate":
+            state = registry.classify(args.version, args.revision)
+            if state.state == "absent":
+                require_no_release(run_command, args.github_repository, args.tag)
+                registry.log(f"gate: no image and no Release for {args.tag}; the image may be published")
+            write_outputs(args.github_output, {"state": state.state, "digest": state.digest or ""})
         elif args.command == "push":
-            state = push_image(registry, args.local_image, args.version, args.revision)
+            precheck = None
+            if args.tag and args.github_repository:
+                precheck = lambda: require_no_release(run_command, args.github_repository, args.tag)  # noqa: E731
+            state = push_image(registry, args.local_image, args.version, args.revision, precheck=precheck)
+            write_outputs(args.github_output, {"state": state.state, "digest": state.digest or ""})
+        elif args.command == "verify-local":
+            state = verify_local_image(registry, args.local_image, args.version, args.revision, args.expected_digest)
             write_outputs(args.github_output, {"state": state.state, "digest": state.digest or ""})
         else:
-            if not args.github_repository:
-                print("--github-repository (or GITHUB_REPOSITORY) is required", file=sys.stderr)
-                return 2
             state = registry.classify(args.version, args.revision)
             if state.state != "same":
                 raise Stop("the image is not in the registry yet; the Release is created only after the image exists")
+            if state.digest != args.expected_digest:
+                raise Stop(
+                    f"the registry now reports {state.digest} for the tag but the image job verified "
+                    f"{args.expected_digest}; refusing to create a Release for an unverified image"
+                )
             outcome = create_or_verify_release(
                 registry, args.github_repository, args.version, args.tag, args.revision, state
             )

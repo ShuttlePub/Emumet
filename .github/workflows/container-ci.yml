@@ -33,7 +33,7 @@ jobs:
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
           docker.io/rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
-          .github/workflows/container-ci.yml .github/workflows/release.yml
+          .github/workflows/container-ci.yml .github/workflows/release.yml .github/workflows/release-probe.yml
 
   image:
     name: Build image, smoke test, local-registry publish test

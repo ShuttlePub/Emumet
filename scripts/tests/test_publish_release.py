@@ -1,6 +1,8 @@
 import hashlib
+import io
 import json
 import subprocess
+import tarfile
 import unittest
 
 from loader import load
@@ -16,10 +18,13 @@ def digest(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def make_image(revision=REV, arch="amd64", layers=LAYERS, media=pr.MANIFEST_MEDIA_TYPES[0]):
+def make_image(revision=REV, arch="amd64", layers=LAYERS, media=pr.MANIFEST_MEDIA_TYPES[0], version=None, entrypoint=None):
+    labels = {pr.REVISION_LABEL: revision}
+    if version is not None:
+        labels[pr.VERSION_LABEL] = version
     config = json.dumps({
         "os": "linux", "architecture": arch,
-        "config": {"Labels": {pr.REVISION_LABEL: revision}},
+        "config": {"Labels": labels, "Entrypoint": entrypoint or ["/app/server"], "User": "10001:10001"},
         "rootfs": {"type": "layers", "diff_ids": layers},
     }).encode()
     manifest = json.dumps({
@@ -164,16 +169,41 @@ class Classify(unittest.TestCase):
         self.assertEqual(redirected, [{}])
 
 
+def local_archive(path, config, layout="docker", extra_entries=0):
+    """A `docker save` archive: docker layout (<hex>.json) or OCI layout (blobs/sha256/<hex>)."""
+    hexdigest = hashlib.sha256(config).hexdigest()
+    name = f"{hexdigest}.json" if layout == "docker" else f"blobs/sha256/{hexdigest}"
+    manifest = [{"Config": name, "RepoTags": ["x:y"], "Layers": []}] * (1 + extra_entries)
+    with tarfile.open(path, "w") as archive:
+        for member_name, data in (("manifest.json", json.dumps(manifest).encode()), (name, config)):
+            info = tarfile.TarInfo(member_name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+
+
+DEFAULT_CONFIG = make_image()[1]
+
+
 class Runner:
-    def __init__(self, label=REV, layers=LAYERS, push_rc=0, on_push=None):
+    def __init__(self, label=REV, layers=LAYERS, push_rc=0, on_push=None, config=DEFAULT_CONFIG, version=None,
+                 layout="docker", save_rc=0, extra_entries=0):
         self.label, self.layers, self.push_rc, self.on_push = label, layers, push_rc, on_push
+        self.config, self.version, self.layout, self.save_rc = config, version, layout, save_rc
+        self.extra_entries = extra_entries
         self.commands = []
 
     def __call__(self, command):
         self.commands.append(list(command))
         if command[:3] == ["docker", "image", "inspect"]:
-            out = json.dumps({pr.REVISION_LABEL: self.label}) + "|" + json.dumps(self.layers)
+            labels = {pr.REVISION_LABEL: self.label}
+            if self.version is not None:
+                labels[pr.VERSION_LABEL] = self.version
+            out = json.dumps(labels) + "|" + json.dumps(self.layers)
             return subprocess.CompletedProcess(command, 0, out, "")
+        if command[:3] == ["docker", "save", "-o"]:
+            if self.save_rc == 0:
+                local_archive(command[3], self.config, self.layout, self.extra_entries)
+            return subprocess.CompletedProcess(command, self.save_rc, "", "" if self.save_rc == 0 else "no such image")
         if command[:2] == ["docker", "push"]:
             if self.on_push:
                 self.on_push()
@@ -190,6 +220,21 @@ class Push(unittest.TestCase):
         self.assertEqual(state.digest, digest(manifest))
         self.assertIn(["docker", "push", "--platform", "linux/amd64", "reg.test/shuttlepub/emumet:2026.11.17"], runner.commands)
         self.assertFalse(any(c[:2] == ["docker", "build"] for c in runner.commands))
+
+    def test_oci_layout_archive_gives_the_same_config_digest(self):
+        manifest, config = make_image()
+        t = FakeRegistry()
+        runner = Runner(layout="oci", on_push=lambda: (setattr(t, "manifest", manifest), setattr(t, "config", config)))
+        self.assertEqual(pr.push_image(registry(t), "local:img", "v", REV, runner).digest, digest(manifest))
+
+    def test_same_layers_but_other_config_is_refused(self):
+        # What the reviewer showed: identical layers and revision label, but another Entrypoint/User.
+        manifest, config = make_image(entrypoint=["/bin/sh"])
+        self.assertNotEqual(config, DEFAULT_CONFIG)
+        t = FakeRegistry()
+        runner = Runner(on_push=lambda: (setattr(t, "manifest", manifest), setattr(t, "config", config)))
+        with self.assertRaisesRegex(pr.Stop, "config .* is not the config"):
+            pr.push_image(registry(t), "local:img", "v", REV, runner)
 
     def test_never_pushes_when_tag_exists(self):
         manifest, config = make_image()
@@ -210,6 +255,22 @@ class Push(unittest.TestCase):
             pr.push_image(registry(FakeRegistry()), "local:img", "v", REV, runner)
         self.assertFalse(any(c[:2] == ["docker", "push"] for c in runner.commands))
 
+    def test_unreadable_local_config_is_not_pushed(self):
+        for runner in (Runner(save_rc=1), Runner(extra_entries=1)):
+            with self.subTest(save_rc=runner.save_rc), self.assertRaises(pr.Stop):
+                pr.push_image(registry(FakeRegistry()), "local:img", "v", REV, runner)
+            self.assertFalse(any(c[:2] == ["docker", "push"] for c in runner.commands))
+
+    def test_a_release_found_before_the_push_stops_it(self):
+        runner = Runner()
+
+        def precheck():
+            raise pr.Stop("a Release for v already exists")
+
+        with self.assertRaisesRegex(pr.Stop, "already exists"):
+            pr.push_image(registry(FakeRegistry()), "local:img", "v", REV, runner, precheck=precheck)
+        self.assertFalse(any(c[:2] == ["docker", "push"] for c in runner.commands))
+
     def test_failed_push_stops_and_reports_state(self):
         t = FakeRegistry()
         reg = registry(t)
@@ -220,7 +281,7 @@ class Push(unittest.TestCase):
     def test_registry_layers_must_equal_local_layers(self):
         manifest, config = make_image(layers=LAYERS[:1])
         t = FakeRegistry()
-        runner = Runner(on_push=lambda: (setattr(t, "manifest", manifest), setattr(t, "config", config)))
+        runner = Runner(config=config, on_push=lambda: (setattr(t, "manifest", manifest), setattr(t, "config", config)))
         with self.assertRaisesRegex(pr.Stop, "same layers"):
             pr.push_image(registry(t), "local:img", "v", REV, runner)
 
@@ -229,67 +290,188 @@ class Push(unittest.TestCase):
             pr.push_image(registry(FakeRegistry()), "local:img", "v", REV, Runner())
 
 
+class VerifyLocal(unittest.TestCase):
+    VERSION = "2026.11.17"
+
+    def published(self, **kwargs):
+        manifest, config = make_image(version=self.VERSION, **kwargs)
+        return FakeRegistry(manifest, config), digest(manifest), config
+
+    def test_a_pulled_image_identical_to_the_registry_passes(self):
+        t, d, config = self.published()
+        runner = Runner(config=config, version=self.VERSION)
+        state = pr.verify_local_image(registry(t), "ghcr.io/x@" + d, self.VERSION, REV, d, runner)
+        self.assertEqual(state.digest, d)
+
+    def test_other_config_with_the_same_layers_is_refused(self):
+        t, d, config = self.published()
+        _, other = make_image(version=self.VERSION, entrypoint=["/bin/sh"])
+        with self.assertRaisesRegex(pr.Stop, "config .* is not the config"):
+            pr.verify_local_image(registry(t), "x", self.VERSION, REV, d, Runner(config=other, version=self.VERSION))
+
+    def test_digest_other_than_the_verified_one_is_refused(self):
+        t, d, config = self.published()
+        with self.assertRaisesRegex(pr.Stop, "expected"):
+            pr.verify_local_image(registry(t), "x", self.VERSION, REV, "sha256:" + "9" * 64, Runner(config=config, version=self.VERSION))
+
+    def test_wrong_version_or_revision_labels_are_refused(self):
+        t, d, config = self.published()
+        with self.assertRaisesRegex(pr.Stop, "version"):
+            pr.verify_local_image(registry(t), "x", self.VERSION, REV, d, Runner(config=config, version="2026.01.01"))
+        with self.assertRaisesRegex(pr.Stop, "revision"):
+            pr.verify_local_image(registry(t), "x", self.VERSION, REV, d, Runner(config=config, label=OTHER, version=self.VERSION))
+
+    def test_layers_that_differ_are_refused(self):
+        t, d, config = self.published()
+        with self.assertRaisesRegex(pr.Stop, "same layers"):
+            pr.verify_local_image(registry(t), "x", self.VERSION, REV, d, Runner(config=config, layers=LAYERS[:1], version=self.VERSION))
+
+    def test_an_absent_tag_is_refused(self):
+        with self.assertRaises(pr.Stop):
+            pr.verify_local_image(registry(FakeRegistry()), "x", self.VERSION, REV, "sha256:" + "9" * 64, Runner())
+
+
+TAG = "v2026.11.17"
+IMAGE_REF = "reg.test/shuttlepub/emumet:2026.11.17"
+DIGEST = "sha256:" + "a" * 64
+
+
+def body_for(digest_=DIGEST, commit=REV, image=IMAGE_REF, extra=""):
+    return (f"## Container image\n\n- Digest: `{digest_}`\n\n"
+            f"{pr.render_metadata(image, digest_, commit)}\n{extra}")
+
+
+class Metadata(unittest.TestCase):
+    def test_round_trip_and_crlf(self):
+        body = body_for()
+        expected = {"image": IMAGE_REF, "digest": DIGEST, "commit": REV}
+        self.assertEqual(pr.parse_metadata(body), expected)
+        self.assertEqual(pr.parse_metadata(body.replace("\n", "\r\n")), expected)
+
+    def test_unusable_blocks_stop(self):
+        block = pr.render_metadata(IMAGE_REF, DIGEST, REV)
+        for name, body in {
+            "none": "no block here",
+            "duplicate": block + "\n" + block,
+            "unknown key": block.replace("commit=", "extra=1\ncommit="),
+            "repeated key": block.replace("commit=", f"digest={DIGEST}\ncommit="),
+            "missing key": block.replace(f"\ncommit={REV}", ""),
+            "empty value": block.replace(f"commit={REV}", "commit="),
+            "spaces around the value": block.replace(f"commit={REV}", f"commit= {REV}"),
+            "marker mentioned elsewhere": block + "\nsee emumet-release-metadata for details",
+            "not closed": block.replace("\n-->", ""),
+        }.items():
+            with self.subTest(name), self.assertRaises(pr.Stop):
+                pr.parse_metadata(body)
+
+
 class Release(unittest.TestCase):
     def classification(self):
-        return pr.Classification("same", "sha256:" + "a" * 64, "sha256:" + "b" * 64, LAYERS)
+        return pr.Classification("same", DIGEST, "sha256:" + "b" * 64, LAYERS)
 
-    def runner(self, releases):
+    def runner(self, releases, create_rc=0, keep_listing_empty=False):
         calls = []
+        listing = list(releases)
 
         def run(command):
             calls.append(list(command))
             if command[:2] == ["gh", "api"]:
-                return subprocess.CompletedProcess(command, 0, json.dumps([releases]), "")
+                return subprocess.CompletedProcess(command, 0, json.dumps([listing]), "")
+            if command[:3] == ["gh", "release", "create"]:
+                if create_rc == 0 and not keep_listing_empty:
+                    with open(command[command.index("--notes-file") + 1], encoding="utf-8") as handle:
+                        listing.append({"tag_name": command[3], "draft": False, "body": handle.read()})
+                return subprocess.CompletedProcess(command, create_rc, "", "" if create_rc == 0 else "boom")
             return subprocess.CompletedProcess(command, 0, "", "")
 
         run.calls = calls
         return run
 
-    def test_creates_release_with_registry_digest(self):
-        run = self.runner([])
-        outcome = pr.create_or_verify_release(
-            registry(FakeRegistry()), "ShuttlePub/Emumet", "2026.11.17", "v2026.11.17", REV, self.classification(), run, lambda m: None
+    def call(self, run, c=None):
+        return pr.create_or_verify_release(
+            registry(FakeRegistry()), "ShuttlePub/Emumet", "2026.11.17", TAG, REV, c or self.classification(), run, lambda m: None
         )
-        self.assertEqual(outcome, "created")
+
+    def test_creates_release_with_registry_digest_and_reads_it_back(self):
+        run = self.runner([])
+        self.assertEqual(self.call(run), "created")
         create = [c for c in run.calls if c[:3] == ["gh", "release", "create"]][0]
         self.assertIn("--verify-tag", create)
+        self.assertNotIn("--generate-notes", create)
+
+    def test_release_that_cannot_be_read_back_stops(self):
+        with self.assertRaisesRegex(pr.Stop, "read back"):
+            self.call(self.runner([], keep_listing_empty=True))
+
+    def test_failed_create_stops(self):
+        with self.assertRaisesRegex(pr.Stop, "create failed"):
+            self.call(self.runner([], create_rc=1))
 
     def test_matching_release_is_noop(self):
-        c = self.classification()
-        body = f"digest {c.digest} commit {REV}"
-        run = self.runner([{"tag_name": "v2026.11.17", "draft": False, "body": body}])
-        outcome = pr.create_or_verify_release(
-            registry(FakeRegistry()), "ShuttlePub/Emumet", "2026.11.17", "v2026.11.17", REV, c, run, lambda m: None
-        )
-        self.assertEqual(outcome, "exists")
+        run = self.runner([{"tag_name": TAG, "draft": False, "body": body_for()}])
+        self.assertEqual(self.call(run), "exists")
         self.assertFalse(any(c_[:3] == ["gh", "release", "create"] for c_ in run.calls))
 
-    def test_mismatching_or_draft_release_stops(self):
-        c = self.classification()
-        for release in (
-            {"tag_name": "v2026.11.17", "draft": False, "body": f"commit {REV}"},
-            {"tag_name": "v2026.11.17", "draft": False, "body": f"digest {c.digest}"},
-            {"tag_name": "v2026.11.17", "draft": True, "body": f"digest {c.digest} commit {REV}"},
-        ):
-            with self.subTest(release=release), self.assertRaisesRegex(pr.Stop, "already exists"):
-                pr.create_or_verify_release(
-                    registry(FakeRegistry()), "ShuttlePub/Emumet", "2026.11.17", "v2026.11.17", REV, c,
-                    self.runner([release]), lambda m: None,
-                )
+    def test_expected_values_written_elsewhere_in_the_body_do_not_match(self):
+        # The old check was a substring test: digest and commit mentioned anywhere were enough.
+        other = body_for(digest_="sha256:" + "e" * 64, commit=OTHER, extra=f"\ndigest {DIGEST} commit {REV}\n")
+        for body in (other, f"digest {DIGEST} commit {REV}", f"commit {REV}", f"digest {DIGEST}"):
+            with self.subTest(body=body[:40]), self.assertRaisesRegex(pr.Stop, "already exists"):
+                self.call(self.runner([{"tag_name": TAG, "draft": False, "body": body}]))
+
+    def test_each_metadata_value_must_match(self):
+        for body in (body_for(digest_="sha256:" + "e" * 64), body_for(commit=OTHER), body_for(image="reg.test/shuttlepub/emumet:other")):
+            with self.subTest(body=body[-120:]), self.assertRaisesRegex(pr.Stop, "already exists"):
+                self.call(self.runner([{"tag_name": TAG, "draft": False, "body": body}]))
+
+    def test_draft_release_stops(self):
+        with self.assertRaisesRegex(pr.Stop, "draft"):
+            self.call(self.runner([{"tag_name": TAG, "draft": True, "body": body_for()}]))
+
+    def test_two_releases_for_the_tag_stop(self):
+        release = {"tag_name": TAG, "draft": False, "body": body_for()}
+        with self.assertRaisesRegex(pr.Stop, "2 Releases"):
+            self.call(self.runner([release, release]))
 
     def test_listing_failure_stops(self):
         def run(command):
             return subprocess.CompletedProcess(command, 1, "", "api down")
 
         with self.assertRaises(pr.Stop):
-            pr.create_or_verify_release(
-                registry(FakeRegistry()), "ShuttlePub/Emumet", "v", "vv", REV, self.classification(), run, lambda m: None
-            )
+            self.call(run)
+
+
+class RequireNoRelease(unittest.TestCase):
+    def runner(self, releases, rc=0):
+        def run(command):
+            return subprocess.CompletedProcess(command, rc, json.dumps([releases]), "boom")
+
+        return run
+
+    def test_no_release_passes(self):
+        pr.require_no_release(self.runner([{"tag_name": "v0.0.1"}]), "ShuttlePub/Emumet", TAG)
+
+    def test_published_or_draft_release_stops_before_a_push(self):
+        for release in ({"tag_name": TAG, "draft": False}, {"tag_name": TAG, "draft": True}):
+            with self.subTest(release=release), self.assertRaisesRegex(pr.Stop, "refusing to publish an image"):
+                pr.require_no_release(self.runner([release]), "ShuttlePub/Emumet", TAG)
+
+    def test_a_failed_lookup_stops(self):
+        with self.assertRaisesRegex(pr.Stop, "cannot list"):
+            pr.require_no_release(self.runner([], rc=1), "ShuttlePub/Emumet", TAG)
 
 
 class Cli(unittest.TestCase):
     def test_rejects_short_revision(self):
         self.assertEqual(pr.main(["classify", "--version", "v", "--revision", "abc"]), 2)
+
+    def test_release_needs_the_verified_digest(self):
+        with self.assertRaises(SystemExit):
+            pr.main(["release", "--version", "v", "--revision", REV, "--tag", TAG, "--github-repository", "o/r"])
+
+    def test_gate_needs_the_tag(self):
+        with self.assertRaises(SystemExit):
+            pr.main(["gate", "--version", "v", "--revision", REV, "--github-repository", "o/r"])
 
 
 class TokenScope(unittest.TestCase):

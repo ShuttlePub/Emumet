@@ -1,0 +1,33 @@
+name: Release probe
+
+# Read-only rehearsal of the registry question the release asks first. It publishes nothing,
+# creates no tag and no Release, and has no write permission. Run it by hand BEFORE the first
+# release to see how GHCR answers an authenticated query for a package that does not exist yet:
+#   gh workflow run release-probe.yml --repo ShuttlePub/Emumet
+# Expected: "classify: absent (... on HTTP 404)". Any "STOP: ..." shows the logged HTTP status and
+# error codes; see docs/releasing.md ("The first publication stopped as undeterminable").
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    name: Ask GHCR about a version that is never published
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    env:
+      REGISTRY_USERNAME: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Classify a tag that is never pushed
+        run: >-
+          python3 scripts/publish-release.py classify
+          --version probe-never-published
+          --revision 0000000000000000000000000000000000000000

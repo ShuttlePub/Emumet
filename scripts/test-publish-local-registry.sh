@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # Exercise scripts/publish-release.py against a real (local, throw-away) registry:
-# absent -> push -> same -> a second push is refused -> another revision is refused.
+# absent -> push -> same -> a copy pulled by digest verifies -> a copy with the same layers but another
+# Entrypoint is refused -> a second push is refused -> another revision is refused.
 #
 #   scripts/test-publish-local-registry.sh <local-image>
 #
 # <local-image> must carry the org.opencontainers.image.revision label (the Dockerfile's
 # EMUMET_REVISION build argument). Nothing is pushed anywhere but to the local registry container,
 # which is removed on exit (only the container this run created).
+#
+# Docker only: scripts/publish-release.py runs the `docker` CLI (save, tag, push), so a different
+# CONTAINER_ENGINE is refused instead of being silently ignored by half of the test.
 set -euo pipefail
 
 IMAGE="${1:?usage: $0 <local-image>}"
 ENGINE="${CONTAINER_ENGINE:-docker}"
+[ "$ENGINE" = docker ] || { echo "[publish-test] FAIL: only CONTAINER_ENGINE=docker is supported (got '$ENGINE')" >&2; exit 1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REGISTRY_IMAGE="docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
 SUFFIX="$(date +%s)-$$"
@@ -23,7 +28,9 @@ die() { printf '[publish-test] FAIL: %s\n' "$*" >&2; exit 1; }
 
 cleanup() {
   "$ENGINE" rm -f "$NAME" >/dev/null 2>&1 || true
-  [ -n "${TAGGED:-}" ] && "$ENGINE" rmi "$TAGGED" >/dev/null 2>&1 || true
+  if [ -n "${TAGGED:-}" ]; then "$ENGINE" rmi "$TAGGED" >/dev/null 2>&1 || true; fi
+  if [ -n "${PULLED:-}" ]; then "$ENGINE" rmi "$PULLED" >/dev/null 2>&1 || true; fi
+  if [ -n "${VARIANT:-}" ]; then "$ENGINE" rmi "$VARIANT" >/dev/null 2>&1 || true; fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -66,6 +73,27 @@ log "3. classify now says same, with the same digest"
 publish classify --github-output "$WORK/out3" >"$WORK/log3" 2>&1 || { cat "$WORK/log3"; die "classify failed after the push"; }
 grep -qx 'state=same' "$WORK/out3" || die "classify after push does not say same"
 grep -qx "digest=${DIGEST}" "$WORK/out3" || die "classify after push reports another digest"
+
+log "3b. a copy pulled by digest verifies against the registry"
+PULLED="${REGISTRY}/shuttlepub/emumet@${DIGEST}"
+"$ENGINE" rmi "$TAGGED" >/dev/null 2>&1 || true
+"$ENGINE" pull -q "$PULLED" >/dev/null || die "cannot pull the pushed image by digest"
+publish verify-local --local-image "$PULLED" --expected-digest "$DIGEST" >"$WORK/log3b" 2>&1 \
+  || { cat "$WORK/log3b"; die "verify-local failed for the image pulled by digest"; }
+log "3c. the same layers with another Entrypoint (config only) are refused"
+VARIANT="emumet-publish-test-variant:${SUFFIX}"
+printf 'FROM %s\nENTRYPOINT ["/app/server", "--changed"]\n' "$IMAGE" | "$ENGINE" build -q -t "$VARIANT" - >/dev/null \
+  || die "cannot build the config-only variant"
+[ "$("$ENGINE" image inspect --format '{{json .RootFS.Layers}}' "$VARIANT")" = "$("$ENGINE" image inspect --format '{{json .RootFS.Layers}}' "$IMAGE")" ] \
+  || die "the variant does not have the same layers; the test would prove nothing"
+if publish verify-local --local-image "$VARIANT" --expected-digest "$DIGEST" >"$WORK/log3c" 2>&1; then
+  die "an image with another Entrypoint was accepted"
+fi
+grep -q 'is not the config' "$WORK/log3c" || { cat "$WORK/log3c"; die "unexpected reason for refusing the variant"; }
+log "3d. another expected digest is refused"
+if publish verify-local --local-image "$PULLED" --expected-digest "sha256:$(printf '%064d' 7)" >"$WORK/log3d" 2>&1; then
+  die "a different expected digest was accepted"
+fi
 
 log "4. a second push is refused (never overwrite)"
 if publish push --local-image "$IMAGE" >"$WORK/log4" 2>&1; then die "a second push was accepted"; fi
