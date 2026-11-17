@@ -5,12 +5,14 @@ mod error;
 mod handler;
 mod hydra;
 mod kratos;
+mod logging;
 mod openapi;
 mod projection_worker;
 mod registration_guard;
 mod root_router;
 mod route;
 mod schema;
+mod shutdown;
 mod webhook_worker;
 
 use crate::api::profile_delivery_worker::{
@@ -20,6 +22,7 @@ use crate::auth::{JwksCache, OidcConfig};
 use crate::error::StackTrace;
 use crate::handler::AppModule;
 use crate::projection_worker::{projection_poll_interval_from_env, ProjectionWorker};
+use crate::shutdown::ShutdownSignals;
 use error_stack::ResultExt;
 use kernel::prelude::entity::ProfileDeliveryPolicy;
 use kernel::KernelError;
@@ -27,31 +30,17 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Layer;
 
 #[tokio::main]
 async fn main() -> Result<(), StackTrace> {
-    let appender = tracing_appender::rolling::daily(std::path::Path::new("./logs/"), "debug.log");
-    let (non_blocking_appender, _guard) = tracing_appender::non_blocking(appender);
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_filter(tracing_subscriber::EnvFilter::new(
-                    std::env::var("RUST_LOG").unwrap_or_else(|_| {
-                        "driver=debug,server=debug,tower_http=debug,hyper=debug,sqlx=debug".into()
-                    }),
-                ))
-                .with_filter(tracing_subscriber::filter::LevelFilter::DEBUG),
-        )
-        .with(
-            tracing_subscriber::fmt::Layer::default()
-                .with_writer(non_blocking_appender)
-                .with_ansi(false)
-                .with_filter(tracing_subscriber::filter::LevelFilter::DEBUG),
-        )
-        .init();
+    // Created before anything slow so that a SIGTERM / SIGINT during start-up is not lost; polled
+    // at the points below and by the graceful shutdown of the HTTP server.
+    let mut shutdown = ShutdownSignals::install()
+        .change_context_lazy(|| KernelError::Internal)
+        .attach_printable("Failed to install the SIGTERM / SIGINT handlers")?;
+
+    // Keep the guard alive until the end of `main`: it flushes the optional log file.
+    let _log_guard = logging::init()?;
 
     // Initialize Snowflake ID generator (must happen before any ID generation)
     let worker_id: u64 = std::env::var("WORKER_ID")
@@ -67,14 +56,27 @@ async fn main() -> Result<(), StackTrace> {
         oidc_config.issuer_url.clone(),
         Duration::from_secs(oidc_config.jwks_refetch_interval_secs),
     ));
-    // Attempt eager JWKS init (non-fatal if Hydra is not yet available).
-    jwks_cache.try_init().await;
+    // Attempt eager JWKS init (non-fatal if Hydra is not yet available). This is a plain HTTP GET
+    // without side effects (and without a timeout), so a stop request is allowed to cut it short.
+    tokio::select! {
+        () = jwks_cache.try_init() => {}
+        () = shutdown.requested() => {
+            tracing::info!("Stop requested during start-up; exiting before serving");
+            return Ok(());
+        }
+    }
     let oidc_config = Arc::new(oidc_config);
 
     // Applies the migrations (the in-place cutover migration included), then generates the actor
     // keys of Profiles that have none. Both happen before any worker or route is started.
     let app = AppModule::new().await?;
     cutover::provision_profile_keys(&app).await?;
+    // The migrations and the key provisioning above are never interrupted half way. A stop request
+    // that arrived meanwhile is honoured now, before any worker or listener exists.
+    if shutdown.is_requested() {
+        tracing::info!("Stop requested during start-up; exiting before serving");
+        return Ok(());
+    }
 
     // Transactional log tailing worker for account projections (ADR 0006 Stage 3).
     let (_projection_handle, projection_shutdown) =
@@ -130,8 +132,9 @@ async fn main() -> Result<(), StackTrace> {
         tcp,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async {
-        let _ = tokio::signal::ctrl_c().await;
+    .with_graceful_shutdown(async move {
+        shutdown.requested().await;
+        tracing::info!("Stop requested; shutting down");
     })
     .await
     .change_context_lazy(|| KernelError::Internal)?;
