@@ -42,31 +42,54 @@ class ParseTag(unittest.TestCase):
             with self.subTest(tag=tag), self.assertRaises(vr.ReleaseRejected):
                 vr.parse_tag(tag, NOW)
 
-    def test_future_date_rejected_and_message_shows_basis(self):
-        with self.assertRaises(vr.ReleaseRejected) as caught:
-            vr.parse_tag("v2026.11.18", NOW)
-        message = str(caught.exception)
-        self.assertIn("2026-11-18", message)
-        self.assertIn("2026-11-17", message)
-        self.assertIn("UTC", message)
+    def test_reference_timezone_is_fixed_jst(self):
+        self.assertEqual(vr.REFERENCE_TIMEZONE.utcoffset(None), dt.timedelta(hours=9))
+        self.assertEqual(str(vr.REFERENCE_TIMEZONE), "JST")
 
-    def test_utc_date_boundary(self):
-        just_before = dt.datetime(2026, 11, 17, 23, 59, 59, tzinfo=dt.timezone.utc)
-        just_after = dt.datetime(2026, 11, 18, 0, 0, 0, tzinfo=dt.timezone.utc)
+    def test_future_date_rejected_and_message_shows_the_jst_basis(self):
+        # NOW is 2026-11-17 14:00 UTC = 23:00 JST on the 17th.
+        with self.assertRaises(vr.ReleaseRejected) as caught:
+            vr.parse_tag("v2026.11.19", NOW)
+        message = str(caught.exception)
+        self.assertIn("2026-11-19", message)
+        self.assertIn("2026-11-17 in JST", message)
+
+    def test_utc_1500_allows_the_next_jst_day_and_rejects_the_one_after(self):
+        # 2026-11-17 15:00 UTC is exactly 2026-11-18 00:00 JST.
+        now = dt.datetime(2026, 11, 17, 15, 0, 0, tzinfo=dt.timezone.utc)
+        self.assertEqual(vr.parse_tag("v2026.11.17", now), "2026.11.17")
+        self.assertEqual(vr.parse_tag("v2026.11.18", now), "2026.11.18")
+        with self.assertRaises(vr.ReleaseRejected) as caught:
+            vr.parse_tag("v2026.11.19", now)
+        self.assertIn("2026-11-18 in JST", str(caught.exception))
+
+    def test_jst_midnight_boundary(self):
+        just_before = dt.datetime(2026, 11, 17, 14, 59, 59, tzinfo=dt.timezone.utc)  # 23:59:59 JST
         self.assertEqual(vr.parse_tag("v2026.11.17", just_before), "2026.11.17")
-        with self.assertRaises(vr.ReleaseRejected):
+        with self.assertRaises(vr.ReleaseRejected) as caught:
             vr.parse_tag("v2026.11.18", just_before)
+        self.assertIn("2026-11-17 in JST", str(caught.exception))
+        just_after = dt.datetime(2026, 11, 17, 15, 0, 0, tzinfo=dt.timezone.utc)  # 00:00:00 JST
         self.assertEqual(vr.parse_tag("v2026.11.18", just_after), "2026.11.18")
 
-    def test_other_offset_is_one_constant(self):
+    def test_naive_now_is_refused(self):
+        with self.assertRaises(ValueError):
+            vr.parse_tag("v2026.11.17", dt.datetime(2026, 11, 17, 14, 0))
+
+    def test_year_end_in_jst(self):
+        now = dt.datetime(2026, 12, 31, 15, 0, tzinfo=dt.timezone.utc)  # 2027-01-01 00:00 JST
+        self.assertEqual(vr.parse_tag("v2027.01.01", now), "2027.01.01")
+        with self.assertRaises(vr.ReleaseRejected):
+            vr.parse_tag("v2027.01.02", now)
+
+    def test_the_basis_is_one_replaceable_constant(self):
         original = vr.REFERENCE_TIMEZONE
         try:
-            vr.REFERENCE_TIMEZONE = dt.timezone(dt.timedelta(hours=9), "JST")
-            # 2026-11-17 20:00 UTC is already 2026-11-18 05:00 in JST.
+            vr.REFERENCE_TIMEZONE = dt.timezone.utc
             now = dt.datetime(2026, 11, 17, 20, 0, tzinfo=dt.timezone.utc)
-            self.assertEqual(vr.parse_tag("v2026.11.18", now), "2026.11.18")
+            self.assertEqual(vr.parse_tag("v2026.11.17", now), "2026.11.17")
             with self.assertRaises(vr.ReleaseRejected):
-                vr.parse_tag("v2026.11.19", now)
+                vr.parse_tag("v2026.11.18", now)
         finally:
             vr.REFERENCE_TIMEZONE = original
 

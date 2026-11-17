@@ -10,7 +10,8 @@ Rules (all of them are enforced; anything that cannot be decided is rejected):
   prerelease suffixes and any other trailing text are rejected).
 * The date must exist in the Gregorian calendar.
 * A date after "today" is rejected. "Today" is the current date in ``REFERENCE_TIMEZONE`` (a single
-  constant, UTC for now); the rejection message prints the date that was used as the basis. Past
+  constant, fixed JST = UTC+9, which has no daylight saving time; the day changes at 00:00 JST); the
+  rejection message prints the JST date that was used as the basis. Past
   dates are accepted without limit so that a late re-run or a delayed release stays possible.
 * The commit the tag points at must be an ancestor of (or equal to) ``origin/main`` as fetched
   into the repository. A missing tag, a missing ``origin/main``, a shallow clone or any git
@@ -31,8 +32,9 @@ import sys
 from typing import Callable, Optional, Sequence
 
 # The one place that decides which calendar day "today" means for the future-date check.
-# Change this (for example to ``dt.timezone(dt.timedelta(hours=9), "JST")``) to change the basis.
-REFERENCE_TIMEZONE: dt.tzinfo = dt.timezone.utc
+# Fixed JST (UTC+9, no daylight saving time, so no tz database is needed). The maintainers chose JST;
+# change this one constant (and its tests) to change the basis.
+REFERENCE_TIMEZONE: dt.tzinfo = dt.timezone(dt.timedelta(hours=9), "JST")
 
 DOCKER_TAG_MAX_LENGTH = 128
 

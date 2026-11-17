@@ -18,7 +18,7 @@ Files: `Dockerfile`, `.dockerignore`, `scripts/` (`validate-release.py`, `publis
 | Format | `vYYYY.MM.DD` or `vYYYY.MM.DD.N`. ASCII digits only; `N` is an integer >= 1 without a leading zero (`.0`, `.01`, signs, `-rc1` and other suffixes are rejected). |
 | Date | Must exist in the Gregorian calendar (`v2026.02.29` is rejected). |
 | Future | A date after "today" is rejected. Past dates are always accepted, so a late re-run or a delayed release stays possible. |
-| Which "today" | The current date in **UTC**. This is the single constant `REFERENCE_TIMEZONE` in `scripts/validate-release.py`; tests inject the time. The rejection message prints the date it used as the basis. *Status: UTC is provisional until the maintainers decide between UTC, a fixed JST, or "UTC plus one day"; changing it means editing that one constant and its test.* |
+| Which "today" | The current date in **JST (fixed UTC+9, no daylight saving time)**; the day changes at 00:00 JST, i.e. 15:00 UTC. At 15:00 UTC the JST day has already advanced: tomorrow's tag (JST) passes, the day after is rejected as a future date. Decided by the maintainers (option B). It is the single constant `REFERENCE_TIMEZONE` in `scripts/validate-release.py`; tests inject the time. The rejection message prints the JST date it used as the basis, e.g. `(2026-11-17 in JST)`. |
 | Branch | The tagged commit must be contained in `origin/main`. A shallow clone, a missing ref or any git failure is a rejection, never a pass. |
 | Cargo | The image version is not compared with `version` in `Cargo.toml`. |
 | Serial | Two releases on one day: the second is `vYYYY.MM.DD.1`. A tag is never moved or reused. |
