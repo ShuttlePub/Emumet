@@ -188,7 +188,7 @@ class Push(unittest.TestCase):
         runner = Runner(on_push=lambda: (setattr(t, "manifest", manifest), setattr(t, "config", config)))
         state = pr.push_image(registry(t), "local:img", "2026.11.17", REV, runner)
         self.assertEqual(state.digest, digest(manifest))
-        self.assertIn(["docker", "push", "reg.test/shuttlepub/emumet:2026.11.17"], runner.commands)
+        self.assertIn(["docker", "push", "--platform", "linux/amd64", "reg.test/shuttlepub/emumet:2026.11.17"], runner.commands)
         self.assertFalse(any(c[:2] == ["docker", "build"] for c in runner.commands))
 
     def test_never_pushes_when_tag_exists(self):

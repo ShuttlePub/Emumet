@@ -131,3 +131,10 @@ maintainers' explicit approval:
 3. A new GHCR package is **private** by default. Making it public (anonymous `docker pull`) is a
    separate setting (Package settings -> Change visibility) and also needs explicit approval.
 4. Record the first release (tag, digest, run URL) in the repository's usual operations log.
+
+### Why the push uses `--platform linux/amd64`
+Recent Docker versions (observed: 29.4.2 on `ubuntu-latest`, 2026-11-17, PR CI of the release PR) store
+images with the containerd image store, and a plain `docker push` then uploads an **image index**. The
+pipeline publishes exactly one single-platform manifest, so `publish-release.py push` runs
+`docker push --platform linux/amd64`, which uploads that one manifest only (no index, no attestations).
+The classifier still refuses an index it finds in the registry.

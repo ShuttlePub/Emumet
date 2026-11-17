@@ -42,6 +42,7 @@ import urllib.request
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 REVISION_LABEL = "org.opencontainers.image.revision"
+PLATFORM = "linux/amd64"
 MANIFEST_MEDIA_TYPES = (
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.v2+json",
@@ -238,8 +239,8 @@ class Registry:
         except (ValueError, UnicodeDecodeError):
             raise Stop("the image config is not valid JSON") from None
         platform = f"{image_config.get('os')}/{image_config.get('architecture')}"
-        if platform != "linux/amd64":
-            raise Stop(f"{self.image}:{version} is {platform}, expected linux/amd64")
+        if platform != PLATFORM:
+            raise Stop(f"{self.image}:{version} is {platform}, expected {PLATFORM}")
         labels = (image_config.get("config") or {}).get("Labels") or {}
         found = labels.get(REVISION_LABEL)
         if found != revision:
@@ -290,7 +291,9 @@ def push_image(
     tagged = run(["docker", "tag", local_image, target])
     if tagged.returncode != 0:
         raise Stop(f"docker tag failed: {tagged.stderr.strip()}")
-    pushed = run(["docker", "push", target])
+    # --platform: with the containerd image store (the default of recent Docker) a plain push
+    # uploads an image index; this pipeline publishes exactly one linux/amd64 manifest.
+    pushed = run(["docker", "push", "--platform", PLATFORM, target])
     registry.log(pushed.stdout.strip()[-2000:])
     if pushed.returncode != 0:
         registry.log(f"push: docker push failed (exit {pushed.returncode}): {pushed.stderr.strip()[-1000:]}")
