@@ -17,6 +17,7 @@ use crate::handler::AppModule;
 use crate::route::account::{AccountRouter, AdminAccountRouter, OrgAccountRouter};
 use crate::route::activitypub::profile_actor::ProfileActorRouter;
 use crate::route::activitypub::profile_inbox::ProfileInboxRouter;
+use crate::route::healthz::HealthzRouter;
 use crate::route::me::MeRouter;
 use crate::route::media::MediaRouter;
 use crate::route::oauth2::OAuth2Router;
@@ -91,10 +92,11 @@ pub(crate) fn build_root_router(
             auth::auth_middleware,
         ));
 
-    // Routes that do NOT require JWT auth (OAuth2 Login/Consent Provider, Profile WebFinger,
-    // Profile federation under /ap — the inbox is HTTP-Signature guarded, the retired Account
-    // actor paths answer 410).
+    // Routes that do NOT require JWT auth (the start-up check /healthz, OAuth2 Login/Consent
+    // Provider, Profile WebFinger, Profile federation under /ap — the inbox is HTTP-Signature
+    // guarded, the retired Account actor paths answer 410).
     let public_routes = axum::Router::new()
+        .route_healthz()
         .route_oauth2()
         .route_profile_webfinger()
         .nest(

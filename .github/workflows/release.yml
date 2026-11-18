@@ -1,0 +1,252 @@
+name: Release
+
+# A pushed v* tag publishes ghcr.io/shuttlepub/emumet:<tag without v> (linux/amd64 only) and
+# creates a GitHub Release (validate -> gate -> build + publish | verify -> release). See docs/releasing.md for the tag rules and for recovery.
+on:
+  push:
+    tags: [ "v*" ]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      commit: ${{ steps.validate.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Script tests
+        working-directory: scripts/tests
+        run: python3 -m unittest discover -s . -p 'test_*.py'
+      - name: Validate the tag (CalVer, existing date, not in the future, on origin/main)
+        id: validate
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 scripts/validate-release.py "$TAG" --github-output "$GITHUB_OUTPUT"
+      - name: The tag must still point at the commit this run was started for
+        env:
+          COMMIT: ${{ steps.validate.outputs.commit }}
+        run: |
+          [ "$COMMIT" = "$GITHUB_SHA" ] || { echo "tag resolves to $COMMIT but the run is for $GITHUB_SHA" >&2; exit 1; }
+
+  gate:
+    name: Registry and Release state of this version
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # contents: write only so that DRAFT Releases are visible to the listing (a read-only token
+    # cannot see them). Nothing is created or changed here. packages: read for the registry query.
+    # This is the early stop before anything is built; the publish job repeats the lookup right
+    # before the push.
+    permissions:
+      contents: write
+      packages: read
+    outputs:
+      state: ${{ steps.gate.outputs.state }}
+      digest: ${{ steps.gate.outputs.digest }}
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      COMMIT: ${{ needs.validate.outputs.commit }}
+      TAG: ${{ github.ref_name }}
+      REGISTRY_USERNAME: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      # absent  -> and no Release (draft or not) exists for the tag, otherwise STOP
+      # same    -> the image is already published; the verify job checks it instead of building
+      # anything else stops. "Release without image" is never repaired automatically.
+      - name: Classify the image and require that no Release exists when it is absent
+        id: gate
+        run: >-
+          python3 scripts/publish-release.py gate
+          --version "$VERSION" --revision "$COMMIT" --tag "$TAG"
+          --github-repository "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT"
+
+  # absent: build and smoke test with a read-only token (this job runs the Dockerfile and the image),
+  # hand the very same image to the publish job as an artifact.
+  build:
+    name: Build and smoke test the image
+    needs: [validate, gate]
+    if: needs.gate.outputs.state == 'absent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    outputs:
+      config: ${{ steps.config.outputs.config }}
+      archive: ${{ steps.archive.outputs.archive }}
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      COMMIT: ${{ needs.validate.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      - name: Build
+        run: >-
+          docker build
+          --provenance=false --sbom=false
+          --build-arg "EMUMET_VERSION=$VERSION"
+          --build-arg "EMUMET_REVISION=$COMMIT"
+          -t emumet-release:local .
+      - name: Smoke test
+        run: scripts/smoke-container.sh emumet-release:local
+      # What was smoke tested: the publish job refuses to push an image with another config digest.
+      - name: Record the config digest of the smoke-tested image
+        id: config
+        run: >-
+          python3 scripts/publish-release.py local-config
+          --version "$VERSION" --revision "$COMMIT" --local-image emumet-release:local
+          --github-output "$GITHUB_OUTPUT"
+      - name: Save the image
+        run: docker save -o "$RUNNER_TEMP/emumet-image.tar" emumet-release:local
+      # The digest of the WHOLE tar goes into a job output (not into the artifact): the publish job
+      # checks it before `docker load`. The config digest alone cannot see swapped layers.
+      - name: Record the SHA-256 of the archive
+        id: archive
+        run: >-
+          python3 scripts/publish-release.py archive-digest
+          --archive "$RUNNER_TEMP/emumet-image.tar" --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: emumet-image
+          path: ${{ runner.temp }}/emumet-image.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  # absent: the only job that may write a package. contents: write is here for ONE reason: the
+  # Release lookup right before the push must see DRAFT Releases (a read-only token cannot). The
+  # job runs only trusted scripts of the tagged commit and docker load/push; it never builds.
+  publish:
+    name: Publish the smoke-tested image
+    needs: [validate, gate, build]
+    if: needs.gate.outputs.state == 'absent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      COMMIT: ${{ needs.validate.outputs.commit }}
+      TAG: ${{ github.ref_name }}
+      CONFIG_DIGEST: ${{ needs.build.outputs.config }}
+      ARCHIVE_DIGEST: ${{ needs.build.outputs.archive }}
+      REGISTRY_USERNAME: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: emumet-image
+          path: ${{ runner.temp }}/image
+      # Before anything reads the tar: it must be byte-for-byte the file the build job saved.
+      - name: Verify the archive against the digest the build job recorded
+        run: >-
+          python3 scripts/publish-release.py verify-archive
+          --archive "$RUNNER_TEMP/image/emumet-image.tar" --expected-sha256 "$ARCHIVE_DIGEST"
+      - name: Load the smoke-tested image
+        run: docker load -i "$RUNNER_TEMP/image/emumet-image.tar"
+      - name: Log in to GHCR
+        run: printf '%s' "$REGISTRY_PASSWORD" | docker login ghcr.io -u "$REGISTRY_USERNAME" --password-stdin
+      # Re-classifies the tag (must still be absent), looks for a Release (draft included) one last
+      # time, requires the config digest the build job recorded, pushes, reads the registry back.
+      - name: Push the smoke-tested image and verify it in the registry
+        id: push
+        run: >-
+          python3 scripts/publish-release.py push
+          --version "$VERSION" --revision "$COMMIT" --local-image emumet-release:local
+          --expected-config-digest "$CONFIG_DIGEST"
+          --tag "$TAG" --github-repository "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT"
+
+  # same: the image is already published. Pull it BY DIGEST and verify it like a fresh push.
+  verify:
+    name: Verify the already published image
+    needs: [validate, gate]
+    if: needs.gate.outputs.state == 'same'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      digest: ${{ needs.gate.outputs.digest }}
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      COMMIT: ${{ needs.validate.outputs.commit }}
+      PUBLISHED_DIGEST: ${{ needs.gate.outputs.digest }}
+      IMAGE_REPOSITORY: ghcr.io/shuttlepub/emumet
+      REGISTRY_USERNAME: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      - name: Log in to GHCR
+        run: printf '%s' "$REGISTRY_PASSWORD" | docker login ghcr.io -u "$REGISTRY_USERNAME" --password-stdin
+      - name: Pull the published image by digest
+        run: docker pull "$IMAGE_REPOSITORY@$PUBLISHED_DIGEST"
+      - name: Verify the pulled image against the registry (config, layers, labels)
+        run: >-
+          python3 scripts/publish-release.py verify-local
+          --version "$VERSION" --revision "$COMMIT"
+          --local-image "$IMAGE_REPOSITORY@$PUBLISHED_DIGEST" --expected-digest "$PUBLISHED_DIGEST"
+      - name: Smoke test the pulled image
+        run: scripts/smoke-container.sh "$IMAGE_REPOSITORY@$PUBLISHED_DIGEST"
+
+  release:
+    name: GitHub Release
+    needs: [validate, gate, publish, verify]
+    # publish or verify is skipped depending on the gate state; exactly one of them must have succeeded.
+    # !cancelled() (not always()): a manual "Cancel workflow" must stop here, before a Release is created.
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.gate.result == 'success' && (needs.publish.result == 'success' || needs.verify.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: read
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      COMMIT: ${{ needs.validate.outputs.commit }}
+      TAG: ${{ github.ref_name }}
+      VERIFIED_DIGEST: ${{ needs.publish.outputs.digest || needs.verify.outputs.digest }}
+      REGISTRY_USERNAME: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      # The registry must still report the digest that was verified above; the managed metadata
+      # block of an existing Release must match image, digest and commit exactly. The body is the
+      # block plus GitHub's generated change log (fetched with the generate-notes API).
+      - name: Create the Release from the digest the registry reports
+        run: >-
+          python3 scripts/publish-release.py release
+          --version "$VERSION" --revision "$COMMIT" --tag "$TAG"
+          --github-repository "$GITHUB_REPOSITORY" --expected-digest "$VERIFIED_DIGEST"

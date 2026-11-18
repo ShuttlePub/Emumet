@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 
 pub mod account;
 pub mod activitypub;
+pub mod healthz;
 pub mod me;
 pub mod media;
 pub mod oauth2;

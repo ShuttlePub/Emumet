@@ -1,0 +1,39 @@
+# Exclusion list (NOT an allow-list): the Emumet root is also used as a build context by
+# shuttlepub-frontends' real E2E (its own Containerfile COPYs Cargo.toml, Cargo.lock, kernel,
+# application, driver, server and migrations), so anything not listed here stays in the context.
+# Never exclude: Cargo.toml, Cargo.lock, rust-toolchain.toml, kernel/, application/, driver/,
+# server/, migrations/.
+
+# VCS and build output
+.git
+.gitignore
+target
+**/target
+
+# Secrets, keys and local configuration
+.env
+.env.*
+!.env.example
+master-key-password
+**/master-key-password
+*.pem
+*.key
+e2e/certs
+.registration-runtime
+
+# Logs and local state
+logs
+**/logs
+*.log
+.direnv
+.idea
+
+# Not needed for the server image
+.github
+docs
+e2e
+tools
+scripts
+ory
+flake.nix
+flake.lock
