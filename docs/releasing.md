@@ -53,8 +53,10 @@ in the repository (see "Recovery").
 
 ## What the tag run does
 
-`release.yml`: `validate` -> `gate` -> (`build` -> `publish`, or `verify`) -> `release`. Runs for one tag never overlap and are
-never cancelled (`concurrency` per tag, `cancel-in-progress: false`); the tag name reaches the
+`release.yml`: `validate` -> `gate` -> (`build` -> `publish`, or `verify`) -> `release`. Runs for one tag never overlap and a
+newer run never cancels a running one (`concurrency` per tag, `cancel-in-progress: false`). A
+**manual** "Cancel workflow" does stop the run: the `release` job's condition uses `!cancelled()`
+(not `always()`), so no Release is created after a cancel. The tag name reaches the
 scripts through `env`, never through `${{ }}` inside a shell command.
 
 1. **validate** (`contents: read`): script tests, `validate-release.py`.
@@ -75,11 +77,15 @@ scripts through `env`, never through `${{ }}` inside a shell command.
    * **build** (`contents: read` only; no package or release permission, no token in its
      environment): builds the image, runs `scripts/smoke-container.sh` on it, records its **config
      digest** (the sha256 of the config JSON inside `docker save`, independent of the engine's image
-     store) and hands the very same image to the next job as a one-day artifact.
+     store), saves the image to a tar, records the **SHA-256 of the whole tar** as a job output
+     (not inside the artifact), and hands the tar to the next job as a one-day artifact.
    * **publish** (`contents: write`, `packages: write`; never builds): `contents: write` is there
      for one reason, so that the Release lookup right before the push can see **draft** Releases (a
-     read-only token cannot, so a draft created after the gate would be missed). It loads the artifact, logs in, and `publish-release.py push` then (a) requires the
-     loaded image to have the config digest the build job recorded, (b) re-classifies the tag
+     read-only token cannot, so a draft created after the gate would be missed). It downloads the artifact and **verifies the tar's SHA-256 against the build job's output
+     before `docker load`** (the config digest alone cannot see swapped layers: with the containerd
+     image store a tar with the same config but other layers loads with a "wrong diff id" warning
+     and exit status 0; `download-artifact` only warns about a digest mismatch). Then it logs in,
+     and `publish-release.py push` (a) requires the loaded image to have the config digest the build job recorded, (b) re-classifies the tag
      (must still be absent), (c) looks for a Release (draft or not) **one last time, immediately
      before `docker push`** and stops if there is one, (d) pushes the same image (no rebuild),
      (e) reads it back and compares **revision label, platform, layer diff IDs and the config
@@ -131,6 +137,7 @@ gh release view vYYYY.MM.DD --repo ShuttlePub/Emumet
 | `build`: build or smoke failed | Nothing published. | Fix on `main` through a PR, then tag the new commit with the next serial. Re-running the failed job only helps for a flaky infrastructure error. |
 | `gate`/`publish`: stopped as **other revision / platform / index** | An image with that version exists and is not ours. | Do not overwrite. Investigate who pushed it; release the next serial. |
 | `gate`/`publish`: stopped as **undeterminable** (see below) | Unknown. | Read the logged HTTP status and codes first. |
+| `publish`: the archive digest does not match | Nothing was loaded or pushed. The artifact differs from what `build` saved (corruption, or tampering between the jobs). | Treat it as a security finding: read the `build` and `publish` logs first. Re-running **all jobs** builds and smoke-tests again and is acceptable only after the cause is understood; re-running `publish` alone just fails the same way. |
 | `publish`: `docker push` failed or its result is unknown | Possibly a partial or complete push. | The script already re-queried and logged the state. Run `classify` as above. `same`: re-run the failed jobs; the gate then sends the run to `verify` (pull by digest, verify, smoke) instead of pushing, and the release job continues. `absent`: re-run the failed jobs. Anything else: stop and use the next serial. Never re-push before the state is confirmed. |
 | `gate` or `publish`: stopped because **a Release exists but the image does not** | The tag has a (draft) Release and no image (`publish` stops here if the Release appeared after the gate, before anything was pushed). | Nothing was pushed. A person decides: usually delete the stray Release by hand and re-run the failed jobs, or release the next serial. It is never repaired automatically. |
 | `verify`: pulled-image verification or smoke failed | The published image is not what the registry metadata says, or does not run. | Do not publish anything over it. Investigate (digest, config, local image store); release the next serial from a fixed commit. |

@@ -15,6 +15,12 @@ Subcommands (all of them print what they decided and why; nothing is ever overwr
   local-config
             Print the config digest of a local image (from `docker save`). The build job records
             it before the image travels to the publish job as an artifact.
+  archive-digest / verify-archive
+            The image travels from the build job to the publish job as a tar. archive-digest prints
+            and records the SHA-256 of that whole file (a job OUTPUT of the build job, so it is not
+            stored next to the file); verify-archive recomputes it BEFORE `docker load` and stops on
+            any difference. The config digest alone is not enough: a tar with the same config but
+            other layers can be loaded (with a "wrong diff id" warning) and pushed.
   push      Re-classify right before the push (must still be absent), then look for a Release
             (draft or not) for the tag ONE LAST TIME, immediately before `docker push`: a Release
             created after the gate stops the push. Runs only in a job whose token can see drafts.
@@ -338,6 +344,39 @@ def local_config_digest(image: str, run: Runner = run_command) -> str:
         return config_digest_from_archive(archive)
 
 
+def archive_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as error:
+        raise Stop(f"cannot read the image archive {path}: {error}") from None
+    return "sha256:" + digest.hexdigest()
+
+
+def verify_archive(path: str, expected: str) -> str:
+    """Stop unless the whole archive file has the SHA-256 the build job recorded."""
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected or ""):
+        raise Stop(f"the recorded archive digest {expected!r} is not a sha256 digest; refusing to load the archive")
+    actual = archive_sha256(path)
+    if actual != expected:
+        raise Stop(
+            f"the image archive {path} has digest {actual}, not the {expected} recorded by the build job; "
+            "refusing to load it"
+        )
+    return actual
+
+
+def is_loopback_registry(registry: str) -> bool:
+    """True only for host[:port] naming a loopback address (the throw-away registry of the local test)."""
+    if registry.startswith("["):
+        host = registry[1:].split("]", 1)[0]
+    else:
+        host = registry.split(":", 1)[0]
+    return host in ("127.0.0.1", "localhost", "::1")
+
+
 def compare_with_registry(
     registry_state: Classification, labels: Dict[str, str], layers: List[str], config_digest: str, what: str
 ) -> None:
@@ -623,13 +662,40 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="skip the last Release lookup (local test registry only; never in release.yml)")
         if name in ("verify-local", "release"):
             command.add_argument("--expected-digest", required=True)
+    archive = sub.add_parser("archive-digest")
+    archive.add_argument("--archive", required=True)
+    archive.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT"))
+    verify = sub.add_parser("verify-archive")
+    verify.add_argument("--archive", required=True)
+    verify.add_argument("--expected-sha256", required=True)
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command in ("archive-digest", "verify-archive"):
+        try:
+            if args.command == "archive-digest":
+                value = archive_sha256(args.archive)
+                print(value)
+                write_outputs(args.github_output, {"archive": value})
+            else:
+                print(f"archive verified: {verify_archive(args.archive, args.expected_sha256)}")
+        except Stop as stop:
+            print(f"STOP: {stop}", file=sys.stderr)
+            return 1
+        return 0
     if not re.fullmatch(r"[0-9a-f]{40}", args.revision):
         print("--revision must be a full 40-hex SHA", file=sys.stderr)
+        return 2
+    if args.command == "push" and args.no_release_check and not (
+        args.insecure_http and is_loopback_registry(args.registry)
+    ):
+        print(
+            "--no-release-check is only for the local test registry: it needs --insecure-http and a loopback "
+            f"--registry (127.0.0.1, localhost, ::1), not {args.registry!r}",
+            file=sys.stderr,
+        )
         return 2
     needs_release_lookup = args.command in ("gate", "release") or (
         args.command == "push" and not args.no_release_check

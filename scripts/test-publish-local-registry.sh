@@ -75,6 +75,34 @@ grep -q 'smoke-tested config' "$WORK/log1b" || { cat "$WORK/log1b"; die "unexpec
 publish classify --github-output "$WORK/outd" >/dev/null 2>&1 || die "classify failed after the refused push"
 grep -qx 'state=absent' "$WORK/outd" || die "the refused push left something in the registry"
 
+log "1c. an archive whose layer was swapped (same config) is refused before it is loaded"
+"$ENGINE" save -o "$WORK/built.tar" "$IMAGE"
+BUILT_SHA="$(python3 "$ROOT/scripts/publish-release.py" archive-digest --archive "$WORK/built.tar")"
+python3 "$ROOT/scripts/publish-release.py" verify-archive --archive "$WORK/built.tar" --expected-sha256 "$BUILT_SHA" >/dev/null || die "the untouched archive was refused"
+python3 - "$WORK/built.tar" "$WORK/swapped.tar" <<'PY'
+import io, sys, tarfile
+src, dst = sys.argv[1:]
+with tarfile.open(src) as source, tarfile.open(dst, "w") as target:
+    members = [m for m in source.getmembers()]
+    # the largest regular file is a layer blob; flip one byte of it, leave the config alone
+    layer = max((m for m in members if m.isfile()), key=lambda m: m.size)
+    for member in members:
+        data = source.extractfile(member).read() if member.isfile() else None
+        if member is layer:
+            data = data[:100] + bytes([data[100] ^ 1]) + data[101:]
+        target.addfile(member, io.BytesIO(data) if data is not None else None)
+PY
+if python3 "$ROOT/scripts/publish-release.py" verify-archive --archive "$WORK/swapped.tar" --expected-sha256 "$BUILT_SHA" >"$WORK/log1c" 2>&1; then
+  die "a tar with a changed layer was accepted"
+fi
+grep -q 'refusing to load' "$WORK/log1c" || { cat "$WORK/log1c"; die "unexpected reason for refusing the swapped archive"; }
+
+log "1d. --no-release-check is refused for anything but a loopback registry over http"
+if python3 "$ROOT/scripts/publish-release.py" push --version "$VERSION" --revision "$REVISION" --local-image "$IMAGE" --no-release-check >"$WORK/log1d" 2>&1; then
+  die "--no-release-check was accepted for ghcr.io"
+fi
+grep -q 'only for the local test registry' "$WORK/log1d" || { cat "$WORK/log1d"; die "unexpected reason for refusing --no-release-check"; }
+
 log "2. push the smoke-tested local image (the Release lookup needs GitHub, so it is skipped here only)"
 publish push --no-release-check --expected-config-digest "$CONFIG" --local-image "$IMAGE" --github-output "$WORK/out2" >"$WORK/log2" 2>&1 || { cat "$WORK/log2"; die "push failed"; }
 grep -qx 'state=same' "$WORK/out2" || die "push did not end in state=same"

@@ -90,6 +90,7 @@ jobs:
       contents: read
     outputs:
       config: ${{ steps.config.outputs.config }}
+      archive: ${{ steps.archive.outputs.archive }}
     env:
       VERSION: ${{ needs.validate.outputs.version }}
       COMMIT: ${{ needs.validate.outputs.commit }}
@@ -116,6 +117,13 @@ jobs:
           --github-output "$GITHUB_OUTPUT"
       - name: Save the image
         run: docker save -o "$RUNNER_TEMP/emumet-image.tar" emumet-release:local
+      # The digest of the WHOLE tar goes into a job output (not into the artifact): the publish job
+      # checks it before `docker load`. The config digest alone cannot see swapped layers.
+      - name: Record the SHA-256 of the archive
+        id: archive
+        run: >-
+          python3 scripts/publish-release.py archive-digest
+          --archive "$RUNNER_TEMP/emumet-image.tar" --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: emumet-image
@@ -142,6 +150,7 @@ jobs:
       COMMIT: ${{ needs.validate.outputs.commit }}
       TAG: ${{ github.ref_name }}
       CONFIG_DIGEST: ${{ needs.build.outputs.config }}
+      ARCHIVE_DIGEST: ${{ needs.build.outputs.archive }}
       REGISTRY_USERNAME: ${{ github.actor }}
       REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -154,6 +163,11 @@ jobs:
         with:
           name: emumet-image
           path: ${{ runner.temp }}/image
+      # Before anything reads the tar: it must be byte-for-byte the file the build job saved.
+      - name: Verify the archive against the digest the build job recorded
+        run: >-
+          python3 scripts/publish-release.py verify-archive
+          --archive "$RUNNER_TEMP/image/emumet-image.tar" --expected-sha256 "$ARCHIVE_DIGEST"
       - name: Load the smoke-tested image
         run: docker load -i "$RUNNER_TEMP/image/emumet-image.tar"
       - name: Log in to GHCR
@@ -208,7 +222,8 @@ jobs:
     name: GitHub Release
     needs: [validate, gate, publish, verify]
     # publish or verify is skipped depending on the gate state; exactly one of them must have succeeded.
-    if: ${{ always() && needs.validate.result == 'success' && needs.gate.result == 'success' && (needs.publish.result == 'success' || needs.verify.result == 'success') }}
+    # !cancelled() (not always()): a manual "Cancel workflow" must stop here, before a Release is created.
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.gate.result == 'success' && (needs.publish.result == 'success' || needs.verify.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import tarfile
+import tempfile
 import unittest
 from unittest import mock
 
@@ -533,6 +534,94 @@ class RequireNoRelease(unittest.TestCase):
     def test_a_failed_lookup_stops(self):
         with self.assertRaisesRegex(pr.Stop, "cannot list"):
             pr.require_no_release(self.runner([], rc=1), "ShuttlePub/Emumet", TAG)
+
+
+def make_archive(path, config: bytes, layer: bytes) -> str:
+    """A docker-save style archive: manifest.json, the config and one layer."""
+    with tarfile.open(path, "w") as archive:
+        for name, data in (
+            ("blobs/config.json", config),
+            ("blobs/layer.tar", layer),
+            ("manifest.json", json.dumps([{"Config": "blobs/config.json", "Layers": ["blobs/layer.tar"]}]).encode()),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    return pr.archive_sha256(path)
+
+
+class ArchiveIntegrity(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+
+    def path(self, name):
+        return os.path.join(self.dir.name, name)
+
+    def test_the_recorded_digest_accepts_the_same_file(self):
+        recorded = make_archive(self.path("a.tar"), b'{"rootfs":1}', b"layer-one")
+        self.assertEqual(pr.verify_archive(self.path("a.tar"), recorded), recorded)
+
+    def test_same_config_other_layer_is_refused(self):
+        """What a config digest check cannot see: `docker load` of such a tar exits 0."""
+        config = b'{"rootfs":{"diff_ids":["sha256:aaaa"]}}'
+        recorded = make_archive(self.path("built.tar"), config, b"the smoke-tested layer")
+        make_archive(self.path("swapped.tar"), config, b"a different layer")
+        # the config inside both archives is byte-identical
+        with tarfile.open(self.path("built.tar")) as one, tarfile.open(self.path("swapped.tar")) as two:
+            self.assertEqual(one.extractfile("blobs/config.json").read(), two.extractfile("blobs/config.json").read())
+        with self.assertRaisesRegex(pr.Stop, "refusing to load"):
+            pr.verify_archive(self.path("swapped.tar"), recorded)
+
+    def test_a_single_flipped_byte_is_refused(self):
+        recorded = make_archive(self.path("a.tar"), b"{}", b"x" * 4096)
+        with open(self.path("a.tar"), "r+b") as handle:
+            handle.seek(2000)
+            byte = handle.read(1)
+            handle.seek(2000)
+            handle.write(bytes([byte[0] ^ 1]))
+        with self.assertRaisesRegex(pr.Stop, "refusing to load"):
+            pr.verify_archive(self.path("a.tar"), recorded)
+
+    def test_an_empty_or_malformed_recorded_digest_is_refused(self):
+        make_archive(self.path("a.tar"), b"{}", b"x")
+        for bad in ("", "sha256:abc", "abc" * 22, None):
+            with self.subTest(bad=bad), self.assertRaisesRegex(pr.Stop, "not a sha256 digest"):
+                pr.verify_archive(self.path("a.tar"), bad)
+
+    def test_a_missing_archive_is_refused(self):
+        with self.assertRaisesRegex(pr.Stop, "cannot read"):
+            pr.verify_archive(self.path("missing.tar"), "sha256:" + "0" * 64)
+
+    def test_the_cli_records_and_checks(self):
+        recorded = make_archive(self.path("a.tar"), b"{}", b"x")
+        output = self.path("out")
+        self.assertEqual(pr.main(["archive-digest", "--archive", self.path("a.tar"), "--github-output", output]), 0)
+        with open(output, encoding="utf-8") as handle:
+            self.assertEqual(handle.read().strip(), f"archive={recorded}")
+        self.assertEqual(pr.main(["verify-archive", "--archive", self.path("a.tar"), "--expected-sha256", recorded]), 0)
+        make_archive(self.path("b.tar"), b"{}", b"y")
+        self.assertEqual(pr.main(["verify-archive", "--archive", self.path("b.tar"), "--expected-sha256", recorded]), 1)
+
+
+class NoReleaseCheck(unittest.TestCase):
+    base = ["push", "--version", "v", "--revision", REV, "--local-image", "x", "--no-release-check"]
+
+    def test_loopback_detection(self):
+        for good in ("127.0.0.1:5000", "localhost:5000", "localhost", "[::1]:5000", "127.0.0.1"):
+            self.assertTrue(pr.is_loopback_registry(good), good)
+        for bad in ("ghcr.io", "ghcr.io:443", "127.0.0.1.evil.example:5000", "localhost.evil.example", "10.0.0.1:5000", "[::2]:1"):
+            self.assertFalse(pr.is_loopback_registry(bad), bad)
+
+    def test_ghcr_is_refused_even_with_the_flag(self):
+        self.assertEqual(pr.main(self.base), 2)  # default registry ghcr.io
+        self.assertEqual(pr.main(self.base + ["--registry", "ghcr.io", "--insecure-http"]), 2)
+
+    def test_a_non_loopback_registry_is_refused(self):
+        self.assertEqual(pr.main(self.base + ["--registry", "registry.example:5000", "--insecure-http"]), 2)
+
+    def test_loopback_without_insecure_http_is_refused(self):
+        self.assertEqual(pr.main(self.base + ["--registry", "127.0.0.1:5000"]), 2)
 
 
 class DraftCreatedAfterTheGate(unittest.TestCase):
