@@ -12,8 +12,14 @@ Subcommands (all of them print what they decided and why; nothing is ever overwr
                         "unknown" error code. Exit status 1. "Cannot tell" is never "absent".
   gate      classify, and when the tag is absent also require that NO GitHub Release (draft or
             not) exists for the tag. "Release without image" is never repaired automatically.
-  push      Re-classify right before the push (must still be absent), push the already
-            smoke-tested local image WITHOUT rebuilding, then read everything back from the
+  local-config
+            Print the config digest of a local image (from `docker save`). The build job records
+            it before the image travels to the publish job as an artifact.
+  push      Re-classify right before the push (must still be absent), then look for a Release
+            (draft or not) for the tag ONE LAST TIME, immediately before `docker push`: a Release
+            created after the gate stops the push. Runs only in a job whose token can see drafts.
+            Push the already smoke-tested local image WITHOUT rebuilding (it must have the config
+            digest the build job recorded, --expected-config-digest), then read everything back from the
             registry and compare it with the local image: revision label, platform, the layer
             diff-IDs and the image CONFIG DIGEST (the sha256 of the config JSON taken from
             `docker save`, which does not depend on the engine's image store). Prints the registry
@@ -22,10 +28,13 @@ Subcommands (all of them print what they decided and why; nothing is ever overwr
             For an image that was already published: compare a locally pulled copy (by digest)
             with the registry (config digest, layers, revision and version labels) and require the
             registry digest to be the expected one. The smoke test then runs on that copy.
-  release   Require classify == same AND the registry digest == the digest the image job verified
-            (--expected-digest), then create the GitHub Release. An existing Release is a no-op
-            only if its managed metadata block (see METADATA_MARKER) matches image, digest and
-            commit exactly; unknown, duplicated or contradicting metadata stops.
+  release   Require classify == same AND the registry digest == the digest the publish or verify job verified
+            (--expected-digest), then create the GitHub Release: the managed metadata block (see
+            METADATA_MARKER) followed by the change log GitHub generates for the tag (the
+            generate-notes API). The generated text is untrusted: it is never read for values, and
+            the marker word is neutralised in it. An existing Release is a no-op only if its
+            managed block matches image, digest and commit exactly; unknown, duplicated or
+            contradicting metadata stops.
 
 The registry is reached with the OCI distribution API (Bearer token flow, credentials from
 REGISTRY_USERNAME / REGISTRY_PASSWORD). Every registry answer that decides something is logged as
@@ -352,17 +361,24 @@ def push_image(
     revision: str,
     run: Runner = run_command,
     precheck: Optional[Callable[[], None]] = None,
+    expected_config: Optional[str] = None,
 ) -> Classification:
     labels, layers = local_image_facts(local_image, run)
     label = labels.get(REVISION_LABEL, "")
     if label != revision:
         raise Stop(f"the local image carries revision {label!r}, expected {revision}")
     local_config = local_config_digest(local_image, run)
-    if precheck is not None:
-        precheck()
+    if expected_config is not None and local_config != expected_config:
+        raise Stop(
+            f"the local image config {local_config} is not the smoke-tested config {expected_config} "
+            "recorded by the build job"
+        )
     state = registry.classify(version, revision)
     if state.state != "absent":
         raise Stop(f"{registry.image}:{version} appeared before the push; refusing to push over it")
+    # The very last look before the push: a Release (draft included) created after the gate stops it.
+    if precheck is not None:
+        precheck()
     target = f"{registry.image}:{version}"
     tagged = run(["docker", "tag", local_image, target])
     if tagged.returncode != 0:
@@ -446,8 +462,17 @@ def parse_metadata(body: str) -> Dict[str, str]:
     return values
 
 
-def release_notes(registry: Registry, version: str, digest: str, commit: str, repo_url: str) -> str:
-    return (
+def neutralise_marker(text: str) -> str:
+    """Generated text must not be able to contain a second metadata marker."""
+    return text.replace("emumet-release-metadata", "emumet_release_metadata")
+
+
+def release_notes(registry: Registry, version: str, digest: str, commit: str, repo_url: str, changelog: str) -> str:
+    """The Release body: image information and the managed block first, then GitHub's change log.
+
+    Only the managed block is ever compared; the change log is untrusted text from pull request titles.
+    """
+    body = (
         f"## Container image\n\n"
         f"- Image: `{registry.image}:{version}` (linux/amd64)\n"
         f"- Digest: `{digest}`\n"
@@ -456,13 +481,35 @@ def release_notes(registry: Registry, version: str, digest: str, commit: str, re
         f"Operating instructions: {repo_url}/blob/{commit}/docs/container-runtime.md\n\n"
         f"{render_metadata(f'{registry.image}:{version}', digest, commit)}\n"
     )
+    changelog = neutralise_marker(changelog.strip())
+    return body + (f"\n---\n\n{changelog}\n" if changelog else "")
+
+
+def generate_changelog(run: Runner, repo: str, tag: str) -> str:
+    """GitHub's automatically generated change log for the tag. Failing to get it is a Stop."""
+    result = run(["gh", "api", "--method", "POST", f"repos/{repo}/releases/generate-notes", "-f", f"tag_name={tag}"])
+    if result.returncode != 0:
+        raise Stop(f"cannot generate the release notes for {tag}: {result.stderr.strip()[-500:]}")
+    try:
+        body = json.loads(result.stdout).get("body")
+    except (ValueError, AttributeError):
+        raise Stop("cannot parse the generated release notes") from None
+    if not isinstance(body, str):
+        raise Stop("the generated release notes have no body")
+    return body
+
+
+def release_precheck(repo: str, tag: str, run: Runner = run_command) -> Callable[[], None]:
+    """What `push` runs right before `docker push`."""
+    return lambda: require_no_release(run, repo, tag)
 
 
 def find_release(run: Runner, repo: str, tag: str) -> Optional[dict]:
     """The Release for the tag, or None. Any failure to find out is a Stop.
 
-    Drafts are only listed to a token that may push (contents: write); with a read-only token a
-    draft is invisible, which is why the gate job runs with write access.
+    Drafts are only listed to a token with contents: write; with a read-only token a draft is
+    invisible. That is why the gate job and the publish job (the one that pushes) have it, and
+    the build job (which runs the Dockerfile) does not.
     """
     result = run(["gh", "api", "--paginate", "--slurp", f"repos/{repo}/releases?per_page=100"])
     if result.returncode != 0:
@@ -523,13 +570,15 @@ def create_or_verify_release(
         check_release_matches(existing, expected, tag)
         log(f"release: {tag} already exists with digest {digest} and commit {commit}; nothing to do")
         return "exists"
-    notes = release_notes(registry, version, digest, commit, f"https://github.com/{repo}")
+    notes = release_notes(
+        registry, version, digest, commit, f"https://github.com/{repo}", generate_changelog(run, repo, tag)
+    )
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
         handle.write(notes)
         notes_path = handle.name
     try:
-        # No --generate-notes: the body is exactly what is written here, so the managed block
-        # cannot be duplicated by generated text (pull request titles).
+        # The generated change log is fetched above and written into the body by this script (not by
+        # --generate-notes), so the marker word can be neutralised in it.
         created = run(["gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--title", tag,
                        "--notes-file", notes_path])
     finally:
@@ -555,7 +604,7 @@ def write_outputs(path: Optional[str], values: Dict[str, str]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("classify", "gate", "push", "verify-local", "release"):
+    for name in ("classify", "gate", "local-config", "push", "verify-local", "release"):
         command = sub.add_parser(name)
         command.add_argument("--version", required=True, help="image tag (the CalVer without the leading v)")
         command.add_argument("--revision", required=True, help="full 40-hex commit SHA the image must carry")
@@ -564,10 +613,14 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--insecure-http", action="store_true", help="use http (local test registry only)")
         command.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT"))
         if name in ("gate", "push", "release"):
-            command.add_argument("--tag", required=name != "push")
+            command.add_argument("--tag")
             command.add_argument("--github-repository", default=os.environ.get("GITHUB_REPOSITORY"))
-        if name in ("push", "verify-local"):
+        if name in ("push", "verify-local", "local-config"):
             command.add_argument("--local-image", required=True)
+        if name == "push":
+            command.add_argument("--expected-config-digest", help="config digest recorded by the build job")
+            command.add_argument("--no-release-check", action="store_true",
+                                 help="skip the last Release lookup (local test registry only; never in release.yml)")
         if name in ("verify-local", "release"):
             command.add_argument("--expected-digest", required=True)
     return parser
@@ -578,8 +631,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not re.fullmatch(r"[0-9a-f]{40}", args.revision):
         print("--revision must be a full 40-hex SHA", file=sys.stderr)
         return 2
-    if args.command in ("gate", "release") and not args.github_repository:
-        print("--github-repository (or GITHUB_REPOSITORY) is required", file=sys.stderr)
+    needs_release_lookup = args.command in ("gate", "release") or (
+        args.command == "push" and not args.no_release_check
+    )
+    if needs_release_lookup and not (args.github_repository and args.tag):
+        print("--tag and --github-repository (or GITHUB_REPOSITORY) are required", file=sys.stderr)
         return 2
     registry = Registry(
         args.registry,
@@ -600,11 +656,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 registry.log(f"gate: no image and no Release for {args.tag}; the image may be published")
             write_outputs(args.github_output, {"state": state.state, "digest": state.digest or ""})
         elif args.command == "push":
-            precheck = None
-            if args.tag and args.github_repository:
-                precheck = lambda: require_no_release(run_command, args.github_repository, args.tag)  # noqa: E731
-            state = push_image(registry, args.local_image, args.version, args.revision, precheck=precheck)
+            precheck = None if args.no_release_check else release_precheck(args.github_repository, args.tag)
+            state = push_image(
+                registry, args.local_image, args.version, args.revision,
+                precheck=precheck, expected_config=args.expected_config_digest,
+            )
             write_outputs(args.github_output, {"state": state.state, "digest": state.digest or ""})
+        elif args.command == "local-config":
+            config = local_config_digest(args.local_image)
+            print(config)
+            write_outputs(args.github_output, {"config": config})
         elif args.command == "verify-local":
             state = verify_local_image(registry, args.local_image, args.version, args.revision, args.expected_digest)
             write_outputs(args.github_output, {"state": state.state, "digest": state.digest or ""})
@@ -614,7 +675,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 raise Stop("the image is not in the registry yet; the Release is created only after the image exists")
             if state.digest != args.expected_digest:
                 raise Stop(
-                    f"the registry now reports {state.digest} for the tag but the image job verified "
+                    f"the registry now reports {state.digest} for the tag but the publish/verify job verified "
                     f"{args.expected_digest}; refusing to create a Release for an unverified image"
                 )
             outcome = create_or_verify_release(

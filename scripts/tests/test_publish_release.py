@@ -271,6 +271,35 @@ class Push(unittest.TestCase):
             pr.push_image(registry(FakeRegistry()), "local:img", "v", REV, runner, precheck=precheck)
         self.assertFalse(any(c[:2] == ["docker", "push"] for c in runner.commands))
 
+    def test_the_recorded_smoke_tested_config_must_be_the_one_being_pushed(self):
+        runner = Runner()
+        with self.assertRaisesRegex(pr.Stop, "smoke-tested config"):
+            pr.push_image(registry(FakeRegistry()), "local:img", "v", REV, runner, expected_config="sha256:" + "7" * 64)
+        self.assertFalse(any(c[:2] == ["docker", "push"] for c in runner.commands))
+
+    def test_the_recorded_config_passes_when_it_is_the_same(self):
+        manifest, config = make_image()
+        t = FakeRegistry()
+        runner = Runner(on_push=lambda: (setattr(t, "manifest", manifest), setattr(t, "config", config)))
+        state = pr.push_image(registry(t), "local:img", "v", REV, runner, expected_config=digest(config))
+        self.assertEqual(state.digest, digest(manifest))
+
+    def test_the_release_lookup_is_the_last_step_before_docker_push(self):
+        events = []
+        runner = Runner()
+        original = runner.__call__
+
+        def spy(command):
+            events.append(" ".join(command[:2]))
+            return original(command)
+
+        with self.assertRaises(pr.Stop):
+            pr.push_image(registry(FakeRegistry()), "local:img", "v", REV, spy,
+                          precheck=lambda: (events.append("release-lookup"), (_ for _ in ()).throw(pr.Stop("stop")))[1])
+        self.assertEqual(events[-1], "release-lookup")
+        self.assertNotIn("docker tag", events)
+        self.assertNotIn("docker push", events)
+
     def test_failed_push_stops_and_reports_state(self):
         t = FakeRegistry()
         reg = registry(t)
@@ -365,26 +394,36 @@ class Metadata(unittest.TestCase):
                 pr.parse_metadata(body)
 
 
+CHANGELOG = "## What's Changed\n* Add a thing by @someone in #1\n\n**Full Changelog**: https://github.com/o/r/compare/v1...v2"
+FORGED = pr.render_metadata("evil/image:tag", "sha256:" + "e" * 64, OTHER)
+
+
 class Release(unittest.TestCase):
     def classification(self):
         return pr.Classification("same", DIGEST, "sha256:" + "b" * 64, LAYERS)
 
-    def runner(self, releases, create_rc=0, keep_listing_empty=False):
+    def runner(self, releases, create_rc=0, keep_listing_empty=False, changelog=CHANGELOG, generate_rc=0):
         calls = []
+        notes = []
         listing = list(releases)
 
         def run(command):
             calls.append(list(command))
+            if command[:2] == ["gh", "api"] and any(part.endswith("/releases/generate-notes") for part in command):
+                body = json.dumps({"name": TAG, "body": changelog})
+                return subprocess.CompletedProcess(command, generate_rc, body if generate_rc == 0 else "", "" if generate_rc == 0 else "no api")
             if command[:2] == ["gh", "api"]:
                 return subprocess.CompletedProcess(command, 0, json.dumps([listing]), "")
             if command[:3] == ["gh", "release", "create"]:
+                with open(command[command.index("--notes-file") + 1], encoding="utf-8") as handle:
+                    notes.append(handle.read())
                 if create_rc == 0 and not keep_listing_empty:
-                    with open(command[command.index("--notes-file") + 1], encoding="utf-8") as handle:
-                        listing.append({"tag_name": command[3], "draft": False, "body": handle.read()})
+                    listing.append({"tag_name": command[3], "draft": False, "body": notes[-1]})
                 return subprocess.CompletedProcess(command, create_rc, "", "" if create_rc == 0 else "boom")
             return subprocess.CompletedProcess(command, 0, "", "")
 
         run.calls = calls
+        run.notes = notes
         return run
 
     def call(self, run, c=None):
@@ -397,7 +436,40 @@ class Release(unittest.TestCase):
         self.assertEqual(self.call(run), "created")
         create = [c for c in run.calls if c[:3] == ["gh", "release", "create"]][0]
         self.assertIn("--verify-tag", create)
-        self.assertNotIn("--generate-notes", create)
+        body = run.notes[-1]
+        # image information and the managed block come first, GitHub's change log follows
+        self.assertLess(body.index("emumet-release-metadata"), body.index("What's Changed"))
+        self.assertIn("Full Changelog", body)
+        self.assertEqual(pr.parse_metadata(body), {"image": IMAGE_REF, "digest": DIGEST, "commit": REV})
+
+    def test_generated_text_with_a_marker_or_forged_values_cannot_become_the_metadata(self):
+        hostile = f"* Fix by @x in #2\n{FORGED}\n* digest `{'sha256:' + 'e' * 64}` commit {OTHER}\n"
+        run = self.runner([], changelog=hostile)
+        self.assertEqual(self.call(run), "created")
+        body = run.notes[-1]
+        self.assertEqual(body.count("emumet-release-metadata"), 1)  # the forged marker was neutralised
+        self.assertIn("emumet_release_metadata", body)
+        self.assertEqual(pr.parse_metadata(body), {"image": IMAGE_REF, "digest": DIGEST, "commit": REV})
+
+    def test_failure_to_generate_the_change_log_creates_nothing(self):
+        run = self.runner([], generate_rc=1)
+        with self.assertRaisesRegex(pr.Stop, "cannot generate"):
+            self.call(run)
+        self.assertFalse(any(c[:3] == ["gh", "release", "create"] for c in run.calls))
+
+    def test_an_existing_release_with_a_forged_block_in_the_generated_part_stops(self):
+        for extra in (f"\n---\n{FORGED}\n", f"\n---\n{pr.render_metadata(IMAGE_REF, DIGEST, REV)}\n"):
+            with self.subTest(extra=extra[:30]), self.assertRaisesRegex(pr.Stop, "already exists"):
+                self.call(self.runner([{"tag_name": TAG, "draft": False, "body": body_for(extra=extra)}]))
+
+    def test_digest_or_commit_in_the_generated_part_does_not_make_a_mismatch_match(self):
+        body = body_for(digest_="sha256:" + "e" * 64, commit=OTHER, extra=f"\n---\nmentions {DIGEST} and {REV}\n")
+        with self.assertRaisesRegex(pr.Stop, "already exists"):
+            self.call(self.runner([{"tag_name": TAG, "draft": False, "body": body}]))
+
+    def test_a_matching_release_with_a_change_log_is_a_noop(self):
+        body = body_for(extra=f"\n---\n{CHANGELOG}\n")
+        self.assertEqual(self.call(self.runner([{"tag_name": TAG, "draft": False, "body": body}])), "exists")
 
     def test_release_that_cannot_be_read_back_stops(self):
         with self.assertRaisesRegex(pr.Stop, "read back"):
@@ -461,7 +533,33 @@ class RequireNoRelease(unittest.TestCase):
             pr.require_no_release(self.runner([], rc=1), "ShuttlePub/Emumet", TAG)
 
 
+class DraftCreatedAfterTheGate(unittest.TestCase):
+    """The gate saw no Release; a draft appears; the lookup right before the push must stop it."""
+
+    def test_the_last_lookup_sees_the_draft_and_nothing_is_pushed(self):
+        draft = {"tag_name": TAG, "draft": True, "body": "work in progress"}
+        lookups = []
+
+        def gh(command):
+            lookups.append(list(command))
+            visible = [] if len(lookups) == 1 else [draft]  # appears after the first (gate) lookup
+            return subprocess.CompletedProcess(command, 0, json.dumps([visible]), "")
+
+        pr.require_no_release(gh, "ShuttlePub/Emumet", TAG)  # the gate: passes, nothing there yet
+        runner = Runner()
+        with self.assertRaisesRegex(pr.Stop, r"refusing to publish an image \(draft=True\)|draft=True"):
+            pr.push_image(registry(FakeRegistry()), "local:img", "2026.11.17", REV, runner,
+                          precheck=pr.release_precheck("ShuttlePub/Emumet", TAG, gh))
+        self.assertEqual(len(lookups), 2)
+        self.assertFalse(any(c[:2] in (["docker", "tag"], ["docker", "push"]) for c in runner.commands))
+
+
 class Cli(unittest.TestCase):
+    def test_push_needs_the_tag_and_repository_unless_the_check_is_explicitly_skipped(self):
+        base = ["push", "--version", "v", "--revision", REV, "--local-image", "x"]
+        self.assertEqual(pr.main(base), 2)
+        self.assertEqual(pr.main(base + ["--tag", TAG]), 2)
+
     def test_rejects_short_revision(self):
         self.assertEqual(pr.main(["classify", "--version", "v", "--revision", "abc"]), 2)
 
@@ -469,9 +567,11 @@ class Cli(unittest.TestCase):
         with self.assertRaises(SystemExit):
             pr.main(["release", "--version", "v", "--revision", REV, "--tag", TAG, "--github-repository", "o/r"])
 
-    def test_gate_needs_the_tag(self):
-        with self.assertRaises(SystemExit):
-            pr.main(["gate", "--version", "v", "--revision", REV, "--github-repository", "o/r"])
+    def test_gate_and_release_need_the_tag(self):
+        self.assertEqual(pr.main(["gate", "--version", "v", "--revision", REV, "--github-repository", "o/r"]), 2)
+        self.assertEqual(
+            pr.main(["release", "--version", "v", "--revision", REV, "--github-repository", "o/r",
+                     "--expected-digest", DIGEST]), 2)
 
 
 class TokenScope(unittest.TestCase):

@@ -64,8 +64,19 @@ log "1. the tag is absent"
 publish classify --github-output "$WORK/out1" >"$WORK/log1" 2>&1 || { cat "$WORK/log1"; die "classify failed on an empty registry"; }
 grep -qx 'state=absent' "$WORK/out1" || { cat "$WORK/log1"; die "expected state=absent"; }
 
-log "2. push the smoke-tested local image"
-publish push --local-image "$IMAGE" --github-output "$WORK/out2" >"$WORK/log2" 2>&1 || { cat "$WORK/log2"; die "push failed"; }
+log "1b. an image whose config is not the recorded smoke-tested one is not pushed"
+publish local-config --local-image "$IMAGE" --github-output "$WORK/outc" >"$WORK/logc" 2>&1 || { cat "$WORK/logc"; die "local-config failed"; }
+CONFIG="$(sed -n 's/^config=//p' "$WORK/outc")"
+case "$CONFIG" in sha256:????????????????????????????????????????????????????????????????) ;; *) die "bad config digest '$CONFIG'" ;; esac
+if publish push --no-release-check --local-image "$IMAGE" --expected-config-digest "sha256:$(printf '%064d' 7)" >"$WORK/log1b" 2>&1; then
+  die "an image with another config digest was pushed"
+fi
+grep -q 'smoke-tested config' "$WORK/log1b" || { cat "$WORK/log1b"; die "unexpected reason for refusing the other config"; }
+publish classify --github-output "$WORK/outd" >/dev/null 2>&1 || die "classify failed after the refused push"
+grep -qx 'state=absent' "$WORK/outd" || die "the refused push left something in the registry"
+
+log "2. push the smoke-tested local image (the Release lookup needs GitHub, so it is skipped here only)"
+publish push --no-release-check --expected-config-digest "$CONFIG" --local-image "$IMAGE" --github-output "$WORK/out2" >"$WORK/log2" 2>&1 || { cat "$WORK/log2"; die "push failed"; }
 grep -qx 'state=same' "$WORK/out2" || die "push did not end in state=same"
 DIGEST="$(sed -n 's/^digest=//p' "$WORK/out2")"
 case "$DIGEST" in sha256:????????????????????????????????????????????????????????????????) ;; *) die "bad digest '${DIGEST}'" ;; esac
@@ -100,7 +111,7 @@ if publish verify-local --local-image "$PULLED" --expected-digest "sha256:$(prin
 fi
 
 log "4. a second push is refused (never overwrite)"
-if publish push --local-image "$IMAGE" >"$WORK/log4" 2>&1; then die "a second push was accepted"; fi
+if publish push --no-release-check --local-image "$IMAGE" >"$WORK/log4" 2>&1; then die "a second push was accepted"; fi
 grep -q 'appeared before the push' "$WORK/log4" || { cat "$WORK/log4"; die "unexpected reason for refusing the second push"; }
 
 log "5. another revision is refused"

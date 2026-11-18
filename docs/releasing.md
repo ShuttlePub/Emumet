@@ -30,26 +30,30 @@ The release job also checks that the tag still resolves to the commit the run wa
 1. The commit to release is on `main` and every check of the **latest** run of that commit is
    green: `gh run list --repo ShuttlePub/Emumet --commit <sha>` / the PR's checks. The tag run
    rebuilds and smoke-tests the image itself, but it does not re-run the Rust test suite.
-2. Pick the tag with the rules above. **Create it locally first, verify it, and only then push
-   it** (a pushed tag starts the release at once and a rejected tag cannot be removed again; the
-   validator needs a full clone):
+2. Pick the tag with the rules above. **Create it locally and verify it first** (the validator
+   needs a full clone). Nothing is pushed in this step:
    ```sh
    git fetch origin --tags
    git tag vYYYY.MM.DD <full commit sha>          # local only
    python3 scripts/validate-release.py vYYYY.MM.DD
-   git push origin vYYYY.MM.DD                    # only when the validation passed
    ```
    If the validation fails, `git tag -d vYYYY.MM.DD` and fix the cause; nothing has left your
    machine.
 3. Check that no tag, image or Release with that version exists yet (the `gate` job stops the run
-   if an image is absent but a Release exists).
+   if an image is absent but a Release exists), and that no other release is running.
+4. **Only now, with every check above done and the explicit approval for this release in hand**,
+   push the tag. A pushed tag starts the release at once and a rejected tag cannot be removed
+   again:
+   ```sh
+   git push origin vYYYY.MM.DD
+   ```
 
 Do not push a tag from a branch other than `main`; it will be rejected, and the rejected tag stays
 in the repository (see "Recovery").
 
 ## What the tag run does
 
-`release.yml`: `validate` -> `gate` -> `image` -> `release`. Runs for one tag never overlap and are
+`release.yml`: `validate` -> `gate` -> (`build` -> `publish`, or `verify`) -> `release`. Runs for one tag never overlap and are
 never cancelled (`concurrency` per tag, `cancel-in-progress: false`); the tag name reaches the
 scripts through `env`, never through `${{ }}` inside a shell command.
 
@@ -66,28 +70,37 @@ scripts through `env`, never through `${{ }}` inside a shell command.
    * anything else **stops**: other revision, other platform, an image index, a non-404 error,
      denied/unauthorized, a 404 without a "manifest unknown" code, an unparseable answer, a
      network failure. "Cannot tell" is never treated as "absent".
-3. **image** (`contents: read`, `packages: write`; the only job that can write a package):
-   * state `absent`: build, run `scripts/smoke-container.sh` on that image, log in, re-check
-     right before the push that the tag is still absent and that no *published* Release exists
-     (this job's token cannot see drafts; the `gate` job did), push the **same** smoke-tested image
-     (no rebuild), then read it back from the registry and compare **revision label, platform,
-     layer diff IDs and the image config digest** with the local image. The local config digest is
-     the sha256 of the config JSON inside `docker save`; it does not depend on the engine's image
-     store, and it catches an image with the same layers but a different Entrypoint, User or
-     labels.
-   * state `same`: log in, `docker pull` the image **by digest**, run
-     `publish-release.py verify-local` (registry digest must equal the digest from the gate; the
-     pulled image's config digest, layers, revision label and version label must equal the
-     registry's), then run the smoke test on the pulled image. Nothing is built or pushed.
-   * the job outputs the digest it verified.
-4. **release** (`contents: write`, `packages: read`): the registry must still report exactly that
-   digest. The Release body contains a managed block
-   `<!-- emumet-release-metadata:v1` / `image=` / `digest=` / `commit=` / `-->`, written without
-   `--generate-notes` so that nothing else can add a second block. An existing Release for the tag
-   is a no-op only if it is not a draft and its single block matches image, digest and commit
-   **exactly**; a missing, duplicated, malformed or contradicting block, or a digest/commit
-   mentioned only elsewhere in the text, stops the job. A created Release is read back and checked
-   the same way.
+3. State `absent` (two jobs; the permission that can see drafts and write a package is held only
+   by the stage that needs it):
+   * **build** (`contents: read` only; no package or release permission, no token in its
+     environment): builds the image, runs `scripts/smoke-container.sh` on it, records its **config
+     digest** (the sha256 of the config JSON inside `docker save`, independent of the engine's image
+     store) and hands the very same image to the next job as a one-day artifact.
+   * **publish** (`contents: write`, `packages: write`; never builds): `contents: write` is there
+     for one reason, so that the Release lookup right before the push can see **draft** Releases (a
+     read-only token cannot, so a draft created after the gate would be missed). It loads the artifact, logs in, and `publish-release.py push` then (a) requires the
+     loaded image to have the config digest the build job recorded, (b) re-classifies the tag
+     (must still be absent), (c) looks for a Release (draft or not) **one last time, immediately
+     before `docker push`** and stops if there is one, (d) pushes the same image (no rebuild),
+     (e) reads it back and compares **revision label, platform, layer diff IDs and the config
+     digest** with the local image. It outputs the digest it verified.
+4. State `same` — **verify** (`contents: read`, `packages: read`): log in, `docker pull` the image
+   **by digest**, run `publish-release.py verify-local` (registry digest must equal the digest from
+   the gate; the pulled image's config digest, layers, revision label and version label must equal
+   the registry's), then run the smoke test on the pulled image. Nothing is built or pushed.
+5. **release** (`contents: write`, `packages: read`; runs when `publish` or `verify` succeeded):
+   the registry must still report exactly the digest that was verified. The Release body is the
+   image information and a managed block
+   `<!-- emumet-release-metadata:v1` / `image=` / `digest=` / `commit=` / `-->`, **followed by the
+   change log GitHub generates for the tag** (the `generate-notes` API; the body is assembled by the
+   script, not by `--generate-notes`). Only the managed block is ever compared. The generated text
+   is untrusted (it comes from pull request titles): it is never read for values, and the marker
+   word is neutralised in it when the body is written. An existing Release for the tag is a no-op
+   only if it is not a draft and its single block matches image, digest and commit **exactly**; a
+   missing, duplicated, malformed or contradicting block (including a forged marker in the
+   generated part), or a digest/commit mentioned only elsewhere in the text, stops the job. A
+   created Release is read back and checked the same way. If the change log cannot be generated
+   the job stops before creating anything.
 
 Provenance and SBOM attestations are switched off (`--provenance=false --sbom=false`) so the tag
 points to one plain manifest that the script can compare; they can be added later as a deliberate
@@ -115,12 +128,12 @@ gh release view vYYYY.MM.DD --repo ShuttlePub/Emumet
 | Where it stopped | State | What to do |
 | --- | --- | --- |
 | `validate` | Nothing published. | Fix the cause (wrong date, not on `main`, shallow checkout). The rejected tag stays; release the next serial (`vYYYY.MM.DD.N`) on the right commit. |
-| `image`: build or smoke failed | Nothing published. | Fix on `main` through a PR, then tag the new commit with the next serial. Re-running the failed job only helps for a flaky infrastructure error. |
-| `image`: stopped as **other revision / platform / index** | An image with that version exists and is not ours. | Do not overwrite. Investigate who pushed it; release the next serial. |
-| `image`: stopped as **undeterminable** (see below) | Unknown. | Read the logged HTTP status and codes first. |
-| `image`: `docker push` failed or its result is unknown | Possibly a partial or complete push. | The script already re-queried and logged the state. Run `classify` as above. `same`: re-run the failed jobs; the image job pulls the published image by digest, verifies and smoke-tests it instead of pushing, and the release job continues. `absent`: re-run the failed jobs. Anything else: stop and use the next serial. Never re-push before the state is confirmed. |
-| `gate`: stopped because **a Release exists but the image does not** | The tag has a (draft) Release and no image. | Nothing was built or pushed. A person decides: usually delete the stray Release by hand and re-run the failed jobs, or release the next serial. It is never repaired automatically. |
-| `image`: `same` but the pulled-image verification or smoke failed | The published image is not what the registry metadata says, or does not run. | Do not publish anything over it. Investigate (digest, config, local image store); release the next serial from a fixed commit. |
+| `build`: build or smoke failed | Nothing published. | Fix on `main` through a PR, then tag the new commit with the next serial. Re-running the failed job only helps for a flaky infrastructure error. |
+| `gate`/`publish`: stopped as **other revision / platform / index** | An image with that version exists and is not ours. | Do not overwrite. Investigate who pushed it; release the next serial. |
+| `gate`/`publish`: stopped as **undeterminable** (see below) | Unknown. | Read the logged HTTP status and codes first. |
+| `publish`: `docker push` failed or its result is unknown | Possibly a partial or complete push. | The script already re-queried and logged the state. Run `classify` as above. `same`: re-run the failed jobs; the gate then sends the run to `verify` (pull by digest, verify, smoke) instead of pushing, and the release job continues. `absent`: re-run the failed jobs. Anything else: stop and use the next serial. Never re-push before the state is confirmed. |
+| `gate` or `publish`: stopped because **a Release exists but the image does not** | The tag has a (draft) Release and no image (`publish` stops here if the Release appeared after the gate, before anything was pushed). | Nothing was pushed. A person decides: usually delete the stray Release by hand and re-run the failed jobs, or release the next serial. It is never repaired automatically. |
+| `verify`: pulled-image verification or smoke failed | The published image is not what the registry metadata says, or does not run. | Do not publish anything over it. Investigate (digest, config, local image store); release the next serial from a fixed commit. |
 | `release` failed | Image is published. | Re-run the failed jobs; the Release is created from the registry digest (an identical existing Release is a no-op). A mismatching or draft Release must be reviewed by a person. |
 
 ### Rolling back after a release
