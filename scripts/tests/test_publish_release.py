@@ -1,9 +1,11 @@
 import hashlib
 import io
 import json
+import os
 import subprocess
 import tarfile
 import unittest
+from unittest import mock
 
 from loader import load
 
@@ -557,8 +559,11 @@ class DraftCreatedAfterTheGate(unittest.TestCase):
 class Cli(unittest.TestCase):
     def test_push_needs_the_tag_and_repository_unless_the_check_is_explicitly_skipped(self):
         base = ["push", "--version", "v", "--revision", REV, "--local-image", "x"]
-        self.assertEqual(pr.main(base), 2)
-        self.assertEqual(pr.main(base + ["--tag", TAG]), 2)
+        # GITHUB_REPOSITORY is set on CI and would be picked up as the default
+        with mock.patch.dict(os.environ):
+            os.environ.pop("GITHUB_REPOSITORY", None)
+            self.assertEqual(pr.main(base), 2)
+            self.assertEqual(pr.main(base + ["--tag", TAG]), 2)
 
     def test_rejects_short_revision(self):
         self.assertEqual(pr.main(["classify", "--version", "v", "--revision", "abc"]), 2)
