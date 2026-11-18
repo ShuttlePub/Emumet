@@ -368,13 +368,15 @@ def verify_archive(path: str, expected: str) -> str:
     return actual
 
 
+# The WHOLE string must match: an allowed host, optionally followed by a numeric port. Nothing else
+# (no user info, no suffix such as "[::1]extra.example", no path).
+LOOPBACK_REGISTRY = re.compile(r"(?P<host>127\.0\.0\.1|localhost|\[::1\])(?::(?P<port>[0-9]{1,5}))?")
+
+
 def is_loopback_registry(registry: str) -> bool:
     """True only for host[:port] naming a loopback address (the throw-away registry of the local test)."""
-    if registry.startswith("["):
-        host = registry[1:].split("]", 1)[0]
-    else:
-        host = registry.split(":", 1)[0]
-    return host in ("127.0.0.1", "localhost", "::1")
+    match = LOOPBACK_REGISTRY.fullmatch(registry)
+    return match is not None and (match.group("port") is None or 1 <= int(match.group("port")) <= 65535)
 
 
 def compare_with_registry(

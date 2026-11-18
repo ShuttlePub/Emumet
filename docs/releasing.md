@@ -134,12 +134,12 @@ gh release view vYYYY.MM.DD --repo ShuttlePub/Emumet
 | Where it stopped | State | What to do |
 | --- | --- | --- |
 | `validate` | Nothing published. | Fix the cause (wrong date, not on `main`, shallow checkout). The rejected tag stays; release the next serial (`vYYYY.MM.DD.N`) on the right commit. |
-| `build`: build or smoke failed | Nothing published. | Fix on `main` through a PR, then tag the new commit with the next serial. Re-running the failed job only helps for a flaky infrastructure error. |
+| `build`: build or smoke failed | Nothing published. | Fix on `main` through a PR, then tag the new commit with the next serial. Re-running the failed job only helps for a flaky infrastructure error (the `gate` output `absent` is still true, so "Re-run failed jobs" continues with `publish`). |
 | `gate`/`publish`: stopped as **other revision / platform / index** | An image with that version exists and is not ours. | Do not overwrite. Investigate who pushed it; release the next serial. |
 | `gate`/`publish`: stopped as **undeterminable** (see below) | Unknown. | Read the logged HTTP status and codes first. |
 | `publish`: the archive digest does not match | Nothing was loaded or pushed. The artifact differs from what `build` saved (corruption, or tampering between the jobs). | Treat it as a security finding: read the `build` and `publish` logs first. Re-running **all jobs** builds and smoke-tests again and is acceptable only after the cause is understood; re-running `publish` alone just fails the same way. |
-| `publish`: `docker push` failed or its result is unknown | Possibly a partial or complete push. | The script already re-queried and logged the state. Run `classify` as above. `same`: re-run the failed jobs; the gate then sends the run to `verify` (pull by digest, verify, smoke) instead of pushing, and the release job continues. `absent`: re-run the failed jobs. Anything else: stop and use the next serial. Never re-push before the state is confirmed. |
-| `gate` or `publish`: stopped because **a Release exists but the image does not** | The tag has a (draft) Release and no image (`publish` stops here if the Release appeared after the gate, before anything was pushed). | Nothing was pushed. A person decides: usually delete the stray Release by hand and re-run the failed jobs, or release the next serial. It is never repaired automatically. |
+| `publish`: `docker push` failed or its result is unknown | Possibly a partial or complete push. | The script already re-queried and logged the state. Run `classify` as above. `same`: use **Re-run all jobs**, not "Re-run failed jobs": the `gate` job already succeeded with `absent` and a failed-jobs re-run keeps that output, so `publish` would stop at "the tag exists already" (correctly: nothing is ever pushed over an image). Re-running all jobs evaluates the `gate` again, which now says `same` and sends the run to `verify` (pull by digest, verify, smoke); the release job then continues. `absent`: "Re-run failed jobs" is enough while the one-day artifact still exists (the `gate` output `absent` is still true); otherwise use **Re-run all jobs**. Anything else: stop and use the next serial. Never re-push before the state is confirmed. |
+| `gate` or `publish`: stopped because **a Release exists but the image does not** | The tag has a (draft) Release and no image (`publish` stops here if the Release appeared after the gate, before anything was pushed). | Nothing was pushed. A person decides: usually delete the stray Release by hand and re-run the failed jobs (when `publish` stopped, its `gate` output `absent` is still true; use **Re-run all jobs** if the one-day artifact has expired), or release the next serial. It is never repaired automatically. |
 | `verify`: pulled-image verification or smoke failed | The published image is not what the registry metadata says, or does not run. | Do not publish anything over it. Investigate (digest, config, local image store); release the next serial from a fixed commit. |
 | `release` failed | Image is published. | Re-run the failed jobs; the Release is created from the registry digest (an identical existing Release is a no-op). A mismatching or draft Release must be reviewed by a person. |
 
@@ -166,7 +166,7 @@ observed yet. To see it **before** the first release, run the read-only probe wo
 that is never pushed with `packages: read` only and creates nothing; the expected log line is
 `classify: absent (... on HTTP 404)`. Otherwise the first run is the real test. If it stops:
 
-1. Open the `Registry state of this version` step and note the logged lines
+1. Open the `Classify the image and require that no Release exists when it is absent` step (`gate` job) and note the logged lines
    (`token request -> HTTP ...`, `GET ... -> HTTP ... codes=[...]`).
 2. Confirm in the organisation's *Packages* page that `emumet` really does not exist.
 3. Nothing was pushed, so nothing needs cleaning. If the logged answer is a legitimate "absent"
@@ -191,7 +191,7 @@ maintainers' explicit approval:
 
 1. Configure the tag ruleset above.
 2. Optionally run the read-only probe (`release-probe.yml`, see above).
-3. Run the "Before tagging" checks and push the first tag. Watch the four jobs and keep the log
+3. Run the "Before tagging" checks and push the first tag. Watch every job of the run (`validate`, `gate`, `build`, `publish`, `release`) and keep the logs
    (see "Where the decision is recorded").
 4. A new GHCR package is **private** by default. Making it public (anonymous `docker pull`) is a
    separate setting (Package settings -> Change visibility) and also needs explicit approval.

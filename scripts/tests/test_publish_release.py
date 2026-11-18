@@ -608,10 +608,20 @@ class NoReleaseCheck(unittest.TestCase):
     base = ["push", "--version", "v", "--revision", REV, "--local-image", "x", "--no-release-check"]
 
     def test_loopback_detection(self):
-        for good in ("127.0.0.1:5000", "localhost:5000", "localhost", "[::1]:5000", "127.0.0.1"):
+        for good in ("127.0.0.1:5000", "localhost:5000", "localhost", "[::1]:5000", "[::1]", "127.0.0.1", "localhost:65535"):
             self.assertTrue(pr.is_loopback_registry(good), good)
-        for bad in ("ghcr.io", "ghcr.io:443", "127.0.0.1.evil.example:5000", "localhost.evil.example", "10.0.0.1:5000", "[::2]:1"):
-            self.assertFalse(pr.is_loopback_registry(bad), bad)
+        for bad in (
+            "ghcr.io", "ghcr.io:443", "127.0.0.1.evil.example:5000", "localhost.evil.example", "10.0.0.1:5000", "[::2]:1",
+            "localhost:5000@registry.example", "localhost@registry.example", "user@localhost:5000",
+            "[::1]extra.example:5000", "[::1]x", "127.0.0.1:5000/path", "localhost:5000/", "localhost:", "localhost:abc",
+            "localhost:5000extra", "localhost:0", "localhost:65536", "localhost:123456", "::1", "::1:5000", "",
+            " localhost:5000", "localhost:5000\n", "LOCALHOST:5000", "127.0.0.1:5000:1", "localhost:-1",
+        ):
+            self.assertFalse(pr.is_loopback_registry(bad), repr(bad))
+
+    def test_the_cli_refuses_a_deceptive_registry_even_with_the_flag(self):
+        for bad in ("localhost:5000@registry.example", "[::1]extra.example:5000"):
+            self.assertEqual(pr.main(self.base + ["--registry", bad, "--insecure-http"]), 2, bad)
 
     def test_ghcr_is_refused_even_with_the_flag(self):
         self.assertEqual(pr.main(self.base), 2)  # default registry ghcr.io
