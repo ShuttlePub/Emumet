@@ -64,6 +64,11 @@ impl IsolatedDatabase {
         Self::create_with(Some(20261122000200)).await
     }
 
+    /// 指定版以降を未適用にして、依存する追加 migration も含めた前後を検証する。
+    pub async fn create_before_migration(version: i64) -> Self {
+        Self::create_with(Some(version)).await
+    }
+
     async fn create_with(stop_before: Option<i64>) -> Self {
         match stop_before {
             None => Self::create_filtered(|_| true).await,

@@ -8,6 +8,8 @@ mod kratos;
 mod logging;
 mod openapi;
 mod post_relay_cli;
+mod post_relay_operator;
+mod post_relay_worker;
 mod projection_worker;
 mod registration_guard;
 mod root_router;
@@ -124,6 +126,12 @@ async fn main() -> Result<(), StackTrace> {
         }
     }
 
+    let relay_sender_enabled = post_relay_worker::enabled()?;
+    if !relay_sender_enabled {
+        tracing::warn!("post relay sending disabled; retention maintenance remains active");
+    }
+    let (relay_stop, relay_handle) =
+        post_relay_worker::spawn(app.post_relay_module(), relay_sender_enabled);
     let router = root_router::build_root_router(app, oidc_config, jwks_cache);
 
     let bind = std::env::var("HTTP_LISTEN_ADDR")
@@ -146,6 +154,8 @@ async fn main() -> Result<(), StackTrace> {
     .await
     .change_context_lazy(|| KernelError::Internal)?;
 
+    let _ = relay_stop.send(true);
+    let _ = relay_handle.await;
     projection_shutdown.trigger();
     enforcement_shutdown.trigger();
     if let Some(shutdown) = registration_shutdown {

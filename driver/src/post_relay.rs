@@ -28,6 +28,42 @@ pub async fn verify_schema(pool: &PgPool) -> error_stack::Result<(), KernelError
     }
     Ok(())
 }
+/// Operator connection: no migrations and a bounded pool; schema MUST match this binary.
+pub async fn connect_operator(url: &str) -> error_stack::Result<PostgresDatabase, KernelError> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .acquire_timeout(std::time::Duration::from_secs(3))
+        .connect(url)
+        .await
+        .convert_error()?;
+    verify_schema(&pool).await?;
+    Ok(PostgresDatabase::from_pool(pool))
+}
+/// Body-free operator result, read without lifecycle locks.
+pub async fn operation_status(
+    db: &PostgresDatabase,
+    id: &str,
+) -> error_stack::Result<serde_json::Value, KernelError> {
+    use kernel::interfaces::database::DatabaseConnection;
+    let mut c = db.connection().await?;
+    let row=sqlx::query("SELECT selected_count,selected_bytes,staged,succeeded,failed,discarded,skipped,cancelled,cursor>=boundary AS complete,(SELECT count(*) FROM post_relay_jobs j WHERE j.operation_id=o.id) AS pending FROM post_relay_operations o WHERE id=$1").bind(id).fetch_one(&mut *c).await.convert_error()?;
+    let mut v = serde_json::Map::new();
+    for name in [
+        "selected_count",
+        "selected_bytes",
+        "staged",
+        "succeeded",
+        "failed",
+        "discarded",
+        "skipped",
+        "cancelled",
+        "pending",
+    ] {
+        v.insert(name.into(), row.get::<i64, _>(name).into());
+    }
+    v.insert("complete".into(), row.get::<bool, _>("complete").into());
+    Ok(v.into())
+}
 pub async fn publish_capacity(
     url: &str,
     report: &CapacityReport,

@@ -39,6 +39,10 @@ impl HomeOriginAllowlist {
             resolver: Arc::new(SystemResolver),
         })
     }
+    /// Configuration membership only. Actual send revalidates DNS and pins the connection.
+    pub fn contains_origin(&self, origin: &str) -> bool {
+        normalize_origin(origin).is_ok_and(|o| o == origin && self.origins.contains(&o))
+    }
     pub fn with_resolver(mut self, resolver: Arc<dyn HostResolver>) -> Self {
         self.resolver = resolver;
         self
