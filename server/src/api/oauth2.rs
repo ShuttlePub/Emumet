@@ -1,7 +1,9 @@
 use crate::handler::AppModule;
-use crate::hydra::HydraAdminClient;
-use crate::kratos::KratosClient;
+use application::service::login_consent::{
+    ConsentDecision, ConsentOutcome, ConsentUseCase, LoginConsentError, LoginUseCase,
+};
 use axum::extract::FromRef;
+use kernel::interfaces::login_consent::{ConsentChallenge, LoginChallenge, RedirectTarget};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -14,12 +16,26 @@ impl OAuth2Api {
         Self { module }
     }
 
-    pub fn hydra_admin_client(&self) -> &HydraAdminClient {
-        self.module.hydra_admin_client()
+    pub async fn login(
+        &self,
+        challenge: &LoginChallenge,
+        cookie_header: &str,
+    ) -> Result<RedirectTarget, LoginConsentError> {
+        self.module.login(challenge, cookie_header).await
     }
 
-    pub fn kratos_client(&self) -> &KratosClient {
-        self.module.kratos_client()
+    pub async fn begin_consent(
+        &self,
+        challenge: &ConsentChallenge,
+    ) -> Result<ConsentOutcome, LoginConsentError> {
+        self.module.begin_consent(challenge).await
+    }
+
+    pub async fn decide_consent(
+        &self,
+        decision: ConsentDecision,
+    ) -> Result<RedirectTarget, LoginConsentError> {
+        self.module.decide_consent(decision).await
     }
 }
 

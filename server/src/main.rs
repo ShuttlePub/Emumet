@@ -3,7 +3,6 @@ mod auth;
 mod cutover;
 mod error;
 mod handler;
-mod hydra;
 mod kratos;
 mod logging;
 mod openapi;

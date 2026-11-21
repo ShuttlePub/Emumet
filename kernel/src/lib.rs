@@ -8,6 +8,7 @@ mod event;
 mod event_store;
 mod http_signing;
 pub mod id;
+mod login_consent;
 mod permission;
 mod projection;
 mod read_model;
@@ -51,6 +52,9 @@ pub mod interfaces {
             ProfileSigningKeyRepository, SigningKeyRepository,
         };
         pub use crate::repository::*;
+    }
+    pub mod login_consent {
+        pub use crate::login_consent::*;
     }
     pub mod permission {
         pub use crate::permission::*;

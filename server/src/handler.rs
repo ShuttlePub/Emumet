@@ -1,11 +1,12 @@
-use crate::hydra::HydraAdminClient;
-use crate::kratos::{KratosClient, KratosRegistrationFlowDirectory};
+use crate::kratos::KratosRegistrationFlowDirectory;
 use driver::crypto::{
     Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
 };
 use driver::database::PostgresDatabase;
 use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
+use driver::hydra::HydraAdminClient;
 use driver::keto::KetoClient;
+use driver::kratos::KratosSessionClient;
 use driver::profile_delivery::{HttpProfileDeliverySender, HttpRemoteActorResolver};
 #[cfg(test)]
 use driver::registration_protection::SmtpSettings;
@@ -18,6 +19,9 @@ use kernel::interfaces::crypto::{
     DependOnSignatureVerifier, DependOnSigner,
 };
 use kernel::interfaces::http_signing::{DependOnHttpSignatureVerifier, DependOnHttpSigner};
+use kernel::interfaces::login_consent::{
+    DependOnIdentitySessionVerifier, DependOnOAuth2FlowGateway,
+};
 use kernel::interfaces::permission::{DependOnPermissionChecker, DependOnPermissionWriter};
 use kernel::interfaces::repository::{
     DependOnEmailTransport, DependOnProfileDeliverySender, DependOnRegistrationFlowDirectory,
@@ -44,7 +48,7 @@ pub struct AppModule {
     http_signature_verifier: HttpSignatureVerifierImpl,
     public_base_url: PublicBaseUrl,
     hydra_admin_client: HydraAdminClient,
-    kratos_client: KratosClient,
+    kratos_session_client: KratosSessionClient,
     keto_client: KetoClient,
     image_storage: S3ImageStorage,
     profile_media_copy_gateway: NoopProfileMediaCopyGateway,
@@ -136,7 +140,7 @@ impl AppModule {
             http_signature_verifier: HttpSignatureVerifierImpl::new()?,
             public_base_url: PublicBaseUrl::new(public_base_url),
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
-            kratos_client: KratosClient::new(kratos_public_url),
+            kratos_session_client: KratosSessionClient::new(kratos_public_url),
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
             image_storage,
             profile_media_copy_gateway: NoopProfileMediaCopyGateway,
@@ -197,7 +201,7 @@ impl AppModule {
             http_signature_verifier: HttpSignatureVerifierImpl::new()?,
             public_base_url: PublicBaseUrl::new(public_base_url),
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
-            kratos_client: KratosClient::new(kratos_public_url),
+            kratos_session_client: KratosSessionClient::new(kratos_public_url),
             keto_client: KetoClient::new(keto_read_url, keto_write_url),
             image_storage,
             profile_media_copy_gateway: NoopProfileMediaCopyGateway,
@@ -313,14 +317,6 @@ impl AppModule {
         )
         .await
     }
-
-    pub fn hydra_admin_client(&self) -> &HydraAdminClient {
-        &self.hydra_admin_client
-    }
-
-    pub fn kratos_client(&self) -> &KratosClient {
-        &self.kratos_client
-    }
 }
 
 kernel::impl_database_delegation!(AppModule, pgpool, PostgresDatabase);
@@ -357,6 +353,20 @@ impl DependOnSignatureVerifier for AppModule {
     type SignatureVerifier = Rsa2048Verifier;
     fn signature_verifier(&self) -> &Self::SignatureVerifier {
         &self.verifier
+    }
+}
+
+impl DependOnOAuth2FlowGateway for AppModule {
+    type OAuth2FlowGateway = HydraAdminClient;
+    fn oauth2_flow_gateway(&self) -> &Self::OAuth2FlowGateway {
+        &self.hydra_admin_client
+    }
+}
+
+impl DependOnIdentitySessionVerifier for AppModule {
+    type IdentitySessionVerifier = KratosSessionClient;
+    fn identity_session_verifier(&self) -> &Self::IdentitySessionVerifier {
+        &self.kratos_session_client
     }
 }
 
