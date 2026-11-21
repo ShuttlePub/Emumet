@@ -783,7 +783,7 @@ async fn post_relay_unlinked_hourly_bounded_and_exhaustion_does_not_spend_linked
 #[test_with::env(DATABASE_URL)]
 async fn post_relay_empty_and_populated_main_migration_operator_refuses_mismatch_without_migration()
 {
-    let d = IsolatedDatabase::create_without_migration(20261122000300).await;
+    let d = IsolatedDatabase::create_before_migration(20261122000300).await;
     let db = &d.database;
     let (_, ps) = fixture(db, 1, true).await;
     assert!(crate::post_relay::verify_schema(&d.pool).await.is_err());

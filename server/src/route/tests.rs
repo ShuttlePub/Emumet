@@ -853,7 +853,8 @@ fn main_serves_only_the_root_router() {
 
 /// The production entrypoint starts projection, Registration Gate webhook, provider maintenance,
 /// independent enforcement probing and (since the P4 cutover) the Profile delivery worker. Whoever
-/// adds another worker has to update this list deliberately.
+/// adds another worker has to update this list deliberately. S1 adds the separately stoppable
+/// post-relay sender after both signing identities have been provisioned.
 #[test]
 fn main_starts_the_expected_workers() {
     let main_rs = include_str!("../main.rs");
@@ -867,7 +868,7 @@ fn main_starts_the_expected_workers() {
         .collect();
     assert_eq!(
         spawns.len(),
-        5,
+        6,
         "unexpected worker start in main.rs: {spawns:?}"
     );
     assert!(spawns[0].contains("ProjectionWorker::spawn"), "{spawns:?}");
@@ -884,6 +885,11 @@ fn main_starts_the_expected_workers() {
         spawns[4].contains("spawn_profile_delivery_worker("),
         "{spawns:?}"
     );
+    assert!(
+        spawns[5].contains("post_relay_worker::spawn("),
+        "{spawns:?}"
+    );
+    assert!(main_rs.contains("post_relay_worker::enabled()?"));
     assert!(
         !main_rs.contains("tokio::spawn"),
         "main.rs must not spawn tasks itself"

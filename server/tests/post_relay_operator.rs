@@ -171,7 +171,18 @@ async fn run(
     let mut cmd = if let Ok(image) = std::env::var("S1_OPERATOR_IMAGE") {
         // Explicit opt-in only. Run this test via a reviewed unsandboxed shell, never CI by default.
         let mut c = tokio::process::Command::new("docker");
-        c.args(["run", "--rm", "--network", "none"]);
+        c.args([
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "-e",
+            "WORKER_ID=not-a-worker-id",
+            "-e",
+            "HYDRA_ISSUER_URL=http://127.0.0.1:9",
+            "-e",
+            "HTTP_LISTEN_ADDR=not-an-address",
+        ]);
         c.args([
             "--user",
             &std::env::var("S1_OPERATOR_UID").expect("explicit local image UID required"),

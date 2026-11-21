@@ -127,10 +127,11 @@ pub(crate) async fn dispatch(args: Vec<String>) -> Result<bool, StackTrace> {
     }
     let url = std::env::var("DATABASE_URL").map_err(|_| invalid())?;
     // Sanitize all operational errors; SQL errors can contain credentials/remote/payload details.
-    execute(c,&url).await.map_err(|_|Report::new(KernelError::Rejected).attach_printable("post-relay operation refused; check schema, eligibility, confirmation, policy, expiry and database availability; no migrations applied"))?;
+    let mut phase = "connect-schema";
+    execute(c, &url, &mut phase).await.map_err(|_| Report::new(KernelError::Rejected).attach_printable(format!("post-relay operation refused at {phase}; check schema, eligibility, confirmation, policy, expiry and database availability; no migrations applied")))?;
     Ok(true)
 }
-async fn execute(c: Command, url: &str) -> Result<(), StackTrace> {
+async fn execute(c: Command, url: &str, phase: &mut &'static str) -> Result<(), StackTrace> {
     let db = driver::post_relay::connect_operator(url).await?;
     if c.action == Action::Status {
         println!(
@@ -173,6 +174,7 @@ async fn execute(c: Command, url: &str) -> Result<(), StackTrace> {
         );
         return Ok(());
     }
+    *phase = "configuration";
     let module = if action == OperatorAction::Redeliver {
         Some(PostRelayModule {
             db: db.clone(),
@@ -185,6 +187,7 @@ async fn execute(c: Command, url: &str) -> Result<(), StackTrace> {
     } else {
         None
     };
+    *phase = "signing-key";
     if let Some(module) = &module {
         use application::instance_identity::UnlockInstanceSigningKeyUseCase;
         module.unlock_instance_signing_key().await?;
@@ -193,6 +196,7 @@ async fn execute(c: Command, url: &str) -> Result<(), StackTrace> {
     let d = db.clone();
     let req = request.clone();
     let confirm = c.flags["--confirm"].clone();
+    *phase = "operation-transaction";
     let batch = db
         .transaction_manager()
         .transaction(move |con| {
@@ -227,6 +231,7 @@ async fn execute(c: Command, url: &str) -> Result<(), StackTrace> {
         "{}",
         serde_json::json!({"batch_selected":batch.selected,"batch_changed":batch.changed,"selection_complete":batch.complete})
     );
+    *phase = "send-and-result";
     if let Some(module) = module {
         let worker = Arc::new(RelayDelivery::new(Arc::new(module)));
         // At most one batch; other server processes may win its fenced claims. They share the

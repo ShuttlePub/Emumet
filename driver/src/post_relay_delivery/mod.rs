@@ -76,6 +76,16 @@ impl PostRelayTransport for HttpPostRelayTransport {
                 total_timeout: Duration::from_secs(10),
                 max_response_bytes: 0,
             };
+            if !reqwest::Url::parse(request.origin).is_ok_and(|u| {
+                u.host_str().is_some()
+                    && u.username().is_empty()
+                    && u.password().is_none()
+                    && u.path() == "/"
+                    && u.query().is_none()
+                    && u.fragment().is_none()
+            }) {
+                return RelayHttpResult::InvalidTarget;
+            }
             let url = format!("{}/internal/v1/emumet/activities", request.origin);
             let target = match resolve_target(&url, self.mode, &self.resolver, &settings).await {
                 Ok(t) => t,

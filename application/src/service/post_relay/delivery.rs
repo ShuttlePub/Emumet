@@ -206,6 +206,22 @@ where
         let Some(snapshot) = snapshot else {
             return Ok(Recorded::Stale);
         };
+        let valid = reqwest::Url::parse(&snapshot.recipient.origin).is_ok_and(|u| {
+            let scheme = u.scheme() == "https"
+                || (cfg!(any(test, feature = "test-mode")) && u.scheme() == "http");
+            scheme
+                && u.host_str().is_some()
+                && u.username().is_empty()
+                && u.password().is_none()
+                && u.path() == "/"
+                && u.query().is_none()
+                && u.fragment().is_none()
+        });
+        if !valid {
+            return self
+                .record(&lease, AttemptResult::Permanent { status: None }, None)
+                .await;
+        }
         let allowed = d
             .post_relay_transport()
             .origin_allowed(&snapshot.recipient.origin);
@@ -299,8 +315,12 @@ where
         if let Some(pause) = &self.pause {
             pause.at(2).await;
         }
-        let remaining=permit.send_deadline-permit.authorized_at;
-        let budget=if remaining.is_positive(){remaining.unsigned_abs()}else{std::time::Duration::ZERO};
+        let remaining = permit.send_deadline - permit.authorized_at;
+        let budget = if remaining.is_positive() {
+            remaining.unsigned_abs()
+        } else {
+            std::time::Duration::ZERO
+        };
         let deadline = start + budget;
         if Instant::now() >= deadline {
             return self

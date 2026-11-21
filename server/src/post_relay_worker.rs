@@ -88,10 +88,11 @@ pub(crate) fn spawn(module: PostRelayModule) -> (watch::Sender<bool>, tokio::tas
         let mut telemetry = tokio::time::interval(Duration::from_secs(60));
         loop {
             tokio::select! {
+                biased;
                 _=stopped.changed()=>break,
+                _=maintenance.tick()=>{if worker.maintain().await.is_err(){tracing::warn!("post relay maintenance failed");}},
                 Some(result)=tasks.join_next(),if !tasks.is_empty()=>{if !matches!(result,Ok(Ok(_))) {tracing::warn!("post relay attempt failed; fenced lease recovery pending");}},
                 _=telemetry.tick()=>tracing::info!(timings=?worker.metrics.snapshot(),"post relay cumulative timings"),
-                _=maintenance.tick()=>{if worker.maintain().await.is_err(){tracing::warn!("post relay maintenance failed");}},
                 _=poll.tick(),if tasks.len()<16=>{
                     match worker.claim((16-tasks.len()) as u16).await {
                         Ok(leases)=>for lease in leases {let worker=worker.clone(); tasks.spawn(async move {worker.deliver(lease).await});},

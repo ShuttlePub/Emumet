@@ -2,14 +2,21 @@
 //! test-mode exception, plain HTTP, real Q1 DB/immutable synthetic envelope bytes.
 use super::*;
 use driver::{home_origin::HomeOriginAllowlist, post_relay_delivery::HttpPostRelayTransport};
-async fn perf_setup(slow:bool) -> (Env, TestModule, Vec<Profile>, Vec<LocalReceiver>) {
+async fn perf_setup(slow: bool) -> (Env, TestModule, Vec<Profile>, Vec<LocalReceiver>) {
     let env = Env::new().await;
     let (mut m, _) = env.process();
     m.ensure_instance_identity().await.unwrap();
     let (_, profiles) = fixture(&m.database, 16, true).await;
     let mut peers = Vec::new();
     for i in 0..4 {
-        peers.push(LocalReceiver::start(if slow&&i==1{Duration::from_secs(30)}else{Duration::ZERO}).await);
+        peers.push(
+            LocalReceiver::start(if slow && i == 1 {
+                Duration::from_secs(30)
+            } else {
+                Duration::ZERO
+            })
+            .await,
+        );
     }
     let origins: Vec<String> = peers.iter().map(LocalReceiver::uri).collect();
     for (i, p) in profiles.iter().enumerate() {
@@ -89,6 +96,20 @@ fn cpu() -> u64 {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "explicit release benchmark; 10-minute steady-state and live PostgreSQL required"]
 async fn s1_final_real_http_release_measurement() {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap();
+    let limits = std::fs::read_to_string("/proc/self/limits").unwrap();
+    eprintln!(
+        "S1_ENV {} {} external_receiver_cores={:?}",
+        status
+            .lines()
+            .find(|l| l.starts_with("Cpus_allowed_list"))
+            .unwrap_or("unknown affinity"),
+        limits
+            .lines()
+            .find(|l| l.starts_with("Max address space"))
+            .unwrap_or("unknown AS limit"),
+        std::env::var("S1_EXTERNAL_RECEIVER_CORES")
+    );
     assert!(std::env::var("DATABASE_URL").is_ok());
     for bytes in [65536, 1_400_000] {
         for parallel in [1usize, 16] {
@@ -143,13 +164,23 @@ async fn s1_final_real_http_release_measurement() {
 // wiremock 0.6.5 retains matched request bodies in MountedMock even when global request
 // recording is disabled. A streaming TCP HTTP recipient is required for meaningful RSS.
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+struct ReceiverChild(std::process::Child);
+impl Drop for ReceiverChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 struct LocalReceiver {
     address: std::net::SocketAddr,
-    accept: tokio::task::JoinHandle<()>,
+    accept: Option<tokio::task::JoinHandle<()>>,
+    _child: Option<ReceiverChild>,
 }
 impl Drop for LocalReceiver {
     fn drop(&mut self) {
-        self.accept.abort();
+        if let Some(h) = &self.accept {
+            h.abort();
+        }
     }
 }
 impl LocalReceiver {
@@ -157,6 +188,22 @@ impl LocalReceiver {
         format!("http://{}", self.address)
     }
     async fn start(delay: Duration) -> Self {
+        if let Ok(cores) = std::env::var("S1_EXTERNAL_RECEIVER_CORES") {
+            use std::io::BufRead;
+            let mut child=ReceiverChild(std::process::Command::new("taskset").args(["-c",&cores]).arg(std::env::current_exe().unwrap()).args(["--exact","instance_identity::tests::post_relay_delivery::measurement::s1_streaming_receiver_process","--ignored","--nocapture"]).env_remove("S1_EXTERNAL_RECEIVER_CORES").env("S1_RECEIVER_SUBPROCESS","1").env("S1_RECEIVER_DELAY_MS",delay.as_millis().to_string()).stdout(std::process::Stdio::piped()).spawn().unwrap());
+            let output = std::io::BufReader::new(child.0.stdout.take().unwrap());
+            for line in output.lines() {
+                let l = line.unwrap();
+                if let Some(a) = l.strip_prefix("S1_RECEIVER_READY ") {
+                    return Self {
+                        address: a.parse().unwrap(),
+                        accept: None,
+                        _child: Some(child),
+                    };
+                }
+            }
+            panic!("recipient subprocess failed before listening");
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let accept = tokio::spawn(async move {
@@ -210,25 +257,108 @@ impl LocalReceiver {
                 });
             }
         });
-        Self { address, accept }
+        Self {
+            address,
+            accept: Some(accept),
+            _child: None,
+        }
     }
 }
 
-#[tokio::test(flavor="multi_thread",worker_threads=4)]
-#[ignore="explicit release origin isolation measurement; PostgreSQL required"]
-async fn s1_origin_timeout_isolation_release_measurement(){
- let mut values=[Vec::new(),Vec::new()];
- for round in 0..3 {for mixed in [false,true]{
-  let (_env,m,profiles,worker,_peers)=perf_setup(mixed).await;
-  let _=m.unlock_instance_signing_key().await.unwrap();
-  for i in 0..512{let p=&profiles[(i%4)*4];admit_payload(&m,p,&format!("healthy-{i}"),false,vec![b'x';65536]).await;}
-  if mixed{for i in 0..16{let p=&profiles[(i%4)*4+1];admit_payload(&m,p,&format!("slow-{i}"),false,vec![b'x';65536]).await;}}
-  let start=Instant::now();let mut done=0;let mut tasks=tokio::task::JoinSet::new();
-  while done<512{
-   if tasks.len()<16{for lease in worker.claim((16-tasks.len())as u16).await.unwrap(){let healthy=lease.receipt.starts_with("healthy-");let w=worker.clone();tasks.spawn(async move{(healthy,w.deliver(lease).await)});}}
-   let (healthy,result)=tasks.join_next().await.expect("scheduler starved the healthy origin").unwrap();assert_eq!(result.unwrap(),Recorded::Applied);if healthy{done+=1;}
-  }
-  let elapsed=start.elapsed();tasks.abort_all();let rps=512.0/elapsed.as_secs_f64();values[mixed as usize].push(rps);eprintln!("S1_ISOLATION round={round} mixed={mixed} healthy_n=512 seconds={:.3} healthy_rps={rps:.2}",elapsed.as_secs_f64());
- }}
- values[0].sort_by(f64::total_cmp);values[1].sort_by(f64::total_cmp);let ratio=values[1][1]/values[0][1];eprintln!("S1_ISOLATION_MEDIAN alone={:.2} mixed={:.2} ratio={ratio:.4} target=0.8",values[0][1],values[1][1]);assert!(ratio>=0.8,"healthy origin isolation target missed");
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "explicit release origin isolation measurement; PostgreSQL required"]
+async fn s1_origin_timeout_isolation_release_measurement() {
+    let mut values = [Vec::new(), Vec::new()];
+    for round in 0..3 {
+        for mixed in [false, true] {
+            let (_env, m, profiles, _peers) = perf_setup(mixed).await;
+            let worker = Arc::new(RelayDelivery::new(Arc::new(m.clone())));
+            let _ = m.unlock_instance_signing_key().await.unwrap();
+            for i in 0..512 {
+                let p = &profiles[(i % 4) * 4];
+                admit_payload(&m, p, &format!("healthy-{i}"), false, vec![b'x'; 65536]).await;
+            }
+            if mixed {
+                for i in 0..16 {
+                    let p = &profiles[(i % 4) * 4 + 1];
+                    admit_payload(&m, p, &format!("slow-{i}"), false, vec![b'x'; 65536]).await;
+                }
+            }
+            let start = Instant::now();
+            let mut done = 0usize;
+            let mut admitted = 512usize;
+            let mut slow_completed = 0usize;
+            let mut tasks = tokio::task::JoinSet::new();
+            // Continue beyond the absolute ten-second deadline: measuring only the initial
+            // 512 successes would abort slow requests before any real timeout occurred.
+            while done < 512 || start.elapsed() < Duration::from_secs(12) {
+                if admitted - done < 128 {
+                    for _ in 0..128 {
+                        let p = &profiles[(admitted % 4) * 4];
+                        admit_payload(
+                            &m,
+                            p,
+                            &format!("healthy-{admitted}"),
+                            false,
+                            vec![b'x'; 65536],
+                        )
+                        .await;
+                        admitted += 1;
+                    }
+                }
+                if tasks.len() < 16 {
+                    for lease in worker.claim((16 - tasks.len()) as u16).await.unwrap() {
+                        let healthy = lease.receipt.starts_with("healthy-");
+                        let w = worker.clone();
+                        tasks.spawn(async move { (healthy, w.deliver(lease).await) });
+                    }
+                }
+                let (healthy, result) = tasks
+                    .join_next()
+                    .await
+                    .expect("scheduler starved the healthy origin")
+                    .unwrap();
+                assert_eq!(result.unwrap(), Recorded::Applied);
+                if healthy {
+                    done += 1;
+                } else {
+                    slow_completed += 1;
+                }
+            }
+            let elapsed = start.elapsed();
+            assert!(
+                !mixed || slow_completed >= 4,
+                "real origin timeouts were not observed"
+            );
+            tasks.abort_all();
+            let rps = done as f64 / elapsed.as_secs_f64();
+            values[mixed as usize].push(rps);
+            eprintln!("S1_ISOLATION round={round} mixed={mixed} healthy_n={done} slow_timeouts={slow_completed} seconds={:.3} healthy_rps={rps:.2}",elapsed.as_secs_f64());
+        }
+    }
+    values[0].sort_by(f64::total_cmp);
+    values[1].sort_by(f64::total_cmp);
+    let ratio = values[1][1] / values[0][1];
+    eprintln!(
+        "S1_ISOLATION_MEDIAN alone={:.2} mixed={:.2} ratio={ratio:.4} target=0.8",
+        values[0][1], values[1][1]
+    );
+    assert!(ratio >= 0.8, "healthy origin isolation target missed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "subprocess recipient helper, only active with explicit S1_RECEIVER_SUBPROCESS=1"]
+async fn s1_streaming_receiver_process() {
+    if std::env::var("S1_RECEIVER_SUBPROCESS").as_deref() != Ok("1") {
+        return;
+    }
+    let delay = Duration::from_millis(
+        std::env::var("S1_RECEIVER_DELAY_MS")
+            .unwrap()
+            .parse()
+            .unwrap(),
+    );
+    let receiver = LocalReceiver::start(delay).await;
+    println!("S1_RECEIVER_READY {}", receiver.address);
+    std::future::pending::<()>().await;
 }

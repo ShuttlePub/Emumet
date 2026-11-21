@@ -386,12 +386,24 @@ async fn s1_p0_p1_p2_p4_three_revokers_auto_and_manual_no_body_resurrection() {
                     );
                 }
                 let start = Instant::now();
-                if point==1{
+                if point == 1 {
                     // Permission holds the common gate until commit: unlink cannot pass it.
-                    let revoker=tokio::spawn({let(m,a,p)=(m.clone(),a.clone(),p.clone());async move{revoke(&m,&a,&p,path).await}});
-                    tokio::time::sleep(Duration::from_millis(20)).await;assert!(!revoker.is_finished());
-                    pause.resume.notify_one();tokio::time::timeout(Duration::from_secs(3),revoker).await.unwrap().unwrap();
-                }else{tokio::time::timeout(Duration::from_secs(3),revoke(&m,&a,&p,path)).await.unwrap();}
+                    let revoker = tokio::spawn({
+                        let (m, a, p) = (m.clone(), a.clone(), p.clone());
+                        async move { revoke(&m, &a, &p, path).await }
+                    });
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    assert!(!revoker.is_finished());
+                    pause.resume.notify_one();
+                    tokio::time::timeout(Duration::from_secs(3), revoker)
+                        .await
+                        .unwrap()
+                        .unwrap();
+                } else {
+                    tokio::time::timeout(Duration::from_secs(3), revoke(&m, &a, &p, path))
+                        .await
+                        .unwrap();
+                }
                 eprintln!(
                     "S1_REVOKE path={path} point={point} manual={manual} ms={:.3}",
                     start.elapsed().as_secs_f64() * 1000.0
@@ -437,9 +449,24 @@ async fn s1_p3_silent_http_has_zero_db_holds_and_all_revokers_finish() {
             assert_eq!(locks, 0);
             let locks:i64=sqlx::query_scalar("SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid IN(SELECT pid FROM pg_stat_activity WHERE datname=current_database())").fetch_one(&env.iso.pool).await.unwrap();
             assert_eq!(locks, 0);
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    if env.iso.pool.num_idle() == env.iso.pool.size() as usize {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("HTTP retained a checked-out DB connection");
+            let revoked = Instant::now();
             tokio::time::timeout(Duration::from_secs(3), revoke(&m, &a, &p, path))
                 .await
                 .unwrap();
+            eprintln!(
+                "S1_SILENT_REVOKE path={path} manual={manual} ms={:.3}",
+                revoked.elapsed().as_secs_f64() * 1000.0
+            );
             assert!(!send.is_finished());
             send.abort();
             let _ = send.await;
@@ -631,19 +658,45 @@ async fn s1_401_retry_changes_only_outer_date_signature_and_not_envelope() {
     assert_eq!(kdf.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test(flavor="multi_thread",worker_threads=4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[test_with::env(DATABASE_URL)]
-async fn s1_unlink_gate_and_precommit_checkpoints_three_revokers_auto_manual(){
- for checkpoint in ["BEFORE","AFTER"]{for manual in [false,true]{for path in 0..3{
-  let (env,m,_,_peer,a,p)=setup().await;let _=m.unlock_instance_signing_key().await.unwrap();admit_job(&m,&p,"unlink-first",manual).await;
-  let worker=Arc::new(RelayDelivery::new(Arc::new(m.clone())));let lease=worker.claim(1).await.unwrap().remove(0);
-  sqlx::query("CREATE FUNCTION s1_pause_unlink() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(98765); RETURN NEW; END $$").execute(&env.iso.pool).await.unwrap();
-  sqlx::query(&format!("CREATE TRIGGER s1_unlink_checkpoint {checkpoint} UPDATE OF state ON profile_links FOR EACH ROW WHEN(OLD.state<>'unlinked' AND NEW.state='unlinked') EXECUTE FUNCTION s1_pause_unlink()")).execute(&env.iso.pool).await.unwrap();
-  let mut blocker=env.iso.pool.begin().await.unwrap();sqlx::query("SELECT pg_advisory_xact_lock(98765)").execute(&mut *blocker).await.unwrap();
-  let revoker=tokio::spawn({let(m,a,p)=(m.clone(),a.clone(),p.clone());async move{revoke(&m,&a,&p,path).await}});
-  tokio::time::timeout(Duration::from_secs(2),async{loop{let paused:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND objid=98765)").fetch_one(&env.iso.pool).await.unwrap();if paused{break}tokio::time::sleep(Duration::from_millis(5)).await;}}).await.unwrap();
-  let w=worker.clone();let send=tokio::spawn(async move{w.deliver(lease).await});tokio::time::sleep(Duration::from_millis(50)).await;assert_eq!(m.transport.calls.load(Ordering::SeqCst),0);assert!(!send.is_finished());
-  blocker.rollback().await.unwrap();revoker.await.unwrap();send.await.unwrap().unwrap();worker.maintain().await.unwrap();assert_eq!(m.transport.calls.load(Ordering::SeqCst),0);
-  let bodies:i64=sqlx::query_scalar("SELECT count(*) FROM post_relay_bodies").fetch_one(&env.iso.pool).await.unwrap();assert_eq!(bodies,0);
- }}}
+async fn s1_unlink_gate_and_precommit_checkpoints_three_revokers_auto_manual() {
+    for checkpoint in ["BEFORE", "AFTER"] {
+        for manual in [false, true] {
+            for path in 0..3 {
+                let (env, m, _, _peer, a, p) = setup().await;
+                let _ = m.unlock_instance_signing_key().await.unwrap();
+                admit_job(&m, &p, "unlink-first", manual).await;
+                let worker = Arc::new(RelayDelivery::new(Arc::new(m.clone())));
+                let lease = worker.claim(1).await.unwrap().remove(0);
+                sqlx::query("CREATE FUNCTION s1_pause_unlink() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(98765); RETURN NEW; END $$").execute(&env.iso.pool).await.unwrap();
+                sqlx::query(&format!("CREATE TRIGGER s1_unlink_checkpoint {checkpoint} UPDATE OF state ON profile_links FOR EACH ROW WHEN(OLD.state<>'unlinked' AND NEW.state='unlinked') EXECUTE FUNCTION s1_pause_unlink()")).execute(&env.iso.pool).await.unwrap();
+                let mut blocker = env.iso.pool.begin().await.unwrap();
+                sqlx::query("SELECT pg_advisory_xact_lock(98765)")
+                    .execute(&mut *blocker)
+                    .await
+                    .unwrap();
+                let revoker = tokio::spawn({
+                    let (m, a, p) = (m.clone(), a.clone(), p.clone());
+                    async move { revoke(&m, &a, &p, path).await }
+                });
+                tokio::time::timeout(Duration::from_secs(2),async{loop{let paused:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND objid=98765)").fetch_one(&env.iso.pool).await.unwrap();if paused{break}tokio::time::sleep(Duration::from_millis(5)).await;}}).await.unwrap();
+                let w = worker.clone();
+                let send = tokio::spawn(async move { w.deliver(lease).await });
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                assert_eq!(m.transport.calls.load(Ordering::SeqCst), 0);
+                assert!(!send.is_finished());
+                blocker.rollback().await.unwrap();
+                revoker.await.unwrap();
+                send.await.unwrap().unwrap();
+                worker.maintain().await.unwrap();
+                assert_eq!(m.transport.calls.load(Ordering::SeqCst), 0);
+                let bodies: i64 = sqlx::query_scalar("SELECT count(*) FROM post_relay_bodies")
+                    .fetch_one(&env.iso.pool)
+                    .await
+                    .unwrap();
+                assert_eq!(bodies, 0);
+            }
+        }
+    }
 }

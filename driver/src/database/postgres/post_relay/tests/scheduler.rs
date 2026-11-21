@@ -81,11 +81,58 @@ async fn s1_scheduler_served_profile_rotates_and_earliest_expiry_wins() {
     let first = scheduled(db, now, 1).await;
     let second = scheduled(db, now + Duration::milliseconds(1), 1).await;
     assert_ne!(first[0].profile_id, second[0].profile_id);
-    sqlx::query("UPDATE post_relay_bodies SET received_at=$1-interval '72 hours',automatic_expires_at=$1 WHERE receipt='a-7'")
-        .bind(now + Duration::seconds(30))
-        .execute(&d.pool)
+}
+#[tokio::test]
+#[test_with::env(DATABASE_URL)]
+async fn s1_scheduler_prioritizes_an_immutable_receipt_near_its_original_deadline() {
+    let d = IsolatedDatabase::create().await;
+    let db = &d.database;
+    let (_, ps) = fixture(db, 2, true).await;
+    let now = clock();
+    let received = now - Duration::hours(72) + Duration::seconds(30);
+    physical(db, received).await;
+    assert_eq!(
+        admit(db, &ps[0], "urgent", received, 3).await,
+        Admission::Queued
+    );
+    physical(db, now).await;
+    assert_eq!(admit(db, &ps[1], "fresh", now, 3).await, Admission::Queued);
+    let urgent = scheduled(db, now, 1).await;
+    assert_eq!(urgent[0].receipt, "urgent");
+}
+
+#[tokio::test]
+#[test_with::env(DATABASE_URL)]
+async fn s1_scheduler_counts_preparing_leases_before_authorization_and_across_refills() {
+    let d = IsolatedDatabase::create().await;
+    let db = &d.database;
+    let (_, ps) = fixture(db, 5, true).await;
+    let now = clock();
+    physical(db, now).await;
+    for (i, p) in ps.iter().enumerate() {
+        sqlx::query("UPDATE profile_links SET origin=$2 WHERE profile_id=$1")
+            .bind(p.id().as_ref())
+            .bind(format!("https://o{i}.example"))
+            .execute(&d.pool)
+            .await
+            .unwrap();
+        for j in 0..8 {
+            assert_eq!(
+                admit(db, p, &format!("{i}-{j}"), now, 3).await,
+                Admission::Queued
+            );
+        }
+    }
+    let leases = scheduled(db, now, 16).await;
+    assert_eq!(leases.len(), 16);
+    for p in &ps {
+        assert!(leases.iter().filter(|l| l.profile_id == *p.id()).count() <= 4);
+    }
+    assert!(scheduled(db, now + Duration::milliseconds(1), 16)
         .await
-        .unwrap();
-    let urgent = scheduled(db, now + Duration::milliseconds(2), 1).await;
-    assert_eq!(urgent[0].receipt, "a-7");
+        .is_empty());
+    assert_eq!(
+        scheduled(db, now + Duration::seconds(31), 16).await.len(),
+        16
+    );
 }
