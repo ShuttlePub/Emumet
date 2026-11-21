@@ -28,9 +28,9 @@ use kernel::interfaces::http_signing::{HttpSignatureVerificationInput, Signature
 #[utoipa::path(
     post,
     path = "/ap/profiles/{profile_nanoid}/inbox",
-    description = "Signed Profile inbox. Raw Activity bytes relay only when POST_RELAY_INBOX_ENABLED=true (default false; S1 merge and lead approval required). Follow/Block are excluded; Undo/Accept/Reject are excluded only when every reference is a known Follow/Block. Unknown references and extension types forward. Existing Follow/domain-control and early-Undo rules remain. Body <=1 MiB; duplicate keys at every depth are rejected. ActivityPub JSON and ld+json with supported parameters are accepted. 202 follows durable commit; Profile overload is 429 and global/physical capacity unavailable is 503 with Retry-After.",
+    description = "Signed Profile inbox. Raw Activity bytes relay only when POST_RELAY_INBOX_ENABLED=true (default false; S1 merge and lead approval required). Follow/Block are excluded; Undo/Accept/Reject are excluded only when every reference is a known Follow/Block. Create/Update/Delete/Like/Announce, unknown references and extension types forward unchanged. Existing Follow/domain-control and early-Undo rules remain. Body <=1 MiB; duplicate keys at every depth are rejected. ActivityPub JSON and ld+json with supported parameters are accepted. 202 follows durable commit; Profile overload is 429 and global/physical capacity unavailable is 503 with Retry-After.",
     params(("profile_nanoid" = String, Path, description = "Profile nanoid")),
-    request_body(content = serde_json::Value, content_type = "application/activity+json"),
+    request_body(content((serde_json::Value = "application/activity+json"), (serde_json::Value = "application/ld+json"))),
     responses(
         (status = 202, description = "Activity applied, duplicate, or ignored without effect"),
         (status = 400, description = "Malformed ActivityPub activity"),
