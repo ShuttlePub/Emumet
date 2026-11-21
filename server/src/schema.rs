@@ -3,6 +3,7 @@ pub mod me;
 pub mod media;
 pub mod oauth2;
 pub mod organization;
+pub mod profile_link;
 pub mod profile_policy;
 pub mod profile_transfer;
 pub mod profile_username;

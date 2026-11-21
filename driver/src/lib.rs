@@ -1,6 +1,7 @@
 pub mod crypto;
 pub mod database;
 mod error;
+pub mod home_origin;
 pub mod http_signing;
 pub mod hydra;
 pub mod keto;

@@ -24,6 +24,7 @@ use crate::route::media::MediaRouter;
 use crate::route::oauth2::OAuth2Router;
 use crate::route::profile_domain_control::DomainControlRouter;
 use crate::route::profile_follow_list::ProfileFollowListRouter;
+use crate::route::profile_link::ProfileLinkRouter;
 use crate::route::profile_relationship::ProfileRelationshipRouter;
 use crate::route::profile_transfer::ProfileTransferRouter;
 use crate::route::profile_username_availability::ProfileUsernameAvailabilityRouter;
@@ -51,6 +52,7 @@ pub(crate) fn build_root_router(
         .route_account()
         .route_org_account()
         .route_profile_transfers()
+        .route_profile_links()
         .route_reports()
         .route_me()
         .route_media()

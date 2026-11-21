@@ -3179,6 +3179,175 @@
         ]
       }
     },
+    "/api/v1/profiles/{profile_nanoid}/links": {
+      "get": {
+        "tags": [
+          "ProfileLinks"
+        ],
+        "operationId": "list_profile_links",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current-owner ledger",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileLinkListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Not current active owner"
+          },
+          "404": {
+            "description": "Profile absent"
+          },
+          "503": {
+            "description": "Retryable database timeout"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "ProfileLinks"
+        ],
+        "operationId": "register_profile_link",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterProfileLink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Same active home",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileLinkResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Home registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileLinkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or non-allowed origin"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Not current active owner"
+          },
+          "404": {
+            "description": "Profile absent"
+          },
+          "409": {
+            "description": "Different active home or concurrent owner change"
+          },
+          "422": {
+            "description": "Unsupported trust mode"
+          },
+          "503": {
+            "description": "Retryable database timeout"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_nanoid}/links/{link_id}": {
+      "delete": {
+        "tags": [
+          "ProfileLinks"
+        ],
+        "operationId": "unlink_profile_link",
+        "parameters": [
+          {
+            "name": "profile_nanoid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unlinked or already unlinked"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Not current active owner"
+          },
+          "404": {
+            "description": "Profile or link absent"
+          },
+          "503": {
+            "description": "Retryable database timeout"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/profiles/{profile_nanoid}/mutes": {
       "get": {
         "tags": [
@@ -4940,6 +5109,69 @@
           }
         }
       },
+      "ProfileLinkListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileLinkResponse"
+            }
+          }
+        }
+      },
+      "ProfileLinkResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "origin",
+          "trust_mode",
+          "generation",
+          "state",
+          "actor",
+          "created_at"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "trust_mode": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "unlink_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unlinked_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ProfileRelationActor": {
         "type": "object",
         "description": "Display information of the target of a block or mute, served from the Profile (local) or a\nserver-side cache of the remote actor document (remote). Text fields are plain text, never HTML.",
@@ -5341,6 +5573,23 @@
             "$ref": "#/components/schemas/DomainControlMode"
           }
         }
+      },
+      "RegisterProfileLink": {
+        "type": "object",
+        "required": [
+          "origin",
+          "trust_mode"
+        ],
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "trust_mode": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
       },
       "RegistrationGateNotificationListResponse": {
         "type": "object",

@@ -9,6 +9,7 @@ mod auth_host;
 mod block;
 mod domain_control;
 mod follow;
+mod home_link;
 mod image;
 mod instance_identity;
 #[cfg(any(test, feature = "test-mode"))]
@@ -137,9 +138,91 @@ impl PostgresDatabase {
 enum PostgresConnectionInner {
     Connection(PoolConnection<Postgres>),
     Transaction(Transaction<'static, Postgres>),
+    Vacant,
 }
 
-pub struct PostgresConnection(PostgresConnectionInner);
+pub struct PostgresConnection(
+    PostgresConnectionInner,
+    Pool<Postgres>,
+    std::sync::Arc<LifecycleBudget>,
+);
+
+struct LifecycleBudget {
+    started_at: tokio::time::Instant,
+    deadline: std::sync::OnceLock<tokio::time::Instant>,
+    started: tokio::sync::Notify,
+}
+impl Default for LifecycleBudget {
+    fn default() -> Self {
+        Self {
+            started_at: tokio::time::Instant::now(),
+            deadline: std::sync::OnceLock::new(),
+            started: tokio::sync::Notify::new(),
+        }
+    }
+}
+impl LifecycleBudget {
+    async fn expired(&self) {
+        loop {
+            let notified = self.started.notified();
+            if let Some(deadline) = self.deadline.get() {
+                tokio::time::sleep_until(*deadline).await;
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+impl PostgresConnection {
+    pub(crate) fn is_transaction(&self) -> bool {
+        matches!(self.0, PostgresConnectionInner::Transaction(_))
+    }
+    pub(crate) fn lifecycle_budget(&self) -> error_stack::Result<(), KernelError> {
+        if !self.is_transaction() {
+            return Err(Report::new(KernelError::Internal)
+                .attach_printable("lifecycle gate requires a transaction"));
+        }
+        self.2.deadline.get_or_init(|| {
+            let deadline = self.2.started_at + std::time::Duration::from_secs(5);
+            self.2.started.notify_one();
+            deadline
+        });
+        Ok(())
+    }
+    pub(crate) async fn begin_atomic(&mut self) -> error_stack::Result<bool, KernelError> {
+        if self.is_transaction() {
+            return Ok(false);
+        }
+        let inner = std::mem::replace(&mut self.0, PostgresConnectionInner::Vacant);
+        let PostgresConnectionInner::Connection(connection) = inner else {
+            unreachable!()
+        };
+        self.0 = PostgresConnectionInner::Transaction(
+            Transaction::begin(connection).await.convert_error()?,
+        );
+        self.2 = std::sync::Arc::new(LifecycleBudget::default());
+        Ok(true)
+    }
+    pub(crate) async fn end_atomic(
+        &mut self,
+        success: bool,
+    ) -> error_stack::Result<(), KernelError> {
+        let inner = std::mem::replace(&mut self.0, PostgresConnectionInner::Vacant);
+        let PostgresConnectionInner::Transaction(transaction) = inner else {
+            unreachable!()
+        };
+        let result = if success {
+            // Keep the original connection usable even when a timed commit fails.
+            // The caller still receives the failure (and must never send on unknown commit).
+            commit_with_budget(transaction, &self.2).await
+        } else {
+            transaction.rollback().await.convert_error()
+        };
+        self.0 = PostgresConnectionInner::Connection(self.1.acquire().await.convert_error()?);
+        self.2 = std::sync::Arc::new(LifecycleBudget::default());
+        result
+    }
+}
 
 impl Connection for PostgresConnection {}
 
@@ -149,6 +232,9 @@ impl Deref for PostgresConnection {
         match &self.0 {
             PostgresConnectionInner::Connection(connection) => connection,
             PostgresConnectionInner::Transaction(transaction) => transaction,
+            PostgresConnectionInner::Vacant => {
+                panic!("unusable connection after transaction failure")
+            }
         }
     }
 }
@@ -158,6 +244,9 @@ impl DerefMut for PostgresConnection {
         match &mut self.0 {
             PostgresConnectionInner::Connection(connection) => connection,
             PostgresConnectionInner::Transaction(transaction) => transaction,
+            PostgresConnectionInner::Vacant => {
+                panic!("unusable connection after transaction failure")
+            }
         }
     }
 }
@@ -205,11 +294,12 @@ impl DbTransaction for PostgresTransaction {
 
     async fn commit(self) -> error_stack::Result<(), KernelError> {
         match self.0 .0 {
-            PostgresConnectionInner::Transaction(transaction) => transaction
-                .commit()
-                .await
-                .change_context(KernelError::Internal),
-            PostgresConnectionInner::Connection(_) => unreachable!(),
+            PostgresConnectionInner::Transaction(transaction) => {
+                commit_with_budget(transaction, &self.0 .2).await
+            }
+            PostgresConnectionInner::Connection(_) | PostgresConnectionInner::Vacant => {
+                unreachable!()
+            }
         }
     }
 
@@ -223,13 +313,32 @@ impl DbTransaction for PostgresTransaction {
     }
 }
 
+async fn commit_with_budget(
+    transaction: Transaction<'static, Postgres>,
+    budget: &LifecycleBudget,
+) -> error_stack::Result<(), KernelError> {
+    if let Some(deadline) = budget.deadline.get() {
+        tokio::time::timeout_at(*deadline, transaction.commit())
+            .await
+            .map_err(|_| {
+                Report::new(KernelError::Internal)
+                    .attach_printable("lifecycle commit exceeded 5s; do not send on unknown commit")
+            })?
+            .convert_error()
+    } else {
+        transaction.commit().await.convert_error()
+    }
+}
+
 impl DatabaseConnection for PostgresDatabase {
     type Connection = PostgresConnection;
     async fn connection(&self) -> error_stack::Result<Self::Connection, KernelError> {
         let connection = self.pool.acquire().await.convert_error()?;
-        Ok(PostgresConnection(PostgresConnectionInner::Connection(
-            connection,
-        )))
+        Ok(PostgresConnection(
+            PostgresConnectionInner::Connection(connection),
+            self.pool.clone(),
+            std::sync::Arc::new(LifecycleBudget::default()),
+        ))
     }
 }
 
@@ -240,6 +349,8 @@ impl TransactionalDatabaseConnection for PostgresDatabase {
         let transaction = self.pool.begin().await.convert_error()?;
         Ok(PostgresTransaction(PostgresConnection(
             PostgresConnectionInner::Transaction(transaction),
+            self.pool.clone(),
+            std::sync::Arc::new(LifecycleBudget::default()),
         )))
     }
 }
@@ -266,17 +377,25 @@ impl TransactionManager for PostgresDatabase {
     {
         Box::pin(async move {
             let transaction = self.pool.begin().await.convert_error()?;
-            let mut conn = PostgresConnection(PostgresConnectionInner::Transaction(transaction));
-            match operation(&mut conn).await {
+            let budget = std::sync::Arc::new(LifecycleBudget::default());
+            let mut conn = PostgresConnection(
+                PostgresConnectionInner::Transaction(transaction),
+                self.pool.clone(),
+                budget.clone(),
+            );
+            let result = tokio::select! {
+                result = operation(&mut conn) => result,
+                () = budget.expired() => Err(Report::new(KernelError::Internal).attach_printable("lifecycle transaction exceeded 5s")),
+            };
+            match result {
                 Ok(result) => match conn.0 {
                     PostgresConnectionInner::Transaction(transaction) => {
-                        transaction
-                            .commit()
-                            .await
-                            .change_context(KernelError::Internal)?;
+                        commit_with_budget(transaction, &budget).await?;
                         Ok(result)
                     }
-                    PostgresConnectionInner::Connection(_) => unreachable!(),
+                    PostgresConnectionInner::Connection(_) | PostgresConnectionInner::Vacant => {
+                        unreachable!()
+                    }
                 },
                 Err(error) => {
                     match conn.0 {
@@ -288,7 +407,8 @@ impl TransactionManager for PostgresDatabase {
                                 );
                             }
                         }
-                        PostgresConnectionInner::Connection(_) => unreachable!(),
+                        PostgresConnectionInner::Connection(_)
+                        | PostgresConnectionInner::Vacant => unreachable!(),
                     }
                     Err(error)
                 }

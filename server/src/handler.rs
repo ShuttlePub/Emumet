@@ -42,6 +42,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppModule {
     pgpool: PostgresDatabase,
+    home_origin_policy: driver::home_origin::HomeOriginAllowlist,
     password_provider: FilePasswordProvider,
     raw_key_generator: Rsa2048RawGenerator,
     key_encryptor: Argon2Encryptor,
@@ -136,6 +137,7 @@ impl AppModule {
         let registration_flow_directory = KratosRegistrationFlowDirectory::new(&kratos_public_url);
 
         Ok(Self {
+            home_origin_policy: driver::home_origin::HomeOriginAllowlist::from_env()?,
             pgpool,
             password_provider: FilePasswordProvider::new(),
             raw_key_generator: Rsa2048RawGenerator,
@@ -199,6 +201,7 @@ impl AppModule {
             dotenvy::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
         let registration_flow_directory = KratosRegistrationFlowDirectory::new(&kratos_public_url);
         Ok(Self {
+            home_origin_policy: driver::home_origin::HomeOriginAllowlist::from_env()?,
             pgpool,
             password_provider: FilePasswordProvider::new(),
             raw_key_generator: Rsa2048RawGenerator,
@@ -514,5 +517,23 @@ impl kernel::interfaces::repository::DependOnRegistrationEnforcementProbeClient 
 impl DependOnInstanceKeyCache for AppModule {
     fn instance_key_cache(&self) -> &InstanceKeyCache {
         &self.instance_key_cache
+    }
+}
+
+impl kernel::home_link::DependOnHomeOriginPolicy for AppModule {
+    type HomeOriginPolicy = driver::home_origin::HomeOriginAllowlist;
+    fn home_origin_policy(&self) -> &Self::HomeOriginPolicy {
+        &self.home_origin_policy
+    }
+}
+
+#[cfg(test)]
+impl AppModule {
+    pub(crate) fn with_home_origin_policy(
+        mut self,
+        policy: driver::home_origin::HomeOriginAllowlist,
+    ) -> Self {
+        self.home_origin_policy = policy;
+        self
     }
 }

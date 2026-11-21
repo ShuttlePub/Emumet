@@ -30,14 +30,24 @@ async fn account(iso: &IsolatedDatabase, dormant: bool) -> AccountId {
     let mut entity = None;
     Account::apply(&mut entity, created).unwrap();
     if dormant {
-        let event = db
-            .account_event_store()
-            .persist_and_transform(
-                &mut con,
-                Account::deactivate(id.clone(), entity.as_ref().unwrap().version().clone()),
-            )
+        // Seed a genuinely pre-L1 history, as written by the old binary. The current
+        // lifecycle writer deliberately requires the migrated ledger and must not
+        // silently bypass atomic revocation when a production table is missing.
+        let command = Account::deactivate(id.clone(), entity.as_ref().unwrap().version().clone());
+        let version = kernel::generate_id();
+        sqlx::query("INSERT INTO account_events(id,version,event_name,data) VALUES ($1,$2,$3,$4)")
+            .bind(id.as_ref())
+            .bind(version)
+            .bind(command.event_name())
+            .bind(serde_json::to_value(command.event()).unwrap())
+            .execute(&mut *con)
             .await
             .unwrap();
+        let event = kernel::prelude::entity::EventEnvelope::new(
+            command.id().clone(),
+            command.event().clone(),
+            kernel::prelude::entity::EventVersion::new(version),
+        );
         Account::apply(&mut entity, event).unwrap();
     }
     let entity = entity.unwrap();

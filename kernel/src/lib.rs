@@ -6,6 +6,7 @@ mod entity;
 mod error;
 mod event;
 mod event_store;
+pub mod home_link;
 mod http_signing;
 pub mod id;
 mod login_consent;
@@ -204,6 +205,13 @@ macro_rules! impl_database_delegation {
             type AuthHostRepository = <$db_type as $crate::interfaces::repository::DependOnAuthHostRepository>::AuthHostRepository;
             fn auth_host_repository(&self) -> &Self::AuthHostRepository {
                 $crate::interfaces::repository::DependOnAuthHostRepository::auth_host_repository(&self.$field)
+            }
+        }
+
+        impl $crate::home_link::DependOnHomeLinkStore for $impl_type {
+            type HomeLinkStore = <$db_type as $crate::home_link::DependOnHomeLinkStore>::HomeLinkStore;
+            fn home_link_store(&self) -> &Self::HomeLinkStore {
+                $crate::home_link::DependOnHomeLinkStore::home_link_store(&self.$field)
             }
         }
 

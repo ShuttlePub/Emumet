@@ -14,6 +14,7 @@ pub(crate) mod organization;
 pub(crate) mod organization_context;
 pub(crate) mod profile_delivery_worker;
 pub(crate) mod profile_follow_list;
+pub(crate) mod profile_link;
 pub(crate) mod profile_relationship;
 pub(crate) mod profile_transfer;
 pub(crate) mod profile_username_availability;
