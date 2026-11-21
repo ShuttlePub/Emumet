@@ -346,24 +346,53 @@ impl PostgresPostRelayStore {
                 .await
                 .convert_error()?;
         } else {
-            sqlx::query("INSERT INTO post_relay_dead_letters(receipt,terminal_at,expires_at,reason) VALUES($1,$2,$3,$4)").bind(&j.receipt).bind(now).bind(now+QUARANTINE_TTL).bind(reason).execute(&mut **c).await.convert_error()?;
-            sqlx::query("INSERT INTO post_relay_audits(receipt,profile_id,link_id,reason,total_attempts,first_attempt_at,last_attempt_at,last_status,terminal_at,expires_at) SELECT b.receipt,b.profile_id,b.link_id,$2,j.total_attempts,j.first_attempt_at,j.last_attempt_at,j.last_status,$3,$4 FROM post_relay_bodies b JOIN post_relay_jobs j USING(receipt) WHERE b.receipt=$1").bind(&j.receipt).bind(reason).bind(now).bind(now+QUARANTINE_TTL).execute(&mut **c).await.convert_error()?;
+            // Recovery/holds/restarts must not grant a fresh 30-day body retention window.
+            // Expiry is a logical terminal event at the original automatic deadline, not now.
+            let terminal = if reason == "expired" {
+                j.automatic_expires_at
+            } else {
+                now.min(j.automatic_expires_at)
+            };
+            let expires = terminal + QUARANTINE_TTL;
+            let purge_body = now >= expires;
+            sqlx::query("INSERT INTO post_relay_audits(receipt,profile_id,link_id,reason,total_attempts,first_attempt_at,last_attempt_at,last_status,terminal_at,expires_at) SELECT b.receipt,b.profile_id,b.link_id,$2,j.total_attempts,j.first_attempt_at,j.last_attempt_at,j.last_status,$3,$4 FROM post_relay_bodies b JOIN post_relay_jobs j USING(receipt) WHERE b.receipt=$1").bind(&j.receipt).bind(reason).bind(terminal).bind(expires).execute(&mut **c).await.convert_error()?;
+            // Combine release and the body-free summary reservation: even a full quota can finish.
+            let removed = i64::from(purge_body);
             self.delta(
                 c,
                 j.profile_id,
-                0,
-                0,
+                -removed,
+                -removed * j.logical_bytes,
                 1 - RESERVATION_ROWS,
                 1024 - RESERVATION_BYTES,
             )
             .await?;
-            self.usage(c, &j.link_id, 0, 0, -1).await?;
+            self.usage(c, &j.link_id, -removed, -removed * j.logical_bytes, -1)
+                .await?;
             let sql = if reason == "expired" {
                 "UPDATE post_relay_counters SET expired=expired+1 WHERE singleton"
             } else {
                 "UPDATE post_relay_counters SET permanent=permanent+1 WHERE singleton"
             };
             sqlx::query(sql).execute(&mut **c).await.convert_error()?;
+            if purge_body {
+                // Already outside the fixed quarantine window: never make it redeliverable.
+                // Keep the body-free summary with the SAME (already due) audit expiry; the
+                // bounded audit purge removes it, rather than inventing a new retention window.
+                sqlx::query("DELETE FROM post_relay_bodies WHERE receipt=$1")
+                    .bind(&j.receipt)
+                    .execute(&mut **c)
+                    .await
+                    .convert_error()?;
+                sqlx::query("DELETE FROM post_relay_link_usage WHERE link_id=$1 AND body_count=0")
+                    .bind(&j.link_id)
+                    .execute(&mut **c)
+                    .await
+                    .convert_error()?;
+                sqlx::query("UPDATE post_relay_counters SET purged=purged+1,last_purge_at=$1 WHERE singleton").bind(now).execute(&mut **c).await.convert_error()?;
+                return Ok(());
+            }
+            sqlx::query("INSERT INTO post_relay_dead_letters(receipt,terminal_at,expires_at,reason) VALUES($1,$2,$3,$4)").bind(&j.receipt).bind(terminal).bind(expires).bind(reason).execute(&mut **c).await.convert_error()?;
         }
         sqlx::query("DELETE FROM post_relay_jobs WHERE receipt=$1")
             .bind(&j.receipt)

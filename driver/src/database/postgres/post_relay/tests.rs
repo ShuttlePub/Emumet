@@ -1645,3 +1645,173 @@ async fn post_relay_preparation_is_not_permission_and_stale_or_revoked_lease_get
     );
     consistent(db, now).await;
 }
+
+#[tokio::test]
+#[test_with::env(DATABASE_URL)]
+async fn post_relay_late_collection_never_extends_logical_terminal_or_quarantine_retention() {
+    let d = IsolatedDatabase::create().await;
+    let db = &d.database;
+    let (_, ps) = fixture(db, 4, true).await;
+    let now = clock();
+    physical(db, now).await;
+    for (i, receipt) in ["late-within", "late-exact", "late-long", "permanent-edge"]
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(admit(db, &ps[i], receipt, now, 31).await, Admission::Queued);
+    }
+    let cutoff = now + AUTOMATIC_TTL;
+    let expiry = cutoff + QUARANTINE_TTL;
+    let hold_at = cutoff - Duration::seconds(1);
+    let leases = claim(db, hold_at, 4).await;
+    let mut tx = db.get_transaction().await.unwrap();
+    assert_eq!(
+        at(hold_at)
+            .hold(
+                tx.connection(),
+                leases.iter().find(|l| l.receipt == "late-long").unwrap()
+            )
+            .await
+            .unwrap(),
+        Recorded::Applied
+    );
+    tx.commit().await.unwrap();
+    let permanent_lease = leases
+        .into_iter()
+        .find(|l| l.receipt == "permanent-edge")
+        .unwrap();
+    // Delayed collection within quarantine retains only the remainder, not 30 fresh days.
+    let mut tx = db.get_transaction().await.unwrap();
+    assert_eq!(
+        at(cutoff + Duration::days(10))
+            .expire_due(tx.connection(), ps[0].id(), 128)
+            .await
+            .unwrap(),
+        1
+    );
+    tx.commit().await.unwrap();
+    let tuple: (OffsetDateTime, OffsetDateTime) = sqlx::query_as(
+        "SELECT terminal_at,expires_at FROM post_relay_dead_letters WHERE receipt='late-within'",
+    )
+    .fetch_one(&d.pool)
+    .await
+    .unwrap();
+    assert_eq!(tuple, (cutoff, expiry));
+    let request = operation(&ps[0], "late-preview", OperatorAction::Redeliver);
+    let mut tx = db.get_transaction().await.unwrap();
+    assert_eq!(
+        at(expiry - Duration::microseconds(1))
+            .operator_preview(tx.connection(), &request)
+            .await
+            .unwrap()
+            .count,
+        1
+    );
+    tx.commit().await.unwrap();
+    let mut tx = db.get_transaction().await.unwrap();
+    assert_eq!(
+        at(expiry)
+            .operator_preview(tx.connection(), &request)
+            .await
+            .unwrap()
+            .count,
+        0
+    );
+    at(expiry)
+        .purge_expired(tx.connection(), ps[0].id(), 128)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    // Exactly at the absolute expiry and far beyond it: no quarantine/body, no manual operation.
+    for (i, receipt, late) in [
+        (1, "late-exact", expiry),
+        (2, "late-long", expiry + Duration::days(100)),
+    ] {
+        let mut tx = db.get_transaction().await.unwrap();
+        assert_eq!(
+            at(late)
+                .expire_due(tx.connection(), ps[i].id(), 128)
+                .await
+                .unwrap(),
+            1
+        );
+        tx.commit().await.unwrap();
+        assert_eq!(
+            number(
+                &d,
+                &format!("SELECT count(*) FROM post_relay_bodies WHERE receipt='{receipt}'")
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            number(
+                &d,
+                &format!("SELECT count(*) FROM post_relay_dead_letters WHERE receipt='{receipt}'")
+            )
+            .await,
+            0
+        );
+        let audit: (OffsetDateTime, OffsetDateTime) =
+            sqlx::query_as("SELECT terminal_at,expires_at FROM post_relay_audits WHERE receipt=$1")
+                .bind(receipt)
+                .fetch_one(&d.pool)
+                .await
+                .unwrap();
+        assert_eq!(audit, (cutoff, expiry));
+        let mut tx = db.get_transaction().await.unwrap();
+        assert_eq!(
+            at(late)
+                .operator_preview(
+                    tx.connection(),
+                    &operation(&ps[i], receipt, OperatorAction::Redeliver)
+                )
+                .await
+                .unwrap()
+                .count,
+            0
+        );
+        at(late)
+            .purge_expired(tx.connection(), ps[i].id(), 128)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            number(
+                &d,
+                &format!("SELECT count(*) FROM post_relay_audits WHERE receipt='{receipt}'")
+            )
+            .await,
+            0
+        );
+    }
+    // A permanent observation just BEFORE cutoff uses that earlier attempt time, not cutoff.
+    let observed = cutoff - Duration::microseconds(1);
+    let lease = permanent_lease;
+    assert!(matches!(
+        authorize(db, &lease, observed).await,
+        Authorization::Permitted(_)
+    ));
+    let mut tx = db.get_transaction().await.unwrap();
+    assert_eq!(
+        at(observed)
+            .record_attempt(
+                tx.connection(),
+                &lease,
+                AttemptResult::Permanent { status: Some(400) },
+                0
+            )
+            .await
+            .unwrap(),
+        Recorded::Applied
+    );
+    tx.commit().await.unwrap();
+    let permanent: (OffsetDateTime, OffsetDateTime) = sqlx::query_as(
+        "SELECT terminal_at,expires_at FROM post_relay_dead_letters WHERE receipt='permanent-edge'",
+    )
+    .fetch_one(&d.pool)
+    .await
+    .unwrap();
+    assert_eq!(permanent, (observed, observed + QUARANTINE_TTL));
+    consistent(db, expiry + Duration::days(100)).await;
+}

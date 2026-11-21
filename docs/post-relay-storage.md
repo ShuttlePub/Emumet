@@ -62,7 +62,10 @@ API connections during HTTP. Throughput/fairness and HTTP cancellation stop-poin
 post_relay_bodies owns immutable receipt, origin, link/generation, received_at and envelope bytes.
 An UPDATE trigger rejects changes. Jobs/dead letters reference this ONE copy, not a second body
 when quarantine/manual delivery is staged. No FK to disposable Profile/Account projections.
-No body is put in an event stream. Logical body bytes = envelope length +4096 bounded metadata.
+No body is put in an event stream. Logical body bytes = envelope length +4096 bounded metadata
+(including the one-to-one job/quarantine references). The separate metadata row cap below covers
+attempts, body-free audits, aggregates and their reservations, as specified in plan §6.4; it is
+not a second independent job/quarantine body quota.
 
 | Partition | Global | Profile |
 | --- | --- | --- |
@@ -86,9 +89,17 @@ Actual persisted attempts are the last 16; total/first/last/status are bounded a
 
 Success: delete body/job/attempts, release reservation, increment ONE fixed counter. No receipt
 success row. Cancellation: logical release/fixed counter immediately; physical delete below.
-Permanent/expired: delete job/attempts, keep one body/dead-letter and one body-free summary for
-30 days from terminal time. Only these failures use the ADR 0003 exception. No early automatic
-eviction for new arrivals. Manual success deletes the body but retains the original failure audit
+Permanent/expired: delete job/attempts, keep one body/dead-letter and one body-free summary only
+until **logical terminal time +30 days**, never DB collection/commit time +30 days. Logical terminal
+time is received_at +72h for automatic expiry, or the permanent failure observation/attempt time
+(no later than that 72h cutoff). Holds, lease recovery, restarts and a long worker outage extend
+NEITHER deadline. Thus automatic-expiry retention ends at received_at +33 days; an earlier
+permanent failure ends sooner. If first collection is AT or AFTER that fixed quarantine expiry,
+erase the body in that transaction without creating a dead letter: a long outage can skip
+quarantine entirely and manual redelivery is impossible. Still record the body-free failure
+summary with that SAME original terminal/expiry (already purge-due), never a fresh 30-day audit
+window. Bounded audit purge then removes it normally. Only these failures use the ADR 0003
+exception. No early automatic eviction for new arrivals. Manual success deletes the body but retains the original failure audit
 only to its original deadline. Purge never relies on caller-supplied remote IDs as keys/labels.
 Unlinked: Profile + fixed no_home reason + UTC hour, count/first/last only; no receipt, header,
 remote origin, Activity ID or body. Expiry is first aggregation +30d, never refreshed by new counts.
@@ -210,7 +221,7 @@ binaries may reject the additional migration; never drop accepted bodies to make
 - atomic receipt/reservation rollback and old receipt: post_relay_atomic_receipt_reservation_rollback_and_old_receipt_is_not_delivery_evidence
 - all-fail reservation/count race: post_relay_concurrent_admission_enforces_count_and_bytes_and_reserves_every_failure
 - byte race: post_relay_concurrent_byte_limit_is_not_just_a_row_limit
-- retention/bounded summary: post_relay_attempts_bounded_and_failure_has_one_summary_and_original_bytes; post_relay_exact_72_hour_and_30_day_boundaries_do_not_extend_on_hold_or_lease
+- retention/bounded summary: post_relay_attempts_bounded_and_failure_has_one_summary_and_original_bytes; post_relay_exact_72_hour_and_30_day_boundaries_do_not_extend_on_hold_or_lease; post_relay_late_collection_never_extends_logical_terminal_or_quarantine_retention (delayed collection, held outage, exact expiry, >100-day stop, permanent observation at cutoff minus 1µs)
 - stale fencing/absolute deadline/shared16/origin4: post_relay_stale_tokens_cannot_mutate_result_capacity_body_or_permit; post_relay_shared_16_and_origin_4_slots_include_manual_and_survive_purge
 - three real revokers: server post_relay_all_three_revokers_release_queued_and_quarantine_body_reservations_atomically
 - P1 timeout/full Account: post_relay_p1_uncommitted_permission_bounds_revoker_wait_and_rollback_releases_slot; post_relay_full_profile_and_multi_account_logical_cancellation_is_bounded
