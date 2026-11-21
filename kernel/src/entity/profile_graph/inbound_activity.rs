@@ -49,6 +49,8 @@ impl NewInboundActivity {
 /// 保存済みの受信記録。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InboundActivityRecord {
+    /// Actual received Follow/Block, not an early-Undo marker or synthetic generation.
+    pub observed_relation: bool,
     pub receiver: ProfileId,
     pub actor: GraphActorUrl,
     pub activity_id: GraphActivityId,

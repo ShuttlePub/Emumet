@@ -22,6 +22,7 @@ impl Termination for StackTrace {
 #[derive(Debug)]
 pub enum ErrorStatus {
     Report(Report<KernelError>),
+    RetryAfter(StatusCode, u32),
     StatusCode(StatusCode),
     StatusCodeWithMessage(StatusCode, String),
 }
@@ -47,6 +48,11 @@ impl From<(StatusCode, String)> for ErrorStatus {
 impl IntoResponse for ErrorStatus {
     fn into_response(self) -> axum::response::Response {
         match self {
+            ErrorStatus::RetryAfter(status, seconds) => (
+                status,
+                [(axum::http::header::RETRY_AFTER, seconds.to_string())],
+            )
+                .into_response(),
             ErrorStatus::Report(e) => match e.current_context() {
                 KernelError::Concurrency => {
                     tracing::warn!("Concurrency conflict: {e:?}");
