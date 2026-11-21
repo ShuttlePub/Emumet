@@ -473,6 +473,15 @@ impl RemotePeer {
         peer
     }
 
+    /// Override the owner supplied by the actual verification key document.
+    pub fn register_verification_owner(&self, owner: &str) {
+        driver::http_signing::inject_test_actor_key(
+            &self.key_id,
+            PEER_KEYS.public_pem.clone(),
+            owner,
+        );
+    }
+
     pub fn register_actor_document(&self) {
         application::service::activitypub::inject_test_remote_actor(
             &self.actor_url,

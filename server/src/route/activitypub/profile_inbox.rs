@@ -95,6 +95,7 @@ pub(crate) async fn post_profile_inbox(
         ))
     })?;
     if !(application::inbox_reading::is_remote_url(&verification.key_id)
+        && application::inbox_reading::is_remote_url(&verification.owner)
         && same_activitypub_id(&verification.owner, &reading.actor)
         && signature_key_document_matches_actor(&verification.key_id, &reading.actor))
     {

@@ -113,3 +113,26 @@ sampling is not a full lock-duration trace. The probe is bounded intake evidence
 sender/backlog test, not a 4-vCPU production SLO, and does not authorize S1/I1 activation.
 
 Measured environment/results are recorded in post-relay-intake-measurement.md.
+
+## Inbox URL bounds versus the legacy relation graph
+
+The forwarding contract accepts actor, usable Activity ID, verification key ID and the **actual
+verified owner** through URL_MAX=2048. The owner is validated itself before admission: the slash-tolerant
+owner/body-actor comparison is not URL validation. Envelope evidence always retains that actual owner;
+it is never replaced with the body actor. Legacy relation authorization/cancellation also uses the
+verified owner, including when the body actor differs by a trailing slash.
+
+The pre-existing social-graph types and database constraints remain 1024 bytes. Do not apply those
+representation limits to forwarding. Values beyond that boundary skip legacy relation mutation/receipt
+work instead of causing a 400 or creating a relation under another identity. A valid 1025–2048 Activity
+ID remains unchanged in the envelope, and an ID over URL_MAX becomes null. No existing graph relation
+can belong to a >1024-byte owner, or have a >1024-byte Follow ID. An outer Undo ID that cannot fit the
+legacy receipt must not discard its short Follow reference: omit only that outer legacy receipt and
+keep the receiver-scoped early-Undo guard in the same Q1 transaction. Raw bytes/the original usable
+outer ID still reach the durable relay job.
+
+Type classification and relation authorization are separate. Stored Follow/Block evidence is looked up
+by receiving Profile + Activity ID, across all signers; a different signer never gains authority to
+change that relation. Guard markers alone are not evidence, and evidence from another Profile does
+not exclude forwarding. The D63 routing result remains independent of legacy representation limits.
+No pre-existing graph database constraint or index was changed for this separation.

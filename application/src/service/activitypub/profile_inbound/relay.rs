@@ -36,7 +36,7 @@ impl<T: ProfileInboxUseCase + DependOnPostRelayStore> ProfileRelayInboxUseCase f
 async fn certain<T: ProfileRelayInboxUseCase>(
     deps: &T,
     c: &mut Conn<T>,
-    ctx: &Context,
+    receiver: &ProfileId,
     r: &Value,
 ) -> error_stack::Result<bool, KernelError> {
     if InboxReading::embedded_relation(r) {
@@ -48,16 +48,15 @@ async fn certain<T: ProfileRelayInboxUseCase>(
     // A real received Follow/Block is evidence; an UndoFollow marker is NOT.
     if deps
         .inbound_activity_repository()
-        .find(c, &ctx.receiver, &ctx.signer, &id)
+        .has_observed_relation(c, receiver, &id)
         .await?
-        .is_some_and(|r| r.observed_relation)
     {
         return Ok(true);
     }
     // Local outbound generations are real Follow operations, never early-Undo tombstones.
     Ok(deps
         .profile_follow_repository()
-        .find_by_follower_activity(c, &ProfileGraphActor::Local(ctx.receiver.clone()), &id)
+        .find_by_follower_activity(c, &ProfileGraphActor::Local(receiver.clone()), &id)
         .await?
         .is_some())
 }
@@ -88,10 +87,13 @@ async fn admit<T: ProfileRelayInboxUseCase>(
     module: &T,
     dto: ProfileRelayInboxDto,
 ) -> error_stack::Result<ProfileInboxOutcome, KernelError> {
-    if !same_id(&dto.verification.owner, &dto.reading.actor) {
+    if !crate::inbox_reading::is_remote_url(&dto.verification.owner)
+        || !crate::inbox_reading::is_remote_url(&dto.verification.key_id)
+        || !same_id(&dto.verification.owner, &dto.reading.actor)
+    {
         return Err(Report::new(KernelError::PermissionDenied));
     }
-    let activity = dto.reading.relation_activity();
+    let mut activity = dto.reading.relation_activity();
     // Follow is excluded and keeps its existing network-before-transaction relation path.
     if dto.reading.relation.as_deref() == Some("Follow") {
         return handle(
@@ -105,11 +107,24 @@ async fn admit<T: ProfileRelayInboxUseCase>(
         .await;
     }
     let (receiver, local_actor_url) = resolve_receiver(module, &dto.profile_nanoid).await?;
-    let ctx = Context {
-        receiver,
-        local_actor_url,
-        signer: GraphActorUrl::new(dto.reading.actor.clone())?,
-    };
+    // Forwarding accepts the contract URL_MAX=2048; the legacy graph/schema only 1024.
+    // Never turn that legacy representation limit into an admission rejection. Relation
+    // authorization uses the verified owner (not the slash-equivalent body actor).
+    let context = GraphActorUrl::new(dto.verification.owner.clone())
+        .ok()
+        .map(|signer| Context {
+            receiver: receiver.clone(),
+            local_actor_url: local_actor_url.clone(),
+            signer,
+        });
+    let own_id_fits_graph =
+        activity.id.is_empty() || GraphActivityId::new(activity.id.clone()).is_ok();
+    let is_undo = dto.reading.relation.as_deref() == Some("Undo");
+    if is_undo && !own_id_fits_graph {
+        // An unrepresentable outer receipt must not discard a short Follow cancellation.
+        // apply_undo permits no outer id and still records the receiver-scoped guard.
+        activity.id.clear();
+    }
     let deps = module.clone();
     module
         .transaction_manager()
@@ -118,7 +133,7 @@ async fn admit<T: ProfileRelayInboxUseCase>(
                 // Takes Account/Profile/relationship gates before the link row (L1/Q1 order).
                 let recipient = deps
                     .post_relay_store()
-                    .prepare_admission(c, &ctx.receiver)
+                    .prepare_admission(c, &receiver)
                     .await?;
                 let mut exclude = matches!(dto.reading.relation.as_deref(), Some("Block"));
                 if matches!(
@@ -128,32 +143,38 @@ async fn admit<T: ProfileRelayInboxUseCase>(
                     let refs = dto.reading.references();
                     exclude = !refs.is_empty();
                     for r in refs {
-                        if !certain(&deps, c, &ctx, r).await? {
+                        if !certain(&deps, c, &receiver, r).await? {
                             exclude = false;
                         }
                     }
                 }
                 let mut outcome = ignored(ProfileInboxIgnored::UnsupportedActivity);
-                match dto.reading.relation.as_deref() {
-                    Some("Block") => {
-                        if let Some(id) = dto.reading.activity_id.as_ref() {
-                            let id = GraphActivityId::new(id.clone())?;
+                match (context.as_ref(), dto.reading.relation.as_deref()) {
+                    (Some(ctx), Some("Block")) => {
+                        if let Some(id) = dto
+                            .reading
+                            .activity_id
+                            .as_ref()
+                            .and_then(|id| GraphActivityId::new(id.clone()).ok())
+                        {
                             deps.inbound_activity_repository()
                                 .record(
                                     c,
-                                    &inbound_record(&ctx, &id, "Block", OffsetDateTime::now_utc())?,
+                                    &inbound_record(ctx, &id, "Block", OffsetDateTime::now_utc())?,
                                 )
                                 .await?;
                         }
                     }
-                    Some("Undo" | "Accept" | "Reject") => {
+                    (Some(ctx), Some("Undo" | "Accept" | "Reject")) => {
                         // An array/missing object is not a unique legacy relation operation.
                         let process = match follow_object(activity.object.as_ref()) {
-                            FollowObject::Embedded { .. } => true,
+                            FollowObject::Embedded { id, .. } => {
+                                id.is_none_or(|id| GraphActivityId::new(id).is_ok())
+                            }
                             FollowObject::Id(id) => GraphActivityId::new(id).is_ok(),
                             _ => false,
                         };
-                        if process {
+                        if process && (own_id_fits_graph || is_undo) {
                             let base = deps.public_base_url().as_str().trim_end_matches('/');
                             if ctx.signer.as_str().starts_with(&format!("{base}/ap/")) {
                                 return Err(rejected(
@@ -203,7 +224,7 @@ async fn admit<T: ProfileRelayInboxUseCase>(
                     Some(r) => envelope(
                         &dto,
                         deps.public_base_url().as_str().trim_end_matches('/'),
-                        &ctx.local_actor_url,
+                        &local_actor_url,
                         &receipt,
                         at,
                         r,
@@ -215,7 +236,7 @@ async fn admit<T: ProfileRelayInboxUseCase>(
                     .enqueue(
                         c,
                         &RelayAdmission {
-                            profile_id: ctx.receiver,
+                            profile_id: receiver,
                             receipt,
                             received_at: at,
                             recipient,

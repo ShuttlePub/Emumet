@@ -129,6 +129,24 @@ impl InboundActivityRepository for PostgresInboundActivityRepository {
         .transpose()
     }
 
+    async fn has_observed_relation(
+        &self,
+        executor: &mut Self::Connection,
+        receiver: &ProfileId,
+        activity_id: &GraphActivityId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM profile_inbound_activities \
+             WHERE receiver_profile_id = $1 AND activity_id = $2 AND observed_relation)",
+        )
+        .bind(receiver.as_ref())
+        .bind(activity_id.as_str())
+        .fetch_one(con)
+        .await
+        .convert_error()
+    }
+
     async fn purge_received_before(
         &self,
         executor: &mut Self::Connection,

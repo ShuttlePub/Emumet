@@ -685,3 +685,382 @@ async fn concurrent_hour_bucket_and_last_profile_quota_slot_are_atomic() {
         .await
         .unwrap());
 }
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn verified_owner_slash_variants_preserve_prior_and_existing_follow_cancellations() {
+    for enabled in [false, true] {
+        let mut w = world().await;
+        w.module = w.module.clone().with_post_relay_inbox(enabled);
+        let p = w.actor_profile().await;
+        link(&w, &p).await;
+        for prior in [false, true] {
+            for embedded in [false, true] {
+                let peer = RemotePeer::new();
+                let follow_id = peer.activity_id("slash-follow");
+                let follow = peer.follow(&follow_id, &p.actor_url);
+                let mut undo = peer.undo(
+                    &peer.activity_id("slash-undo"),
+                    if embedded {
+                        follow.clone()
+                    } else {
+                        json!(follow_id)
+                    },
+                );
+                undo["actor"] = json!(format!("{}/", peer.actor_url));
+                if !prior {
+                    assert_eq!(
+                        post(&w, &p, &peer, &follow).await.status(),
+                        StatusCode::ACCEPTED
+                    );
+                    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_follows WHERE follower_actor_url=$1 AND state<>'ended')")
+                        .bind(&peer.actor_url).fetch_one(w.pool()).await.unwrap();
+                    assert!(active);
+                }
+                assert_eq!(
+                    post(&w, &p, &peer, &undo).await.status(),
+                    StatusCode::ACCEPTED,
+                    "enabled={enabled} prior={prior} embedded={embedded}"
+                );
+                if prior {
+                    assert_eq!(
+                        post(&w, &p, &peer, &follow).await.status(),
+                        StatusCode::ACCEPTED
+                    );
+                }
+                let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_follows WHERE follower_actor_url=$1 AND state<>'ended')")
+                    .bind(&peer.actor_url).fetch_one(w.pool()).await.unwrap();
+                assert!(!active, "verified owner must key cancellation state");
+                let wrong_owner: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM profile_inbound_activities WHERE actor_url=$1",
+                )
+                .bind(format!("{}/", peer.actor_url))
+                .fetch_one(w.pool())
+                .await
+                .unwrap();
+                assert_eq!(wrong_owner, 0);
+            }
+        }
+    }
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn verification_owner_itself_is_bounded_and_preserved_not_replaced_by_body_actor() {
+    let w = world().await;
+    let p = w.actor_profile().await;
+    link(&w, &p).await;
+    let peer = RemotePeer::new();
+    let body = json!({"type":"Create", "actor":peer.actor_url});
+    for len in [2049, 4096] {
+        let owner = format!(
+            "{}{}",
+            peer.actor_url,
+            "/".repeat(len - peer.actor_url.len())
+        );
+        peer.register_verification_owner(&owner);
+        assert_eq!(
+            post(&w, &p, &peer, &body).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(count(&w, "post_relay_jobs").await, 0);
+        assert_eq!(count(&w, "profile_inbound_activities").await, 0);
+    }
+    // The existing key-injection helper treats an empty owner as its key-id owner;
+    // use nonempty invalid values so these really reach verification unchanged.
+    for owner in [
+        " ",
+        "httpS://peer.example/u",
+        "https://peer.example/u ",
+        "https://user@peer.example/u",
+    ] {
+        peer.register_verification_owner(owner);
+        assert_eq!(
+            post(&w, &p, &peer, &body).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let owner = format!(
+        "{}{}",
+        peer.actor_url,
+        "/".repeat(2048 - peer.actor_url.len())
+    );
+    peer.register_verification_owner(&owner);
+    assert_eq!(
+        post(&w, &p, &peer, &body).await.status(),
+        StatusCode::ACCEPTED
+    );
+    let all = envelopes(&w).await;
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0]["activity"]["actor"], peer.actor_url);
+    assert_eq!(all[0]["verification"]["signer_actor"], owner);
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../../docs/contracts/post-relay-v1.schema.json"
+    ))
+    .unwrap();
+    jsonschema::validator_for(&schema)
+        .unwrap()
+        .validate(&all[0])
+        .unwrap();
+}
+
+fn exact_url(prefix: &str, len: usize) -> String {
+    assert!(prefix.len() <= len);
+    format!("{prefix}{}", "a".repeat(len - prefix.len()))
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn signed_http_url_boundaries_reach_jobs_and_long_undo_ids_keep_short_follow_guards() {
+    let w = world().await;
+    let p = w.actor_profile().await;
+    link(&w, &p).await;
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../../docs/contracts/post-relay-v1.schema.json"
+    ))
+    .unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let mut expected = 0;
+    for len in [1024, 1025, 2048, 2049] {
+        let actor = exact_url(
+            &format!(
+                "https://peer-{}.remote.example/",
+                uuid::Uuid::new_v4().simple()
+            ),
+            len,
+        );
+        let mut peer = RemotePeer::at(&actor);
+        // A key id need not have a fragment: keep a max-length actor's key id within URL_MAX too.
+        peer.key_id = actor.clone();
+        peer.register_verification_owner(&actor);
+        for kind in ["Create", "Accept", "Reject", "Undo"] {
+            let v = json!({"type":kind,"actor":actor,"object":"https://unknown.example/follow"});
+            let response = post(&w, &p, &peer, &v).await;
+            assert_eq!(
+                response.status(),
+                if len <= 2048 {
+                    StatusCode::ACCEPTED
+                } else {
+                    StatusCode::BAD_REQUEST
+                },
+                "actor len={len} kind={kind}"
+            );
+            if len <= 2048 {
+                expected += 1;
+                let raw = serde_json::to_vec(&v).unwrap();
+                let all = envelopes(&w).await;
+                let e = all
+                    .iter()
+                    .find(|e| e["activity"]["raw_body"] == STANDARD.encode(&raw))
+                    .unwrap();
+                assert_eq!(e["activity"]["actor"], actor);
+                assert_eq!(e["verification"]["signer_actor"], actor);
+                validator.validate(e).unwrap();
+            }
+            assert_eq!(count(&w, "post_relay_jobs").await, expected);
+        }
+    }
+    let peer = RemotePeer::new();
+    for len in [1024, 1025, 2048, 2049] {
+        for kind in ["Undo", "Accept", "Reject"] {
+            let reference = exact_url(&format!("https://unknown.example/{len}/{kind}/"), len);
+            for (i, object) in [
+                json!(reference),
+                json!({"id":reference}),
+                json!({"type":"Follow","id":reference,"actor":peer.actor_url,"object":p.actor_url}),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let v = json!({"type":kind,"actor":peer.actor_url,"id":peer.activity_id(&format!("reference-{len}-{kind}-{i}")),"object":object});
+                assert_eq!(
+                    post(&w, &p, &peer, &v).await.status(),
+                    StatusCode::ACCEPTED,
+                    "reference len={len} kind={kind} form={i}"
+                );
+                if i < 2 {
+                    expected += 1;
+                }
+                assert_eq!(
+                    count(&w, "post_relay_jobs").await,
+                    expected,
+                    "embedded Follow is excluded independently of legacy bounds"
+                );
+            }
+        }
+    }
+    for len in [1024, 1025, 2048, 2049] {
+        for kind in ["Create", "Accept", "Reject", "Undo"] {
+            let id = exact_url(&format!("https://remote.example/{len}/{kind}/"), len);
+            let follow_id = peer.activity_id(&format!("late-{len}-{kind}"));
+            let v = json!({"type":kind,"id":id,"actor":peer.actor_url,"object":follow_id});
+            assert_eq!(
+                post(&w, &p, &peer, &v).await.status(),
+                StatusCode::ACCEPTED,
+                "id len={len} kind={kind}"
+            );
+            expected += 1;
+            let raw = serde_json::to_vec(&v).unwrap();
+            let all = envelopes(&w).await;
+            let e = all
+                .iter()
+                .find(|e| e["activity"]["raw_body"] == STANDARD.encode(&raw))
+                .unwrap();
+            assert_eq!(
+                e["activity"]["id"],
+                if len <= 2048 { json!(id) } else { Value::Null }
+            );
+            validator.validate(e).unwrap();
+            if kind == "Undo" {
+                assert_eq!(
+                    post(&w, &p, &peer, &peer.follow(&follow_id, &p.actor_url))
+                        .await
+                        .status(),
+                    StatusCode::ACCEPTED
+                );
+                let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_follows WHERE follower_actor_url=$1 AND activity_id=$2 AND state<>'ended')")
+                    .bind(&peer.actor_url).bind(&follow_id).fetch_one(w.pool()).await.unwrap();
+                assert!(
+                    !active,
+                    "long outer Undo id must not drop the short Follow guard"
+                );
+            }
+            assert_eq!(count(&w, "post_relay_jobs").await, expected);
+        }
+    }
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn d63_stored_type_evidence_is_profile_scoped_not_signer_authorization() {
+    let w = world().await;
+    let p = w.actor_profile().await;
+    let other = w.actor_profile().await;
+    link(&w, &p).await;
+    link(&w, &other).await;
+    let a = RemotePeer::new();
+    let b = RemotePeer::new();
+    let follow_id = a.activity_id("actual-follow");
+    let block_id = a.activity_id("actual-block");
+    assert_eq!(
+        post(&w, &p, &a, &a.follow(&follow_id, &p.actor_url))
+            .await
+            .status(),
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        post(
+            &w,
+            &p,
+            &a,
+            &json!({"type":"Block","actor":a.actor_url,"id":block_id})
+        )
+        .await
+        .status(),
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(count(&w, "post_relay_jobs").await, 0);
+    for kind in ["Undo", "Accept", "Reject"] {
+        for (i, object) in [
+            json!(follow_id),
+            json!({"id":follow_id}),
+            json!(block_id),
+            json!({"id":block_id}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let v = json!({"type":kind,"actor":b.actor_url,"id":b.activity_id(&format!("cross-actor-{kind}-{i}")),"object":object});
+            assert_eq!(post(&w, &p, &b, &v).await.status(), StatusCode::ACCEPTED);
+            assert_eq!(
+                count(&w, "post_relay_jobs").await,
+                0,
+                "stored evidence is not signer scoped"
+            );
+        }
+    }
+    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_follows WHERE follower_actor_url=$1 AND activity_id=$2 AND state='accepted')")
+        .bind(&a.actor_url).bind(&follow_id).fetch_one(w.pool()).await.unwrap();
+    assert!(
+        active,
+        "B's known type reference must not authorize changing A's Follow"
+    );
+    let guard_id = a.activity_id("guard-not-evidence");
+    assert_eq!(
+        post(
+            &w,
+            &p,
+            &a,
+            &a.undo(&a.activity_id("guard"), json!(guard_id))
+        )
+        .await
+        .status(),
+        StatusCode::ACCEPTED
+    );
+    let mut expected = 1;
+    for kind in ["Undo", "Accept", "Reject"] {
+        for (profile, object) in [
+            (&p, json!(guard_id)),
+            (&other, json!(follow_id)),
+            (&other, json!(block_id)),
+        ] {
+            let v = json!({"type":kind,"actor":b.actor_url,"id":b.activity_id(&format!("unknown-{kind}-{expected}")),"object":object});
+            assert_eq!(
+                post(&w, profile, &b, &v).await.status(),
+                StatusCode::ACCEPTED
+            );
+            expected += 1;
+            assert_eq!(count(&w, "post_relay_jobs").await, expected);
+        }
+    }
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn canonical_forward_url_boundaries_pass_signed_http_and_envelope_schema() {
+    let w = world().await;
+    let p = w.actor_profile().await;
+    link(&w, &p).await;
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../../../docs/contracts/post-relay-v1-fixtures/inbox/activity-reading.json"
+    ))
+    .unwrap();
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../../docs/contracts/post-relay-v1.schema.json"
+    ))
+    .unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let mut executed = Vec::new();
+    for case in fixtures["cases"].as_array().unwrap() {
+        let name = case["id"].as_str().unwrap();
+        if case["expect"]["outcome"] != "forward"
+            || !(name.contains("url-max") || name.contains("punycode"))
+        {
+            continue;
+        }
+        let actor = case["expect"]["actor"].as_str().unwrap();
+        let mut peer = RemotePeer::at(actor);
+        peer.key_id = actor.to_string();
+        peer.register_verification_owner(actor);
+        let raw = case["body"].as_str().unwrap().as_bytes();
+        let response = w
+            .inbox_router()
+            .oneshot(request(&w, &p, &peer, raw, case["content_type"].as_str().unwrap()).await)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "{name}");
+        let all = envelopes(&w).await;
+        let e = all
+            .iter()
+            .find(|e| e["activity"]["raw_body"] == STANDARD.encode(raw))
+            .unwrap();
+        assert_eq!(e["activity"]["id"], case["expect"]["activity_id"], "{name}");
+        assert_eq!(e["activity"]["actor"], actor);
+        validator.validate(e).unwrap();
+        executed.push(name.to_owned());
+    }
+    assert!(executed
+        .iter()
+        .any(|name| name == "forward-actor-exactly-url-max"));
+    assert!(executed.len() >= 3, "{executed:?}");
+}
