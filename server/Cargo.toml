@@ -63,3 +63,4 @@ tokio = { workspace = true, features = ["process", "test-util"] }
 sqlx = { version = "0.7", features = ["runtime-tokio", "postgres"] }
 sha2 = "0.10"
 httpdate = "1"
+jsonschema = { version = "0.62.0", default-features = false }

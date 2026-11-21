@@ -1,0 +1,988 @@
+{
+  "note": "Inbox reading fixtures (v1.md \"Reading an inbox Activity\"). `body` is the exact request body text; `body_synthetic` is built by the harness: padding = {\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\",\"pad\":\"aaa...\"} of exactly `bytes` bytes; nested_depth = {\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\",\"x\":[[...[]...]]} whose JSON container depth is exactly `depth` (the root object is depth 1); node_count = {\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\",\"x\":[0,0,...]} with exactly `nodes` JSON values in total. known_relation_ids are the ids of Follow/Block activities already stored for the Profile; prior_undo_markers are ids that only exist as early-Undo guard markers.",
+  "cases": [
+    {
+      "id": "forward-create-to-string",
+      "title": "Create with `to` as a bare string.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\",\"to\":\"https://www.w3.org/ns/activitystreams#Public\",\"object\":{\"type\":\"Note\",\"content\":\"hi\"}}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-create-actor-object",
+      "title": "actor as an object with a string id.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/2\",\"type\":\"Create\",\"actor\":{\"id\":\"https://remote.example/users/bob\",\"type\":\"Person\"},\"object\":{\"type\":\"Note\"}}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/2",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-create-no-id",
+      "title": "No Activity id: activity_id is null.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\",\"object\":{\"type\":\"Note\"}}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": null,
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-id-not-a-string",
+      "title": "id is a number: not extractable, so null.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":12345,\"type\":\"Like\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://home.example/n/1\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": null,
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-like",
+      "title": "Like.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Like\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://home.example/n/1\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-announce",
+      "title": "Announce.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Announce\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://home.example/n/1\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-delete",
+      "title": "Delete.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Delete\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/n/9\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-update",
+      "title": "Update.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Update\",\"actor\":\"https://remote.example/users/bob\",\"object\":{\"id\":\"https://remote.example/n/9\",\"type\":\"Note\"}}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-extension-type-only",
+      "title": "A type the receiver has never heard of is still forwarded.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"https://example.org/ns#Poll\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-type-array-with-extension",
+      "title": "type array: Create plus an extension type.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"Create\",\"https://example.org/ns#Foo\"],\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-type-array-unknown-only",
+      "title": "type array of unknown types only.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"Foo\",\"Bar\"],\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-ldjson-as-profile",
+      "title": "application/ld+json with the ActivityStreams profile.",
+      "content_type": "application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-ldjson-no-profile",
+      "title": "application/ld+json without a profile parameter.",
+      "content_type": "application/ld+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-activity-json-charset-uppercase",
+      "title": "MIME type and charset are case-insensitive.",
+      "content_type": "Application/Activity+JSON; charset=UTF-8",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-actor-array-single",
+      "title": "actor as a one-element array.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/3\",\"type\":\"Create\",\"actor\":[\"https://remote.example/users/bob\"]}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/3",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-actor-array-same-id-twice",
+      "title": "actor array whose elements all resolve to one id.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/4\",\"type\":\"Create\",\"actor\":[\"https://remote.example/users/bob\",{\"id\":\"https://remote.example/users/bob\"}]}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/4",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-undo-unknown-url",
+      "title": "Undo whose object is only a URL the receiver does not know: reference unknown, so forward.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/unknown\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-undo-without-object",
+      "title": "Undo with no object: not a 422, reference unknown, forward.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-undo-empty-array",
+      "title": "Undo with an empty object array: reference unknown, forward.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":[]}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-undo-mixed-array",
+      "title": "Undo with a known Follow and an unknown URL: the whole body is forwarded.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":[\"https://remote.example/follows/1\",\"https://remote.example/likes/7\"]}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-undo-embedded-like",
+      "title": "Undo of an embedded Like (not a Follow/Block).",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":{\"id\":\"https://remote.example/likes/7\",\"type\":\"Like\",\"object\":\"https://home.example/n/1\"}}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-accept-unknown-url",
+      "title": "Accept of an unknown URL.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Accept\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/unknown\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-reject-unknown-url",
+      "title": "Reject of an unknown URL.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Reject\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/unknown\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-undo-extension-type-unknown-ref",
+      "title": "Undo plus an extension type, unknown reference: forward.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"Undo\",\"https://example.org/ns#Foo\"],\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/unknown\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-undo-prior-undo-marker-is-not-evidence",
+      "title": "The URL is only recorded as a prior-Undo guard marker (the Follow itself was never seen). A marker is not evidence of a Follow: forward.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/early\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "prior_undo_markers": [
+        "https://remote.example/follows/early"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-depth-32",
+      "title": "JSON nesting depth exactly 32 (inclusive limit).",
+      "content_type": "application/activity+json",
+      "body_synthetic": {
+        "kind": "nested_depth",
+        "depth": 32
+      },
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": null,
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-nodes-100000",
+      "title": "Exactly 100000 JSON values (inclusive limit).",
+      "content_type": "application/activity+json",
+      "body_synthetic": {
+        "kind": "node_count",
+        "nodes": 100000
+      },
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": null,
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-body-exactly-1mib",
+      "title": "Body of exactly 1048576 bytes (inclusive limit).",
+      "content_type": "application/activity+json",
+      "body_synthetic": {
+        "kind": "padding",
+        "bytes": 1048576
+      },
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": null,
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "forward-type-array-16",
+      "title": "type array with exactly 16 entries (inclusive limit).",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"https://example.org/ns#T0\",\"https://example.org/ns#T1\",\"https://example.org/ns#T2\",\"https://example.org/ns#T3\",\"https://example.org/ns#T4\",\"https://example.org/ns#T5\",\"https://example.org/ns#T6\",\"https://example.org/ns#T7\",\"https://example.org/ns#T8\",\"https://example.org/ns#T9\",\"https://example.org/ns#T10\",\"https://example.org/ns#T11\",\"https://example.org/ns#T12\",\"https://example.org/ns#T13\",\"https://example.org/ns#T14\",\"https://example.org/ns#T15\"],\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://remote.example/a/1",
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
+      "id": "exclude-follow",
+      "title": "Follow.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/follows/1\",\"type\":\"Follow\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://emumet.example/ap/profiles/p1nano\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "type"
+      }
+    },
+    {
+      "id": "exclude-block",
+      "title": "Block.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/blocks/1\",\"type\":\"Block\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://emumet.example/ap/profiles/p1nano\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "type"
+      }
+    },
+    {
+      "id": "exclude-follow-prefixed",
+      "title": "`as:Follow` is recognized as the standard term.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"as:Follow\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://emumet.example/ap/profiles/p1nano\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "type"
+      }
+    },
+    {
+      "id": "exclude-follow-full-iri",
+      "title": "Full ActivityStreams IRI.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"https://www.w3.org/ns/activitystreams#Follow\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://emumet.example/ap/profiles/p1nano\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "type"
+      }
+    },
+    {
+      "id": "exclude-follow-with-extension-type",
+      "title": "Follow plus an extension type is still a Follow.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"Follow\",\"https://example.org/ns#X\"],\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://emumet.example/ap/profiles/p1nano\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "type"
+      }
+    },
+    {
+      "id": "exclude-undo-known-follow-url",
+      "title": "Undo whose object URL is a known Follow.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/1\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "known_reference"
+      }
+    },
+    {
+      "id": "exclude-undo-known-block-url",
+      "title": "Undo whose object URL is a known Block.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/blocks/1\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "known_reference"
+      }
+    },
+    {
+      "id": "exclude-undo-embedded-follow",
+      "title": "Undo with an embedded Follow object: the type is certain.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":{\"id\":\"https://remote.example/follows/2\",\"type\":\"Follow\",\"object\":\"https://emumet.example/ap/profiles/p1nano\"}}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "known_reference"
+      }
+    },
+    {
+      "id": "exclude-undo-embedded-block",
+      "title": "Undo with an embedded Block object.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":{\"id\":\"https://remote.example/blocks/2\",\"type\":\"Block\"}}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "known_reference"
+      }
+    },
+    {
+      "id": "exclude-accept-known-follow",
+      "title": "Accept of a known Follow.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Accept\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/1\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "known_reference"
+      }
+    },
+    {
+      "id": "exclude-reject-known-follow",
+      "title": "Reject of a known Follow.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Reject\",\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/1\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "known_reference"
+      }
+    },
+    {
+      "id": "exclude-undo-array-all-known",
+      "title": "Undo whose object array contains only known Follow/Block references.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Undo\",\"actor\":\"https://remote.example/users/bob\",\"object\":[\"https://remote.example/follows/1\",\"https://remote.example/blocks/1\"]}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "known_reference"
+      }
+    },
+    {
+      "id": "exclude-undo-known-with-extension-type",
+      "title": "Undo plus an extension type, known reference: the reference decides.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"Undo\",\"https://example.org/ns#Foo\"],\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/1\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "exclude",
+        "via": "known_reference"
+      }
+    },
+    {
+      "id": "reject-duplicate-key-top-level",
+      "title": "Duplicate key at the top level.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"type\":\"Create\",\"type\":\"Like\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "duplicate_key"
+      }
+    },
+    {
+      "id": "reject-duplicate-key-nested",
+      "title": "Duplicate key inside a nested object.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\",\"object\":{\"id\":\"a\",\"id\":\"b\"}}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "duplicate_key"
+      }
+    },
+    {
+      "id": "reject-duplicate-key-in-array-element",
+      "title": "Duplicate key inside an object that is an array element.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\",\"tag\":[{\"name\":\"x\"},{\"name\":\"y\",\"name\":\"z\"}]}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "duplicate_key"
+      }
+    },
+    {
+      "id": "reject-duplicate-key-after-unescape",
+      "title": "Keys that are equal only after unescaping (`\\u0074ype` is `type`).",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"type\":\"Create\",\"\\u0074ype\":\"Like\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "duplicate_key"
+      }
+    },
+    {
+      "id": "reject-follow-and-block",
+      "title": "type array holding both Follow and Block: ambiguous relation.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"Follow\",\"Block\"],\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "ambiguous_relation"
+      }
+    },
+    {
+      "id": "reject-undo-and-follow",
+      "title": "type array holding two different relation operations.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"Undo\",\"Follow\"],\"actor\":\"https://remote.example/users/bob\",\"object\":\"https://remote.example/follows/1\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "ambiguous_relation"
+      }
+    },
+    {
+      "id": "reject-invalid-json",
+      "title": "Not JSON.",
+      "content_type": "application/activity+json",
+      "body": "{\"type\":\"Create\",",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_json"
+      }
+    },
+    {
+      "id": "reject-not-an-object",
+      "title": "Top-level array.",
+      "content_type": "application/activity+json",
+      "body": "[{\"type\":\"Create\"}]",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "not_object"
+      }
+    },
+    {
+      "id": "reject-bom",
+      "title": "A UTF-8 byte order mark before the JSON text.",
+      "content_type": "application/activity+json",
+      "body": "﻿{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_json"
+      }
+    },
+    {
+      "id": "reject-type-missing",
+      "title": "No type.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_type"
+      }
+    },
+    {
+      "id": "reject-type-empty-array",
+      "title": "type is an empty array.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[],\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_type"
+      }
+    },
+    {
+      "id": "reject-type-number",
+      "title": "type is a number.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":7,\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_type"
+      }
+    },
+    {
+      "id": "reject-type-array-with-empty-string",
+      "title": "type array containing an empty string.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"Create\",\"\"],\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_type"
+      }
+    },
+    {
+      "id": "reject-type-array-17",
+      "title": "type array with 17 entries (limit is 16).",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":[\"https://example.org/ns#T0\",\"https://example.org/ns#T1\",\"https://example.org/ns#T2\",\"https://example.org/ns#T3\",\"https://example.org/ns#T4\",\"https://example.org/ns#T5\",\"https://example.org/ns#T6\",\"https://example.org/ns#T7\",\"https://example.org/ns#T8\",\"https://example.org/ns#T9\",\"https://example.org/ns#T10\",\"https://example.org/ns#T11\",\"https://example.org/ns#T12\",\"https://example.org/ns#T13\",\"https://example.org/ns#T14\",\"https://example.org/ns#T15\",\"https://example.org/ns#T16\"],\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_type"
+      }
+    },
+    {
+      "id": "reject-actor-missing",
+      "title": "No actor.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Create\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "actor_missing_or_ambiguous"
+      }
+    },
+    {
+      "id": "reject-actor-two-ids",
+      "title": "actor array naming two different ids.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"type\":\"Create\",\"actor\":[\"https://remote.example/users/bob\",\"https://remote.example/users/alice\"]}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "actor_missing_or_ambiguous"
+      }
+    },
+    {
+      "id": "reject-actor-number",
+      "title": "actor is a number.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"type\":\"Create\",\"actor\":42}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "actor_missing_or_ambiguous"
+      }
+    },
+    {
+      "id": "reject-depth-33",
+      "title": "JSON nesting depth 33 (limit is 32).",
+      "content_type": "application/activity+json",
+      "body_synthetic": {
+        "kind": "nested_depth",
+        "depth": 33
+      },
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "too_deep"
+      }
+    },
+    {
+      "id": "reject-nodes-100001",
+      "title": "100001 JSON values (limit is 100000).",
+      "content_type": "application/activity+json",
+      "body_synthetic": {
+        "kind": "node_count",
+        "nodes": 100001
+      },
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "too_many_nodes"
+      }
+    },
+    {
+      "id": "reject-body-over-1mib",
+      "title": "Body of 1048577 bytes.",
+      "content_type": "application/activity+json",
+      "body_synthetic": {
+        "kind": "padding",
+        "bytes": 1048577
+      },
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 413,
+        "reason": "body_too_large"
+      }
+    },
+    {
+      "id": "reject-content-type-json",
+      "title": "application/json is not accepted on the inbox.",
+      "content_type": "application/json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_content_type"
+      }
+    },
+    {
+      "id": "reject-content-type-other-profile",
+      "title": "application/ld+json with a profile other than ActivityStreams.",
+      "content_type": "application/ld+json; profile=\"https://example.org/other\"",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_content_type"
+      }
+    },
+    {
+      "id": "reject-content-type-unknown-parameter",
+      "title": "application/activity+json with a parameter other than charset=utf-8.",
+      "content_type": "application/activity+json; foo=bar",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://remote.example/a/1\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_content_type"
+      }
+    }
+  ]
+}

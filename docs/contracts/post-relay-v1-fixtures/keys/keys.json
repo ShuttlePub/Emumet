@@ -1,0 +1,41 @@
+{
+  "note": "TEST ONLY. Only public keys are committed; private keys were discarded after signing. Regenerating with tools/generate-fixtures.mjs creates different keys.",
+  "keys": {
+    "emumet-a-instance-active": {
+      "key_id": "https://emumet.example/ap/instance#key-7f3a9c1e",
+      "owner": "https://emumet.example/ap/instance",
+      "public_key_file": "keys/emumet-a-instance-active.pub.pem",
+      "note": "Emumet A instance key (active)."
+    },
+    "emumet-a-instance-previous": {
+      "key_id": "https://emumet.example/ap/instance#key-2b8d4e60",
+      "owner": "https://emumet.example/ap/instance",
+      "public_key_file": "keys/emumet-a-instance-previous.pub.pem",
+      "note": "Emumet A previous instance key, still published in the actor document."
+    },
+    "emumet-b-instance": {
+      "key_id": "https://emumet-b.example/ap/instance#key-b19c0d22",
+      "owner": "https://emumet-b.example/ap/instance",
+      "public_key_file": "keys/emumet-b-instance.pub.pem",
+      "note": "Emumet B instance key (a second trusted Emumet)."
+    },
+    "emumet-a-profile": {
+      "key_id": "https://emumet.example/ap/profiles/p1nano#main-key",
+      "owner": "https://emumet.example/ap/profiles/p1nano",
+      "public_key_file": "keys/emumet-a-profile.pub.pem",
+      "note": "Profile key of p1nano on Emumet A. MUST NOT be accepted for the outer signature."
+    },
+    "unrelated": {
+      "key_id": "https://emumet.example/ap/instance#key-deadbeef",
+      "owner": "https://emumet.example/ap/instance",
+      "public_key_file": "keys/unrelated.pub.pem",
+      "note": "Unrelated key used to forge signatures that claim an Emumet A key id."
+    },
+    "remote-bob": {
+      "key_id": "https://remote.example/users/bob#main-key",
+      "owner": "https://remote.example/users/bob",
+      "public_key_file": "keys/remote-bob.pub.pem",
+      "note": "Remote actor key used for the ORIGINAL inbox signature stored as evidence."
+    }
+  }
+}
