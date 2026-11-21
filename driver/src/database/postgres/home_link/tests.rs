@@ -66,7 +66,7 @@ async fn fixture(db: &PostgresDatabase, count: usize) -> (Account, Vec<Profile>)
 /// Poll `pg_locks` until a backend of this database is *actually waiting* on a lock, so a stop
 /// point is only released after the competing operation reached the contended gate/row.
 async fn wait_for_lock_waiter(pool: &sqlx::PgPool) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let waiting: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM pg_locks WHERE NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",

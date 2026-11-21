@@ -748,7 +748,9 @@ async fn wait_for_lock_waiter(w: &GraphWorld) {
 }
 /// Like [`wait_for_lock_waiter`] but until at least `count` backends are waiting.
 async fn wait_for_lock_waiters(w: &GraphWorld, count: i64) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    // Generous: organisation Profile creation generates an RSA key (slow in debug/coverage builds)
+    // before it reaches the gate. Only a failing test ever waits this long.
+    tokio::time::timeout(Duration::from_secs(120), async {
         loop {
             let waiting: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM pg_locks WHERE NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",
