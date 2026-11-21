@@ -214,7 +214,12 @@ async fn s1_scheduler_stalled_claimer_times_out_rolls_back_and_recovers() {
         "lock timeout must abort the waiting transaction"
     );
     assert!(started.elapsed() >= std::time::Duration::from_millis(1800));
-    drop(holder); // crashed/stopped claimer: its uncommitted lease and schedule row roll back
+    // Keep the stalled client's transaction object alive. PostgreSQL must reap it after 5s
+    // idle even if a paused process cannot send ROLLBACK or close its socket.
+    tokio::time::sleep_until(tokio::time::Instant::from_std(
+        started + std::time::Duration::from_millis(5300),
+    ))
+    .await;
     let recovered = db
         .transaction(|c| Box::pin(async move { at(now).claim_scheduled(c, 1, None).await }))
         .await
@@ -222,6 +227,10 @@ async fn s1_scheduler_stalled_claimer_times_out_rolls_back_and_recovers() {
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].receipt, "stalled");
     assert_ne!(recovered[0].token, first[0].token);
+    assert!(
+        holder.commit().await.is_err(),
+        "the stopped connection was terminated, not committed"
+    );
     let mut plain = db.get_transaction().await.unwrap();
     for name in [
         "lock_timeout",

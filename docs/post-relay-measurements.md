@@ -1,5 +1,8 @@
 # S1 relay measurements
 
+Current acceptance evidence is the **R1–R3 review correction** section (code `0a15260`).
+Earlier sections preserve historical runs; the final target comparison uses the rerun.
+
 ## Start baseline (2026-11-22)
 
 Base: 7efe25c7b5e5237d4246e74b7c50903996040b14. Explicit release test:
@@ -37,7 +40,7 @@ are **not measured by this harness**. They must not be inferred as zero. The par
 serialization cost increases markedly; shared quota/lifecycle transactions are the first
 contention hypothesis, not a verified root cause.
 
-## Acceptance targets (unchanged; final worker measurements pending)
+## Acceptance targets (unchanged; baseline context)
 
 4 vCPU/8 GiB, release: 64 KiB >=100/s; maximum-body envelope >=20/s; a healthy origin
 maintains >=80% of its isolated rate beside a timeout origin; >=10 minutes with stable RSS,
@@ -76,8 +79,8 @@ Rates time delivery after preload, including claim/prepare/unlock/authorize/comm
 but exclude admission. CPU tick/RSS snapshots include admission and the recipient; do not
 interpret CPU ticks/rate as identical measurement windows. DB-phase includes pool acquisition,
 queries/gates/locks and unlock bookkeeping; local semaphore wait is separate. It is **not an
-isolated PostgreSQL connection-wait or lock-wait distribution**. No such distribution has yet
-been collected. Signing is performed before authorization. KDF counts are actual decrypts,
+isolated PostgreSQL connection-wait or lock-wait distribution**. That historical run did not collect one; see the R1–R3
+correction below for separate acquisition and per-job queue samples. Signing is performed before authorization. KDF counts are actual decrypts,
 not cache lookups; parsed signer preparation is separately asserted once by correctness tests.
 
 Continuous 65,536-byte batches of 64, bounded 16, for **600.09s**: **204,288 successes,
@@ -223,16 +226,152 @@ prove the revoker is blocked. With the HTTP peer silent for 30 s (P3) all three 
 finish in **1.3–6.7 ms** while the HTTP request is still pending, with zero idle transactions,
 zero advisory locks and an all-idle pool. The 3 s test bound was never approached.
 
+## R1–R3 review correction measurements (2026-11-22)
+
+The runs below supersede the earlier throughput/target comparison after the scheduling and
+claim-timeout fixes. Limits and targets are unchanged. Environment: the same release build,
+sender cores 0–3 / 8 GiB address-space limit, PostgreSQL 17 cores 4–7 over Unix socket,
+streaming recipient subprocesses cores 8–9, 16 Profiles / four origins, plain HTTP.
+
+### Separate waiting-time instruments
+
+- `db_slot_wait_ns`: application semaphore (four short DB phases), outside the DB-phase timer.
+- `connection_wait_ns`: actual PostgreSQL pool `acquire` latency for relay transactions;
+  excludes SQL BEGIN, local semaphore and query/lock execution. Connection validation/creation,
+  when needed by the pool, is part of acquiring a usable connection. Identity cache reads are
+  outside this transaction-specific counter.
+- `lock_wait_ns`: time acquiring explicit relay locks: scheduler table; Account/Profile/
+  relationship gates and link rows; quota, permit-slot and job rows. This is **acquisition
+  latency**, including DB round trips/row reads (and local gate bookkeeping), not a claim
+  that PostgreSQL was blocked throughout. It excludes lock-holding time and other DB queries.
+  `scheduler_lock_wait_ns` is its separately reported scheduler-only subset, not an extra
+  amount to add. Implicit locks of other UPDATEs are not separately attributed.
+- `queue_wait_ns`: each claimed job's DB claim time minus its stored `due_at`, clamped at
+  zero. Includes admission/preload residence before the throughput stopwatch starts; excludes
+  intentional retry/backoff before the job becomes ready. The worker exports count/sum/max,
+  and the speed harness records every lease and prints min/p50/p95/max. No per-success DB
+  history or receipt-labelled metric is retained. It is ready-to-claim latency, not HTTP or
+  end-to-end received-at age (the latter also includes intentional retry delays).
+- Existing `db_phase_ns` still includes connection/query/lock/commit work; these components
+  overlap it and **must not be added** to it. Transaction timings are observed when an
+  operation returns (including errors); externally cancelled operations are not complete
+  timing samples. All totals are cumulative process counters, not simultaneous wall time.
+
+Controlled separate-connection regression
+`s1_scheduler_measures_connection_lock_and_each_jobs_ready_queue_separately` holds the only
+pool connection for 200 ms, then a different backend holds the scheduler lock for 100 ms.
+Measured **201.31 ms pool acquisition**, **102.24 ms scheduler lock acquisition**, and
+**1,000 ms ready queue for each of two jobs** (injected DB clock). This verifies that the
+three counters are independently sensitive, rather than inferring wait time from a completed
+batch's lock-waiter count of zero.
+
+### Rerun throughput and waiting times (code `0a15260`)
+
+128 synthetic immutable envelopes per case, after all R1/R2 code changes and with the new
+metrics enabled. Throughput excludes admission, whereas queue residence includes preload.
+
+| bytes | parallel | delivery/s | CPU ticks | RSS before → after KiB | KDF calls / ms |
+|---:|---:|---:|---:|---:|---:|
+| 65536 | 1 | 230.13 | 40 | 16212 → 30628 | 1 / 57.95 |
+| 65536 | 16 | 418.00 | 39 | 30544 → 37468 | 1 / 66.45 |
+| 1400000 | 1 | 149.79 | 64 | 37444 → 60528 | 1 / 62.51 |
+| 1400000 | 16 | 259.85 | 68 | 53196 → 76140 | 1 / 62.05 |
+
+All timings below are cumulative nanoseconds divided by **128 jobs**, expressed in ms/job
+(not mean latency per SQL call; one claim can contain multiple jobs). Locks are acquisition
+latencies as defined above, so these are upper bounds on actual blocked time.
+
+| bytes / parallel | DB phase | DB semaphore | pool acquire | relay locks | scheduler subset | ready queue mean |
+|---|---:|---:|---:|---:|---:|---:|
+| 65536 / 1 | 2.549 | 0.000 | 0.055 | 0.412 | 0.019 | 406.329 |
+| 65536 / 16 | 7.370 | 13.863 | 0.175 | 4.767 | 0.003 | 251.625 |
+| 1400000 / 1 | 3.782 | 0.000 | 0.070 | 0.511 | 0.023 | 785.153 |
+| 1400000 / 16 | 13.697 | 29.842 | 0.238 | 7.895 | 0.003 | 547.038 |
+
+| bytes / parallel | job queue min ms | p50 ms | p95 ms | max ms |
+|---|---:|---:|---:|---:|
+| 65536 / 1 | 180.279 | 410.892 | 539.604 | 553.269 |
+| 65536 / 16 | 157.194 | 262.359 | 290.011 | 298.374 |
+| 1400000 / 1 | 633.982 | 796.105 | 850.149 | 853.508 |
+| 1400000 / 16 | 444.202 | 550.956 | 618.192 | 631.917 |
+
+Queue values are per-job samples over a deliberately preloaded 128-job batch, not a steady
+arrival distribution or a production queue-latency SLO. At bounded-16 the measured pool wait
+is small relative to lock acquisition and local DB semaphore wait; increasing the pool alone
+would not remove those two serialized costs. This is an observation, not a tuned pool change.
+
+### Claim failure / fairness regressions
+
+Before the fix, `s1_scheduler_recently_served_profile_deadline_survives_last_origin_slot`
+selected a fresh job instead of the one-second-to-expiry job; the two timeout/budget tests
+also failed (lock wait exceeded the four-second test guard, transaction-local timeout was
+zero). The worker regression `stalled_claim_does_not_block_maintenance_or_shutdown` failed
+because maintenance could not run during the stalled claim. They all pass after the fixes.
+Existing Profile rotation / origin fairness / saturated-origin / provisional-occupancy tests
+still pass. Additional tests exercise a real three-second statement timeout, five-second
+whole-transaction rollback (including work before claim), transaction-local setting cleanup,
+and a fresh fenced claim after the stopped claimer rolls back. The stopped client retains its
+transaction object: PostgreSQL terminates its idle backend at 5 s without a client ROLLBACK,
+and recovery succeeds before the old client can commit. Claim takes no lifecycle gate.
+Maintenance runs within 1.5 s during a scheduler wait and stop notification joins the idle
+worker within 500 ms, without waiting for the claim's two-second lock timeout.
+
+### Rerun steady state and timeout-origin isolation
+
+The corrected sender completed **176,576 deliveries in 600.18 s**, **294.20/s including
+continuing admission** (64 KiB, batches of 64, bounded 16). One KDF in the whole run.
+
+| seconds | successes | RSS KiB | DB connections | live bodies / lock waiters |
+|---:|---:|---:|---:|---:|
+| 0.3 | 64 | 58,808 | 7 | 0 / 0 |
+| 60.1 | 18,432 | 59,160 | 10 | 0 / 0 |
+| 120.0 | 36,544 | 59,200 | 10 | 0 / 0 |
+| 300.1 | 90,048 | 59,232 | 10 | 0 / 0 |
+| 480.1 | 141,696 | 59,260 | 11 | 0 / 0 |
+| 600.2 | 176,576 | 59,268 | 11 | 0 / 0 |
+
+RSS after 120 s changes by 68 KiB (about 0.11%); final RSS is 57.88 MiB. Connections fill the
+bounded pool from 7 to 11 (cap 16), then stay 11 over the last 120 s, not an unbounded series.
+At all eleven completed-batch samples, jobs/bodies/attempts/dead letters/audits/operations/
+unlinked/link-usage rows are zero; schedule/Profile quota remain 16, slots 16, and global
+capacity/quota/counters one each. Sender CPU is 45,782 ticks / 600.18 s, about 0.763 core,
+excluding PostgreSQL and the external recipient.
+
+Across all 176,576 jobs, means in ms/job: DB phase **6.924**, DB semaphore **13.669**,
+pool acquisition **0.0961**, relay lock acquisition **4.613** (scheduler subset **0.00150**),
+ready queue **92.801**, maximum individual ready-queue wait **179.655 ms**. These are actual
+separate timing samples, not inferred from the zero waiter snapshots.
+
+Three healthy origins beside one 30 s silent recipient, 12 s windows (four real ten-second
+HTTP timeouts observed in each mixed window), median of three rounds:
+
+| round | alone/s | mixed healthy/s | slow timeouts |
+|---:|---:|---:|---:|
+| 0 | 320.96 | 320.12 | 4 |
+| 1 | 326.33 | 325.89 | 4 |
+| 2 | 329.78 | 329.86 | 4 |
+
+Median alone **326.33/s**, mixed **325.89/s**, ratio **0.9987 ≥ 0.80**. Only healthy
+origin jobs are counted. These runs use rolling refills; they do not measure just an initial
+burst that ends before the slow requests time out.
+
+Using the measured admission-inclusive service rate, the plan's illustrative catch-up formula
+is `backlog / (294.20 − continuing arrivals/s)`: at 100 arrivals/s, 1,000 ready jobs need
+about **5.15 s** if this service rate and workload remain unchanged and expiry permits it.
+At arrivals ≥ capacity the backlog does not drain. This is not a promise for the unmeasured
+100,000-job/full-volume queue, real TLS/network, failure traffic or an already-expired receipt.
+
 ## Target comparison
 
-| Plan §7.3 target | Result | Verdict |
+| Plan §7.3 target | Result after R1/R2 | Verdict |
 |---|---|---|
-| 64 KiB ≥ 100/s (4 vCPU, 8 GiB, release) | 220–224/s serial, 372–417/s bounded-16 (4 cores, 8 GiB-AS); 267–538/s on the unrestricted host | met (plain HTTP) |
-| ~1.34 MiB envelope ≥ 20/s | 154–155/s serial, 264–268/s bounded-16; 173/311 unrestricted | met (plain HTTP) |
-| healthy origin ≥ 80 % beside a timing-out origin | 0.9963 (median of 3), earlier run 0.9966 | met |
-| ≥ 10 min with stable RSS / connections / live rows | 600 s, RSS flat, 10 connections, 0 live bodies/rows, 0 lock waiters | met |
-| KDF not proportional to deliveries | 1 KDF per 128 and per 172,032 deliveries | met |
-| unlink/deactivation/projector do not wait for slow HTTP | 1.3–6.7 ms with a 30 s silent peer | met |
+| 64 KiB ≥ 100/s (4 vCPU, 8 GiB, release) | 230.13/s serial, 418.00/s bounded-16 (four cores / 8 GiB-AS) | met (plain HTTP) |
+| ~1.34 MiB envelope ≥ 20/s | 149.79/s serial, 259.85/s bounded-16 | met (plain HTTP) |
+| healthy origin ≥ 80% beside a timing-out origin | 0.9987 (median of 3 rounds) | met |
+| ≥ 10 min with stable RSS / connections / live rows | 600.18 s; RSS +68 KiB after 120 s; pool bounded 7→11/16, final 120 s at 11; zero live rows | met |
+| KDF not proportional to deliveries | 1 KDF for 176,576 deliveries | met |
+| unlink/deactivation/projector do not wait for slow HTTP | P3 regressions pass; prior measured 1.3–6.7 ms with a 30 s silent peer | met |
+| Separate DB connection / lock / job queue waits (S1-1) | pool/lock acquisition counters and per-job queue samples above; independently injected waits verified | measured |
 
 **No target is missed in the measured environment, but the environment differs from the target
 in the following ways, none of which this document claims to have closed:**
@@ -246,6 +385,7 @@ in the following ways, none of which this document claims to have closed:**
   sender), not a 4-vCPU VM**; PostgreSQL and the recipient run on separate cores, so a real
   4-vCPU deployment that co-locates PostgreSQL would see lower rates. Run-to-run spread is
   ±10 % and co-tenant load was not excluded.
-- **Pure DB connection-wait / lock-wait distributions were not collected**; only the aggregate
-  DB-phase and local semaphore times above, plus sampled lock-waiter counts (0), exist.
+- Lock timings are explicit **acquisition latencies**, not server-only blocked-time distributions;
+  implicit UPDATE locks are not separately attributed. Pool acquisition and each ready-job wait
+  are now measured separately as defined above.
 - Production volumes and mixed workloads beyond four logical origins / 16 Profiles are untested.
