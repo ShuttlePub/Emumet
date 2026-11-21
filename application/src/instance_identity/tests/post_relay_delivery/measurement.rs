@@ -309,8 +309,14 @@ async fn s1_origin_timeout_isolation_release_measurement() {
             let (_env, m, profiles, _peers) = perf_setup(mixed).await;
             let worker = Arc::new(RelayDelivery::new(Arc::new(m.clone())));
             let _ = m.unlock_instance_signing_key().await.unwrap();
+            let healthy_profiles: Vec<_> = profiles
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 4 != 1)
+                .map(|(_, p)| p)
+                .collect();
             for i in 0..512 {
-                let p = &profiles[(i % 4) * 4];
+                let p = healthy_profiles[i % healthy_profiles.len()];
                 admit_payload(&m, p, &format!("healthy-{i}"), false, vec![b'x'; 65536]).await;
             }
             if mixed {
@@ -329,7 +335,7 @@ async fn s1_origin_timeout_isolation_release_measurement() {
             while done < 512 || start.elapsed() < Duration::from_secs(12) {
                 if admitted - done < 128 {
                     for _ in 0..128 {
-                        let p = &profiles[(admitted % 4) * 4];
+                        let p = healthy_profiles[admitted % healthy_profiles.len()];
                         admit_payload(
                             &m,
                             p,
@@ -375,7 +381,7 @@ async fn s1_origin_timeout_isolation_release_measurement() {
     values[1].sort_by(f64::total_cmp);
     let ratio = values[1][1] / values[0][1];
     eprintln!(
-        "S1_ISOLATION_MEDIAN alone={:.2} mixed={:.2} ratio={ratio:.4} target=0.8",
+        "S1_ISOLATION_MEDIAN healthy_origins=3 alone={:.2} mixed={:.2} ratio={ratio:.4} target=0.8",
         values[0][1], values[1][1]
     );
     assert!(ratio >= 0.8, "healthy origin isolation target missed");
