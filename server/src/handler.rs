@@ -118,6 +118,18 @@ fn registration_protection_policies_from_env() -> (ReadinessPolicy, EmailChallen
 }
 
 impl AppModule {
+    pub(crate) fn post_relay_module(&self) -> crate::post_relay_worker::PostRelayModule {
+        crate::post_relay_worker::PostRelayModule {
+            db: self.pgpool.clone(),
+            encryptor: self.key_encryptor.clone(),
+            cache: self.instance_key_cache.clone(),
+            password: self.password_provider.clone(),
+            origin: self.public_base_url.clone(),
+            transport: driver::post_relay_delivery::HttpPostRelayTransport::new(
+                self.home_origin_policy.clone(),
+            ),
+        }
+    }
     pub async fn new() -> error_stack::Result<Self, KernelError> {
         let hydra_admin_url =
             dotenvy::var("HYDRA_ADMIN_URL").unwrap_or_else(|_| "http://localhost:4445".to_string());

@@ -11,14 +11,17 @@ use kernel::interfaces::crypto::{
 };
 use kernel::interfaces::database::DependOnDatabaseConnection;
 use sqlx::Executor;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use zeroize::Zeroizing;
+
+mod post_relay_delivery;
 
 const BASE: &str = "https://emumet.example";
 
 struct CountingEncryptor {
     inner: Argon2Encryptor,
     decrypts: Arc<AtomicUsize>,
+    decrypt_ns: AtomicU64,
 }
 
 impl KeyEncryptor for CountingEncryptor {
@@ -37,7 +40,11 @@ impl KeyEncryptor for CountingEncryptor {
         password: &[u8],
     ) -> error_stack::Result<Zeroizing<Vec<u8>>, KernelError> {
         self.decrypts.fetch_add(1, Ordering::SeqCst);
-        self.inner.decrypt(encrypted, password)
+        let start = Instant::now();
+        let result = self.inner.decrypt(encrypted, password);
+        self.decrypt_ns
+            .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        result
     }
 }
 
@@ -82,6 +89,7 @@ impl PreparedSigner for CountingSigner {
 /// One "process": its own cache, counters and password, on a shared database.
 #[derive(Clone)]
 struct TestModule {
+    transport: post_relay_delivery::TestTransport,
     database: PostgresDatabase,
     password_provider: Arc<FilePasswordProvider>,
     raw_key_generator: Arc<Rsa2048RawGenerator>,
@@ -167,12 +175,14 @@ impl Env {
     ) -> (TestModule, Arc<AtomicUsize>) {
         let decrypts = Arc::new(AtomicUsize::new(0));
         let module = TestModule {
+            transport: post_relay_delivery::TestTransport::default(),
             database: self.iso.database.clone(),
             password_provider: Arc::new(FilePasswordProvider::with_paths(password, password)),
             raw_key_generator: Arc::new(Rsa2048RawGenerator),
             key_encryptor: Arc::new(CountingEncryptor {
                 inner: Argon2Encryptor::default(),
                 decrypts: decrypts.clone(),
+                decrypt_ns: AtomicU64::new(0),
             }),
             signer_factory: Arc::new(CountingSignerFactory {
                 inner: Rsa2048PreparedSignerFactory,

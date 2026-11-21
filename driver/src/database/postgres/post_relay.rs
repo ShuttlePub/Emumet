@@ -481,6 +481,14 @@ impl PostRelayStore for PostgresPostRelayStore {
     ) -> error_stack::Result<Vec<RelayLease>, KernelError> {
         self.claim(c, limit).await
     }
+    async fn claim_scheduled(
+        &self,
+        c: &mut Self::Connection,
+        limit: u16,
+        operation: Option<&str>,
+    ) -> error_stack::Result<Vec<RelayLease>, KernelError> {
+        self.scheduled_claim(c, limit, operation).await
+    }
     async fn prepare_send(
         &self,
         c: &mut Self::Connection,

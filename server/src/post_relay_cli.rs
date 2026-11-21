@@ -59,12 +59,16 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, &'static str
     })
 }
 pub async fn dispatch(args: impl IntoIterator<Item = String>) -> Result<bool, StackTrace> {
+    let args: Vec<String> = args.into_iter().collect();
+    if args.first().is_some_and(|s| s == "post-relay") {
+        return crate::post_relay_operator::dispatch(args).await;
+    }
     let command =
         parse(args).map_err(|e| Report::new(KernelError::Validation).attach_printable(e))?;
     match command {
         Command::Serve => Ok(false),
         Command::Help => {
-            print!("{HELP}");
+            print!("{HELP}{}", crate::post_relay_operator::HELP);
             Ok(true)
         }
         Command::Report {

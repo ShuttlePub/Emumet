@@ -5,6 +5,31 @@ use crate::KernelError;
 use std::future::Future;
 use time::{Duration, OffsetDateTime};
 
+/// Signed immutable bytes. Transport must include DNS/connect/TLS/response in deadline.
+pub struct RelayHttpRequest<'a> {
+    pub origin: &'a str,
+    pub envelope: &'a [u8],
+    pub headers: &'a [(String, String)],
+    pub deadline: std::time::Instant,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelayHttpResult {
+    Response {
+        status: u16,
+        retry_after_secs: Option<u64>,
+    },
+    InvalidTarget,
+    Transient,
+}
+pub trait PostRelayTransport: Send + Sync + 'static {
+    fn origin_allowed(&self, origin: &str) -> bool;
+    fn send(&self, request: &RelayHttpRequest<'_>) -> impl Future<Output = RelayHttpResult> + Send;
+}
+pub trait DependOnPostRelayTransport: Send + Sync {
+    type PostRelayTransport: PostRelayTransport;
+    fn post_relay_transport(&self) -> &Self::PostRelayTransport;
+}
+
 pub const AUTOMATIC_TTL: Duration = Duration::hours(72);
 pub const QUARANTINE_TTL: Duration = Duration::days(30);
 pub const SEND_TIMEOUT: Duration = Duration::seconds(10);
@@ -137,6 +162,7 @@ pub enum OperatorAction {
     Redeliver,
     Discard,
 }
+#[derive(Clone)]
 pub struct OperatorRequest {
     pub id: String,
     pub profile_id: ProfileId,
@@ -216,6 +242,13 @@ pub trait PostRelayStore: Send + Sync + 'static {
         &self,
         c: &mut Self::Connection,
         limit: u16,
+    ) -> impl Future<Output = error_stack::Result<Vec<RelayLease>, KernelError>> + Send;
+    /// S1 fair scheduling. Leaves the low-level Q1 claim port unchanged for recovery/testing.
+    fn claim_scheduled(
+        &self,
+        c: &mut Self::Connection,
+        limit: u16,
+        operation: Option<&str>,
     ) -> impl Future<Output = error_stack::Result<Vec<RelayLease>, KernelError>> + Send;
     /// A separate short read transaction, no lifecycle/job locks and no new permit.
     fn prepare_send(

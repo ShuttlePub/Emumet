@@ -20,6 +20,37 @@ impl PostgresPostRelayStore {
             })
             .collect()
     }
+    pub(super) async fn scheduled_claim(
+        &self,
+        c: &mut PostgresConnection,
+        limit: u16,
+        operation: Option<&str>,
+    ) -> error_stack::Result<Vec<RelayLease>, KernelError> {
+        tx(c)?;
+        let limit = batch(limit)?;
+        let now = self.now(c).await?;
+        // Exclude saturated origins before taking process slots. Round-robin by Profile's
+        // last claim, interleave origins, then favor near deadlines. The scheduler has at most
+        // one row per recently active Profile, not per successful delivery.
+        let rows=sqlx::query("WITH candidates AS MATERIALIZED (SELECT j.receipt,b.profile_id,b.origin,j.due_at,CASE WHEN j.operation_id IS NULL THEN b.automatic_expires_at ELSE d.expires_at END AS expires_at,COALESCE(s.last_claimed_at,'epoch'::timestamptz) AS last_claimed, (SELECT count(*) FROM post_relay_slots x WHERE x.origin=b.origin AND x.until_at>$1) AS occupied FROM post_relay_jobs j JOIN post_relay_bodies b USING(receipt) JOIN profile_links l ON l.id=b.link_id LEFT JOIN post_relay_dead_letters d USING(receipt) LEFT JOIN post_relay_schedule s ON s.profile_id=b.profile_id WHERE ($4::text IS NULL OR j.operation_id=$4) AND l.state='active' AND l.generation=b.generation AND j.due_at<=$1 AND (j.operation_id IS NULL OR j.authorized_at IS NULL) AND (j.lease_until IS NULL OR j.lease_until<=$1) AND (j.send_deadline IS NULL OR j.send_deadline<=$1)), profiles AS (SELECT *,row_number() OVER(PARTITION BY profile_id ORDER BY expires_at,due_at,receipt) AS profile_rank FROM candidates WHERE occupied<4), origins AS (SELECT *,row_number() OVER(PARTITION BY origin ORDER BY profile_rank,last_claimed,expires_at,due_at,receipt) AS origin_rank FROM profiles), picked AS (SELECT j.receipt FROM origins p JOIN post_relay_jobs j USING(receipt) WHERE origin_rank<=4-occupied ORDER BY (p.expires_at<=$1+interval '1 minute') DESC,origin_rank,p.profile_rank,p.last_claimed,p.expires_at,p.due_at,p.receipt FOR UPDATE OF j SKIP LOCKED LIMIT $2) UPDATE post_relay_jobs j SET token=nextval('post_relay_fence'),lease_until=$3,authorized_at=NULL,send_deadline=NULL,attempt_id=NULL FROM picked p,post_relay_bodies b WHERE j.receipt=p.receipt AND b.receipt=j.receipt RETURNING j.receipt,b.profile_id,j.token,j.lease_until").bind(now).bind(limit).bind(now+LEASE_TTL).bind(operation).fetch_all(&mut **c).await.convert_error()?;
+        let mut profiles: Vec<i64> = rows.iter().map(|r| r.get("profile_id")).collect();
+        profiles.sort_unstable();
+        profiles.dedup();
+        for profile in profiles {
+            sqlx::query("INSERT INTO post_relay_schedule(profile_id,last_claimed_at) VALUES($1,$2) ON CONFLICT(profile_id) DO UPDATE SET last_claimed_at=EXCLUDED.last_claimed_at").bind(profile).bind(now).execute(&mut **c).await.convert_error()?;
+        }
+        sqlx::query("DELETE FROM post_relay_schedule s WHERE last_claimed_at<$1-interval '1 day' AND NOT EXISTS(SELECT 1 FROM post_relay_bodies b WHERE b.profile_id=s.profile_id)").bind(now).execute(&mut **c).await.convert_error()?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(RelayLease {
+                    receipt: r.get("receipt"),
+                    profile_id: ProfileId::new(r.get::<i64, _>("profile_id")),
+                    token: r.get("token"),
+                    lease_until: r.get("lease_until"),
+                })
+            })
+            .collect()
+    }
     pub(super) async fn preparation(
         &self,
         c: &mut PostgresConnection,

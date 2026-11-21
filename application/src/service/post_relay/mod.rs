@@ -1,5 +1,6 @@
 //! Transaction participation facade for I1/S1. It never starts a sender or opens a second
 //! transaction. Receipt/Undo writes and relay reservation must share the supplied connection.
+pub mod delivery;
 use kernel::interfaces::database::DatabaseConnection;
 use kernel::interfaces::post_relay::{
     Admission, DependOnPostRelayStore, PostRelayStore, RelayAdmission,

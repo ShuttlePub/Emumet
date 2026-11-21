@@ -52,8 +52,8 @@ async fn s1_baseline_real_http() {
                     Admission::Queued
                 );
             }
-            let cpu_before=process_cpu_ticks();
-            let rss_before=process_rss_kib();
+            let cpu_before = process_cpu_ticks();
+            let rss_before = process_rss_kib();
             let started = Instant::now();
             let (mut db_ns, mut sign_ns, mut http_ns) = (0u128, 0u128, 0u128);
             let mut completed = 0usize;
@@ -92,7 +92,12 @@ async fn s1_baseline_real_http() {
                 }
             }
             let elapsed = started.elapsed().as_secs_f64();
-            eprintln!("S1_RESOURCE cpu_ticks={} rss_before_kib={} rss_after_kib={}",process_cpu_ticks().saturating_sub(cpu_before),rss_before,process_rss_kib());
+            eprintln!(
+                "S1_RESOURCE cpu_ticks={} rss_before_kib={} rss_after_kib={}",
+                process_cpu_ticks().saturating_sub(cpu_before),
+                rss_before,
+                process_rss_kib()
+            );
             let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM post_relay_bodies")
                 .fetch_one(&d.pool)
                 .await
@@ -103,5 +108,28 @@ async fn s1_baseline_real_http() {
     consistent(&db, OffsetDateTime::now_utc()).await;
 }
 
-fn process_cpu_ticks()->u64{std::fs::read_to_string("/proc/self/stat").ok().and_then(|v|v.rsplit_once(')').map(|(_,s)|s.split_whitespace().skip(11).take(2).filter_map(|n|n.parse::<u64>().ok()).sum())).unwrap_or(0)}
-fn process_rss_kib()->u64{std::fs::read_to_string("/proc/self/status").ok().and_then(|v|v.lines().find(|s|s.starts_with("VmRSS:")).and_then(|s|s.split_whitespace().nth(1)).and_then(|s|s.parse().ok())).unwrap_or(0)}
+fn process_cpu_ticks() -> u64 {
+    std::fs::read_to_string("/proc/self/stat")
+        .ok()
+        .and_then(|v| {
+            v.rsplit_once(')').map(|(_, s)| {
+                s.split_whitespace()
+                    .skip(11)
+                    .take(2)
+                    .filter_map(|n| n.parse::<u64>().ok())
+                    .sum()
+            })
+        })
+        .unwrap_or(0)
+}
+fn process_rss_kib() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|v| {
+            v.lines()
+                .find(|s| s.starts_with("VmRSS:"))
+                .and_then(|s| s.split_whitespace().nth(1))
+                .and_then(|s| s.parse().ok())
+        })
+        .unwrap_or(0)
+}

@@ -1,5 +1,6 @@
 use super::*;
 mod measurement;
+mod scheduler;
 use crate::database::postgres::isolated_db::IsolatedDatabase;
 use kernel::interfaces::database::{
     DatabaseConnection, Transaction, TransactionalDatabaseConnection,

@@ -8,6 +8,8 @@ mod kratos;
 mod logging;
 mod openapi;
 mod post_relay_cli;
+mod post_relay_operator;
+mod post_relay_worker;
 mod projection_worker;
 mod registration_guard;
 mod root_router;
@@ -124,6 +126,12 @@ async fn main() -> Result<(), StackTrace> {
         }
     }
 
+    let relay = if post_relay_worker::enabled()? {
+        Some(post_relay_worker::spawn(app.post_relay_module()))
+    } else {
+        tracing::warn!("post relay sending disabled; reception/quota remain active");
+        None
+    };
     let router = root_router::build_root_router(app, oidc_config, jwks_cache);
 
     let bind = std::env::var("HTTP_LISTEN_ADDR")
@@ -146,6 +154,10 @@ async fn main() -> Result<(), StackTrace> {
     .await
     .change_context_lazy(|| KernelError::Internal)?;
 
+    if let Some((stop, handle)) = relay {
+        let _ = stop.send(true);
+        let _ = handle.await;
+    }
     projection_shutdown.trigger();
     enforcement_shutdown.trigger();
     if let Some(shutdown) = registration_shutdown {
