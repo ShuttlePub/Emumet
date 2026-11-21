@@ -17,18 +17,18 @@ use time::OffsetDateTime;
 
 pub struct PostgresHomeLinkStore;
 
-/// Q1's DB-only transaction participant. No queue exists in L1. Q1 replaces this
-/// implementation with cancellation/quarantine deletion/capacity release, not a post-commit task.
+/// Q1's DB-only participant: fence sends and release logical quota in the revoking transaction.
+/// Bounded purge removes physically retained, unusable bodies (see post-relay-storage.md).
 pub struct PostgresLinkCancellation;
 impl LinkCancellationParticipant for PostgresLinkCancellation {
     type Connection = PostgresConnection;
     async fn cancel_link_generation(
         &self,
-        _connection: &mut Self::Connection,
-        _link_id: &str,
-        _generation: i64,
+        connection: &mut Self::Connection,
+        link_id: &str,
+        generation: i64,
     ) -> error_stack::Result<(), KernelError> {
-        Ok(())
+        super::post_relay::maintenance::cancel(connection, link_id, generation).await
     }
 }
 

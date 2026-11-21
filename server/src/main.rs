@@ -7,6 +7,7 @@ mod instance_identity;
 mod kratos;
 mod logging;
 mod openapi;
+mod post_relay_cli;
 mod projection_worker;
 mod registration_guard;
 mod root_router;
@@ -33,6 +34,9 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<(), StackTrace> {
+    if post_relay_cli::dispatch(std::env::args().skip(1)).await? {
+        return Ok(());
+    }
     // Created before anything slow so that a SIGTERM / SIGINT during start-up is not lost; polled
     // at the points below and by the graceful shutdown of the HTTP server.
     let mut shutdown = ShutdownSignals::install()

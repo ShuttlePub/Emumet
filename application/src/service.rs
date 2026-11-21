@@ -8,6 +8,7 @@ pub mod home_link;
 pub mod login_consent;
 pub mod media;
 pub mod organization;
+pub mod post_relay;
 pub mod profile;
 pub mod profile_follow_list;
 pub(crate) mod profile_owner_status;

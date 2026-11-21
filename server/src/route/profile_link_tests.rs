@@ -211,6 +211,7 @@ async fn home_link_transfer_preserves_identity_and_old_owner_cannot_list_registe
     let p = w.create_profile(&old, true).await;
     w.create_profile(&new, true).await;
     let l = register(&w, &old, &p).await;
+    queue_post_relay(&w, &p, "transfer-relay").await;
     let org = w
         .module
         .create_organization(
@@ -272,6 +273,49 @@ async fn home_link_transfer_preserves_identity_and_old_owner_cannot_list_registe
     let (s, ls) = request(&w, Some(&new), "GET", &base, None, Some(&org.account_id)).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(ls["items"][0], l);
+    {
+        use kernel::interfaces::post_relay::{
+            Authorization, DependOnPostRelayStore, PostRelayStore,
+        };
+        let db = w.module.database_connection();
+        let mut tx = db.get_transaction().await.unwrap();
+        let lease = w
+            .module
+            .post_relay_store()
+            .claim_due(tx.connection(), 1)
+            .await
+            .unwrap()
+            .remove(0);
+        tx.commit().await.unwrap();
+        let mut tx = db.get_transaction().await.unwrap();
+        let Authorization::Permitted(permit) = w
+            .module
+            .post_relay_store()
+            .authorize_send(tx.connection(), &lease, true)
+            .await
+            .unwrap()
+        else {
+            panic!("transferred relay permit")
+        };
+        tx.commit().await.unwrap();
+        assert_eq!(permit.recipient.link_id, l["id"].as_str().unwrap());
+        assert_eq!(permit.recipient.generation, 1);
+        assert_eq!(permit.recipient.origin, "https://home.example");
+        let mut tx = db.get_transaction().await.unwrap();
+        w.module
+            .post_relay_store()
+            .finish_success(
+                tx.connection(),
+                &lease,
+                &kernel::interfaces::post_relay::AttemptObservation {
+                    attempt_id: permit.attempt_id,
+                    observed_at: permit.authorized_at,
+                },
+            )
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
     w.module.project_batch().await.unwrap();
     let (_, again) = request(&w, Some(&new), "GET", &base, None, Some(&org.account_id)).await;
     assert_eq!(again, ls);
@@ -283,6 +327,7 @@ async fn home_link_projector_same_batch_deactivate_reactivate_and_stale_replay_k
     let u = w.new_user().await;
     let p = w.create_profile(&u, true).await;
     let old = register(&w, &u, &p).await;
+    queue_post_relay(&w, &p, "same-batch-relay").await;
     let a = owner(&w, &p).await;
     // Bypass command hook deliberately: independently exercise projector defense.
     raw_event(&w, &a, AccountEvent::Deactivated).await;
@@ -296,6 +341,13 @@ async fn home_link_projector_same_batch_deactivate_reactivate_and_stale_replay_k
     assert_eq!(ls[0].id, old["id"].as_str().unwrap());
     assert_eq!(ls[0].state, "unlinked");
     assert_eq!(ls[0].generation, 2);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT body_count FROM post_relay_quota")
+            .fetch_one(w.pool())
+            .await
+            .unwrap(),
+        0
+    );
     let fresh = register(&w, &u, &p).await;
     assert_ne!(fresh["id"], old["id"]);
     for _ in 0..2 {
@@ -1215,4 +1267,211 @@ async fn home_link_profile_projector_materialization_waits_for_the_account_gate(
     gate.commit().await.unwrap();
     task.await.unwrap().unwrap();
     assert_eq!(rows(id).await, 1);
+}
+
+// Explicit test-only admission: no production inbox route is connected in Q1.
+async fn queue_post_relay(w: &GraphWorld, p: &LocalProfile, receipt: &str) {
+    use application::service::post_relay::AdmitPostRelayUseCase;
+    use kernel::interfaces::post_relay::{
+        Admission, CapacityReport, DependOnPostRelayStore, PostRelayStore, RelayAdmission,
+    };
+    let now = time::OffsetDateTime::now_utc();
+    let db = w.module.database_connection();
+    let mut tx = db.get_transaction().await.unwrap();
+    w.module
+        .post_relay_store()
+        .report_capacity(
+            tx.connection(),
+            &CapacityReport {
+                free_bytes: 50 * 1024 * 1024 * 1024,
+                total_bytes: 100 * 1024 * 1024 * 1024,
+                sampled_at: now,
+            },
+        )
+        .await
+        .unwrap();
+    let recipient = w
+        .module
+        .post_relay_store()
+        .prepare_admission(tx.connection(), &p.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.module
+            .admit_post_relay(
+                tx.connection(),
+                &RelayAdmission {
+                    profile_id: p.id.clone(),
+                    receipt: receipt.into(),
+                    received_at: now,
+                    recipient,
+                    envelope: b" original bytes ".to_vec()
+                }
+            )
+            .await
+            .unwrap(),
+        Admission::Queued
+    );
+    tx.commit().await.unwrap();
+}
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn post_relay_all_three_revokers_release_queued_and_quarantine_body_reservations_atomically()
+{
+    use application::service::account::DeactivateAccountUseCase;
+    use kernel::interfaces::post_relay::{
+        AttemptResult, Authorization, DependOnPostRelayStore, PostRelayStore, Recorded,
+    };
+    for kind in ["unlink", "command", "projector"] {
+        let w = world().await;
+        let u = w.new_user().await;
+        let p = w.create_profile(&u, true).await;
+        let link = register(&w, &u, &p).await;
+        queue_post_relay(&w, &p, "queued").await;
+        queue_post_relay(&w, &p, "quarantine").await;
+        let db = w.module.database_connection();
+        let mut tx = db.get_transaction().await.unwrap();
+        let leases = w
+            .module
+            .post_relay_store()
+            .claim_due(tx.connection(), 2)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let dead = leases.iter().find(|l| l.receipt == "quarantine").unwrap();
+        let queued = leases.iter().find(|l| l.receipt == "queued").unwrap();
+        let mut tx = db.get_transaction().await.unwrap();
+        w.module
+            .post_relay_store()
+            .record_attempt(
+                tx.connection(),
+                dead,
+                AttemptResult::http(403, None),
+                None,
+                0,
+            )
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let mut tx = db.get_transaction().await.unwrap();
+        let Authorization::Permitted(permit) = w
+            .module
+            .post_relay_store()
+            .authorize_send(tx.connection(), queued, true)
+            .await
+            .unwrap()
+        else {
+            panic!("prior permit")
+        };
+        tx.commit().await.unwrap();
+        let a = owner(&w, &p).await;
+        match kind {
+            "unlink" => {
+                assert_eq!(
+                    request(
+                        &w,
+                        Some(&u),
+                        "DELETE",
+                        &format!(
+                            "/api/v1/profiles/{}/links/{}",
+                            p.nanoid,
+                            link["id"].as_str().unwrap()
+                        ),
+                        None,
+                        None
+                    )
+                    .await
+                    .0,
+                    StatusCode::NO_CONTENT
+                );
+            }
+            "command" => {
+                let nanoid: String = sqlx::query_scalar("SELECT nanoid FROM accounts WHERE id=$1")
+                    .bind(a.as_ref())
+                    .fetch_one(w.pool())
+                    .await
+                    .unwrap();
+                w.module
+                    .deactivate_account(&u.auth_account_id, nanoid)
+                    .await
+                    .unwrap();
+            }
+            _ => {
+                raw_event(&w, &a, AccountEvent::Deactivated).await;
+                w.module.project_batch().await.unwrap();
+            }
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT body_count FROM post_relay_quota")
+                .fetch_one(w.pool())
+                .await
+                .unwrap(),
+            0,
+            "{kind}"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM post_relay_bodies")
+                .fetch_one(w.pool())
+                .await
+                .unwrap(),
+            2,
+            "physical cleanup is bounded later"
+        );
+        let mut tx = db.get_transaction().await.unwrap();
+        assert!(matches!(
+            w.module
+                .post_relay_store()
+                .authorize_send(tx.connection(), queued, true)
+                .await
+                .unwrap(),
+            Authorization::Stale
+        ));
+        assert_eq!(
+            w.module
+                .post_relay_store()
+                .finish_success(
+                    tx.connection(),
+                    queued,
+                    &kernel::interfaces::post_relay::AttemptObservation {
+                        attempt_id: permit.attempt_id,
+                        observed_at: permit.authorized_at
+                    }
+                )
+                .await
+                .unwrap(),
+            Recorded::Stale
+        );
+        tx.commit().await.unwrap();
+        assert_eq!(permit.recipient.link_id, link["id"].as_str().unwrap());
+        let mut tx = db.get_transaction().await.unwrap();
+        assert_eq!(
+            w.module
+                .post_relay_store()
+                .purge_expired(tx.connection(), &p.id, 128)
+                .await
+                .unwrap(),
+            2
+        );
+        assert!(w
+            .module
+            .post_relay_store()
+            .check_reservations(tx.connection())
+            .await
+            .unwrap());
+        tx.commit().await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM post_relay_jobs")
+                .fetch_one(w.pool())
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM post_relay_audits")
+                .fetch_one(w.pool())
+                .await
+                .unwrap(),
+            1
+        );
+    }
 }
