@@ -162,12 +162,22 @@ fn url(db: &IsolatedDatabase) -> String {
     u.set_path(db.pool.connect_options().get_database().unwrap());
     u.to_string()
 }
+struct ImageSecretVolume(String);
+impl Drop for ImageSecretVolume {
+    fn drop(&mut self) {
+        // Test-only RAII: also remove the generated secret volume on an assertion unwind.
+        let _ = std::process::Command::new("docker")
+            .args(["volume", "rm", &self.0])
+            .output();
+    }
+}
 async fn run(
     args: &[&str],
     database: &str,
     password: Option<&std::path::Path>,
     enabled: bool,
 ) -> Output {
+    let mut secret_volume = None;
     let mut cmd = if let Ok(image) = std::env::var("S1_OPERATOR_IMAGE") {
         // Explicit opt-in only. Run this test via a reviewed unsandboxed shell, never CI by default.
         let mut c = tokio::process::Command::new("docker");
@@ -200,13 +210,35 @@ async fn run(
             &format!("POST_RELAY_SENDER_ENABLED={enabled}"),
         ]);
         if let Some(p) = password {
+            // A rootless daemon maps host UID to container root, NOT the same numeric UID.
+            // Copy this generated fixture to an isolated volume with the actual image UID;
+            // do not relax 0600 or run the operation as root to mask ownership mistakes.
+            let volume = ImageSecretVolume(format!(
+                "emumet-s1-secret-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let uid = std::env::var("S1_OPERATOR_UID").unwrap();
+            let prepared = tokio::time::timeout(std::time::Duration::from_secs(15), tokio::process::Command::new("docker").args([
+                "run", "--rm", "--network", "none", "--user", "0:0",
+                "--entrypoint", "/bin/sh",
+                "--mount", &format!("type=bind,readonly,src={},dst=/fixture-password",p.display()),
+                "--mount", &format!("type=volume,src={},dst=/run/secrets",volume.0),
+                &image, "-c", "cp /fixture-password /run/secrets/master-key-password && chown \"$1\" /run/secrets/master-key-password && chmod 600 /run/secrets/master-key-password && chmod 755 /run/secrets", "secret-fixture", &uid,
+            ]).kill_on_drop(true).output()).await.unwrap().unwrap();
+            assert!(
+                prepared.status.success(),
+                "{}",
+                String::from_utf8_lossy(&prepared.stderr)
+            );
             c.args([
                 "--mount",
-                &format!(
-                    "type=bind,readonly,src={},dst=/run/secrets/master-key-password",
-                    p.display()
-                ),
+                &format!("type=volume,readonly,src={},dst=/run/secrets", volume.0),
             ]);
+            secret_volume = Some(volume);
         }
         c.arg(image);
         c
@@ -228,10 +260,12 @@ async fn run(
         .env("AWS_EC2_METADATA_DISABLED", "false")
         .env("HTTP_LISTEN_ADDR", "not-an-address")
         .kill_on_drop(true);
-    tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output())
+    let output = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output())
         .await
         .expect("operator started unrelated services or waited for HTTP")
-        .unwrap()
+        .unwrap();
+    drop(secret_volume);
+    output
 }
 #[tokio::test]
 async fn post_relay_operator_help_is_available_without_ory_source_or_database() {
