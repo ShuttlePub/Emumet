@@ -149,13 +149,103 @@ an earlier Q1 checksum. Existing migrations/shared DB were not edited to suppres
 complete rerun uses a newly created dedicated root DB. The pre-Q1 upgrade fixture was adjusted
 to exclude Q1 **and its dependent later migrations**, retaining the populated-main upgrade test.
 
-## Target comparison / remaining measurements
+## Four-core / 8 GiB address-space measurement (2026-11-22)
 
-Unrestricted-host rates exceed >=100/s (64KiB) and >=20/s (~1.34MiB), but the host is larger
-than the target and plaintext HTTP excludes TLS handshake/crypto/RTT cost. No claim is made
-that production HTTPS reaches these rates. Connection reuse, TLS session behavior, real
-network latency and receiver speed can reduce throughput; retained per-origin4 caps must not
-be raised to disguise that. The separate four-core/8GiB-address-space measurement and mixed
-origin isolation results are to be recorded below after completion. A virtual address-space
-limit is not a cgroup RSS/memory-controller equivalent. Pure DB connection/lock-wait
-histograms, TLS and deployment-volume saturation remain unverified; report these before I1.
+Same Ryzen 9 7900 host, release build, code identical to the final head except for test-only
+changes. **Sender process (production worker + Q1 ports + pinned HTTP adapter + measurement
+harness) pinned with `taskset -c 0-3` and `ulimit -v 8388608` (8 GiB virtual address space);
+PostgreSQL 17 pinned to cores 4-7 (separate process, Unix socket); the HTTP recipient is an
+external child process pinned to cores 8-9** (so recipient CPU does not compete with the
+sender). Four Tokio worker threads, 16 Profiles, four logical origins, 128 deliveries per
+sample, plain HTTP, no TLS. Other lanes' workloads were not excluded from the host.
+
+| Envelope | Concurrent | Delivery/s | CPU ticks | RSS before → after, KiB | KDF calls |
+|---|---:|---:|---:|---:|---:|
+| 65,536 | 1 | 224.11 | 42 | 15,744 → 30,316 | 1 / 59.4 ms |
+| 65,536 | 16 (4/origin) | 416.80 | 38 | 30,304 → 37,540 | 1 / 59.6 ms |
+| 1,400,000 | 1 | 155.11 | 59 | 37,444 → 62,852 | 1 / 58.8 ms |
+| 1,400,000 | 16 (4/origin) | 264.63 | 65 | 55,452 → 87,532 | 1 / 64.2 ms |
+
+An earlier identical-configuration run gave 219.84 / 371.50 / 153.93 / 267.86 per second, i.e. the
+run-to-run spread is roughly ±10 %. Per-job phases (ms, mean over 128 jobs; DB phase includes
+pool acquire, queries, gates and unlock bookkeeping; the semaphore wait is separate):
+
+| Envelope / concurrency | DB phase | local DB-slot wait | RSA+digest | HTTP | auth-start→HTTP |
+|---|---:|---:|---:|---:|---:|
+| 65,536 / 1 | 2.66 | 0.0004 | 1.20 | 0.59 | 0.72 |
+| 65,536 / 16 | 7.50 | 14.65 | 2.25 | 4.71 | 7.81 |
+| 1,400,000 / 1 | 3.68 | 0.0004 | 1.75 | 0.99 | 1.24 |
+| 1,400,000 / 16 | 13.63 | 30.41 | 3.29 | 3.79 | 15.52 |
+
+### Ten-minute steady run (same four-core / 8 GiB-AS configuration)
+
+65,536-byte envelopes, batches of 64, bounded 16, **600.12 s, 172,032 successes, 286.66/s
+including continuing admission** (admission shares the sender cores). Sampled once a minute:
+
+| elapsed s | successes | RSS KiB | CPU ticks | live bodies | DB connections | lock waiters | KDF calls |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.3 | 64 | 59,540 | 346 | 0 | 8 | 0 | 1 |
+| 60 | 18,176 | 60,608 | 4,996 | 0 | 10 | 0 | 1 |
+| 120 | 36,032 | 62,708 | 9,619 | 0 | 10 | 0 | 1 |
+| 300 | 86,144 | 62,732 | 22,815 | 0 | 10 | 0 | 1 |
+| 600 | 172,032 | 62,760 | 45,109 | 0 | 10 | 0 | 1 |
+
+RSS is flat after the first two minutes (62,708 → 62,760 KiB over the last 480 s), connections
+stay at 10 (pool cap 16), live body rows and lock waiters are 0 at every sample, one KDF for all
+172,032 deliveries (so KDF does not scale with deliveries). All relay tables were sampled each
+minute (`S1_TABLE_COUNTS`): jobs, bodies, attempts, dead letters, audits, operations and
+unlinked rows stayed 0 and the fixed rows (slots 16, schedule 16, profile quota 16, quota/
+capacity/counters 1) never changed, so there is no row growth after terminal results.
+CPU averaged about 0.75 core (44,763 ticks / 600 s, excluding PostgreSQL and the recipient).
+
+### Healthy origin beside a timing-out origin (four-core / 8 GiB-AS)
+
+Three healthy origins and one origin whose receiver never answers (timeouts), 12 s windows,
+median of three rounds, alone vs mixed, 64 KiB envelopes:
+
+| round | alone/s | mixed/s (slow-origin timeouts) |
+|---:|---:|---:|
+| 0 | 255.92 | 240.61 (4) |
+| 1 | 223.40 | 144.16 (4) |
+| 2 | 158.65 | 222.56 (4) |
+
+Median alone 223.40/s, mixed 222.56/s: **ratio 0.9963 (target ≥ 0.80)**. The rounds themselves
+vary widely (144–256/s) in both arms because of co-tenant host load, so the ratio is a median
+over a noisy sample, not a tight estimate. Only healthy-origin deliveries are counted; the
+harness now routes healthy traffic to the three healthy origins only.
+
+### Unlink / deactivation latency while the sender is in each stop point
+
+From `s1_p0_p1_p2_p4_…` and `s1_p3_silent_…` (real PostgreSQL, four-core / 8 GiB-AS):
+revocation (3 revokers × automatic/manual × P0/P2/P4) completes in **1.3–10.9 ms**; point P1
+(which deliberately holds the permission gate) 41–55 ms of which 20 ms is the test's wait to
+prove the revoker is blocked. With the HTTP peer silent for 30 s (P3) all three revokers
+finish in **1.3–6.7 ms** while the HTTP request is still pending, with zero idle transactions,
+zero advisory locks and an all-idle pool. The 3 s test bound was never approached.
+
+## Target comparison
+
+| Plan §7.3 target | Result | Verdict |
+|---|---|---|
+| 64 KiB ≥ 100/s (4 vCPU, 8 GiB, release) | 220–224/s serial, 372–417/s bounded-16 (4 cores, 8 GiB-AS); 267–538/s on the unrestricted host | met (plain HTTP) |
+| ~1.34 MiB envelope ≥ 20/s | 154–155/s serial, 264–268/s bounded-16; 173/311 unrestricted | met (plain HTTP) |
+| healthy origin ≥ 80 % beside a timing-out origin | 0.9963 (median of 3), earlier run 0.9966 | met |
+| ≥ 10 min with stable RSS / connections / live rows | 600 s, RSS flat, 10 connections, 0 live bodies/rows, 0 lock waiters | met |
+| KDF not proportional to deliveries | 1 KDF per 128 and per 172,032 deliveries | met |
+| unlink/deactivation/projector do not wait for slow HTTP | 1.3–6.7 ms with a 30 s silent peer | met |
+
+**No target is missed in the measured environment, but the environment differs from the target
+in the following ways, none of which this document claims to have closed:**
+
+- **No TLS.** Recipients are plain loopback HTTP; TLS handshake/crypto/session-reuse and real
+  network RTT are not measured and can reduce throughput. The per-origin 4 / global 16 caps
+  were not raised to disguise that.
+- **The 8 GiB limit is a virtual address-space `ulimit -v`, not a cgroup memory controller**;
+  RSS (≈ 60–90 MiB) is far below it but cgroup page-cache/accounting behaviour is not covered.
+- **CPU pinning is physical-core selection on a 12-core host (cores 0–3 = four distinct physical cores, one hardware thread each, for the
+  sender), not a 4-vCPU VM**; PostgreSQL and the recipient run on separate cores, so a real
+  4-vCPU deployment that co-locates PostgreSQL would see lower rates. Run-to-run spread is
+  ±10 % and co-tenant load was not excluded.
+- **Pure DB connection-wait / lock-wait distributions were not collected**; only the aggregate
+  DB-phase and local semaphore times above, plus sampled lock-waiter counts (0), exist.
+- Production volumes and mixed workloads beyond four logical origins / 16 Profiles are untested.
