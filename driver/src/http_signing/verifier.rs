@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use error_stack::{Report, Result};
 use kernel::interfaces::http_signing::{
-    ActorPublicKey, HttpSignatureVerificationInput, HttpSignatureVerifier,
-    SignatureVerificationResult,
+    ActorPublicKey, HttpSignatureVerificationInput, HttpSignatureVerifier, SignatureEvidenceResult,
 };
 use kernel::KernelError;
 
@@ -87,12 +86,12 @@ impl Default for HttpSignatureVerifierImpl {
 }
 
 impl HttpSignatureVerifier for HttpSignatureVerifierImpl {
-    async fn verify(
+    async fn verify_with_evidence(
         &self,
         request: &HttpSignatureVerificationInput,
-    ) -> Result<SignatureVerificationResult, KernelError> {
+    ) -> Result<SignatureEvidenceResult, KernelError> {
         if get_header(&request.headers, "signature-input").is_some() {
-            return Ok(SignatureVerificationResult::Invalid(
+            return Ok(SignatureEvidenceResult::Invalid(
                 "RFC 9421 verification is not implemented".to_string(),
             ));
         }
@@ -100,7 +99,7 @@ impl HttpSignatureVerifier for HttpSignatureVerifierImpl {
         let signature_header = match get_header(&request.headers, "signature") {
             Some(value) => value,
             None => {
-                return Ok(SignatureVerificationResult::Invalid(
+                return Ok(SignatureEvidenceResult::Invalid(
                     "MissingSignature: Signature header is required".to_string(),
                 ));
             }
@@ -109,33 +108,33 @@ impl HttpSignatureVerifier for HttpSignatureVerifierImpl {
         let parsed = match parse_cavage_signature(signature_header) {
             Ok(parsed) => parsed,
             Err(message) => {
-                return Ok(SignatureVerificationResult::Invalid(format!(
+                return Ok(SignatureEvidenceResult::Invalid(format!(
                     "MalformedSignature: {message}"
                 )));
             }
         };
 
         if let Err(message) = validate_required_signed_headers(request, &parsed.headers) {
-            return Ok(SignatureVerificationResult::Invalid(message));
+            return Ok(SignatureEvidenceResult::Invalid(message));
         }
 
         if let Err(message) = validate_date_header(request, self.date_tolerance) {
-            return Ok(SignatureVerificationResult::Invalid(message));
+            return Ok(SignatureEvidenceResult::Invalid(message));
         }
 
         if let Err(message) = validate_digest_header(request) {
-            return Ok(SignatureVerificationResult::Invalid(message));
+            return Ok(SignatureEvidenceResult::Invalid(message));
         }
 
         let signing_string = match cavage_signing_string(request, &parsed.headers) {
             Ok(value) => value,
-            Err(message) => return Ok(SignatureVerificationResult::Invalid(message)),
+            Err(message) => return Ok(SignatureEvidenceResult::Invalid(message)),
         };
 
         let actor_key = match self.fetch_actor_key(&parsed.key_id).await {
             Ok(value) => value,
             Err(e) => {
-                return Ok(SignatureVerificationResult::Invalid(format!(
+                return Ok(SignatureEvidenceResult::Invalid(format!(
                     "KeyFetchFailed: {e:?}"
                 )));
             }
@@ -149,13 +148,18 @@ impl HttpSignatureVerifier for HttpSignatureVerifierImpl {
         );
 
         match valid {
-            Ok(true) => Ok(SignatureVerificationResult::Valid {
-                key_id: parsed.key_id,
-            }),
-            Ok(false) => Ok(SignatureVerificationResult::Invalid(
+            Ok(true) => Ok(SignatureEvidenceResult::Valid(
+                kernel::interfaces::http_signing::SignatureEvidence {
+                    key_id: parsed.key_id,
+                    owner: actor_key.owner,
+                    scheme: kernel::interfaces::http_signing::SignatureScheme::Cavage,
+                    verified_at: time::OffsetDateTime::now_utc(),
+                },
+            )),
+            Ok(false) => Ok(SignatureEvidenceResult::Invalid(
                 "InvalidSignature: signature does not match".to_string(),
             )),
-            Err(message) => Ok(SignatureVerificationResult::Invalid(message)),
+            Err(message) => Ok(SignatureEvidenceResult::Invalid(message)),
         }
     }
 

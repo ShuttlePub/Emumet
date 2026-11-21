@@ -37,7 +37,14 @@ pub(super) fn follow_object(object: Option<&Value>) -> FollowObject {
     match object {
         Some(Value::String(id)) => FollowObject::Id(id.clone()),
         Some(Value::Object(map)) => {
-            if map.get("type").and_then(Value::as_str) != Some("Follow") {
+            if !map
+                .get("type")
+                .and_then(crate::inbox_reading::type_strings)
+                .is_some_and(|ts| {
+                    ts.iter()
+                        .any(|t| crate::inbox_reading::as_term(t) == Some("Follow"))
+                })
+            {
                 return FollowObject::Other;
             }
             FollowObject::Embedded {

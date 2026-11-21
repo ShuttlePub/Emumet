@@ -15,27 +15,20 @@ use super::inbox_support::{
 use crate::api::ActivityPubApi;
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
-use application::dto::profile_inbound::ProfileInboxDto;
+use application::inbox_reading::{build_evidence, media_type_ok, read_inbox, REQUEST_TARGET_MAX};
+use application::service::activitypub::{InboxOverload, ProfileRelayInboxDto};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::Router;
-use kernel::interfaces::http_signing::{
-    HttpSignatureVerificationInput, SignatureVerificationResult,
-};
+use kernel::interfaces::http_signing::{HttpSignatureVerificationInput, SignatureEvidenceResult};
 
 #[utoipa::path(
     post,
     path = "/ap/profiles/{profile_nanoid}/inbox",
-    description = "ActivityPub inbox of one Profile actor. \
-Requires a valid HTTP Signature whose key owner is `activity.actor`. \
-Received activity table: Follow (object = this Profile; stored as an accepted generation and an Accept delivery job is reserved in the same transaction; when the Profile blocks the signer the Follow is refused instead: an ended generation is stored and a Reject(Follow) delivery job is reserved), \
-Accept / Reject (object = a Follow this Profile sent, matched by the original Follow activity ID and by both parties), \
-Undo (object = a Follow of the signer; an Undo that overtakes its Follow is remembered so the late Follow creates nothing). \
-Every other activity (post activities such as Create / Like / EmojiReact / Announce, Block, Undo of a non-Follow, ...) is acknowledged with 202 and changes nothing: post authorization belongs to ShuttlePub and domain policy to D8G. \
-Stale (ended generation), foreign (other Profile / other actor), unknown-Follow and duplicate activities are acknowledged with 202 without changing any relation.",
+    description = "Signed Profile inbox. Raw Activity bytes relay only when POST_RELAY_INBOX_ENABLED=true (default false; S1 merge and lead approval required). Follow/Block are excluded; Undo/Accept/Reject are excluded only when every reference is a known Follow/Block. Unknown references and extension types forward. Existing Follow/domain-control and early-Undo rules remain. Body <=1 MiB; duplicate keys at every depth are rejected. ActivityPub JSON and ld+json with supported parameters are accepted. 202 follows durable commit; Profile overload is 429 and global/physical capacity unavailable is 503 with Retry-After.",
     params(("profile_nanoid" = String, Path, description = "Profile nanoid")),
     request_body(content = serde_json::Value, content_type = "application/activity+json"),
     responses(
@@ -44,6 +37,9 @@ Stale (ended generation), foreign (other Profile / other actor), unknown-Follow 
         (status = 401, description = "Missing or invalid HTTP Signature, or the signing actor is not activity.actor"),
         (status = 404, description = "Profile not found or not an actor"),
         (status = 408, description = "The follower actor could not be resolved (retryable)"),
+        (status = 413, description = "Activity body exceeds 1 MiB"),
+        (status = 429, description = "Profile admission limit; Retry-After seconds"),
+        (status = 503, description = "Global/capacity/storage unavailable; retryable"),
         (status = 422, description = "Activity violates the Profile inbox rules (wrong target Profile, malformed reference)"),
     ),
     tag = "ProfileActor",
@@ -60,10 +56,11 @@ pub(crate) async fn post_profile_inbox(
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    if content_type != "application/activity+json" {
+    let start = std::time::Instant::now();
+    if !media_type_ok(content_type) {
         return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
-            "Content-Type must be application/activity+json".to_string(),
+            "invalid_content_type".to_string(),
         )));
     }
     ensure_host_matches_public_base_url(&api.public_base_host_header()?, &headers)?;
@@ -77,52 +74,83 @@ pub(crate) async fn post_profile_inbox(
         headers: headers_to_map(&headers),
         body: Some(body.to_vec()),
     };
-    let key_id = match api
-        .verify_http_signature(&verification_input)
-        .await
-        .map_err(ErrorStatus::from)?
-    {
-        SignatureVerificationResult::Valid { key_id } => key_id,
-        SignatureVerificationResult::Invalid(reason) => {
-            tracing::warn!(
-                reason,
-                "Rejected Profile inbox request with invalid signature"
-            );
-            return Err(ErrorStatus::from(StatusCode::UNAUTHORIZED));
-        }
-    };
-
-    let activity: kernel::activitypub::Activity = serde_json::from_slice(&body).map_err(|e| {
-        ErrorStatus::from((
+    let target = original_uri.to_string();
+    if target.len() > REQUEST_TARGET_MAX {
+        return Err(ErrorStatus::from((
             StatusCode::BAD_REQUEST,
-            format!("Malformed ActivityPub activity: {e}"),
+            "request_target_too_long".to_string(),
+        )));
+    }
+    let signature_start = std::time::Instant::now();
+    let verification = match api.verify_inbox_signature(&verification_input).await {
+        Ok(SignatureEvidenceResult::Valid(e)) => e,
+        _ => return Err(ErrorStatus::from(StatusCode::UNAUTHORIZED)),
+    };
+    let signature_us = signature_start.elapsed().as_micros() as u64;
+    let read_start = std::time::Instant::now();
+    let reading = read_inbox(&body, content_type).map_err(|e| {
+        ErrorStatus::from((
+            StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_REQUEST),
+            e.reason.to_string(),
         ))
     })?;
-    let actor_key = api.fetch_actor_key(&key_id).await.map_err(|e| {
-        tracing::warn!(?e, key_id, "Failed to fetch Profile inbox signer actor key");
-        ErrorStatus::from(StatusCode::UNAUTHORIZED)
-    })?;
-    if !(same_activitypub_id(&actor_key.owner, &activity.actor)
-        && signature_key_document_matches_actor(&key_id, &activity.actor))
+    if !(application::inbox_reading::is_remote_url(&verification.key_id)
+        && same_activitypub_id(&verification.owner, &reading.actor)
+        && signature_key_document_matches_actor(&verification.key_id, &reading.actor))
     {
-        tracing::warn!(
-            key_owner = actor_key.owner,
-            key_id,
-            activity_actor = activity.actor,
-            "Profile inbox signature owner does not match activity actor"
-        );
         return Err(ErrorStatus::from(StatusCode::UNAUTHORIZED));
     }
-
-    let outcome = api
-        .handle_profile_inbox_activity(ProfileInboxDto {
-            profile_nanoid,
-            signer_actor_url: actor_key.owner,
-            activity,
+    let fields = headers
+        .iter()
+        .map(|(n, v)| {
+            (
+                n.as_str().to_string(),
+                String::from_utf8_lossy(v.as_bytes()).into_owned(),
+            )
         })
-        .await
-        .map_err(ErrorStatus::from)?;
-    tracing::debug!(?outcome, "Processed Profile inbox activity");
+        .collect::<Vec<_>>();
+    let evidence = build_evidence(&fields);
+    let read_us = read_start.elapsed().as_micros() as u64;
+    let admission_start = std::time::Instant::now();
+    api.admit_profile_inbox(ProfileRelayInboxDto {
+        profile_nanoid,
+        reading,
+        raw_body: body.to_vec(),
+        verification,
+        request_target: target,
+        evidence,
+        enabled: api.relay_inbox_enabled(),
+    })
+    .await
+    .map_err(|e| {
+        if let Some(limit) = e.frames().find_map(|f| f.downcast_ref::<InboxOverload>()) {
+            return ErrorStatus::RetryAfter(
+                StatusCode::from_u16(limit.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+                limit.retry_after_secs,
+            );
+        }
+        // Never log database errors containing binds, malformed body or peer-selected IDs.
+        let status = match e.current_context() {
+            kernel::KernelError::NotFound => StatusCode::NOT_FOUND,
+            kernel::KernelError::Rejected => StatusCode::UNPROCESSABLE_ENTITY,
+            kernel::KernelError::Validation => StatusCode::BAD_REQUEST,
+            kernel::KernelError::PermissionDenied => StatusCode::UNAUTHORIZED,
+            kernel::KernelError::Timeout => StatusCode::REQUEST_TIMEOUT,
+            _ => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            ErrorStatus::RetryAfter(status, 1)
+        } else {
+            ErrorStatus::from(status)
+        }
+    })?;
+    tracing::debug!(
+        signature_us,
+        read_us,
+        admission_us = admission_start.elapsed().as_micros() as u64,
+        accepted_us = start.elapsed().as_micros() as u64,
+        "Profile inbox committed"
+    );
     Ok(StatusCode::ACCEPTED.into_response())
 }
 
@@ -144,6 +172,10 @@ impl ProfileInboxRouter for Router<AppModule> {
 #[cfg(test)]
 #[path = "profile_inbox_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "profile_relay_tests.rs"]
+mod relay_tests;
 
 #[cfg(test)]
 #[path = "profile_domain_guard_tests.rs"]

@@ -58,13 +58,43 @@ pub enum SignatureVerificationResult {
     Invalid(String),
 }
 
+/// The exact key owner and scheme used by the cryptographic verification, never refetched.
+#[derive(Debug, Clone)]
+pub struct SignatureEvidence {
+    pub key_id: String,
+    pub owner: String,
+    pub scheme: SignatureScheme,
+    pub verified_at: time::OffsetDateTime,
+}
+pub enum SignatureEvidenceResult {
+    Valid(SignatureEvidence),
+    Invalid(String),
+}
+
 pub trait HttpSignatureVerifier: Send + Sync {
+    fn verify_with_evidence(
+        &self,
+        request: &HttpSignatureVerificationInput,
+    ) -> impl std::future::Future<Output = error_stack::Result<SignatureEvidenceResult, KernelError>>
+           + Send;
+
     fn verify(
         &self,
         request: &HttpSignatureVerificationInput,
     ) -> impl std::future::Future<
         Output = error_stack::Result<SignatureVerificationResult, KernelError>,
-    > + Send;
+    > + Send {
+        async move {
+            Ok(match self.verify_with_evidence(request).await? {
+                SignatureEvidenceResult::Valid(e) => {
+                    SignatureVerificationResult::Valid { key_id: e.key_id }
+                }
+                SignatureEvidenceResult::Invalid(reason) => {
+                    SignatureVerificationResult::Invalid(reason)
+                }
+            })
+        }
+    }
 
     fn fetch_actor_key(
         &self,

@@ -1,17 +1,14 @@
 use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use application::dto::activitypub::{GetProfileActorDto, GetProfileWebFingerDto};
-use application::dto::profile_inbound::{ProfileInboxDto, ProfileInboxOutcome};
+use application::dto::profile_inbound::ProfileInboxOutcome;
 use application::instance_identity::GetInstanceActorUseCase;
-use application::service::activitypub::{
-    GetProfileActorUseCase, GetProfileWebFingerUseCase, ProfileInboxUseCase,
-};
+use application::service::activitypub::{GetProfileActorUseCase, GetProfileWebFingerUseCase};
 use axum::extract::FromRef;
 use axum::http::StatusCode;
 use kernel::activitypub::{Actor, InstanceActor, WebFingerResponse};
 use kernel::interfaces::http_signing::{
-    ActorPublicKey, DependOnHttpSignatureVerifier, HttpSignatureVerificationInput,
-    HttpSignatureVerifier, SignatureVerificationResult,
+    DependOnHttpSignatureVerifier, HttpSignatureVerificationInput, HttpSignatureVerifier,
 };
 use kernel::KernelError;
 use std::sync::Arc;
@@ -51,6 +48,16 @@ impl ActivityPubApi {
         })
     }
 
+    pub fn relay_inbox_enabled(&self) -> bool {
+        self.module.post_relay_inbox_enabled()
+    }
+    pub async fn admit_profile_inbox(
+        &self,
+        dto: application::service::activitypub::ProfileRelayInboxDto,
+    ) -> error_stack::Result<ProfileInboxOutcome, KernelError> {
+        use application::service::activitypub::ProfileRelayInboxUseCase;
+        self.module.inbox_module().admit_profile_inbox(dto).await
+    }
     pub async fn get_profile_actor(
         &self,
         dto: GetProfileActorDto,
@@ -70,28 +77,15 @@ impl ActivityPubApi {
         self.module.get_profile_webfinger(dto).await
     }
 
-    pub async fn verify_http_signature(
+    pub async fn verify_inbox_signature(
         &self,
         input: &HttpSignatureVerificationInput,
-    ) -> error_stack::Result<SignatureVerificationResult, KernelError> {
-        self.module.http_signature_verifier().verify(input).await
-    }
-
-    pub async fn fetch_actor_key(
-        &self,
-        key_id: &str,
-    ) -> error_stack::Result<ActorPublicKey, KernelError> {
+    ) -> error_stack::Result<kernel::interfaces::http_signing::SignatureEvidenceResult, KernelError>
+    {
         self.module
             .http_signature_verifier()
-            .fetch_actor_key(key_id)
+            .verify_with_evidence(input)
             .await
-    }
-
-    pub async fn handle_profile_inbox_activity(
-        &self,
-        dto: ProfileInboxDto,
-    ) -> error_stack::Result<ProfileInboxOutcome, KernelError> {
-        self.module.handle_profile_inbox_activity(dto).await
     }
 }
 

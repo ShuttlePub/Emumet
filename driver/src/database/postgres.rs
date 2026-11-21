@@ -131,6 +131,21 @@ impl PostgresDatabase {
         sqlx::migrate!("../migrations").run(&mut *connection).await
     }
 
+    /// Independent bounded pool for short I1 intake sections. Same DB/options, no migrations
+    /// or external services; lazy connections. Keep API/projector capacity independent.
+    pub fn inbox_intake_pool(&self) -> Self {
+        Self {
+            pool: sqlx::postgres::PgPoolOptions::new()
+                .max_connections(4)
+                .connect_lazy_with(
+                    self.pool
+                        .connect_options()
+                        .as_ref()
+                        .clone()
+                        .application_name("emumet_inbox_intake"),
+                ),
+        }
+    }
     pub fn from_pool(pool: Pool<Postgres>) -> Self {
         Self { pool }
     }
@@ -456,7 +471,12 @@ impl TransactionManager for PostgresDatabase {
         T: Send + 'a,
     {
         Box::pin(async move {
+            let begin_start = std::time::Instant::now();
             let transaction = self.pool.begin().await.convert_error()?;
+            tracing::debug!(
+                transaction_begin_us = begin_start.elapsed().as_micros() as u64,
+                "Transaction connection acquired and begun"
+            );
             let budget = std::sync::Arc::new(LifecycleBudget::default());
             let mut conn = PostgresConnection(
                 PostgresConnectionInner::Transaction(transaction),

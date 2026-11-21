@@ -42,6 +42,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppModule {
     pgpool: PostgresDatabase,
+    post_relay_inbox_database: PostgresDatabase,
     home_origin_policy: driver::home_origin::HomeOriginAllowlist,
     password_provider: FilePasswordProvider,
     raw_key_generator: Rsa2048RawGenerator,
@@ -52,6 +53,7 @@ pub struct AppModule {
     http_signer: HttpSignerImpl,
     http_signature_verifier: HttpSignatureVerifierImpl,
     public_base_url: PublicBaseUrl,
+    post_relay_inbox_enabled: bool,
     hydra_admin_client: HydraAdminClient,
     kratos_session_client: KratosSessionClient,
     keto_client: KetoClient,
@@ -117,7 +119,37 @@ fn registration_protection_policies_from_env() -> (ReadinessPolicy, EmailChallen
     (readiness, email)
 }
 
+fn inbox_enabled(base: &str) -> error_stack::Result<bool, KernelError> {
+    match dotenvy::var("POST_RELAY_INBOX_ENABLED").as_deref() {
+        Err(_) | Ok("false") => Ok(false),
+        Ok("true") if application::inbox_reading::valid_sender_origin(base) => Ok(true),
+        _ => Err(error_stack::Report::new(KernelError::Validation).attach_printable("POST_RELAY_INBOX_ENABLED requires true/false and a normalized HTTPS PUBLIC_BASE_URL origin")),
+    }
+}
 impl AppModule {
+    pub(crate) fn inbox_module(&self) -> Self {
+        let mut module = self.clone();
+        module.pgpool = self.post_relay_inbox_database.clone();
+        module
+    }
+    #[cfg(test)]
+    pub(crate) fn with_inbox_database(mut self, database: PostgresDatabase) -> Self {
+        self.post_relay_inbox_database = database;
+        self
+    }
+    pub(crate) fn post_relay_inbox_enabled(&self) -> bool {
+        self.post_relay_inbox_enabled
+    }
+    #[cfg(test)]
+    pub(crate) fn with_post_relay_inbox(mut self, enabled: bool) -> Self {
+        self.post_relay_inbox_enabled = enabled;
+        self
+    }
+    #[cfg(test)]
+    pub(crate) fn with_public_base_url(mut self, base: &str) -> Self {
+        self.public_base_url = PublicBaseUrl::new(base.to_string());
+        self
+    }
     pub async fn new() -> error_stack::Result<Self, KernelError> {
         let hydra_admin_url =
             dotenvy::var("HYDRA_ADMIN_URL").unwrap_or_else(|_| "http://localhost:4445".to_string());
@@ -138,6 +170,7 @@ impl AppModule {
 
         Ok(Self {
             home_origin_policy: driver::home_origin::HomeOriginAllowlist::from_env()?,
+            post_relay_inbox_database: pgpool.inbox_intake_pool(),
             pgpool,
             password_provider: FilePasswordProvider::new(),
             raw_key_generator: Rsa2048RawGenerator,
@@ -147,6 +180,7 @@ impl AppModule {
             verifier: Rsa2048Verifier,
             http_signer: HttpSignerImpl,
             http_signature_verifier: HttpSignatureVerifierImpl::new()?,
+            post_relay_inbox_enabled: inbox_enabled(&public_base_url)?,
             public_base_url: PublicBaseUrl::new(public_base_url),
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_session_client: KratosSessionClient::new(kratos_public_url),
@@ -202,6 +236,7 @@ impl AppModule {
         let registration_flow_directory = KratosRegistrationFlowDirectory::new(&kratos_public_url);
         Ok(Self {
             home_origin_policy: driver::home_origin::HomeOriginAllowlist::from_env()?,
+            post_relay_inbox_database: pgpool.inbox_intake_pool(),
             pgpool,
             password_provider: FilePasswordProvider::new(),
             raw_key_generator: Rsa2048RawGenerator,
@@ -211,6 +246,7 @@ impl AppModule {
             verifier: Rsa2048Verifier,
             http_signer: HttpSignerImpl,
             http_signature_verifier: HttpSignatureVerifierImpl::new()?,
+            post_relay_inbox_enabled: inbox_enabled(&public_base_url)?,
             public_base_url: PublicBaseUrl::new(public_base_url),
             hydra_admin_client: HydraAdminClient::new(hydra_admin_url),
             kratos_session_client: KratosSessionClient::new(kratos_public_url),
@@ -292,6 +328,7 @@ impl AppModule {
     /// Test wiring: point the module at another (isolated) database, e.g. a per-test database with all production migrations.
     #[cfg(test)]
     pub(crate) fn with_database(mut self, database: PostgresDatabase) -> Self {
+        self.post_relay_inbox_database = database.inbox_intake_pool();
         self.pgpool = database;
         self
     }

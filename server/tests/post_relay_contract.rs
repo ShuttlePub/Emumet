@@ -1284,6 +1284,44 @@ fn inbox_reading_fixtures_match_the_reference_reader() {
             other => panic!("{id}: unknown outcome {other}"),
         };
         assert_eq!(read_inbox(c), want, "{id}");
+        // Exercise the production reader, not only the C0 reference implementation.
+        let body = c
+            .get("body_synthetic")
+            .map_or_else(|| s(c, "body").to_string(), synthetic_body);
+        let actual =
+            match application::inbox_reading::read_inbox(body.as_bytes(), s(c, "content_type")) {
+                Err(e) => Reading::Reject(e.status, e.reason),
+                Ok(r) => {
+                    let known: HashSet<_> = c["known_relation_ids"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect();
+                    if r.excluded_by(|v| match v {
+                        Value::String(id) => known.contains(id.as_str()),
+                        Value::Object(o) => o
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|id| known.contains(id)),
+                        _ => false,
+                    }) {
+                        Reading::Exclude(
+                            if matches!(r.relation.as_deref(), Some("Follow" | "Block")) {
+                                "type"
+                            } else {
+                                "known_reference"
+                            },
+                        )
+                    } else {
+                        Reading::Forward {
+                            activity_id: r.activity_id,
+                            actor: r.actor,
+                        }
+                    }
+                }
+            };
+        assert_eq!(actual, want, "production {id}");
     }
     assert!(
         counts.0 >= 25 && counts.1 >= 10 && counts.2 >= 20,
@@ -1634,6 +1672,17 @@ fn header_evidence_algorithm_matches_the_fixtures() {
         assert!(ids.insert(id), "duplicate case {id}");
         let got = build_evidence(c["original_headers"].as_array().unwrap());
         assert_eq!(got, c["expect"], "{id}");
+        let mut fields = Vec::new();
+        for h in c["original_headers"].as_array().unwrap() {
+            for _ in 0..h.get("times").and_then(Value::as_u64).unwrap_or(1) {
+                fields.push((s(h, "name").to_string(), s(h, "value").to_string()));
+            }
+        }
+        assert_eq!(
+            application::inbox_reading::build_evidence(&fields),
+            c["expect"],
+            "production {id}"
+        );
         // What the algorithm produces is always a valid envelope within the budget.
         let mut e = env.clone();
         e["original_request"]["signature_headers"] = got["signature_headers"].clone();
