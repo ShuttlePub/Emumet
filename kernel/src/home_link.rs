@@ -43,6 +43,17 @@ pub trait HomeLinkStore: Send + Sync + 'static {
         connection: &mut Self::Connection,
         ids: &[ProfileId],
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+    /// Requires the Account gate. Locks, in one ascending Profile-gate pass followed by one
+    /// ascending relationship-gate pass, the union of the Account's live Profiles, its ledger-only
+    /// Profile IDs and `extra` (e.g. every Profile stream a reactivation may restore). The
+    /// lifecycle projector calls this once **before** any deactivation/restoration so later
+    /// per-step locks only re-enter locks that are already held.
+    fn lock_account_profile_set(
+        &self,
+        connection: &mut Self::Connection,
+        account: &AccountId,
+        extra: &[ProfileId],
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
     fn owner_candidate(
         &self,
         connection: &mut Self::Connection,

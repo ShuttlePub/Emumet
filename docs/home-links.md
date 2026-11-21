@@ -50,6 +50,9 @@ Profile row and ledger ownership in one transaction. The pre-gate owner is only 
 A changed candidate retries from discovery in a **new transaction** (at most three attempts);
 persistent concurrency returns 409. Never acquire a new, possibly lower Account gate while
 retaining the old one.
+The Account projector settles the whole Profile set of a lifecycle replay up front (live Profiles,
+ledger-only IDs and every Profile stream a reactivation may restore) and takes those Profile gates
+ascending, then the relationship gates ascending, before deactivating or restoring anything.
 An organization requires the existing organization context; a personal auth linkage alone does
 not grant organization-context access.
 
@@ -149,6 +152,7 @@ job rejects zero matches or ignored acceptance tests. Test names below omit thei
 | Authority despite projection lag; BAN and suspension expiry | `write_side_ban_is_seen_while_projection_is_active`, `suspension_uses_committed_state_and_expiry_without_unlinking` |
 | P0 / revoker-precommit, stalled P1 rollback, local timeout only | `p0_and_unlink_precommit_stop_points_serialize_mock_authorization`, `p1_stalled_permit_rolls_back_and_bounds_revocation_wait`, `lifecycle_timeouts_are_transaction_local_and_plain_transactions_remain_unbounded` |
 | Existing relationship gate precedes link locks | `deactivation_waits_for_existing_relationship_gate_before_locking_links` |
+| Reactivation replay (mixed linked/unlinked Profiles, rows physically deleted): all Profile gates ascending before relationship gates | `home_link_projector_reactivation_replay_locks_all_profiles_ascending_before_relationships` |
 | Missing historical AuthAccount does not block or restore privileges | `missing_auth_history_does_not_block_projection_or_recreate_an_auth_link` |
 | Populated old schema and old-binary migration refusal | `additive_migration_on_populated_main_schema_and_old_binary_refusal` (other fixtures migrate empty schemas) |
 | JWT/current owner/allowlist/mode/username-less API | `home_link_api_auth_origin_modes_and_idempotency_including_non_actor_profile` |

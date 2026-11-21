@@ -63,6 +63,26 @@ async fn fixture(db: &PostgresDatabase, count: usize) -> (Account, Vec<Profile>)
     }
     (a, profiles)
 }
+/// Poll `pg_locks` until a backend of this database is *actually waiting* on a lock, so a stop
+/// point is only released after the competing operation reached the contended gate/row.
+async fn wait_for_lock_waiter(pool: &sqlx::PgPool) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_locks WHERE NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("concurrent operation never reached a lock wait");
+}
 async fn gated(
     db: &PostgresDatabase,
     p: &Profile,
@@ -363,7 +383,7 @@ async fn p0_and_unlink_precommit_stop_points_serialize_mock_authorization() {
     let p2 = p.clone();
     let id = l.id.clone();
     let task = tokio::spawn(async move { mock_authorize(&db, &p2, &id).await });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    wait_for_lock_waiter(&w.pool).await;
     assert!(!task.is_finished());
     unlink.commit().await.unwrap();
     assert!(!task.await.unwrap());
@@ -646,7 +666,7 @@ async fn deactivation_waits_for_existing_relationship_gate_before_locking_links(
         .unwrap();
     let db = w.database.clone();
     let task = tokio::spawn(async move { deactivate(&db, &a).await });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    wait_for_lock_waiter(&w.pool).await;
     assert!(!task.is_finished());
     let mut probe = w.database.get_transaction().await.unwrap();
     sqlx::query("SELECT id FROM profile_links WHERE id=$1 FOR UPDATE NOWAIT")

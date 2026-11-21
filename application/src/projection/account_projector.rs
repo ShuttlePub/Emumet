@@ -121,6 +121,41 @@ pub trait ProjectAccountBatch:
                     self.home_link_store()
                         .lock_accounts(transaction.connection(), std::slice::from_ref(&account_id))
                         .await?;
+                    // Shared lock order: Account gate -> Profile gates ascending -> relationship
+                    // gates ascending -> links. The deactivation replay below and the
+                    // reactivation restore further down use different Profile sets, so settle
+                    // the union (incl. every Profile stream a restore may touch) *now*, before
+                    // either step takes a Profile lock.
+                    let may_deactivate = envelopes
+                        .iter()
+                        .any(|event| matches!(event.event, AccountEvent::Deactivated));
+                    let may_restore = {
+                        let executor = transaction.connection();
+                        self.account_read_model()
+                            .find_by_id_including_deleted(executor, &account_id)
+                            .await?
+                            .is_some_and(|account| account.deleted_at().is_some())
+                    };
+                    if may_deactivate || may_restore {
+                        let history: Vec<ProfileId> = if may_restore {
+                            let executor = transaction.connection();
+                            self.profile_event_log()
+                                .find_streams_touching_account(executor, &account_id)
+                                .await?
+                                .iter()
+                                .map(|event| ProfileId::new(*event.envelope.id.as_ref()))
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                        self.home_link_store()
+                            .lock_account_profile_set(
+                                transaction.connection(),
+                                &account_id,
+                                &history,
+                            )
+                            .await?;
+                    }
                     for event in &envelopes {
                         if matches!(event.event, AccountEvent::Deactivated) {
                             self.home_link_store()

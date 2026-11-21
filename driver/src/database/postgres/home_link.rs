@@ -102,6 +102,24 @@ impl HomeLinkStore for PostgresHomeLinkStore {
         }
         Ok(())
     }
+    async fn lock_account_profile_set(
+        &self,
+        c: &mut Self::Connection,
+        account: &AccountId,
+        extra: &[ProfileId],
+    ) -> error_stack::Result<(), KernelError> {
+        let mut ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM profiles WHERE account_id=$1 UNION SELECT profile_id FROM profile_links WHERE owner_account_id=$1")
+            .bind(account.as_ref()).fetch_all(&mut **c).await.convert_error()?;
+        ids.extend(extra.iter().map(|id| *id.as_ref()));
+        ids.sort_unstable();
+        ids.dedup();
+        let ids = ids.into_iter().map(ProfileId::new).collect::<Vec<_>>();
+        self.lock_profiles(c, &ids).await?;
+        PostgresProfileRelationshipLock
+            .lock_profiles(c, &ids)
+            .await?;
+        Ok(())
+    }
     async fn owner_candidate(
         &self,
         c: &mut Self::Connection,

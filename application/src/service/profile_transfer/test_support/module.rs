@@ -382,6 +382,14 @@ impl kernel::interfaces::home_link::HomeLinkStore for MockModule {
     ) -> error_stack::Result<(), KernelError> {
         Ok(())
     }
+    async fn lock_account_profile_set(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+        _: &[ProfileId],
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
     async fn owner_candidate(
         &self,
         _: &mut MockConnection,

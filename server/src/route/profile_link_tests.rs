@@ -462,7 +462,7 @@ async fn home_link_all_three_revokers_serialize_with_a_precommit_permit() {
                 _ => module.project_batch().await.map(|_| ()),
             }
         });
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        wait_for_lock_waiter(&w).await;
         assert!(
             !revoke.is_finished(),
             "{kind} must wait for the permit transaction"
@@ -722,4 +722,179 @@ async fn home_link_held_owner_can_inspect_and_unlink_but_cannot_register() {
         assert_eq!(list["items"][0]["state"], "unlinked");
         assert_eq!(list["items"][0]["generation"], 2);
     }
+}
+
+/// Poll `pg_locks` until some backend of this database is *actually waiting* on a lock (advisory,
+/// row or transaction), not merely "has not finished yet".
+async fn wait_for_lock_waiter(w: &GraphWorld) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_locks WHERE NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",
+            )
+            .fetch_one(w.pool())
+            .await
+            .unwrap();
+            if waiting > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("concurrent operation never reached a lock wait");
+}
+
+/// Mixed organisation (low-ID Profile without a link, high-ID Profile with a link), physically
+/// deleted by deactivation, then reactivated while the old deactivation event is still inside the
+/// replay window. The shared lock order is Profile gates ascending -> relationship gates ascending:
+/// the projector must queue on the *lowest* Profile gate without already holding the high
+/// Profile's Profile/relationship gates.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn home_link_projector_reactivation_replay_locks_all_profiles_ascending_before_relationships()
+{
+    use application::service::session_context::OrganizationContext;
+    use kernel::interfaces::event::EventApplier;
+    use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
+    use kernel::interfaces::repository::DependOnProfileRepository;
+    use kernel::prelude::entity::OrgRole;
+    use kernel::prelude::entity::{Nanoid, Profile, ProfileId};
+    let w = world().await;
+    let u = w.new_user().await;
+    w.create_profile(&u, true).await;
+    let org = w
+        .module
+        .create_organization(
+            u.auth_account_id.clone(),
+            CreateOrganizationDto {
+                name: format!("l1order{}", kernel::generate_id()),
+            },
+        )
+        .await
+        .unwrap();
+    let a = AccountId::new(
+        sqlx::query_scalar::<_, i64>("SELECT id FROM accounts WHERE nanoid=$1")
+            .bind(&org.account_id)
+            .fetch_one(w.pool())
+            .await
+            .unwrap(),
+    );
+    let context = OrganizationContext {
+        org_account_id: a.clone(),
+        org_account_nanoid: org.account_id,
+        role: OrgRole::Owner,
+    };
+    let mut ids = vec![];
+    for linked in [false, true] {
+        let mut c = w.module.database_connection().connection().await.unwrap();
+        let event = w
+            .module
+            .profile_repository()
+            .save(
+                &mut c,
+                Profile::create(
+                    ProfileId::new(kernel::generate_id()),
+                    a.clone(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Nanoid::default(),
+                ),
+            )
+            .await
+            .unwrap();
+        let mut profile = None;
+        Profile::apply(&mut profile, event).unwrap();
+        let profile = profile.unwrap();
+        w.module
+            .profile_read_model()
+            .create(&mut c, &profile)
+            .await
+            .unwrap();
+        drop(c);
+        if linked {
+            w.module
+                .register_home_link(
+                    &u.auth_account_id,
+                    Some(&context),
+                    profile.nanoid().as_ref(),
+                    "https://home.example",
+                    3,
+                )
+                .await
+                .unwrap();
+        }
+        ids.push(*profile.id().as_ref());
+    }
+    let (low, high) = (ids[0], ids[1]);
+    assert!(low < high);
+    // Physically delete every Profile row (ledger-only identity remains for `high`).
+    raw_event(&w, &a, AccountEvent::Deactivated).await;
+    w.module.project_batch().await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM profiles WHERE account_id=$1")
+            .bind(a.as_ref())
+            .fetch_one(w.pool())
+            .await
+            .unwrap(),
+        0
+    );
+    raw_event(&w, &a, AccountEvent::Reactivated).await;
+    // Replay the window again: it still contains the old deactivation event.
+    sqlx::query("DELETE FROM projection_checkpoints WHERE projector_name='account_projector'")
+        .execute(w.pool())
+        .await
+        .unwrap();
+    let mut holder = w.pool().begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('emumet/profile-lifecycle/' || $1::text, 0))")
+        .bind(low)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let module = w.module.clone();
+    let task = tokio::spawn(async move { module.project_batch().await });
+    wait_for_lock_waiter(&w).await;
+    // The projector queues on the lowest Profile gate and holds nothing for the high Profile.
+    let mut probe = w.pool().begin().await.unwrap();
+    for (label, key) in [
+        ("profile gate", format!("emumet/profile-lifecycle/{high}")),
+        (
+            "relationship gate",
+            format!("emumet.profile_relationship:{high}"),
+        ),
+    ] {
+        assert!(
+            sqlx::query_scalar::<_, bool>(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))"
+            )
+            .bind(key)
+            .fetch_one(&mut *probe)
+            .await
+            .unwrap(),
+            "high-ID {label} was held while waiting on the lower Profile gate"
+        );
+    }
+    probe.commit().await.unwrap();
+    holder.commit().await.unwrap();
+    task.await.unwrap().unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM profiles WHERE account_id=$1")
+            .bind(a.as_ref())
+            .fetch_one(w.pool())
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM profile_links WHERE owner_account_id=$1 AND state='unlinked'"
+        )
+        .bind(a.as_ref())
+        .fetch_one(w.pool())
+        .await
+        .unwrap(),
+        1
+    );
 }
