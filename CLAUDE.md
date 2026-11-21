@@ -108,10 +108,10 @@ kernel → application → server
 kernel → driver    → server
 ```
 
-- **kernel**: Domain entities, interface traits (EventStore, ReadModel, Repository, *Query), Event Sourcing core, crypto trait composition (SigningKeyGenerator). Traits are exposed via logical `pub mod interfaces {}` block in `lib.rs` (not a physical directory).
-- **application**: Use case services (Account CRUD use cases), projection projectors (tailing), DTOs
-- **driver**: PostgreSQL implementations of kernel interfaces
-- **server**: Axum HTTP server, JWT auth (Ory Hydra), OAuth2 Login/Consent Provider, route handlers, facade newtypes (server/src/api/), DI wiring (AppModule)
+- **kernel**: Domain entities, interface traits (EventStore, ReadModel, Repository, *Query), Event Sourcing core, crypto trait composition (SigningKeyGenerator). Traits are exposed via logical `pub mod interfaces {}` block in `lib.rs` (not a physical directory). `login_consent` (OAuth2 login/consent boundary types and the `OAuth2FlowGateway` / `IdentitySessionVerifier` ports) is self-contained: it depends on no other kernel entity or repository.
+- **application**: Use case services (Account CRUD use cases), projection projectors (tailing), DTOs. `service/login_consent/` holds the OAuth2 login/consent use cases (`LoginUseCase`, `ConsentUseCase`: branching, session-cookie narrowing, scope validation, email claim) and works against the ports only (no DB).
+- **driver**: PostgreSQL implementations of kernel interfaces; Ory clients (`keto`; `hydra` = Hydra admin API as `OAuth2FlowGateway`; `kratos` = Kratos whoami as `IdentitySessionVerifier`)
+- **server**: Axum HTTP server, JWT auth (Ory Hydra), OAuth2 Login/Consent routes (HTTP in/out conversion only), route handlers, facade newtypes (server/src/api/), DI wiring (AppModule)
 
 ### CQRS + Event Sourcing Pattern
 
@@ -182,8 +182,8 @@ JWT validation middleware (`server/src/auth.rs`):
 - Bearer token → RS256 validation → `Extension<AuthClaims>` inserted into request
 - `AuthClaims` → `OidcAuthInfo` → `resolve_auth_account_id` (find-or-create AuthHost + AuthAccount)
 
-OAuth2 Login/Consent Provider (`server/src/route/oauth2.rs`):
-- GET /oauth2/login — Kratos session → Hydra login accept
+OAuth2 Login/Consent Provider (routes in `server/src/route/oauth2/` only convert HTTP; the logic is `application::service::login_consent`, reached through `OAuth2Api`; Hydra / Kratos are reached through the `kernel::interfaces::login_consent` ports implemented by `driver::hydra` / `driver::kratos`):
+- GET /oauth2/login — Kratos session → Hydra login accept (any Kratos verification failure rejects the login with `login_required`; Hydra failures are 502)
 - GET /oauth2/consent — skip check → redirect or show consent
 - POST /oauth2/consent — accept/reject with scope validation
 
@@ -205,7 +205,7 @@ Event Sourcing対象エンティティ (Account, AuthAccount, Profile, Metadata)
 
 ### Server DI Architecture
 
-`AppModule` — single wiring root. Owns `PostgresDatabase` + crypto providers + HydraAdminClient + KratosClient. `impl_database_delegation!` wires all DB `DependOn*` traits; small handwritten impls for non-DB traits (crypto, permission, http_signing, config). Provides `hydra_admin_client()` and `kratos_client()` accessors.
+`AppModule` — single wiring root. Owns `PostgresDatabase` + crypto providers + HydraAdminClient + KratosSessionClient. `impl_database_delegation!` wires all DB `DependOn*` traits; small handwritten impls for non-DB traits (crypto, permission, http_signing, config, `DependOnOAuth2FlowGateway`, `DependOnIdentitySessionVerifier`). It exposes no raw Hydra / Kratos client accessors.
 
 **Facade newtypes** (server/src/api/): `AccountApi`, `AdminAccountApi`, `MeApi`, `OAuth2Api`, `ActivityPubApi`, `ProfileRelationshipApi`, `ProfileFollowListApi`. Each wraps `AppModule` via `FromRef`, exposes only use-case methods + legitimate helpers. Facades do NOT implement `DependOn*` — route handlers cannot reach raw ports/executors (compile-time block).
 

@@ -1,11 +1,10 @@
-use super::REMEMBER_FOR_SECS;
+use super::status_of;
 use crate::api::OAuth2Api;
-use crate::hydra::{AcceptLoginRequest, RejectRequest};
-use crate::kratos::KratosClient;
 use crate::schema::oauth2::{LoginQuery, OAuth2Response};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use kernel::interfaces::login_consent::LoginChallenge;
 
 // ---------------------------------------------------------------------------
 // GET /oauth2/login
@@ -27,145 +26,20 @@ pub(crate) async fn login(
     Query(LoginQuery { login_challenge }): Query<LoginQuery>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, StatusCode> {
-    let hydra = api.hydra_admin_client();
-    let kratos = api.kratos_client();
-
-    // 1. Fetch login request from Hydra.
-    let login_request = hydra
-        .get_login_request(&login_challenge)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get login request from Hydra: {e}");
-            StatusCode::BAD_GATEWAY
-        })?;
-
-    // 2. If Hydra says skip (already authenticated), accept immediately.
-    if login_request.skip {
-        let redirect = hydra
-            .accept_login(
-                &login_challenge,
-                &AcceptLoginRequest {
-                    subject: login_request.subject.clone(),
-                    remember: Some(true),
-                    remember_for: Some(REMEMBER_FOR_SECS),
-                    context: None,
-                },
-            )
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to accept login at Hydra: {e}");
-                StatusCode::BAD_GATEWAY
-            })?;
-
-        return Ok(OAuth2Response::Redirect {
-            redirect_to: redirect.redirect_to,
-        }
-        .into_response());
-    }
-
-    // 3. Verify user has a valid Kratos session via cookie.
-    let cookie = headers
+    let cookie_header = headers
         .get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let kratos_session = match verify_kratos_session(kratos, cookie).await {
-        Ok(session) => session,
-        Err(_) => {
-            let redirect = hydra
-                .reject_login(
-                    &login_challenge,
-                    &RejectRequest {
-                        error: "login_required".to_string(),
-                        error_description: Some("No valid Kratos session found.".to_string()),
-                    },
-                )
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to reject login at Hydra: {e}");
-                    StatusCode::BAD_GATEWAY
-                })?;
-
-            return Ok(OAuth2Response::Redirect {
-                redirect_to: redirect.redirect_to,
-            }
-            .into_response());
-        }
-    };
-
-    // 4. Accept login with Kratos identity UUID as subject.
-    let redirect = hydra
-        .accept_login(
-            &login_challenge,
-            &AcceptLoginRequest {
-                subject: kratos_session.identity_id,
-                remember: Some(true),
-                remember_for: Some(REMEMBER_FOR_SECS),
-                context: kratos_session
-                    .email
-                    .as_ref()
-                    .map(|e| serde_json::json!({ "email": e })),
-            },
-        )
+    let redirect = api
+        .login(&LoginChallenge::new(login_challenge), cookie_header)
         .await
-        .map_err(|e| {
-            tracing::error!("Failed to accept login at Hydra: {e}");
-            StatusCode::BAD_GATEWAY
-        })?;
+        .map_err(status_of)?;
 
     Ok(OAuth2Response::Redirect {
-        redirect_to: redirect.redirect_to,
+        redirect_to: redirect.into_string(),
     }
     .into_response())
-}
-
-struct VerifiedSession {
-    identity_id: String,
-    email: Option<String>,
-}
-
-/// Verify Kratos session via cookie, returning the identity ID on success.
-async fn verify_kratos_session(
-    kratos: &KratosClient,
-    cookie: &str,
-) -> Result<VerifiedSession, StatusCode> {
-    if cookie.is_empty() {
-        tracing::warn!("oauth2/login: no cookie header, cannot verify Kratos session");
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    // Extract only the Kratos session cookie to avoid leaking other cookies.
-    let kratos_cookie = cookie
-        .split(';')
-        .map(|c| c.trim())
-        .find(|c| c.starts_with("ory_kratos_session="))
-        .unwrap_or("");
-
-    if kratos_cookie.is_empty() {
-        tracing::warn!("oauth2/login: no ory_kratos_session cookie found");
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    let session = kratos.whoami(kratos_cookie).await.map_err(|e| {
-        tracing::error!("Kratos whoami request failed: {e}");
-        StatusCode::BAD_GATEWAY
-    })?;
-
-    match session {
-        Some(s) => Ok(VerifiedSession {
-            identity_id: s.identity.id,
-            email: s
-                .identity
-                .traits
-                .get("email")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-        }),
-        None => {
-            tracing::warn!("oauth2/login: Kratos session invalid or expired");
-            Err(StatusCode::UNAUTHORIZED)
-        }
-    }
 }
 
 #[cfg(test)]

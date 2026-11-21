@@ -5,10 +5,19 @@ pub(crate) use consent::{__path_get_consent, __path_post_consent, get_consent, p
 pub(crate) use login::{__path_login, login};
 
 use crate::handler::AppModule;
+use application::service::login_consent::LoginConsentError;
+use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::Router;
 
-pub(super) const REMEMBER_FOR_SECS: i64 = 3600;
+/// A failure of the OAuth2 provider is a bad gateway; a grant of a scope that was never requested is
+/// a bad request.
+pub(super) fn status_of(error: LoginConsentError) -> StatusCode {
+    match error {
+        LoginConsentError::Upstream(_) => StatusCode::BAD_GATEWAY,
+        LoginConsentError::ScopeNotRequested(_) => StatusCode::BAD_REQUEST,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Router
