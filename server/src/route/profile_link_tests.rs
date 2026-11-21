@@ -304,7 +304,14 @@ async fn home_link_transfer_preserves_identity_and_old_owner_cannot_list_registe
         let mut tx = db.get_transaction().await.unwrap();
         w.module
             .post_relay_store()
-            .finish_success(tx.connection(), &lease)
+            .finish_success(
+                tx.connection(),
+                &lease,
+                &kernel::interfaces::post_relay::AttemptObservation {
+                    attempt_id: permit.attempt_id,
+                    observed_at: permit.authorized_at,
+                },
+            )
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -1336,7 +1343,13 @@ async fn post_relay_all_three_revokers_release_queued_and_quarantine_body_reserv
         let mut tx = db.get_transaction().await.unwrap();
         w.module
             .post_relay_store()
-            .record_attempt(tx.connection(), dead, AttemptResult::http(403, None), 0)
+            .record_attempt(
+                tx.connection(),
+                dead,
+                AttemptResult::http(403, None),
+                None,
+                0,
+            )
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -1416,7 +1429,14 @@ async fn post_relay_all_three_revokers_release_queued_and_quarantine_body_reserv
         assert_eq!(
             w.module
                 .post_relay_store()
-                .finish_success(tx.connection(), queued)
+                .finish_success(
+                    tx.connection(),
+                    queued,
+                    &kernel::interfaces::post_relay::AttemptObservation {
+                        attempt_id: permit.attempt_id,
+                        observed_at: permit.authorized_at
+                    }
+                )
                 .await
                 .unwrap(),
             Recorded::Stale

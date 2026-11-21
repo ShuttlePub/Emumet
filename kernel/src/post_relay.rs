@@ -77,6 +77,13 @@ pub enum Authorization {
     Stale,
     Busy,
 }
+/// A trusted S1 observation on the authorization DB timeline, within the committed permit.
+/// S1 MUST use its monotonic send deadline, never label an after-deadline response in time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttemptObservation {
+    pub attempt_id: i64,
+    pub observed_at: OffsetDateTime,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttemptResult {
     Success,
@@ -227,19 +234,24 @@ pub trait PostRelayStore: Send + Sync + 'static {
         lease: &RelayLease,
         origin_allowed: bool,
     ) -> impl Future<Output = error_stack::Result<Authorization, KernelError>> + Send;
+    /// Completed HTTP results require the permit attempt and a trusted in-deadline observation.
+    /// None is only pre-permission failure / transport timeout; a late response is not in time.
+    /// A live fenced in-time success/permanent result wins over delayed DB save past expiry.
     fn record_attempt(
         &self,
         c: &mut Self::Connection,
         lease: &RelayLease,
         result: AttemptResult,
+        observation: Option<&AttemptObservation>,
         random: u64,
     ) -> impl Future<Output = error_stack::Result<Recorded, KernelError>> + Send;
     fn finish_success(
         &self,
         c: &mut Self::Connection,
         lease: &RelayLease,
+        observation: &AttemptObservation,
     ) -> impl Future<Output = error_stack::Result<Recorded, KernelError>> + Send {
-        self.record_attempt(c, lease, AttemptResult::Success, 0)
+        self.record_attempt(c, lease, AttemptResult::Success, Some(observation), 0)
     }
     fn hold(
         &self,

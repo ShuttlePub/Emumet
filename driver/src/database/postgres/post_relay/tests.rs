@@ -168,9 +168,25 @@ async fn record(
     now: OffsetDateTime,
     r: AttemptResult,
 ) -> Recorded {
+    let mut c = db.connection().await.unwrap();
+    let attempt: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT attempt_id FROM post_relay_jobs WHERE receipt=$1",
+    )
+    .bind(&l.receipt)
+    .fetch_optional(&mut *c)
+    .await
+    .unwrap()
+    .flatten();
+    drop(c);
+    let observation = attempt
+        .filter(|_| !matches!(r, AttemptResult::Retry { status: None, .. }))
+        .map(|attempt_id| AttemptObservation {
+            attempt_id,
+            observed_at: now,
+        });
     let mut t = db.get_transaction().await.unwrap();
     let a = at(now)
-        .record_attempt(t.connection(), l, r, 0)
+        .record_attempt(t.connection(), l, r, observation.as_ref(), 0)
         .await
         .unwrap();
     t.commit().await.unwrap();
@@ -400,9 +416,22 @@ async fn post_relay_exact_72_hour_and_30_day_boundaries_do_not_extend_on_hold_or
             .expire_due(t.connection(), p.id(), 128)
             .await
             .unwrap(),
-        1
+        0
     );
     t.commit().await.unwrap();
+    assert_eq!(
+        record(
+            db,
+            &l,
+            end,
+            AttemptResult::Retry {
+                status: None,
+                retry_after_secs: None
+            }
+        )
+        .await,
+        Recorded::Applied
+    );
     assert_eq!(
         record(db, &l, end, AttemptResult::Success).await,
         Recorded::Stale
@@ -1792,20 +1821,16 @@ async fn post_relay_late_collection_never_extends_logical_terminal_or_quarantine
         authorize(db, &lease, observed).await,
         Authorization::Permitted(_)
     ));
-    let mut tx = db.get_transaction().await.unwrap();
     assert_eq!(
-        at(observed)
-            .record_attempt(
-                tx.connection(),
-                &lease,
-                AttemptResult::Permanent { status: Some(400) },
-                0
-            )
-            .await
-            .unwrap(),
+        record(
+            db,
+            &lease,
+            observed,
+            AttemptResult::Permanent { status: Some(400) }
+        )
+        .await,
         Recorded::Applied
     );
-    tx.commit().await.unwrap();
     let permanent: (OffsetDateTime, OffsetDateTime) = sqlx::query_as(
         "SELECT terminal_at,expires_at FROM post_relay_dead_letters WHERE receipt='permanent-edge'",
     )
@@ -1814,4 +1839,394 @@ async fn post_relay_late_collection_never_extends_logical_terminal_or_quarantine
     .unwrap();
     assert_eq!(permanent, (observed, observed + QUARANTINE_TTL));
     consistent(db, expiry + Duration::days(100)).await;
+}
+
+mod p4 {
+    use super::*;
+
+    async fn result_at(
+        db: &PostgresDatabase,
+        lease: &RelayLease,
+        observation: Option<&AttemptObservation>,
+        result: AttemptResult,
+        now: OffsetDateTime,
+    ) -> error_stack::Result<Recorded, KernelError> {
+        let mut t = db.get_transaction().await.unwrap();
+        let result = at(now)
+            .record_attempt(t.connection(), lease, result, observation, 0)
+            .await;
+        if result.is_ok() {
+            t.commit().await.unwrap();
+        } else {
+            drop(t); // The existing transaction guard rolls back on drop.
+        }
+        result
+    }
+
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn post_relay_p4_in_deadline_results_survive_delayed_record_but_not_unlink_or_wrong_attempt(
+    ) {
+        let d = IsolatedDatabase::create().await;
+        let db = &d.database;
+        let (_, ps) = fixture(db, 4, true).await;
+        let start = clock();
+        physical(db, start).await;
+        for (i, p) in ps.iter().enumerate() {
+            assert_eq!(
+                admit(db, p, &format!("p4-{i}"), start, 8).await,
+                Admission::Queued
+            );
+        }
+        let cutoff = start + AUTOMATIC_TTL;
+        let near = cutoff - Duration::seconds(1);
+        let mut leases = claim(db, near, 4).await;
+        leases.sort_by(|a, b| a.receipt.cmp(&b.receipt));
+        let mut permits = vec![];
+        for l in &leases {
+            let Authorization::Permitted(p) = authorize(db, l, near).await else {
+                panic!("P4 permit");
+            };
+            permits.push(p);
+        }
+        let late = cutoff + Duration::seconds(1);
+        let p = &permits[3];
+        let observation = AttemptObservation {
+            attempt_id: p.attempt_id,
+            observed_at: cutoff - Duration::microseconds(1),
+        };
+        let wrong = AttemptObservation {
+            attempt_id: p.attempt_id + 1,
+            ..observation
+        };
+        assert_eq!(
+            result_at(db, &p.lease, Some(&wrong), AttemptResult::Success, late)
+                .await
+                .unwrap(),
+            Recorded::Stale
+        );
+        for observed_at in [
+            p.authorized_at - Duration::microseconds(1),
+            p.send_deadline + Duration::microseconds(1),
+        ] {
+            assert!(result_at(
+                db,
+                &p.lease,
+                Some(&AttemptObservation {
+                    observed_at,
+                    ..observation
+                }),
+                AttemptResult::Success,
+                late
+            )
+            .await
+            .is_err());
+        }
+        assert!(result_at(db, &p.lease, None, AttemptResult::Success, late)
+            .await
+            .is_err());
+        assert_eq!(
+            number(
+                &d,
+                "SELECT count(*) FROM post_relay_slots WHERE token IS NOT NULL"
+            )
+            .await,
+            4
+        );
+        let mut t = db.get_transaction().await.unwrap();
+        assert!(at(late)
+            .maintenance_due(t.connection(), 128)
+            .await
+            .unwrap()
+            .is_empty());
+        t.commit().await.unwrap();
+        for profile in &ps {
+            let mut t = db.get_transaction().await.unwrap();
+            assert_eq!(
+                at(late)
+                    .expire_due(t.connection(), profile.id(), 128)
+                    .await
+                    .unwrap(),
+                0
+            );
+            t.commit().await.unwrap();
+        }
+        for (i, result) in [
+            AttemptResult::Success,
+            AttemptResult::Permanent { status: Some(403) },
+            AttemptResult::Retry {
+                status: Some(503),
+                retry_after_secs: None,
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let p = &permits[i];
+            assert_eq!(
+                result_at(
+                    db,
+                    &p.lease,
+                    Some(&AttemptObservation {
+                        attempt_id: p.attempt_id,
+                        observed_at: observation.observed_at,
+                    }),
+                    result,
+                    late,
+                )
+                .await
+                .unwrap(),
+                Recorded::Applied
+            );
+        }
+        assert_eq!(
+            number(
+                &d,
+                "SELECT count(*) FROM post_relay_bodies WHERE receipt='p4-0'"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            number(
+                &d,
+                "SELECT count(*) FROM post_relay_audits WHERE receipt='p4-0'"
+            )
+            .await,
+            0
+        );
+        let terminal: (OffsetDateTime, OffsetDateTime, OffsetDateTime) =
+            sqlx::query_as("SELECT terminal_at,expires_at,last_attempt_at FROM post_relay_audits WHERE receipt='p4-1'")
+                .fetch_one(&d.pool).await.unwrap();
+        assert_eq!(
+            terminal,
+            (
+                observation.observed_at,
+                observation.observed_at + QUARANTINE_TTL,
+                observation.observed_at
+            )
+        );
+        let expired: OffsetDateTime = sqlx::query_scalar(
+            "SELECT terminal_at FROM post_relay_dead_letters WHERE receipt='p4-2' AND reason='expired'",
+        )
+        .fetch_one(&d.pool)
+        .await
+        .unwrap();
+        assert_eq!(expired, cutoff);
+        unlink(db, &ps[3]).await;
+        assert_eq!(
+            result_at(
+                db,
+                &p.lease,
+                Some(&observation),
+                AttemptResult::Success,
+                late
+            )
+            .await
+            .unwrap(),
+            Recorded::Stale
+        );
+        assert_eq!(purge(db, &ps[3], late).await, 1);
+        consistent(db, late).await;
+    }
+
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn post_relay_p4_lease_expiry_rejects_completed_response_and_uses_original_cutoff() {
+        let d = IsolatedDatabase::create().await;
+        let db = &d.database;
+        let (_, ps) = fixture(db, 1, true).await;
+        let start = clock();
+        physical(db, start).await;
+        admit(db, &ps[0], "p4-lease", start, 8).await;
+        let cutoff = start + AUTOMATIC_TTL;
+        let near = cutoff - Duration::seconds(1);
+        let l = claim(db, near, 1).await.remove(0);
+        let Authorization::Permitted(p) = authorize(db, &l, near).await else {
+            panic!("P4 lease permit");
+        };
+        let observation = AttemptObservation {
+            attempt_id: p.attempt_id,
+            observed_at: cutoff - Duration::microseconds(1),
+        };
+        let lost = p.lease.lease_until;
+        assert_eq!(
+            result_at(
+                db,
+                &p.lease,
+                Some(&observation),
+                AttemptResult::Success,
+                lost
+            )
+            .await
+            .unwrap(),
+            Recorded::Stale
+        );
+        let mut t = db.get_transaction().await.unwrap();
+        assert_eq!(
+            at(lost)
+                .expire_due(t.connection(), ps[0].id(), 128)
+                .await
+                .unwrap(),
+            1
+        );
+        t.commit().await.unwrap();
+        let times: (OffsetDateTime, OffsetDateTime) = sqlx::query_as(
+            "SELECT terminal_at,expires_at FROM post_relay_dead_letters WHERE receipt='p4-lease'",
+        )
+        .fetch_one(&d.pool)
+        .await
+        .unwrap();
+        assert_eq!(times, (cutoff, cutoff + QUARANTINE_TTL));
+        consistent(db, lost).await;
+    }
+
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn post_relay_p4_manual_success_survives_original_quarantine_expiry_while_lease_is_live()
+    {
+        let d = IsolatedDatabase::create().await;
+        let db = &d.database;
+        let (_, ps) = fixture(db, 1, true).await;
+        let start = clock();
+        physical(db, start).await;
+        admit(db, &ps[0], "p4-manual", start, 8).await;
+        let l = claim(db, start, 1).await.remove(0);
+        assert!(matches!(
+            authorize(db, &l, start).await,
+            Authorization::Permitted(_)
+        ));
+        record(
+            db,
+            &l,
+            start,
+            AttemptResult::Permanent { status: Some(403) },
+        )
+        .await;
+        let expiry = start + QUARANTINE_TTL;
+        let near = expiry - Duration::seconds(1);
+        let request = operation(&ps[0], "p4-manual-op", OperatorAction::Redeliver);
+        assert_eq!(begin(db, &request, near).await.count, 1);
+        assert_eq!(operate(db, &request.id, near, false).await.changed, 1);
+        let l = claim(db, near, 1).await.remove(0);
+        let Authorization::Permitted(p) = authorize(db, &l, near).await else {
+            panic!("P4 manual permit");
+        };
+        assert!(p.manual);
+        assert_eq!(p.send_deadline, expiry);
+        let mut t = db.get_transaction().await.unwrap();
+        assert_eq!(
+            at(expiry)
+                .expire_due(t.connection(), ps[0].id(), 128)
+                .await
+                .unwrap(),
+            0
+        );
+        at(expiry)
+            .purge_expired(t.connection(), ps[0].id(), 128)
+            .await
+            .unwrap();
+        t.commit().await.unwrap();
+        assert_eq!(
+            number(&d, "SELECT count(*) FROM post_relay_bodies").await,
+            1
+        );
+        let late = expiry + Duration::seconds(1);
+        assert_eq!(
+            result_at(
+                db,
+                &p.lease,
+                Some(&AttemptObservation {
+                    attempt_id: p.attempt_id,
+                    observed_at: expiry - Duration::microseconds(1)
+                }),
+                AttemptResult::Success,
+                late
+            )
+            .await
+            .unwrap(),
+            Recorded::Applied
+        );
+        assert_eq!(
+            number(&d, "SELECT count(*) FROM post_relay_bodies").await,
+            0
+        );
+        assert_eq!(
+            number(
+                &d,
+                "SELECT succeeded FROM post_relay_operations WHERE id='p4-manual-op'"
+            )
+            .await,
+            1
+        );
+        consistent(db, late).await;
+    }
+
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn post_relay_absolute_30_day_retention_is_timezone_independent_across_dst() {
+        let d = IsolatedDatabase::create().await;
+        let db = &d.database;
+        let (_, ps) = fixture(db, 1, true).await;
+        let start = time::Date::from_calendar_date(2027, time::Month::March, 1)
+            .unwrap()
+            .midnight()
+            .assume_utc();
+        physical(db, start).await;
+        admit(db, &ps[0], "dst", start, 8).await;
+        let l = claim(db, start, 1).await.remove(0);
+        let Authorization::Permitted(p) = authorize(db, &l, start).await else {
+            panic!("DST permit");
+        };
+        let mut t = db.get_transaction().await.unwrap();
+        sqlx::query("SET LOCAL TIME ZONE 'America/New_York'")
+            .execute(&mut **t.connection())
+            .await
+            .unwrap();
+        assert_eq!(
+            at(start)
+                .record_attempt(
+                    t.connection(),
+                    &p.lease,
+                    AttemptResult::Permanent { status: Some(403) },
+                    Some(&AttemptObservation {
+                        attempt_id: p.attempt_id,
+                        observed_at: start
+                    }),
+                    0
+                )
+                .await
+                .unwrap(),
+            Recorded::Applied
+        );
+        t.commit().await.unwrap();
+        let expiry: OffsetDateTime = sqlx::query_scalar(
+            "SELECT expires_at FROM post_relay_dead_letters WHERE receipt='dst'",
+        )
+        .fetch_one(&d.pool)
+        .await
+        .unwrap();
+        assert_eq!(expiry, start + QUARANTINE_TTL);
+        let now = start + Duration::days(1);
+        let mut t = db.get_transaction().await.unwrap();
+        sqlx::query("SET LOCAL TIME ZONE 'America/New_York'")
+            .execute(&mut **t.connection())
+            .await
+            .unwrap();
+        at(now)
+            .begin_operator(
+                t.connection(),
+                &operation(&ps[0], "dst-op", OperatorAction::Redeliver),
+            )
+            .await
+            .unwrap();
+        t.commit().await.unwrap();
+        let expiry: OffsetDateTime =
+            sqlx::query_scalar("SELECT expires_at FROM post_relay_operations WHERE id='dst-op'")
+                .fetch_one(&d.pool)
+                .await
+                .unwrap();
+        assert_eq!(expiry, now + QUARANTINE_TTL);
+        consistent(db, now).await;
+    }
 }

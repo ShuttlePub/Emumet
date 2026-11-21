@@ -64,11 +64,12 @@ struct Job {
     lease_until: Option<OffsetDateTime>,
     authorized_at: Option<OffsetDateTime>,
     send_deadline: Option<OffsetDateTime>,
+    attempt_id: Option<i64>,
     operation_id: Option<String>,
     total_attempts: i64,
     quarantine_expires_at: Option<OffsetDateTime>,
 }
-const JOB_SELECT:&str="SELECT b.receipt,b.profile_id,b.link_id,b.generation,b.origin,b.logical_bytes,b.automatic_expires_at,j.token,j.lease_until,j.authorized_at,j.send_deadline,j.operation_id,j.total_attempts,d.expires_at AS quarantine_expires_at FROM post_relay_bodies b JOIN post_relay_jobs j USING(receipt) LEFT JOIN post_relay_dead_letters d USING(receipt)";
+const JOB_SELECT:&str="SELECT b.receipt,b.profile_id,b.link_id,b.generation,b.origin,b.logical_bytes,b.automatic_expires_at,j.token,j.lease_until,j.authorized_at,j.send_deadline,j.attempt_id,j.operation_id,j.total_attempts,d.expires_at AS quarantine_expires_at FROM post_relay_bodies b JOIN post_relay_jobs j USING(receipt) LEFT JOIN post_relay_dead_letters d USING(receipt)";
 impl Job {
     fn expires(&self) -> OffsetDateTime {
         if self.operation_id.is_some() {
@@ -282,7 +283,10 @@ impl PostgresPostRelayStore {
         l: &RelayLease,
         now: OffsetDateTime,
     ) -> error_stack::Result<Option<Job>, KernelError> {
-        Ok(self.job(c, &l.receipt).await?.filter(|j| {
+        let job = self.job(c, &l.receipt).await?;
+        // Row-lock waits also consume the lease; do not validate with a pre-wait clock.
+        let now = now.max(self.now(c).await?);
+        Ok(job.filter(|j| {
             j.profile_id == g.profile
                 && j.token == l.token
                 && j.lease_until.is_some_and(|t| t > now)
@@ -339,6 +343,16 @@ impl PostgresPostRelayStore {
         reason: &str,
         now: OffsetDateTime,
     ) -> error_stack::Result<(), KernelError> {
+        self.quarantine_observed(c, j, reason, now, now).await
+    }
+    async fn quarantine_observed(
+        &self,
+        c: &mut PostgresConnection,
+        j: &Job,
+        reason: &str,
+        now: OffsetDateTime,
+        observed_at: OffsetDateTime,
+    ) -> error_stack::Result<(), KernelError> {
         if let Some(op) = &j.operation_id {
             sqlx::query("UPDATE post_relay_operations SET failed=failed+1 WHERE id=$1")
                 .bind(op)
@@ -351,7 +365,7 @@ impl PostgresPostRelayStore {
             let terminal = if reason == "expired" {
                 j.automatic_expires_at
             } else {
-                now.min(j.automatic_expires_at)
+                observed_at.min(j.automatic_expires_at)
             };
             let expires = terminal + QUARANTINE_TTL;
             let purge_body = now >= expires;
@@ -459,9 +473,10 @@ impl PostRelayStore for PostgresPostRelayStore {
         c: &mut Self::Connection,
         l: &RelayLease,
         r: AttemptResult,
+        observation: Option<&AttemptObservation>,
         random: u64,
     ) -> error_stack::Result<Recorded, KernelError> {
-        self.record(c, l, r, random).await
+        self.record(c, l, r, observation, random).await
     }
     async fn hold(
         &self,

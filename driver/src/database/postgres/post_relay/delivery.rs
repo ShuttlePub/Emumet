@@ -191,6 +191,7 @@ impl PostgresPostRelayStore {
         c: &mut PostgresConnection,
         l: &RelayLease,
         result: AttemptResult,
+        observation: Option<&AttemptObservation>,
         random: u64,
     ) -> error_stack::Result<Recorded, KernelError> {
         let g = self.gate(c, &l.profile_id).await?;
@@ -199,9 +200,28 @@ impl PostgresPostRelayStore {
         let Some(j) = self.leased_job(c, &g, l, now).await? else {
             return Ok(Recorded::Stale);
         };
-        if result == AttemptResult::Success && j.authorized_at.is_none() {
-            return Err(Report::new(KernelError::Validation));
-        }
+        let observed_at = if let Some(o) = observation {
+            if j.attempt_id != Some(o.attempt_id) {
+                return Ok(Recorded::Stale);
+            }
+            let (Some(authorized), Some(deadline)) = (j.authorized_at, j.send_deadline) else {
+                return Ok(Recorded::Stale);
+            };
+            if o.observed_at < authorized || o.observed_at > deadline {
+                return Err(Report::new(KernelError::Validation));
+            }
+            o.observed_at
+        } else {
+            // No completed HTTP response: pre-permission preparation failure or transport timeout.
+            // A definite response after permission requires the original attempt and observation.
+            if result == AttemptResult::Success
+                || (j.authorized_at.is_some()
+                    && !matches!(result, AttemptResult::Retry { status: None, .. }))
+            {
+                return Err(Report::new(KernelError::Validation));
+            }
+            now
+        };
         let status = match result {
             AttemptResult::Success => Some(200),
             AttemptResult::Retry { status, .. } | AttemptResult::Permanent { status } => status,
@@ -210,7 +230,12 @@ impl PostgresPostRelayStore {
             return Err(Report::new(KernelError::Validation));
         }
         self.release_slot(c, j.token).await?;
-        let expired = now >= j.expires();
+        let completed_terminal = observation.is_some()
+            && matches!(
+                result,
+                AttemptResult::Success | AttemptResult::Permanent { .. }
+            );
+        let expired = now >= j.expires() && !completed_terminal;
         let reason = if expired {
             "expired"
         } else {
@@ -220,9 +245,9 @@ impl PostgresPostRelayStore {
                 AttemptResult::Permanent { .. } => "permanent",
             }
         };
-        sqlx::query("UPDATE post_relay_jobs SET total_attempts=total_attempts+1,first_attempt_at=COALESCE(first_attempt_at,$2),last_attempt_at=$2,last_status=$3 WHERE receipt=$1").bind(&j.receipt).bind(now).bind(status.map(|s|s as i16)).execute(&mut **c).await.convert_error()?;
+        sqlx::query("UPDATE post_relay_jobs SET total_attempts=total_attempts+1,first_attempt_at=COALESCE(first_attempt_at,$2),last_attempt_at=$2,last_status=$3 WHERE receipt=$1").bind(&j.receipt).bind(observed_at).bind(status.map(|s|s as i16)).execute(&mut **c).await.convert_error()?;
         if j.operation_id.is_none() {
-            sqlx::query("INSERT INTO post_relay_attempts(receipt,number,at,status,reason) VALUES($1,$2,$3,$4,$5)").bind(&j.receipt).bind(j.total_attempts+1).bind(now).bind(status.map(|s|s as i16)).bind(reason).execute(&mut **c).await.convert_error()?;
+            sqlx::query("INSERT INTO post_relay_attempts(receipt,number,at,status,reason) VALUES($1,$2,$3,$4,$5)").bind(&j.receipt).bind(j.total_attempts+1).bind(observed_at).bind(status.map(|s|s as i16)).bind(reason).execute(&mut **c).await.convert_error()?;
             sqlx::query("DELETE FROM post_relay_attempts WHERE receipt=$1 AND number<=$2")
                 .bind(&j.receipt)
                 .bind(j.total_attempts + 1 - ATTEMPT_ROWS)
@@ -246,7 +271,8 @@ impl PostgresPostRelayStore {
                 .await
                 .convert_error()?;
         } else if matches!(result, AttemptResult::Permanent { .. }) || j.operation_id.is_some() {
-            self.quarantine(c, &j, "permanent", now).await?;
+            self.quarantine_observed(c, &j, "permanent", now, observed_at)
+                .await?;
         } else if let AttemptResult::Retry {
             retry_after_secs, ..
         } = result

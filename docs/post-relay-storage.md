@@ -28,6 +28,21 @@ the supplied connection; it never opens another transaction or commits a handler
   authorize_send takes an origin policy decision already prepared OUTSIDE the transaction.
   Authorization::Permitted is only a proposed permit: a successful COMMIT is the start of sending.
   Unknown commit => NO send. No connection/transaction is carried by SendPermit.
+- P4 (response obtained, DB recording delayed): record_attempt takes Option<&AttemptObservation>
+  (permit attempt_id plus observed_at), and finish_success REQUIRES that observation. S1 attests
+  that it obtained the result within the SAME monotonic send deadline; observed_at is correlated
+  to the permit's DB authorization timeline, NOT an independently skewed application wall clock
+  or a receiver Date. It must be within [authorized_at, send_deadline]. Never claim that a late
+  response was in time. No observation is only for pre-permission preparation failures or a
+  transport timeout without a completed response (Retry with no HTTP status after permission).
+  The store rechecks the current lease/fencing/generation/owner and attempt ID, and resamples the
+  lease clock AFTER job-row lock waits. A valid in-deadline 2xx deletes the body even if DB saving
+  crosses 72h/the original manual quarantine expiry; a permanent result uses OBSERVED time as
+  logical terminal, not late DB save time. A retry saved after the automatic cutoff still ends
+  at that cutoff. Wrong attempt, revoked generation or lost lease is stale even for 2xx; out-of-
+  permit observation/missing success observation is rejected without releasing slots/capacity.
+  Expiry and quarantine body purge leave a live authorized lease time to record P4, only until
+  lease loss; no new send/claim/observation window is granted, and no retention deadline resets.
 - The final permission UPDATE samples clock_timestamp once. Its absolute deadline is the lesser
   of authorized_at +10s and received_at +72h (manual: original quarantine expiry). Commit latency
   consumes that deadline. S1 can conservatively anchor (send_deadline - authorized_at) to an
@@ -93,7 +108,8 @@ Permanent/expired: delete job/attempts, keep one body/dead-letter and one body-f
 until **logical terminal time +30 days**, never DB collection/commit time +30 days. Logical terminal
 time is received_at +72h for automatic expiry, or the permanent failure observation/attempt time
 (no later than that 72h cutoff). Holds, lease recovery, restarts and a long worker outage extend
-NEITHER deadline. Thus automatic-expiry retention ends at received_at +33 days; an earlier
+NEITHER deadline. Thirty days means 720 elapsed hours, including SQL constraints/cleanup (not
+session-timezone calendar arithmetic across DST). Thus automatic-expiry retention ends at received_at +33 days; an earlier
 permanent failure ends sooner. If first collection is AT or AFTER that fixed quarantine expiry,
 erase the body in that transaction without creating a dead letter: a long outage can skip
 quarantine entirely and manual redelivery is impossible. Still record the body-free failure
@@ -228,6 +244,8 @@ binaries may reject the additional migration; never drop accepted bodies to make
 - transfer/reprojection: server home_link_transfer_preserves_identity_and_old_owner_cannot_list_register_or_unlink; home_link_projector_same_batch_deactivate_reactivate_and_stale_replay_keep_new_link
 - unlinked isolation/process rate: post_relay_unlinked_hourly_bounded_and_exhaustion_does_not_spend_linked_reservations; post_relay_rate_is_shared_by_two_separate_processes_not_process_local
 - operator frame/fixed snapshot: post_relay_manual_one_shot_same_envelope_original_30_day_expiry_and_audit_protected; post_relay_operator_snapshot_batches_exclusion_discard_confirmation_and_unlink_fencing
+- absolute TTL across DST: post_relay_absolute_30_day_retention_is_timezone_independent_across_dst (America/New_York across spring transition)
+- P4 delayed result / attempt identity / lease and revoke fencing: post_relay_p4_in_deadline_results_survive_delayed_record_but_not_unlink_or_wrong_attempt; post_relay_p4_lease_expiry_rejects_completed_response_and_uses_original_cutoff; post_relay_p4_manual_success_survives_original_quarantine_expiry_while_lease_is_live
 - immutable preparation without permission: post_relay_preparation_is_not_permission_and_stale_or_revoked_lease_gets_no_body
 - global rate/DB clock/renew/hold: post_relay_global_rate_and_db_received_clock_and_renew_hold_are_shared_state
 - manual crash (no repeated permission): post_relay_manual_committed_permission_is_not_repeated_after_worker_crash

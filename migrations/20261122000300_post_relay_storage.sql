@@ -96,7 +96,7 @@ CREATE TABLE post_relay_dead_letters (
  receipt varchar(128) PRIMARY KEY REFERENCES post_relay_bodies(receipt) ON DELETE CASCADE,
  terminal_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
  reason text NOT NULL CHECK(reason IN ('permanent','expired')),
- CHECK(expires_at=terminal_at+interval '30 days')
+ CHECK(expires_at=terminal_at+interval '720 hours')
 );
 CREATE INDEX post_relay_dead_letters_expiry ON post_relay_dead_letters(expires_at,receipt);
 CREATE TABLE post_relay_audits (
@@ -105,7 +105,7 @@ CREATE TABLE post_relay_audits (
  total_attempts bigint NOT NULL, first_attempt_at timestamptz, last_attempt_at timestamptz,
  last_status smallint CHECK(last_status BETWEEN 100 AND 599),
  terminal_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
- CHECK(expires_at=terminal_at+interval '30 days')
+ CHECK(expires_at=terminal_at+interval '720 hours')
 );
 CREATE INDEX post_relay_audits_expiry ON post_relay_audits(expires_at,profile_id);
 CREATE TABLE post_relay_unlinked (
