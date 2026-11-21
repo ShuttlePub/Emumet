@@ -56,7 +56,8 @@ impl PostgresPostRelayStore {
         Self::validate_operation(r)?;
         let g = self.gate(c, &r.profile_id).await?;
         let link = Self::operation_link(&g, r.action)?;
-        let (q, p) = self.quota(c, &g).await?;
+        // Serialize ID reuse checks without allocating capacity for an old or invalid request.
+        self.lock_quota_rows(c, &g).await?;
         let now = self.now(c).await?;
         let action = match r.action {
             OperatorAction::Redeliver => "redeliver",
@@ -86,6 +87,7 @@ impl PostgresPostRelayStore {
                 earliest_expiry: None,
             });
         }
+        let (q, p) = self.admission_quota(c, &g).await?;
         // This protected partition is not spent by ordinary admission; full body capacity cannot
         // prevent an explicit recovery/discard from obtaining its aggregate audit row.
         if q.operator_rows >= 100000 || p.operator_rows >= 1000 {
@@ -130,7 +132,9 @@ impl PostgresPostRelayStore {
                 OperatorAction::Redeliver
             },
         )?;
-        self.quota(c, &g).await?;
+        if !self.existing_quota(c, &g).await? {
+            return Err(Report::new(KernelError::NotFound));
+        }
         let now = self.now(c).await?;
         // Global quota serializes selection/cursor updates. Audit write occurs after body/job work.
         let op = sqlx::query("SELECT * FROM post_relay_operations WHERE id=$1")

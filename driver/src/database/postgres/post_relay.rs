@@ -175,16 +175,54 @@ impl PostgresPostRelayStore {
             links,
         })
     }
-    async fn quota(
+    /// Lock only: callers with old leases must never initialize, convert or touch capacity.
+    async fn lock_quota_rows(
         &self,
         c: &mut PostgresConnection,
         g: &Gate,
-    ) -> error_stack::Result<(Quota, Quota), KernelError> {
+    ) -> error_stack::Result<(Quota, Option<Quota>), KernelError> {
+        c.require_account_gate(g.owner)?;
+        c.require_profile_gate(g.profile)?;
         let q =
             sqlx::query_as::<_, Quota>("SELECT * FROM post_relay_quota WHERE singleton FOR UPDATE")
                 .fetch_one(&mut **c)
                 .await
                 .convert_error()?;
+        let p = sqlx::query_as::<_, Quota>(
+            "SELECT * FROM post_relay_profile_quota WHERE profile_id=$1 FOR UPDATE",
+        )
+        .bind(g.profile)
+        .fetch_optional(&mut **c)
+        .await
+        .convert_error()?;
+        Ok((q, p))
+    }
+    async fn lock_slots(&self, c: &mut PostgresConnection) -> error_stack::Result<(), KernelError> {
+        sqlx::query("SELECT id FROM post_relay_slots ORDER BY id FOR UPDATE")
+            .fetch_all(&mut **c)
+            .await
+            .convert_error()?;
+        Ok(())
+    }
+    async fn existing_quota(
+        &self,
+        c: &mut PostgresConnection,
+        g: &Gate,
+    ) -> error_stack::Result<bool, KernelError> {
+        let (_, p) = self.lock_quota_rows(c, g).await?;
+        if p.is_none() {
+            return Ok(false);
+        }
+        self.lock_slots(c).await?;
+        Ok(true)
+    }
+    /// Explicit admission of a new delivery, aggregate or operator request owns initialization.
+    async fn admission_quota(
+        &self,
+        c: &mut PostgresConnection,
+        g: &Gate,
+    ) -> error_stack::Result<(Quota, Quota), KernelError> {
+        let (q, _) = self.lock_quota_rows(c, g).await?;
         let state: Option<bool> = sqlx::query_scalar(
             "SELECT delivery_state FROM post_relay_profile_quota WHERE profile_id=$1",
         )
@@ -221,10 +259,7 @@ impl PostgresPostRelayStore {
         .fetch_one(&mut **c)
         .await
         .convert_error()?;
-        sqlx::query("SELECT id FROM post_relay_slots ORDER BY id FOR UPDATE")
-            .fetch_all(&mut **c)
-            .await
-            .convert_error()?;
+        self.lock_slots(c).await?;
         let q = sqlx::query_as::<_, Quota>("SELECT * FROM post_relay_quota WHERE singleton")
             .fetch_one(&mut **c)
             .await

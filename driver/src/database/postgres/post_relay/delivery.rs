@@ -46,7 +46,9 @@ impl PostgresPostRelayStore {
         l: &RelayLease,
     ) -> error_stack::Result<Recorded, KernelError> {
         let g = self.gate(c, &l.profile_id).await?;
-        self.quota(c, &g).await?;
+        if !self.existing_quota(c, &g).await? {
+            return Ok(Recorded::Stale);
+        }
         let now = self.now(c).await?;
         let Some(j) = self.leased_job(c, &g, l, now).await? else {
             return Ok(Recorded::Stale);
@@ -69,7 +71,9 @@ impl PostgresPostRelayStore {
         allowed: bool,
     ) -> error_stack::Result<Authorization, KernelError> {
         let g = self.gate(c, &l.profile_id).await?;
-        self.quota(c, &g).await?;
+        if !self.existing_quota(c, &g).await? {
+            return Ok(Authorization::Stale);
+        }
         let now = self.now(c).await?;
         let Some(j) = self.leased_job(c, &g, l, now).await? else {
             return Ok(Authorization::Stale);
@@ -171,7 +175,9 @@ impl PostgresPostRelayStore {
         l: &RelayLease,
     ) -> error_stack::Result<Recorded, KernelError> {
         let g = self.gate(c, &l.profile_id).await?;
-        self.quota(c, &g).await?;
+        if !self.existing_quota(c, &g).await? {
+            return Ok(Recorded::Stale);
+        }
         let now = self.now(c).await?;
         let Some(j) = self.leased_job(c, &g, l, now).await? else {
             return Ok(Recorded::Stale);
@@ -195,7 +201,9 @@ impl PostgresPostRelayStore {
         random: u64,
     ) -> error_stack::Result<Recorded, KernelError> {
         let g = self.gate(c, &l.profile_id).await?;
-        self.quota(c, &g).await?;
+        if !self.existing_quota(c, &g).await? {
+            return Ok(Recorded::Stale);
+        }
         let now = self.now(c).await?;
         let Some(j) = self.leased_job(c, &g, l, now).await? else {
             return Ok(Recorded::Stale);

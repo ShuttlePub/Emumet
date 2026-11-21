@@ -43,7 +43,7 @@ impl PostgresPostRelayStore {
         if current != r.recipient {
             return Err(Report::new(KernelError::Concurrency));
         }
-        let (q, p) = match self.quota(c, &g).await {
+        let (q, p) = match self.admission_quota(c, &g).await {
             Ok(value) => value,
             Err(e) if matches!(e.current_context(), KernelError::Rejected) => {
                 return Ok(Admission::Limited {

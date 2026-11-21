@@ -18,7 +18,9 @@ impl PostgresPostRelayStore {
     ) -> error_stack::Result<u64, KernelError> {
         let limit = batch(limit)?;
         let g = self.gate(c, p).await?;
-        self.quota(c, &g).await?;
+        if !self.existing_quota(c, &g).await? {
+            return Ok(0);
+        }
         let now = self.now(c).await?;
         let receipts:Vec<String>=sqlx::query_scalar("SELECT b.receipt FROM post_relay_bodies b JOIN post_relay_jobs j USING(receipt) JOIN profile_links l ON l.id=b.link_id LEFT JOIN post_relay_dead_letters d USING(receipt) WHERE b.profile_id=$1 AND l.state='active' AND l.generation=b.generation AND ((j.operation_id IS NULL AND b.automatic_expires_at<=$2) OR (j.operation_id IS NOT NULL AND (d.expires_at<=$2 OR (j.authorized_at IS NOT NULL AND j.lease_until<=$2 AND j.send_deadline<=$2)))) AND (j.authorized_at IS NULL OR j.lease_until<=$2) ORDER BY b.seq LIMIT $3").bind(g.profile).bind(now).bind(limit).fetch_all(&mut **c).await.convert_error()?;
         for receipt in &receipts {
@@ -37,7 +39,9 @@ impl PostgresPostRelayStore {
     ) -> error_stack::Result<u64, KernelError> {
         let limit = batch(limit)?;
         let g = self.gate(c, p).await?;
-        self.quota(c, &g).await?;
+        if !self.existing_quota(c, &g).await? {
+            return Ok(0);
+        }
         let now = self.now(c).await?;
         let bodies=sqlx::query("SELECT b.receipt,b.link_id,b.logical_bytes,l.state,l.generation=b.generation AS same_generation,u.released FROM post_relay_bodies b JOIN profile_links l ON l.id=b.link_id JOIN post_relay_link_usage u ON u.link_id=b.link_id LEFT JOIN post_relay_dead_letters d USING(receipt) LEFT JOIN post_relay_jobs j USING(receipt) WHERE b.profile_id=$1 AND (l.state<>'active' OR l.generation<>b.generation OR (d.expires_at<=$2 AND (j.authorized_at IS NULL OR j.lease_until<=$2))) ORDER BY b.seq FOR UPDATE OF b LIMIT $3").bind(g.profile).bind(now).bind(limit).fetch_all(&mut **c).await.convert_error()?;
         for b in &bodies {
@@ -211,8 +215,8 @@ pub(in crate::database::postgres) async fn cancel(
     let Some(u) = u.filter(|u| !u.get::<bool, _>("released")) else {
         return Ok(());
     };
-    STORE
-        .quota(
+    if !STORE
+        .existing_quota(
             c,
             &Gate {
                 profile: p,
@@ -222,7 +226,11 @@ pub(in crate::database::postgres) async fn cancel(
                 links: vec![],
             },
         )
-        .await?;
+        .await?
+    {
+        return Err(Report::new(KernelError::Internal)
+            .attach_printable("post relay missing cancellation quota"));
+    }
     let count: i64 = u.get("body_count");
     let jobs: i64 = u.get("auto_jobs");
     STORE

@@ -1351,7 +1351,7 @@ async fn post_relay_full_profile_and_multi_account_logical_cancellation_is_bound
     for p in &ps {
         let mut t = db.get_transaction().await.unwrap();
         let g = STORE.gate(t.connection(), p.id()).await.unwrap();
-        STORE.quota(t.connection(), &g).await.unwrap();
+        STORE.admission_quota(t.connection(), &g).await.unwrap();
         let link = g
             .links
             .iter()
@@ -1372,7 +1372,7 @@ async fn post_relay_full_profile_and_multi_account_logical_cancellation_is_bound
         seed.commit().await.unwrap();
         let mut t = db.get_transaction().await.unwrap();
         let g = STORE.gate(t.connection(), p.id()).await.unwrap();
-        STORE.quota(t.connection(), &g).await.unwrap();
+        STORE.admission_quota(t.connection(), &g).await.unwrap();
         sqlx::query("INSERT INTO post_relay_link_usage(link_id,profile_id,body_count,body_bytes,auto_jobs) VALUES($1,$2,2000,536870912,1000)").bind(&link.id).bind(p.id().as_ref()).execute(&mut **t.connection()).await.unwrap();
         STORE
             .delta(
@@ -1839,6 +1839,361 @@ async fn post_relay_late_collection_never_extends_logical_terminal_or_quarantine
     .unwrap();
     assert_eq!(permanent, (observed, observed + QUARANTINE_TTL));
     consistent(db, expiry + Duration::days(100)).await;
+}
+
+mod r1 {
+    use super::*;
+
+    async fn fingerprint(d: &IsolatedDatabase) -> String {
+        sqlx::query_scalar("SELECT jsonb_build_object('global',(SELECT to_jsonb(q) FROM post_relay_quota q),'profiles',(SELECT jsonb_agg(q ORDER BY profile_id) FROM post_relay_profile_quota q),'slots',(SELECT jsonb_agg(s ORDER BY id) FROM post_relay_slots s),'counters',(SELECT to_jsonb(k) FROM post_relay_counters k),'usage',(SELECT jsonb_agg(u ORDER BY link_id) FROM post_relay_link_usage u))::text")
+            .fetch_one(&d.pool).await.unwrap()
+    }
+
+    async fn assert_stale_operations(
+        d: &IsolatedDatabase,
+        ls: &[RelayLease],
+        observations: &[AttemptObservation],
+        late: OffsetDateTime,
+    ) {
+        let db = &d.database;
+        let original = fingerprint(d).await;
+        for (i, l) in ls.iter().enumerate() {
+            // Reproduce R1 result persistence first; then cover every other lease entry point.
+            for action in [4, 0, 1, 2, 3, 5, 6, 7] {
+                let store = at(late);
+                let mut t = db.get_transaction().await.unwrap();
+                match action {
+                    0 => assert_eq!(
+                        store.renew_lease(t.connection(), l).await.unwrap(),
+                        Recorded::Stale
+                    ),
+                    1 => assert!(matches!(
+                        store.authorize_send(t.connection(), l, true).await.unwrap(),
+                        Authorization::Stale
+                    )),
+                    2 => assert_eq!(
+                        store.hold(t.connection(), l).await.unwrap(),
+                        Recorded::Stale
+                    ),
+                    3 => assert_eq!(
+                        store
+                            .finish_success(t.connection(), l, &observations[i])
+                            .await
+                            .unwrap(),
+                        Recorded::Stale
+                    ),
+                    4 => assert_eq!(
+                        store
+                            .record_attempt(
+                                t.connection(),
+                                l,
+                                AttemptResult::Retry {
+                                    status: None,
+                                    retry_after_secs: None
+                                },
+                                None,
+                                0
+                            )
+                            .await
+                            .unwrap(),
+                        Recorded::Stale
+                    ),
+                    5 => assert_eq!(
+                        store
+                            .record_attempt(
+                                t.connection(),
+                                l,
+                                AttemptResult::Permanent { status: Some(403) },
+                                Some(&observations[i]),
+                                0
+                            )
+                            .await
+                            .unwrap(),
+                        Recorded::Stale
+                    ),
+                    6 => assert_eq!(
+                        store
+                            .record_attempt(
+                                t.connection(),
+                                l,
+                                AttemptResult::Success,
+                                Some(&observations[i]),
+                                0
+                            )
+                            .await
+                            .unwrap(),
+                        Recorded::Stale
+                    ),
+                    _ => assert!(store
+                        .prepare_send(t.connection(), l)
+                        .await
+                        .unwrap()
+                        .is_none()),
+                }
+                // Commit even Stale: rollback must not hide accidental capacity mutation.
+                t.commit().await.unwrap();
+                assert_eq!(fingerprint(d).await, original, "lease {i} action {action}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn post_relay_stale_operations_after_quota_purge_never_recreate_or_convert_capacity() {
+        let d = IsolatedDatabase::create().await;
+        let db = &d.database;
+        let (_, ps) = fixture(db, 3, true).await;
+        let start = clock();
+        physical(db, start).await;
+        for (i, p) in ps.iter().enumerate() {
+            admit(db, p, &format!("r1-{i}"), start, 8).await;
+        }
+        let mut ls = claim(db, start, 3).await;
+        ls.sort_by(|a, b| a.receipt.cmp(&b.receipt));
+        let Authorization::Permitted(p0) = authorize(db, &ls[0], start).await else {
+            panic!("r1 first permit");
+        };
+        let Authorization::Permitted(p1) = authorize(db, &ls[1], start).await else {
+            panic!("r1 completed permit");
+        };
+        let observations = [
+            AttemptObservation {
+                attempt_id: p0.attempt_id,
+                observed_at: start,
+            },
+            AttemptObservation {
+                attempt_id: p1.attempt_id,
+                observed_at: start,
+            },
+            AttemptObservation {
+                attempt_id: 0,
+                observed_at: start,
+            },
+        ];
+        let mut t = db.get_transaction().await.unwrap();
+        assert_eq!(
+            at(start)
+                .finish_success(t.connection(), &ls[1], &observations[1])
+                .await
+                .unwrap(),
+            Recorded::Applied
+        );
+        t.commit().await.unwrap();
+        // Canceled authorized + canceled pre-permission leases, and completed still-linked lease.
+        unlink(db, &ps[0]).await;
+        unlink(db, &ps[2]).await;
+        let late = start.max(OffsetDateTime::now_utc()) + Duration::days(31);
+        for p in &ps {
+            purge(db, p, late).await;
+        }
+        assert_eq!(
+            number(&d, "SELECT count(*) FROM post_relay_profile_quota").await,
+            0
+        );
+        assert_eq!(
+            number(
+                &d,
+                "SELECT delivery_rows+unlinked_rows+operator_rows FROM post_relay_quota"
+            )
+            .await,
+            64 // The fixed global quota/counter/slot/capacity reservation remains.
+        );
+        let original = fingerprint(&d).await;
+        assert_stale_operations(&d, &ls, &observations, late).await;
+        // Delayed maintenance and repeated L1 cancellation are also non-initializing no-ops.
+        for p in &ps {
+            let mut t = db.get_transaction().await.unwrap();
+            assert_eq!(
+                at(late)
+                    .expire_due(t.connection(), p.id(), 128)
+                    .await
+                    .unwrap(),
+                0
+            );
+            t.commit().await.unwrap();
+            assert_eq!(purge(db, p, late).await, 0);
+            assert_eq!(fingerprint(&d).await, original);
+        }
+        let mut t = db.get_transaction().await.unwrap();
+        let g = at(late).gate(t.connection(), ps[0].id()).await.unwrap();
+        let link = g.links.iter().find(|l| l.state == "unlinked").unwrap();
+        super::super::maintenance::cancel(t.connection(), &link.id, link.generation - 1)
+            .await
+            .unwrap();
+        t.commit().await.unwrap();
+        assert_eq!(fingerprint(&d).await, original);
+        let mut t = db.get_transaction().await.unwrap();
+        assert_eq!(
+            at(late)
+                .operator_preview(
+                    t.connection(),
+                    &operation(&ps[1], "r1-preview", OperatorAction::Redeliver)
+                )
+                .await
+                .unwrap()
+                .count,
+            0
+        );
+        t.commit().await.unwrap();
+        assert_eq!(fingerprint(&d).await, original);
+        consistent(db, late).await;
+        // Only explicit admission may create capacity again; active link still works afterwards.
+        physical(db, late).await;
+        assert!(matches!(
+            admit(db, &ps[1], "r1-fresh", late, 8).await,
+            Admission::Queued
+        ));
+        assert_eq!(
+            number(&d, "SELECT count(*) FROM post_relay_profile_quota").await,
+            1
+        );
+        consistent(db, late).await;
+
+        // A new unlinked aggregate may recreate a header. Merely relinking must not let
+        // an old worker convert that header into delivery capacity before its stale check.
+        assert_eq!(
+            admit(db, &ps[0], "r1-unlinked", late, 8).await,
+            Admission::Unlinked
+        );
+        let mut t = db.get_transaction().await.unwrap();
+        let g = STORE.gate(t.connection(), ps[0].id()).await.unwrap();
+        let owner = PostgresHomeLinkStore
+            .owner(t.connection(), ps[0].id(), &AccountId::new(g.owner))
+            .await
+            .unwrap();
+        PostgresHomeLinkStore
+            .register(
+                t.connection(),
+                &owner,
+                "https://emumet.example/ap/profiles/relay",
+                "https://home.example",
+            )
+            .await
+            .unwrap();
+        t.commit().await.unwrap();
+        assert_stale_operations(&d, &ls[..1], &observations[..1], late).await;
+        assert_eq!(
+            number(
+                &d,
+                "SELECT count(*) FROM post_relay_profile_quota WHERE delivery_state"
+            )
+            .await,
+            1
+        );
+        consistent(db, late).await;
+        // Explicit admission, unlike a stale lease, is allowed to convert this header.
+        assert_eq!(
+            admit(db, &ps[0], "r1-new-generation", late, 8).await,
+            Admission::Queued
+        );
+        assert_eq!(
+            number(
+                &d,
+                "SELECT count(*) FROM post_relay_profile_quota WHERE delivery_state"
+            )
+            .await,
+            2
+        );
+        consistent(db, late).await;
+    }
+
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn post_relay_cancellation_with_missing_quota_fails_without_reinitialization() {
+        let d = IsolatedDatabase::create().await;
+        let db = &d.database;
+        let (_, ps) = fixture(db, 1, true).await;
+        let start = clock();
+        physical(db, start).await;
+        assert_eq!(
+            admit(db, &ps[0], "r1-corrupt", start, 8).await,
+            Admission::Queued
+        );
+        let mut t = db.get_transaction().await.unwrap();
+        let g = STORE.gate(t.connection(), ps[0].id()).await.unwrap();
+        let link = g.links.iter().find(|l| l.state == "active").unwrap();
+        // Inject corruption only inside a transaction that is rolled back below.
+        sqlx::query("DELETE FROM post_relay_profile_quota WHERE profile_id=$1")
+            .bind(ps[0].id().as_ref())
+            .execute(&mut **t.connection())
+            .await
+            .unwrap();
+        let error = PostgresHomeLinkStore
+            .unlink(t.connection(), ps[0].id(), &link.id)
+            .await
+            .unwrap_err();
+        assert!(matches!(error.current_context(), KernelError::Internal));
+        let headers: i64 = sqlx::query_scalar("SELECT count(*) FROM post_relay_profile_quota")
+            .fetch_one(&mut **t.connection())
+            .await
+            .unwrap();
+        assert_eq!(headers, 0);
+        let rows: i64 = sqlx::query_scalar("SELECT unlinked_rows FROM post_relay_quota")
+            .fetch_one(&mut **t.connection())
+            .await
+            .unwrap();
+        assert_eq!(rows, 0);
+        drop(t); // sqlx rolls back uncommitted transactions on drop.
+        consistent(db, start).await;
+    }
+
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn post_relay_old_operator_batches_after_quota_purge_never_recreate_capacity() {
+        let d = IsolatedDatabase::create().await;
+        let db = &d.database;
+        let (_, ps) = fixture(db, 2, true).await;
+        let start = clock();
+        let request = operation(&ps[0], "r1-old-operation", OperatorAction::Redeliver);
+        assert_eq!(begin(db, &request, start).await.count, 0);
+        // Reusing an existing ID for another Profile is stale, not fresh admission.
+        let original = fingerprint(&d).await;
+        let conflicting = operation(&ps[1], &request.id, OperatorAction::Redeliver);
+        let mut t = db.get_transaction().await.unwrap();
+        assert!(matches!(
+            at(start)
+                .begin_operator(t.connection(), &conflicting)
+                .await
+                .unwrap_err()
+                .current_context(),
+            KernelError::Concurrency
+        ));
+        t.commit().await.unwrap();
+        assert_eq!(fingerprint(&d).await, original);
+        let late = start + Duration::days(31);
+        purge(db, &ps[0], late).await;
+        assert_eq!(
+            number(&d, "SELECT count(*) FROM post_relay_profile_quota").await,
+            0
+        );
+        let original = fingerprint(&d).await;
+        for discard in [false, true] {
+            let mut t = db.get_transaction().await.unwrap();
+            let result = if discard {
+                at(late)
+                    .operator_discard(t.connection(), &request.id, true)
+                    .await
+            } else {
+                at(late)
+                    .operator_redeliver(t.connection(), &request.id)
+                    .await
+            };
+            assert!(matches!(
+                result.unwrap_err().current_context(),
+                KernelError::NotFound
+            ));
+            t.commit().await.unwrap();
+            assert_eq!(fingerprint(&d).await, original);
+        }
+        // A fresh explicit request is admission, not a stale batch continuation.
+        let fresh = operation(&ps[0], "r1-fresh-operation", OperatorAction::Discard);
+        assert_eq!(begin(db, &fresh, late).await.count, 0);
+        assert_eq!(
+            number(&d, "SELECT count(*) FROM post_relay_profile_quota").await,
+            1
+        );
+        consistent(db, late).await;
+    }
 }
 
 mod p4 {
