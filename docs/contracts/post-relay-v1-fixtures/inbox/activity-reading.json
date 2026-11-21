@@ -1000,6 +1000,51 @@
       }
     },
     {
+      "id": "forward-actor-and-id-on-a-punycode-host",
+      "title": "A Punycode (xn--) host has consecutive hyphens inside a label: actor and id are valid and forwarded.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://xn--r8jz45g.example/users/bob/statuses/1/activity\",\"type\":\"Create\",\"actor\":\"https://xn--r8jz45g.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": "https://xn--r8jz45g.example/users/bob/statuses/1/activity",
+        "actor": "https://xn--r8jz45g.example/users/bob"
+      }
+    },
+    {
+      "id": "reject-actor-label-ends-with-hyphen",
+      "title": "A DNS label may not end with a hyphen.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"type\":\"Create\",\"actor\":\"https://a-.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "reject",
+        "status": 400,
+        "reason": "invalid_actor"
+      }
+    },
+    {
+      "id": "forward-id-label-starts-with-hyphen-becomes-null",
+      "title": "A DNS label may not start with a hyphen: the id is null.",
+      "content_type": "application/activity+json",
+      "body": "{\"@context\":\"https://www.w3.org/ns/activitystreams\",\"id\":\"https://a.-b.example/a/1\",\"type\":\"Create\",\"actor\":\"https://remote.example/users/bob\"}",
+      "known_relation_ids": [
+        "https://remote.example/follows/1",
+        "https://remote.example/blocks/1"
+      ],
+      "expect": {
+        "outcome": "forward",
+        "activity_id": null,
+        "actor": "https://remote.example/users/bob"
+      }
+    },
+    {
       "id": "forward-id-exactly-url-max",
       "title": "An Activity id of exactly URL_MAX characters is forwarded as it is.",
       "content_type": "application/activity+json",

@@ -1,4 +1,4 @@
-# Emumet post-relay contract v1 (revision 2)
+# Emumet post-relay contract v1 (revision 3)
 
 Status: canonical text for P1. This file, `v1.schema.json`, `v1.constants.json` and `fixtures/` form one
 contract. The canonical copy lives in the host repository (`ShuttlePub/host`,
@@ -12,6 +12,10 @@ the send deadline starts at `authorized_at` (section 9); the receiver checks the
 signs over the real ones (sections 5 and 7); field formats of timestamps and URLs (section 4.5); length limits
 and handling of the extracted `actor`, `id` and `type` (section 8.2); an exact algorithm for the header evidence
 (section 4.3); two new constants (`OMITTED_COUNT_MAX`, `TYPE_STRING_MAX`).
+
+Revision 3 (second C0 review): a DNS label may contain consecutive hyphens, so Punycode (`xn--`) hosts are valid in
+URLs (section 4.5); quoted strings in the covered components of `Signature-Input` use the RFC 8941 escapes
+(section 4.3).
 
 ## 1. Scope
 
@@ -128,7 +132,8 @@ Candidates are examined in three groups, in this order:
    `signature` field (Cavage), then the component names in the covered-components lists of each
    `signature-input` field (RFC 9421), each in the order written. Pseudo-components that are not header
    fields (`(request-target)`, `(created)`, `(expires)`, and any name starting with `@`) are skipped, and
-   component parameters (`;name=...`) are ignored. For one name, all fields of that name are examined in the
+   component parameters (`;name=...`) are ignored. A quoted string uses the escapes of RFC 8941 (`\"` and `\\`):
+   an escaped quote does not end the string, in a component name or in a parameter value. For one name, all fields of that name are examined in the
    original order;
 3. the names `digest`, `content-digest`, `date`, `host`, `content-type`, `content-length`, in that order, each with
    all fields of that name in the original order.
@@ -190,8 +195,10 @@ JSON Schema cannot express these; a receiver MUST perform them:
   are `https` URLs on the sender's host (the origin match itself is section 7 step 5). Every URL is
   `scheme://authority` optionally followed by one of `/`, `?` or `#` and then printable ASCII (`0x21`-`0x7e`), at
   most `URL_MAX` characters. The authority is a host and an optional port, nothing else: no userinfo, no IPv6
-  literal, no empty authority (`https://#` and `https://?x` are invalid). The host is made of ASCII letters,
-  digits and single `.` or `-` separators between them (lowercase only for the origins and Emumet URLs). The
+  literal, no empty authority (`https://#` and `https://?x` are invalid). The host is one or more DNS labels
+  separated by single dots. A label is made of ASCII letters, digits and hyphens and neither starts nor ends with
+  a hyphen; hyphens may be consecutive, so Punycode labels such as `xn--r8jz45g` are valid (lowercase only for
+  the origins and Emumet URLs). Label and host length are limited only by `URL_MAX` and `ORIGIN_MAX`. The
   port is 1-65535 without leading zeros. The URL being allowed to be fetched (SSRF protection) is a separate
   matter and is not decided by the envelope format.
 * `fixtures/formats/field-formats.json` lists valid and invalid values for each rule.

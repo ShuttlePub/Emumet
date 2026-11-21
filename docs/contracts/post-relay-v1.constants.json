@@ -1,7 +1,7 @@
 {
   "contract": "emumet-post-relay",
   "version": "v1",
-  "revision": 2,
+  "revision": 3,
   "note": "Machine-readable copy of the bounded constants in v1.md section 'Bounded constants'. v1.md, v1.schema.json and the fixtures MUST agree with this file; the C0 test checks the agreement.",
   "constants": {
     "ENVELOPE_VERSION": 1,

@@ -335,6 +335,86 @@
       }
     },
     {
+      "id": "rfc9421-escaped-quote-in-parameter",
+      "title": "A component parameter value holds an escaped quote and a space. The escaped quote does not end the string, so the next covered component, cookie, is found: it is secret-bearing, so it is omitted and counted.",
+      "original_headers": [
+        {
+          "name": "Signature",
+          "value": "sig1=:AAAA:"
+        },
+        {
+          "name": "Signature-Input",
+          "value": "sig1=(\"@query-param\";name=\"a\\\" b\" \"cookie\" \"host\");created=1700000000"
+        },
+        {
+          "name": "Cookie",
+          "value": "session=1"
+        },
+        {
+          "name": "Host",
+          "value": "emumet.example"
+        }
+      ],
+      "expect": {
+        "signature_headers": [
+          {
+            "name": "signature",
+            "value": "sig1=:AAAA:"
+          },
+          {
+            "name": "signature-input",
+            "value": "sig1=(\"@query-param\";name=\"a\\\" b\" \"cookie\" \"host\");created=1700000000"
+          },
+          {
+            "name": "host",
+            "value": "emumet.example"
+          }
+        ],
+        "omitted_header_names": [
+          "cookie"
+        ],
+        "omitted_header_count": 1,
+        "evidence_complete": false
+      }
+    },
+    {
+      "id": "rfc9421-escaped-backslash-and-parens-in-parameter",
+      "title": "A parameter value with an escaped backslash and parentheses does not confuse the parser: the covered x-extra is kept and nothing is omitted.",
+      "original_headers": [
+        {
+          "name": "Signature",
+          "value": "sig1=:AAAA:"
+        },
+        {
+          "name": "Signature-Input",
+          "value": "sig1=(\"@method\";tag=\"x\\\\(y)\" \"x-extra\");keyid=\"k(1)\""
+        },
+        {
+          "name": "X-Extra",
+          "value": "v"
+        }
+      ],
+      "expect": {
+        "signature_headers": [
+          {
+            "name": "signature",
+            "value": "sig1=:AAAA:"
+          },
+          {
+            "name": "signature-input",
+            "value": "sig1=(\"@method\";tag=\"x\\\\(y)\" \"x-extra\");keyid=\"k(1)\""
+          },
+          {
+            "name": "x-extra",
+            "value": "v"
+          }
+        ],
+        "omitted_header_names": [],
+        "omitted_header_count": 0,
+        "evidence_complete": true
+      }
+    },
+    {
       "id": "pseudo-components-are-skipped",
       "title": "(request-target), (created) and @method are not header fields: not kept, not omitted.",
       "original_headers": [

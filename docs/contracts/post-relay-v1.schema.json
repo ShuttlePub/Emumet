@@ -31,7 +31,7 @@
         "instance_actor": {
           "type": "string",
           "maxLength": 2048,
-          "pattern": "^https://[a-z0-9]+([.-][a-z0-9]+)*(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?/ap/instance$"
+          "pattern": "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?/ap/instance$"
         }
       }
     },
@@ -149,19 +149,19 @@
       "description": "Normalized origin: lowercase https scheme and host, no userinfo, path, query or fragment, no default port (:443); port 1-65535 without leading zeros.",
       "type": "string",
       "maxLength": 255,
-      "pattern": "^https://[a-z0-9]+([.-][a-z0-9]+)*(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?$",
+      "pattern": "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?$",
       "not": { "pattern": ":443$" }
     },
     "emumet_url": {
       "type": "string",
       "maxLength": 2048,
-      "pattern": "^https://[a-z0-9]+([.-][a-z0-9]+)*(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?/[\\x21-\\x7e]*$"
+      "pattern": "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?/[\\x21-\\x7e]*$"
     },
     "remote_url": {
       "description": "http or https URL: scheme://host[:port] and then nothing, or one of / ? # followed by printable ASCII. No userinfo, no IPv6 literal, no empty authority (v1.md section 4.5).",
       "type": "string",
       "maxLength": 2048,
-      "pattern": "^https?://[A-Za-z0-9]+([.-][A-Za-z0-9]+)*(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?([/?#][\\x21-\\x7e]*)?$"
+      "pattern": "^https?://[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?([/?#][\\x21-\\x7e]*)?$"
     },
     "header_name": {
       "description": "Lowercase header field name.",

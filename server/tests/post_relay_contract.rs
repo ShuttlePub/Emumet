@@ -391,13 +391,15 @@ fn url_parts(value: &str, allow_http: bool, lowercase: bool) -> Option<(&str, Op
         None => (authority, None),
     };
     let alnum = |c: char| c.is_ascii_alphanumeric() && !(lowercase && c.is_ascii_uppercase());
-    let sep = |c: char| c == '.' || c == '-';
-    let chars: Vec<char> = host.chars().collect();
-    let host_ok = !chars.is_empty()
-        && alnum(chars[0])
-        && alnum(chars[chars.len() - 1])
-        && chars.iter().all(|&c| alnum(c) || sep(c))
-        && chars.windows(2).all(|w| !(sep(w[0]) && sep(w[1])));
+    // One or more DNS labels separated by single dots; a label is letters, digits and hyphens and
+    // neither starts nor ends with a hyphen (consecutive hyphens are fine: Punycode `xn--`).
+    let host_ok = host.split('.').all(|label| {
+        let c: Vec<char> = label.chars().collect();
+        !c.is_empty()
+            && alnum(c[0])
+            && alnum(c[c.len() - 1])
+            && c.iter().all(|&x| alnum(x) || x == '-')
+    });
     if !host_ok {
         return None;
     }
@@ -1464,11 +1466,31 @@ fn is_secret_header(name: &str) -> bool {
         .any(|w| name.contains(w))
 }
 
+/// An RFC 8941 string starting at `c[i] == '"'`: its unescaped value and the index after the closing
+/// quote, or `None` when it is not terminated.
+fn read_sf_string(c: &[char], mut i: usize) -> Option<(String, usize)> {
+    let mut out = String::new();
+    i += 1;
+    while i < c.len() {
+        match c[i] {
+            '\\' => {
+                out.push(*c.get(i + 1)?);
+                i += 2;
+            }
+            '"' => return Some((out, i + 1)),
+            ch => {
+                out.push(ch);
+                i += 1;
+            }
+        }
+    }
+    None
+}
+
 /// Header names covered by the signature fields (v1.md 4.3 group 2), pseudo-components skipped.
 fn covered_names(fields: &[(String, String)]) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    for (n, v) in fields.iter().filter(|(n, _)| n == "signature") {
-        let _ = n;
+    for (_, v) in fields.iter().filter(|(n, _)| n == "signature") {
         if let Some(p) = v.find("headers=\"") {
             let rest = &v[p + "headers=\"".len()..];
             if let Some(end) = rest.find('"') {
@@ -1480,6 +1502,10 @@ fn covered_names(fields: &[(String, String)]) -> Vec<String> {
         let c: Vec<char> = v.chars().collect();
         let mut i = 0;
         while i < c.len() {
+            if c[i] == '"' {
+                i = read_sf_string(&c, i).map_or(c.len(), |(_, next)| next);
+                continue;
+            }
             if c[i] != '(' {
                 i += 1;
                 continue;
@@ -1497,23 +1523,18 @@ fn covered_names(fields: &[(String, String)]) -> Vec<String> {
                     i += 1;
                     continue;
                 }
-                let Some(len) = c[i + 1..].iter().position(|&x| x == '"') else {
+                let Some((name, next)) = read_sf_string(&c, i) else {
                     i = c.len();
                     break;
                 };
-                names.push(
-                    c[i + 1..i + 1 + len]
-                        .iter()
-                        .collect::<String>()
-                        .to_ascii_lowercase(),
-                );
-                i += len + 2;
-                let mut in_quotes = false;
-                while i < c.len() && (in_quotes || (c[i] != ' ' && c[i] != ')')) {
+                names.push(name.to_ascii_lowercase());
+                i = next;
+                while i < c.len() && c[i] != ' ' && c[i] != ')' {
                     if c[i] == '"' {
-                        in_quotes = !in_quotes;
+                        i = read_sf_string(&c, i).map_or(c.len(), |(_, next)| next);
+                    } else {
+                        i += 1;
                     }
-                    i += 1;
                 }
             }
         }
@@ -1626,6 +1647,8 @@ fn header_evidence_algorithm_matches_the_fixtures() {
         );
     }
     for needed in [
+        "rfc9421-escaped-quote-in-parameter",
+        "rfc9421-escaped-backslash-and-parens-in-parameter",
         "budget-exactly-full",
         "budget-one-over-omits-the-big-header",
         "budget-full-name-not-listed",

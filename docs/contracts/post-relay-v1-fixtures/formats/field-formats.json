@@ -273,6 +273,30 @@
     },
     {
       "def": "remote_url",
+      "value": "https://xn--r8jz45g.example/users/bob",
+      "valid": true,
+      "note": "Punycode / consecutive hyphens inside a label"
+    },
+    {
+      "def": "remote_url",
+      "value": "http://xn--n3h.example",
+      "valid": true,
+      "note": "Punycode / consecutive hyphens inside a label"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://a--b.example/u",
+      "valid": true,
+      "note": "Punycode / consecutive hyphens inside a label"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://xn--r8jz45g.xn--zckzah/u",
+      "valid": true,
+      "note": "Punycode / consecutive hyphens inside a label"
+    },
+    {
+      "def": "remote_url",
       "value": "https://remote.example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "valid": true,
       "note": "exactly URL_MAX (2048) characters"
@@ -375,6 +399,24 @@
     },
     {
       "def": "remote_url",
+      "value": "https://a-.example/u",
+      "valid": false,
+      "note": "label ends with a hyphen"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://a.-b.example/u",
+      "valid": false,
+      "note": "label starts with a hyphen"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://a--.example/u",
+      "valid": false,
+      "note": "label ends with hyphens"
+    },
+    {
+      "def": "remote_url",
       "value": "ftp://remote.example/u",
       "valid": false,
       "note": "scheme"
@@ -417,6 +459,11 @@
     {
       "def": "emumet_url",
       "value": "https://emumet.example:8443/ap/x",
+      "valid": true
+    },
+    {
+      "def": "emumet_url",
+      "value": "https://xn--emumet-9d0b.example/ap/profiles/p1nano",
       "valid": true
     },
     {
@@ -467,6 +514,11 @@
     },
     {
       "def": "origin",
+      "value": "https://xn--home-7qa.example",
+      "valid": true
+    },
+    {
+      "def": "origin",
       "value": "https://home.example:443",
       "valid": false,
       "note": "default port"
@@ -509,6 +561,11 @@
     {
       "def": "instance_actor",
       "value": "https://emumet.example:8443/ap/instance",
+      "valid": true
+    },
+    {
+      "def": "instance_actor",
+      "value": "https://xn--emumet-9d0b.example/ap/instance",
       "valid": true
     },
     {
