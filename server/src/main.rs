@@ -126,12 +126,12 @@ async fn main() -> Result<(), StackTrace> {
         }
     }
 
-    let relay = if post_relay_worker::enabled()? {
-        Some(post_relay_worker::spawn(app.post_relay_module()))
-    } else {
-        tracing::warn!("post relay sending disabled; reception/quota remain active");
-        None
-    };
+    let relay_sender_enabled = post_relay_worker::enabled()?;
+    if !relay_sender_enabled {
+        tracing::warn!("post relay sending disabled; retention maintenance remains active");
+    }
+    let (relay_stop, relay_handle) =
+        post_relay_worker::spawn(app.post_relay_module(), relay_sender_enabled);
     let router = root_router::build_root_router(app, oidc_config, jwks_cache);
 
     let bind = std::env::var("HTTP_LISTEN_ADDR")
@@ -154,10 +154,8 @@ async fn main() -> Result<(), StackTrace> {
     .await
     .change_context_lazy(|| KernelError::Internal)?;
 
-    if let Some((stop, handle)) = relay {
-        let _ = stop.send(true);
-        let _ = handle.await;
-    }
+    let _ = relay_stop.send(true);
+    let _ = relay_handle.await;
     projection_shutdown.trigger();
     enforcement_shutdown.trigger();
     if let Some(shutdown) = registration_shutdown {

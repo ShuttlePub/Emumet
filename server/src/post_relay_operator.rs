@@ -190,7 +190,23 @@ async fn execute(c: Command, url: &str, phase: &mut &'static str) -> Result<(), 
     *phase = "signing-key";
     if let Some(module) = &module {
         use application::instance_identity::UnlockInstanceSigningKeyUseCase;
-        module.unlock_instance_signing_key().await?;
+        module
+            .unlock_instance_signing_key()
+            .await
+            .inspect_err(|e| {
+                use application::instance_identity::InstanceIdentityProblem as P;
+                // Fixed labels only; never expose a key, password, SQL detail or path.
+                *phase = e.frames().find_map(|f| f.downcast_ref::<P>()).map_or(
+                    "signing-key-unavailable",
+                    |p| match p {
+                        P::OriginMismatch => "signing-key-origin",
+                        P::UndecryptableKey => "signing-key-password-or-ciphertext",
+                        P::UnparsableKey => "signing-key-format",
+                        P::KeyPairMismatch => "signing-key-pair",
+                        _ => "signing-key-selection",
+                    },
+                );
+            })?;
     }
     let policy = module.as_ref().map(|m| m.transport.clone());
     let d = db.clone();

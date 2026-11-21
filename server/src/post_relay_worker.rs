@@ -78,7 +78,10 @@ pub(crate) fn enabled() -> error_stack::Result<bool, KernelError> {
 }
 /// One bounded process pool, shared DB slots enforce 16 global/4 origin across all processes.
 /// Maintenance gets a turn every second independently of in-flight HTTP.
-pub(crate) fn spawn(module: PostRelayModule) -> (watch::Sender<bool>, tokio::task::JoinHandle<()>) {
+pub(crate) fn spawn(
+    module: PostRelayModule,
+    sender_enabled: bool,
+) -> (watch::Sender<bool>, tokio::task::JoinHandle<()>) {
     let (stop, mut stopped) = watch::channel(false);
     let worker = Arc::new(RelayDelivery::new(Arc::new(module)));
     let handle = tokio::spawn(async move {
@@ -93,7 +96,7 @@ pub(crate) fn spawn(module: PostRelayModule) -> (watch::Sender<bool>, tokio::tas
                 _=maintenance.tick()=>{if worker.maintain().await.is_err(){tracing::warn!("post relay maintenance failed");}},
                 Some(result)=tasks.join_next(),if !tasks.is_empty()=>{if !matches!(result,Ok(Ok(_))) {tracing::warn!("post relay attempt failed; fenced lease recovery pending");}},
                 _=telemetry.tick()=>tracing::info!(timings=?worker.metrics.snapshot(),"post relay cumulative timings"),
-                _=poll.tick(),if tasks.len()<16=>{
+                _=poll.tick(),if sender_enabled && tasks.len()<16=>{
                     match worker.claim((16-tasks.len()) as u16).await {
                         Ok(leases)=>for lease in leases {let worker=worker.clone(); tasks.spawn(async move {worker.deliver(lease).await});},
                         Err(_)=>tracing::warn!("post relay claim failed"),
@@ -111,4 +114,49 @@ pub(crate) fn spawn(module: PostRelayModule) -> (watch::Sender<bool>, tokio::tas
         }
     });
     (stop, handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn disabled_sender_still_collects_expired_empty_quota() {
+        let d = driver::database::isolated_db::IsolatedDatabase::create().await;
+        // Retained quota outlives deleted Accounts/Profiles; use a historical empty owner slot.
+        sqlx::query("INSERT INTO post_relay_profile_quota(profile_id,owner_account_id,delivery_state,delivery_rows,delivery_bytes,touched_at) VALUES(456,123,true,1,512,clock_timestamp()-interval '31 days')").execute(&d.pool).await.unwrap();
+        sqlx::query("UPDATE post_relay_quota SET delivery_rows=delivery_rows+1,delivery_bytes=delivery_bytes+512 WHERE singleton").execute(&d.pool).await.unwrap();
+        let module = PostRelayModule {
+            db: PostgresDatabase::from_pool(d.pool.clone()),
+            encryptor: Argon2Encryptor::default(),
+            cache: Arc::new(InstanceKeyCache::default()),
+            password: FilePasswordProvider::new(),
+            origin: PublicBaseUrl::new("https://emumet.example".into()),
+            transport: HttpPostRelayTransport::new(
+                driver::home_origin::HomeOriginAllowlist::from_json("[]").unwrap(),
+            ),
+        };
+        let (stop, handle) = spawn(module, false);
+        let collected = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM post_relay_profile_quota WHERE profile_id=456)",
+                )
+                .fetch_one(&d.pool)
+                .await
+                .unwrap();
+                if !exists {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        let _ = stop.send(true);
+        handle.await.unwrap();
+        assert!(
+            collected.is_ok(),
+            "sender stop must not suspend retention collection"
+        );
+    }
 }

@@ -51,7 +51,8 @@ Configuration removal or suspended/banned owner is a hold, never a fresh 72h bud
 ## Sender-only stop and emergency stop
 
 Set POST_RELAY_SENDER_ENABLED=false and restart **every sending server process**. Only the
-post-relay sender stops; normal listener/inbox/API/Profile delivery remain configured as
+post-relay sending stops; post-relay expiry/purge maintenance continues every second.
+The normal listener/inbox/API/Profile delivery remain configured as
 before. Manual redeliver commands also refuse this setting. true/unset enables, any other
 value is a configuration error. Existing process configuration does not change in place.
 In-flight authorized sends drain for a bounded period; disabling is not instantaneous
@@ -76,7 +77,9 @@ The release image's entrypoint is /app/server: append these arguments to docker 
 need neither source nor Cargo. They bypass AppModule, Ory/JWKS, S3, normal listener, and
 normal workers. They **never apply migrations**; the exact embedded migration versions,
 success markers and checksums must match. Use the matching deployed image, not a different
-version to upgrade the DB. DATABASE_URL is required. Do not put credentials into logs.
+version to upgrade the DB. DATABASE_URL is required. Errors identify a fixed, sanitized
+phase (schema, configuration, signing key, operation transaction or sending), never raw
+SQL/key/path details. Do not put credentials into logs.
 
 Only operator UUIDs and PostgreSQL fence/attempt sequences generate IDs here. No Snowflake
 initialization/generation occurs: WORKER_ID is not used and cannot collide with the running
