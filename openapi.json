@@ -116,7 +116,7 @@
         "tags": [
           "ProfileActor"
         ],
-        "description": "Signed Profile inbox. Raw Activity bytes relay only when POST_RELAY_INBOX_ENABLED=true (default false; S1 merge and lead approval required). Follow/Block are excluded; Undo/Accept/Reject are excluded only when every reference is a known Follow/Block. Unknown references and extension types forward. Existing Follow/domain-control and early-Undo rules remain. Body <=1 MiB; duplicate keys at every depth are rejected. ActivityPub JSON and ld+json with supported parameters are accepted. 202 follows durable commit; Profile overload is 429 and global/physical capacity unavailable is 503 with Retry-After.",
+        "description": "Signed Profile inbox. Raw Activity bytes relay only when POST_RELAY_INBOX_ENABLED=true (default false; S1 merge and lead approval required). Follow/Block are excluded; Undo/Accept/Reject are excluded only when every reference is a known Follow/Block. Create/Update/Delete/Like/Announce, unknown references and extension types forward unchanged. Existing Follow/domain-control and early-Undo rules remain. Body <=1 MiB; duplicate keys at every depth are rejected. ActivityPub JSON and ld+json with supported parameters are accepted. 202 follows durable commit; Profile overload is 429 and global/physical capacity unavailable is 503 with Retry-After.",
         "operationId": "post_profile_inbox",
         "parameters": [
           {
@@ -132,6 +132,9 @@
         "requestBody": {
           "content": {
             "application/activity+json": {
+              "schema": {}
+            },
+            "application/ld+json": {
               "schema": {}
             }
           },
