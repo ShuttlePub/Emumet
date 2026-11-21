@@ -146,9 +146,36 @@ async fn s1_final_real_http_release_measurement() {
         worker.maintain().await.unwrap();
         if started.elapsed() >= next {
             let (rows,connections,waiting):(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM post_relay_bodies),(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()),(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock')").fetch_one(&env.iso.pool).await.unwrap();
+            assert_eq!(
+                rows, 0,
+                "a completed batch must not retain failed/retry bodies"
+            );
+            let counts: serde_json::Value = sqlx::query_scalar(
+                r#"SELECT jsonb_build_object(
+                'bodies',(SELECT count(*) FROM post_relay_bodies),
+                'jobs',(SELECT count(*) FROM post_relay_jobs),
+                'attempts',(SELECT count(*) FROM post_relay_attempts),
+                'dead_letters',(SELECT count(*) FROM post_relay_dead_letters),
+                'audits',(SELECT count(*) FROM post_relay_audits),
+                'operations',(SELECT count(*) FROM post_relay_operations),
+                'unlinked',(SELECT count(*) FROM post_relay_unlinked),
+                'schedule',(SELECT count(*) FROM post_relay_schedule),
+                'slots',(SELECT count(*) FROM post_relay_slots),
+                'capacity',(SELECT count(*) FROM post_relay_capacity),
+                'quota',(SELECT count(*) FROM post_relay_quota),
+                'profile_quota',(SELECT count(*) FROM post_relay_profile_quota),
+                'link_usage',(SELECT count(*) FROM post_relay_link_usage),
+                'counters',(SELECT count(*) FROM post_relay_counters))"#,
+            )
+            .fetch_one(&env.iso.pool)
+            .await
+            .unwrap();
             eprintln!("S1_STEADY seconds={:.1} succeeded={} rss_kib={} cpu_ticks={} live_bodies={rows} connections={connections} lock_waiters={waiting} kdf_calls={}",started.elapsed().as_secs_f64(),rounds*64,rss(),cpu(),m.key_encryptor.decrypts.load(Ordering::SeqCst));
+            eprintln!(
+                "S1_TABLE_COUNTS seconds={:.1} counts={counts}",
+                started.elapsed().as_secs_f64()
+            );
             next += Duration::from_secs(60);
-            assert_eq!(rows, 0);
         }
     }
     eprintln!(
@@ -175,6 +202,9 @@ struct LocalReceiver {
     address: std::net::SocketAddr,
     accept: Option<tokio::task::JoinHandle<()>>,
     _child: Option<ReceiverChild>,
+    // Keep the pipe open: libtest writes its long-running-test warning after 60 seconds.
+    // Dropping it at READY makes a healthy receiver exit on EPIPE during a 10-minute run.
+    _child_stdout: Option<std::io::BufReader<std::process::ChildStdout>>,
 }
 impl Drop for LocalReceiver {
     fn drop(&mut self) {
@@ -191,18 +221,22 @@ impl LocalReceiver {
         if let Ok(cores) = std::env::var("S1_EXTERNAL_RECEIVER_CORES") {
             use std::io::BufRead;
             let mut child=ReceiverChild(std::process::Command::new("taskset").args(["-c",&cores]).arg(std::env::current_exe().unwrap()).args(["--exact","instance_identity::tests::post_relay_delivery::measurement::s1_streaming_receiver_process","--ignored","--nocapture"]).env_remove("S1_EXTERNAL_RECEIVER_CORES").env("S1_RECEIVER_SUBPROCESS","1").env("S1_RECEIVER_DELAY_MS",delay.as_millis().to_string()).stdout(std::process::Stdio::piped()).spawn().unwrap());
-            let output = std::io::BufReader::new(child.0.stdout.take().unwrap());
-            for line in output.lines() {
-                let l = line.unwrap();
-                if let Some(a) = l.strip_prefix("S1_RECEIVER_READY ") {
+            let mut output = std::io::BufReader::new(child.0.stdout.take().unwrap());
+            let mut line = String::new();
+            loop {
+                line.clear();
+                if output.read_line(&mut line).unwrap() == 0 {
+                    panic!("recipient subprocess failed before listening");
+                }
+                if let Some(a) = line.trim_end().strip_prefix("S1_RECEIVER_READY ") {
                     return Self {
                         address: a.parse().unwrap(),
                         accept: None,
                         _child: Some(child),
+                        _child_stdout: Some(output),
                     };
                 }
             }
-            panic!("recipient subprocess failed before listening");
         }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -261,6 +295,7 @@ impl LocalReceiver {
             address,
             accept: Some(accept),
             _child: None,
+            _child_stdout: None,
         }
     }
 }
