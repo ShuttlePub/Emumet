@@ -1,4 +1,5 @@
 use super::*;
+mod measurement;
 use crate::database::postgres::isolated_db::IsolatedDatabase;
 use kernel::interfaces::database::{
     DatabaseConnection, Transaction, TransactionalDatabaseConnection,
