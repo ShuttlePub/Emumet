@@ -1,0 +1,76 @@
+{
+  "id": "p1-reject-envelope-too-large",
+  "phase": "P1",
+  "title": "The request body is 2 MiB + 1 byte. It is rejected on size alone, before the signature is examined.",
+  "description": "Synthetic: the harness builds a body of `bytes` copies of `unit`. No Digest or Signature header is needed.",
+  "preconditions": {
+    "link_ledger": "none",
+    "note": "P1 receivers hold no link ledger. link_id and link_generation are the trusted Emumet's own claim."
+  },
+  "receiver": {
+    "trusted_emumet_origins": [
+      "https://emumet.example",
+      "https://emumet-b.example"
+    ],
+    "own_origin": "https://home.example",
+    "now": "2026-11-21T09:00:00Z",
+    "instance_actor_documents": {
+      "https://emumet.example": {
+        "@context": [
+          "https://www.w3.org/ns/activitystreams",
+          "https://w3id.org/security/v1"
+        ],
+        "id": "https://emumet.example/ap/instance",
+        "type": "Application",
+        "publicKey": [
+          {
+            "id": "https://emumet.example/ap/instance#key-7f3a9c1e",
+            "owner": "https://emumet.example/ap/instance",
+            "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAicxLZN/l++4EZYQwrWrG\nd0Vw1fs6JWhLxvtbEejIatBSnAAlYjuL8vjoTtiwgUF9r/xkSt/Z8suqXlQfmcHc\n35ulRRKG1c6+YlKTzPsarg7CelRsqSAKgB4O5TOaVFvYcCSzPANW+6R4K5Po1ZTN\n9RVEoNbo65TCeMhRbpvjh0Jd7+QNfY3w7YOFfgEVgqpDgadQ44iW0NmyqjRC5OJW\nD2JV9qLhJwn82bZar6Zn7sp+TmQeGJbepjTmrrWH1UsCzYMETA+B3QUMyii+PZoD\nS1LrkzGts8yd4HMLM6ey1/zCKL5/nwePKabIUHzwIqoHsWFU6X6tSNXv+TfJJA0P\nBwIDAQAB\n-----END PUBLIC KEY-----\n"
+          },
+          {
+            "id": "https://emumet.example/ap/instance#key-2b8d4e60",
+            "owner": "https://emumet.example/ap/instance",
+            "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu80YJF7Fd43biHMMfuPU\nAWtUlb5+yWLU66SrAnuktOERNCSWqUvS9Q/LhyPiNMZMKtdSj1njQ9mPYSPs8xRP\nULlLtB7saPk5vYqMpZax+lP7cLcanZo2hpMx/i7eHOS280ogJDow/mjNbCEGuoTL\nITVhkEg5c2ssceOeQzwrZxUCEW2oKTsUlmJtDzKM3ja3I6QZQ+luIX3TcVKCe6rz\nogGDtazarCZDJOitfyZsz6zfz5eWQq9VDcfIOFDSdh9HXpID1KPMEXsBIj9WNxUA\nPGJ+N4a24GcTs9XEU8lZlbHpjMjlyGtVVTCSF7rFTq4hPcDBoVLIkwePQTSNGCeZ\n5QIDAQAB\n-----END PUBLIC KEY-----\n"
+          }
+        ]
+      },
+      "https://emumet-b.example": {
+        "@context": [
+          "https://www.w3.org/ns/activitystreams",
+          "https://w3id.org/security/v1"
+        ],
+        "id": "https://emumet-b.example/ap/instance",
+        "type": "Application",
+        "publicKey": [
+          {
+            "id": "https://emumet-b.example/ap/instance#key-b19c0d22",
+            "owner": "https://emumet-b.example/ap/instance",
+            "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAngVYqW1MgNeci15gRcoT\ncTrL2P/ec2fLEPE2jBDTpbB+WJyBTVOmixWMOWL0xErxXqhVt5KXER08PP5dW+MM\nHwALvVRbpWNlqH6/Yq/xh/oJBsMF/7CUyn/Z88wSsunDL0ZHW9b4ZWPyiCwTJi/6\nULWLjpOwlfHNkb7C5RkeOpxlQXv/y59tiDWZLpzFWlK25CietfUin1l1INw2sVE3\nIIYFcD14uOUffyePSP1H805T2q/dqeRDEoxNyaBdePoSn9ROhLAy9oHRGveWSptv\nPnYmlc/j2vImawWpsJs3pgSVm3SCjtZ+5RuR8I6Ykg8ql1DKYXvVMlFbhqZxukfB\nwwIDAQAB\n-----END PUBLIC KEY-----\n"
+          }
+        ]
+      }
+    },
+    "already_accepted_receipts": []
+  },
+  "request": {
+    "method": "POST",
+    "target": "/internal/v1/emumet/activities",
+    "headers": {
+      "host": "home.example",
+      "content-type": "application/json",
+      "content-length": "2097153"
+    },
+    "body_synthetic": {
+      "kind": "repeat",
+      "unit": "x",
+      "bytes": 2097153
+    }
+  },
+  "expect": {
+    "result": "reject",
+    "status": 413,
+    "reason": "envelope_too_large",
+    "sender_class": "permanent"
+  }
+}

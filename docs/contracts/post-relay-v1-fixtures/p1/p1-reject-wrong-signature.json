@@ -1,0 +1,75 @@
+{
+  "id": "p1-reject-wrong-signature",
+  "phase": "P1",
+  "title": "Claims the active Emumet A key id but is signed by an unrelated key.",
+  "description": "",
+  "preconditions": {
+    "link_ledger": "none",
+    "note": "P1 receivers hold no link ledger. link_id and link_generation are the trusted Emumet's own claim."
+  },
+  "receiver": {
+    "trusted_emumet_origins": [
+      "https://emumet.example",
+      "https://emumet-b.example"
+    ],
+    "own_origin": "https://home.example",
+    "now": "2026-11-21T09:00:00Z",
+    "instance_actor_documents": {
+      "https://emumet.example": {
+        "@context": [
+          "https://www.w3.org/ns/activitystreams",
+          "https://w3id.org/security/v1"
+        ],
+        "id": "https://emumet.example/ap/instance",
+        "type": "Application",
+        "publicKey": [
+          {
+            "id": "https://emumet.example/ap/instance#key-7f3a9c1e",
+            "owner": "https://emumet.example/ap/instance",
+            "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAicxLZN/l++4EZYQwrWrG\nd0Vw1fs6JWhLxvtbEejIatBSnAAlYjuL8vjoTtiwgUF9r/xkSt/Z8suqXlQfmcHc\n35ulRRKG1c6+YlKTzPsarg7CelRsqSAKgB4O5TOaVFvYcCSzPANW+6R4K5Po1ZTN\n9RVEoNbo65TCeMhRbpvjh0Jd7+QNfY3w7YOFfgEVgqpDgadQ44iW0NmyqjRC5OJW\nD2JV9qLhJwn82bZar6Zn7sp+TmQeGJbepjTmrrWH1UsCzYMETA+B3QUMyii+PZoD\nS1LrkzGts8yd4HMLM6ey1/zCKL5/nwePKabIUHzwIqoHsWFU6X6tSNXv+TfJJA0P\nBwIDAQAB\n-----END PUBLIC KEY-----\n"
+          },
+          {
+            "id": "https://emumet.example/ap/instance#key-2b8d4e60",
+            "owner": "https://emumet.example/ap/instance",
+            "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu80YJF7Fd43biHMMfuPU\nAWtUlb5+yWLU66SrAnuktOERNCSWqUvS9Q/LhyPiNMZMKtdSj1njQ9mPYSPs8xRP\nULlLtB7saPk5vYqMpZax+lP7cLcanZo2hpMx/i7eHOS280ogJDow/mjNbCEGuoTL\nITVhkEg5c2ssceOeQzwrZxUCEW2oKTsUlmJtDzKM3ja3I6QZQ+luIX3TcVKCe6rz\nogGDtazarCZDJOitfyZsz6zfz5eWQq9VDcfIOFDSdh9HXpID1KPMEXsBIj9WNxUA\nPGJ+N4a24GcTs9XEU8lZlbHpjMjlyGtVVTCSF7rFTq4hPcDBoVLIkwePQTSNGCeZ\n5QIDAQAB\n-----END PUBLIC KEY-----\n"
+          }
+        ]
+      },
+      "https://emumet-b.example": {
+        "@context": [
+          "https://www.w3.org/ns/activitystreams",
+          "https://w3id.org/security/v1"
+        ],
+        "id": "https://emumet-b.example/ap/instance",
+        "type": "Application",
+        "publicKey": [
+          {
+            "id": "https://emumet-b.example/ap/instance#key-b19c0d22",
+            "owner": "https://emumet-b.example/ap/instance",
+            "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAngVYqW1MgNeci15gRcoT\ncTrL2P/ec2fLEPE2jBDTpbB+WJyBTVOmixWMOWL0xErxXqhVt5KXER08PP5dW+MM\nHwALvVRbpWNlqH6/Yq/xh/oJBsMF/7CUyn/Z88wSsunDL0ZHW9b4ZWPyiCwTJi/6\nULWLjpOwlfHNkb7C5RkeOpxlQXv/y59tiDWZLpzFWlK25CietfUin1l1INw2sVE3\nIIYFcD14uOUffyePSP1H805T2q/dqeRDEoxNyaBdePoSn9ROhLAy9oHRGveWSptv\nPnYmlc/j2vImawWpsJs3pgSVm3SCjtZ+5RuR8I6Ykg8ql1DKYXvVMlFbhqZxukfB\nwwIDAQAB\n-----END PUBLIC KEY-----\n"
+          }
+        ]
+      }
+    },
+    "already_accepted_receipts": []
+  },
+  "request": {
+    "method": "POST",
+    "target": "/internal/v1/emumet/activities",
+    "headers": {
+      "host": "home.example",
+      "date": "Sat, 21 Nov 2026 08:59:58 GMT",
+      "digest": "SHA-256=S2wedsLhvfSfzCgwK1KbJHeRK1kUVSiNu5+MmB7eOx0=",
+      "content-type": "application/json",
+      "content-length": "2107",
+      "signature": "keyId=\"https://emumet.example/ap/instance#key-7f3a9c1e\",algorithm=\"rsa-sha256\",headers=\"(request-target) host date digest\",signature=\"yxEFhmvy1aEc4OsVhRDTKqHDuVpRsq6P9gFpi67peZp+9CRPQebwoE2mtB9MNPwLRWCxnTiguCGxvsrI/CmjUQLb1jaFhJgbk6o32O1Hg5M81InDFeIxAQfGMjNiUKPUUK74HkexzhzYhMQMqhIa//bbUT0xo54AUfhWDrPDy5ZmlK1EupQ/uYxZJl+a8IGQV7gILF50Oay3kBJEhb4ruBzSzSaQmMPdsBAtbEMse/GFofgryg2TjZuvEgdAzyt/rXeP7hm/LXPg536Ph/XyQ5Y03R4ZUqgK+nDC4C2p83aLa6pM5dM5uvJ8fYFOUU0x0pJUUaBB0Xs4bgMwlpNyPw==\""
+    },
+    "body": "{\"version\":1,\"receipt_id\":\"rcpt_01JD8Q2M7K4N5V6W9X0Y1Z2A3N\",\"received_at\":\"2026-11-21T08:59:41.000Z\",\"sender\":{\"origin\":\"https://emumet.example\",\"instance_actor\":\"https://emumet.example/ap/instance\"},\"recipient\":{\"origin\":\"https://home.example\",\"profile_actor\":\"https://emumet.example/ap/profiles/p1nano\",\"link_id\":\"link_8f2d6c1a9b3e\",\"link_generation\":1},\"activity\":{\"id\":\"https://remote.example/users/bob/statuses/109/activity\",\"actor\":\"https://remote.example/users/bob\",\"body_encoding\":\"base64\",\"raw_body\":\"eyJAY29udGV4dCI6Imh0dHBzOi8vd3d3LnczLm9yZy9ucy9hY3Rpdml0eXN0cmVhbXMiLCJpZCI6Imh0dHBzOi8vcmVtb3RlLmV4YW1wbGUvdXNlcnMvYm9iL3N0YXR1c2VzLzEwOS9hY3Rpdml0eSIsInR5cGUiOiJDcmVhdGUiLCJhY3RvciI6Imh0dHBzOi8vcmVtb3RlLmV4YW1wbGUvdXNlcnMvYm9iIiwidG8iOiJodHRwczovL3d3dy53My5vcmcvbnMvYWN0aXZpdHlzdHJlYW1zI1B1YmxpYyIsIm9iamVjdCI6eyJpZCI6Imh0dHBzOi8vcmVtb3RlLmV4YW1wbGUvdXNlcnMvYm9iL3N0YXR1c2VzLzEwOSIsInR5cGUiOiJOb3RlIiwiY29udGVudCI6IuOBk+OCk+OBq+OBoeOBryAg5LiW55WMIFx1MDBlOSJ9fQ==\"},\"verification\":{\"result\":\"verified\",\"scheme\":\"cavage\",\"key_id\":\"https://remote.example/users/bob#main-key\",\"signer_actor\":\"https://remote.example/users/bob\",\"verified_at\":\"2026-11-21T08:59:41.014Z\"},\"original_request\":{\"method\":\"POST\",\"request_target\":\"/ap/profiles/p1nano/inbox\",\"signature_headers\":[{\"name\":\"host\",\"value\":\"emumet.example\"},{\"name\":\"date\",\"value\":\"Sat, 21 Nov 2026 08:59:40 GMT\"},{\"name\":\"digest\",\"value\":\"SHA-256=b+3AbafvIB9FJN9HRxWKQW4PUEeWNdZFeUhPy77SRqg=\"},{\"name\":\"content-type\",\"value\":\"application/activity+json\"},{\"name\":\"signature\",\"value\":\"keyId=\\\"https://remote.example/users/bob#main-key\\\",algorithm=\\\"rsa-sha256\\\",headers=\\\"(request-target) host date digest\\\",signature=\\\"kjxcn5xDmp4Dxrr/cDINWc/rO81m9okK8gVCjISBNyNND/eM0xsAczJIgnTByezbLlS+2BziSA7ZuNnqRBMlO32qR6Q8E9/+0hl8SuYOpZ9ir1sE2uOLg7tR9RuJvUlFYBCP/KBW7NegCCn+yFp28M78xdOL+9eLovu9AtbAYj7kkOh2TLxe1z591lOEAsSiR1L8X/j3mjCOxZOvUpqEGp8P/h5zayLle36v/obXopYV4raGwz4TT/8SX7nkCStTlzwOUnff2FfGvMsBcS2DReyIirQdFByZRHoCGNdyPGlMlAmS5TFEHglMxSHaYtYsp0g69hbo9Q5vOjSnmSKFDA==\\\"\"}]},\"evidence_complete\":true,\"omitted_header_names\":[],\"omitted_header_count\":0}"
+  },
+  "expect": {
+    "result": "reject",
+    "status": 401,
+    "reason": "signature_invalid",
+    "sender_class": "retry"
+  }
+}

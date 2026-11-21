@@ -1,0 +1,335 @@
+{
+  "note": "Snapshot of the canonical contract. Do not edit these files in this repository: change the host copy, then re-snapshot. The C0 contract test recomputes every checksum.",
+  "host_repo": "ShuttlePub/host",
+  "host_commit": "b068e1601b7a5f3f91276e53de5c3d697c7bee1e",
+  "contract": "emumet-post-relay",
+  "version": "v1",
+  "revision": 3,
+  "files": [
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/v1.md",
+      "path": "post-relay-v1.md",
+      "sha256": "2bb845990b067b89621558e095f9337a40a10247e2eec27bd7077039c46c2a1c"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/v1.schema.json",
+      "path": "post-relay-v1.schema.json",
+      "sha256": "43cb23937c914606ac59ec2d760e9b4b43b821021bf089067d511bce3dae793d"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/v1.constants.json",
+      "path": "post-relay-v1.constants.json",
+      "sha256": "f2f3b6a52e67b8a29a519496ed6102d273b1f3d2edff5d9cd2c42b0340fc9b14"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/README.md",
+      "path": "post-relay-v1-fixtures/README.md",
+      "sha256": "886a6c3c40a791fd395370c60d903980d8423169484c3ec51f73f84ed5781bba"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/evidence/header-omission.json",
+      "path": "post-relay-v1-fixtures/evidence/header-omission.json",
+      "sha256": "d51b4d7549aa1a4e7415e6c88042be2587923ea1f0acc171963d53c34696cd25"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/formats/field-formats.json",
+      "path": "post-relay-v1-fixtures/formats/field-formats.json",
+      "sha256": "87a56e4c74ec968dc05cc98f6cbab3d0e4620bf50bb94c2596d56f4baf45390c"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/inbox/activity-reading.json",
+      "path": "post-relay-v1-fixtures/inbox/activity-reading.json",
+      "sha256": "25aca12eec6c09687e8d704d74d5b5fff753a5778053da6128605e4bebfe47f0"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/keys/emumet-a-instance-active.pub.pem",
+      "path": "post-relay-v1-fixtures/keys/emumet-a-instance-active.pub.pem",
+      "sha256": "60fdadfc2c9f4c994758e9d2fac1079a2b763a97d7c2ad1dcfc0c5ac44ade7c7"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/keys/emumet-a-instance-previous.pub.pem",
+      "path": "post-relay-v1-fixtures/keys/emumet-a-instance-previous.pub.pem",
+      "sha256": "67b3539d7293a4d4be85af38e2e254aacc02fe3f22a51def291f2cb7849a603f"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/keys/emumet-a-profile.pub.pem",
+      "path": "post-relay-v1-fixtures/keys/emumet-a-profile.pub.pem",
+      "sha256": "6394667a77cc2f970e11edbdab8321ff04ae2a895b1a3a19a304f403c2a22457"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/keys/emumet-b-instance.pub.pem",
+      "path": "post-relay-v1-fixtures/keys/emumet-b-instance.pub.pem",
+      "sha256": "d0c794057fb4f3694471b34a5b60fd329c1464f0e4aac7452d7e74be396b78f0"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/keys/instance-actor-documents.json",
+      "path": "post-relay-v1-fixtures/keys/instance-actor-documents.json",
+      "sha256": "52bddd8cdc78042250dac33fbdd63f6c431a38eb5ad93c6210cedecea19ca044"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/keys/keys.json",
+      "path": "post-relay-v1-fixtures/keys/keys.json",
+      "sha256": "1682967588bd5e6e31452b95ab0eaae8d12e012646b355a6fe5225dbffa48047"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/keys/remote-bob.pub.pem",
+      "path": "post-relay-v1-fixtures/keys/remote-bob.pub.pem",
+      "sha256": "61d1b4dce76895e79f8c9d947fbb5dd237a8adb5b8e380e756e5f45ac6cdbdfc"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/keys/unrelated.pub.pem",
+      "path": "post-relay-v1-fixtures/keys/unrelated.pub.pem",
+      "sha256": "bd870c809a212de5acaa863e567565d8ba0595e5f9085eca1fb25eed2051945e"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-activity-id-null.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-activity-id-null.json",
+      "sha256": "0f746182effb29cab566ac0f70f94a0c12c5bf647bb2924570607cc9c904a931"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-date-at-tolerance.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-date-at-tolerance.json",
+      "sha256": "1c18b86301c629599d254dfb1353abc153625fcc4ed1cbbfad508e88102690e8"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-duplicate-receipt.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-duplicate-receipt.json",
+      "sha256": "9cd39486a80316e03c0cd33a0b6b6fd5c9a5f631cf263e05623034a29dd8bbe7"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-evidence-incomplete.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-evidence-incomplete.json",
+      "sha256": "255146214c5fd354602c104b61c6298ab0168c20849d66645545a68a21a940c4"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-leap-day-timestamps.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-leap-day-timestamps.json",
+      "sha256": "ba52129f6d8667675f95d6f1f95ffd27c43549437ad1a5762ee36db3b4ea760e"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-minimal.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-minimal.json",
+      "sha256": "663ce66a75b0fbf9b9adc08a0a53b2e9b2ecccce7b23288a25cc1c2ada7f80aa"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-punycode-actor.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-punycode-actor.json",
+      "sha256": "e2344337a7d853e7987762a2c9aa34cc539ac577a357bea25aa1a23d85a80776"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-second-published-key.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-second-published-key.json",
+      "sha256": "722657960c3ad864ac91abbda318996a2215de989aee784c11f8ae9201e1b67d"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-stale-received-at.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-stale-received-at.json",
+      "sha256": "bdc48b855eda332ad04a282bbc1d0999fe39e10df9c3bebf7724e0db7ed0c105"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-trusted-second-emumet.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-trusted-second-emumet.json",
+      "sha256": "51d630a36b65e301020f97eab4d13bce3edc18ef8f167002b13593bb47f5397d"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-ok-unseen-link-claim.json",
+      "path": "post-relay-v1-fixtures/p1/p1-ok-unseen-link-claim.json",
+      "sha256": "b7af3777d2868471e8dc27e07d93e1e4923244d87da11ed6c3cdb7138f3496d7"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-content-type.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-content-type.json",
+      "sha256": "58791b5ea40514c9a0b0438327af79b29e727ee9a28fbeecb526f85bea0c42c1"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-date-skew-past.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-date-skew-past.json",
+      "sha256": "a2b407f0df9bd75abcbf64ea38ff05af5e9a8925b64c4c2ca0762e3268b3dfab"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-date-skew.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-date-skew.json",
+      "sha256": "ef5928f4976bc4c40a8fe700f17c4c3fb22573209459b591cc3eefa1e1b0a7b0"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-digest-mismatch.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-digest-mismatch.json",
+      "sha256": "dffdc0f2fab22c2ea4b7d783fe631d1212ecc172d40b47bab17ee9b8ab9aa604"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-envelope-too-large.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-envelope-too-large.json",
+      "sha256": "709e528e89d2d2c9ffee8fa52e428e6ca0085b2144f6b697e50aff871b1d44da"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-host-mismatch.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-host-mismatch.json",
+      "sha256": "d323d54bf41ecbc0a36f99c4791e7d5fdab4354b57a3a1fb6e5e0ab494ebf4a9"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-instance-actor-mismatch.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-instance-actor-mismatch.json",
+      "sha256": "1807c3136aa09007d62b0f42ebb31029cf2576f3a7cde16e6abb4c4162c4f64c"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-key-owner-not-instance-actor.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-key-owner-not-instance-actor.json",
+      "sha256": "376991c31295c2adf5d374bcff5e3158da8c33d58312d7a4a927f43e4f7c06c8"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-keyid-other-origin.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-keyid-other-origin.json",
+      "sha256": "3e0892a0f89142baa605aeaaf162d2d6746c9e51922e6b5457de2ad44ae1c271"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-method-get.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-method-get.json",
+      "sha256": "b452f279b69b42bf9c71184698bf307ba255c73f34277f3ff8d2f53b7563c3d9"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-profile-key.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-profile-key.json",
+      "sha256": "30edcc6bdb85c5d0b5d872a17d623c787c0aa8859a8b8cae30b75c41c11e298e"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-profile-origin-mismatch.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-profile-origin-mismatch.json",
+      "sha256": "7f4e012d0639185435075cf56f340d59c400e303825a1d730f46ac626f9fcec3"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-recipient-origin-mismatch.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-recipient-origin-mismatch.json",
+      "sha256": "125d0cb2b653cea9778a95539a3cab0ffbe36a5bc93392d5c71acb6d0cead5bb"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-bad-base64.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-bad-base64.json",
+      "sha256": "7333324c8ecca25731614ad36ba7d6e73d712f516be8546bc39de788b5bcc8bf"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-bad-origin.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-bad-origin.json",
+      "sha256": "7d63ed9119fda673ecababbc193a942854fc03299d5e640c41afd6e780911894"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-empty-authority.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-empty-authority.json",
+      "sha256": "8a15c8663fb31ff925cd02b113d6a1f4a11028a98a6cf1ab2d46e1765314a7d6"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-evidence-inconsistent.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-evidence-inconsistent.json",
+      "sha256": "690961540bd0bf3293f7678dc515e1f8710d5ac754b1b3f7b22dd887df52af3b"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-impossible-received-at.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-impossible-received-at.json",
+      "sha256": "778610980d20c3bbddf00d04c6b8d5721639ad3f511c56a2decf01a7ea2a3d78"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-impossible-verified-at.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-impossible-verified-at.json",
+      "sha256": "8b878032d81a6706423f3998e23200a41e0f0722ec682e66a41ef47ac68204c2"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-missing-field.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-missing-field.json",
+      "sha256": "44ba09b5225824ff4d117fb0ac9f6639d18c966a0e0e272536b7837405174cc5"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-month-out-of-range.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-month-out-of-range.json",
+      "sha256": "c73772147098a7e6f9dc737abef4e10ecd71383e70473c7385cc64f974dd282b"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-unknown-field.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-unknown-field.json",
+      "sha256": "e1c012aa9961e9153d62fa6a2a0f14264d5609dcdf7a6c40fb9778eb942362e4"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-schema-userinfo-in-url.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-schema-userinfo-in-url.json",
+      "sha256": "18cda01f33f2ca49636853b27a298040058219f95e580e3bf42eb9127bb9a427"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-signature-for-other-method.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-signature-for-other-method.json",
+      "sha256": "346cd0eb5c7621905dc42a5461e4131c5025ee4eaa1a1b0719bf0aa6bf476f39"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-signature-for-other-target.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-signature-for-other-target.json",
+      "sha256": "d1a62987fb2c78806a0220656936fee98b86af09941cd11bfbe780ee2eb13003"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-signature-headers-incomplete.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-signature-headers-incomplete.json",
+      "sha256": "3225f1fee58e08f670d1f64b52cc6144c00bdafeed97abed144472ca4f9a4bc8"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-signature-missing.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-signature-missing.json",
+      "sha256": "47292a36e8b15e281f68a5a47b814bbc4ee8ece08008c835efd6f58c1f88bc1a"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-target-other-path.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-target-other-path.json",
+      "sha256": "e1370d40afb67d358ef00da88cb032b02e5d211af7964431ffd693e11b23b4ed"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-target-with-query.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-target-with-query.json",
+      "sha256": "ff01952df2d7ef09f6c927e7da72a891f494de36ab3990de98392d22b5852b6b"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-unknown-emumet.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-unknown-emumet.json",
+      "sha256": "78bce06b0318812c1c3a8d88a41f82cb4d3fc210d513a91a29013151609398a1"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-unsupported-version.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-unsupported-version.json",
+      "sha256": "c8dc6b44d1c103cd0f47356db10ace384d5845aa76fd332fb2a5a88a0d1f65b9"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p1/p1-reject-wrong-signature.json",
+      "path": "post-relay-v1-fixtures/p1/p1-reject-wrong-signature.json",
+      "sha256": "f542f6d9a090290dff745e261548e47da02f184711457a98060106eb5b99ab65"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p2/p2-ok-matching-active-link.json",
+      "path": "post-relay-v1-fixtures/p2/p2-ok-matching-active-link.json",
+      "sha256": "f6886534b3076ae36d24c2226ef89791f33ccf06fd36fe3b07895614e84ff2c3"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p2/p2-reject-link-other-profile.json",
+      "path": "post-relay-v1-fixtures/p2/p2-reject-link-other-profile.json",
+      "sha256": "90e9cf099ffbd8aa4ce43056e7abdfd50b4187995517d946e823a0d519997e88"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p2/p2-reject-stale-generation.json",
+      "path": "post-relay-v1-fixtures/p2/p2-reject-stale-generation.json",
+      "sha256": "d9912879152b7e932eae4e7385c2e73653358083cb2b4e046ac1570bede39ab4"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p2/p2-reject-unknown-link.json",
+      "path": "post-relay-v1-fixtures/p2/p2-reject-unknown-link.json",
+      "sha256": "f18d7dadf52ba96872b72140e906156e1367f27bbadaa7d551fbb371d58d7e7a"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/p2/p2-reject-unlinked.json",
+      "path": "post-relay-v1-fixtures/p2/p2-reject-unlinked.json",
+      "sha256": "3ab671e3a2653bcda64c832c604211045bf1904544f819c376b6fcde62c62e5d"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/retransmission.json",
+      "path": "post-relay-v1-fixtures/retransmission.json",
+      "sha256": "c4bc62b2891f41e8e1194dba9f4a70e08c9197c436659f521ba39bc3466acb26"
+    },
+    {
+      "host_path": "intents/shuttlepub/contracts/emumet-post-relay/fixtures/signature-vectors.json",
+      "path": "post-relay-v1-fixtures/signature-vectors.json",
+      "sha256": "4f7b6859cca529bd4cf6c94c8bb884d9006e1b829119a6af5bb782385337cce5"
+    }
+  ]
+}
