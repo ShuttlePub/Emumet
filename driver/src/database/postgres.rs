@@ -151,6 +151,11 @@ struct LifecycleBudget {
     started_at: tokio::time::Instant,
     deadline: std::sync::OnceLock<tokio::time::Instant>,
     started: tokio::sync::Notify,
+    /// Profile lifecycle gates already held by this transaction (see
+    /// [`PostgresConnection::acquire_profile_gate`]).
+    profile_gates: std::sync::Mutex<std::collections::BTreeSet<i64>>,
+    /// A relationship gate was taken: no *new* Profile gate may follow (Profile -> relationship).
+    relationship_gates_taken: std::sync::atomic::AtomicBool,
 }
 impl Default for LifecycleBudget {
     fn default() -> Self {
@@ -158,6 +163,8 @@ impl Default for LifecycleBudget {
             started_at: tokio::time::Instant::now(),
             deadline: std::sync::OnceLock::new(),
             started: tokio::sync::Notify::new(),
+            profile_gates: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            relationship_gates_taken: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -176,6 +183,38 @@ impl LifecycleBudget {
 impl PostgresConnection {
     pub(crate) fn is_transaction(&self) -> bool {
         matches!(self.0, PostgresConnectionInner::Transaction(_))
+    }
+    /// Registers a Profile lifecycle gate this transaction is about to take. Returns `Ok(false)`
+    /// when it is already held (re-entrant; nothing to acquire). A *new* gate is refused with
+    /// `Concurrency` when it is not strictly above every Profile gate already held, or when a
+    /// relationship gate was already taken: the shared order is Account gates -> Profile gates
+    /// ascending -> relationship gates ascending -> links, so an out-of-order request would be a
+    /// lock-order inversion. The caller rolls back and retries in a **new** transaction with the
+    /// complete set (the set can only have grown concurrently).
+    pub(crate) fn acquire_profile_gate(&self, id: i64) -> error_stack::Result<bool, KernelError> {
+        let mut held = self.2.profile_gates.lock().unwrap();
+        if held.contains(&id) {
+            return Ok(false);
+        }
+        if self
+            .2
+            .relationship_gates_taken
+            .load(std::sync::atomic::Ordering::SeqCst)
+            || held.last().is_some_and(|max| *max > id)
+        {
+            return Err(
+                Report::new(KernelError::Concurrency).attach_printable(format!(
+                    "Profile gate {id} requested out of order; retry with a complete Profile set"
+                )),
+            );
+        }
+        held.insert(id);
+        Ok(true)
+    }
+    pub(crate) fn note_relationship_gates_taken(&self) {
+        self.2
+            .relationship_gates_taken
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
     pub(crate) fn lifecycle_budget(&self) -> error_stack::Result<(), KernelError> {
         if !self.is_transaction() {

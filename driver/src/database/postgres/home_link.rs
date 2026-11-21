@@ -92,6 +92,9 @@ impl HomeLinkStore for PostgresHomeLinkStore {
         ids.sort_unstable();
         ids.dedup();
         for id in ids {
+            if !c.acquire_profile_gate(id)? {
+                continue;
+            }
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('emumet/profile-lifecycle/' || $1::text, 0))")
                 .bind(id).execute(&mut **c).await.convert_error()?;
             sqlx::query("SELECT id FROM profiles WHERE id=$1 FOR NO KEY UPDATE")

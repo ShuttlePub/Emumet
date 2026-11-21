@@ -611,18 +611,35 @@ async fn home_link_register_unlink_and_real_transfer_race_keeps_only_current_own
         .unwrap();
     let before = register(&w, &old, &p).await;
     let id = before["id"].as_str().unwrap();
-    let (registration, unlink, transfer) = tokio::join!(
-        w.module.register_home_link(
-            &old.auth_account_id,
-            None,
-            &p.nanoid,
-            "https://home.example",
-            3
-        ),
-        w.module
-            .unlink_home_link(&old.auth_account_id, None, &p.nanoid, id),
-        w.module
-            .accept_profile_transfer_request(&new.auth_account_id, req.nanoid)
+    // Stop point: hold the old owner's Account gate until all three operations are actually
+    // queued on a lock, then release them together.
+    let mut gate = w.pool().begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('emumet/account-lifecycle/' || $1::text, 0))")
+        .bind(old_account.as_ref())
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+    let (m1, m2, m3) = (w.module.clone(), w.module.clone(), w.module.clone());
+    let (a1, a2, a3) = (
+        old.auth_account_id.clone(),
+        old.auth_account_id.clone(),
+        new.auth_account_id.clone(),
+    );
+    let (n1, n2) = (p.nanoid.clone(), p.nanoid.clone());
+    let link_id = id.to_owned();
+    let registration = tokio::spawn(async move {
+        m1.register_home_link(&a1, None, &n1, "https://home.example", 3)
+            .await
+    });
+    let unlink = tokio::spawn(async move { m2.unlink_home_link(&a2, None, &n2, &link_id).await });
+    let transfer =
+        tokio::spawn(async move { m3.accept_profile_transfer_request(&a3, req.nanoid).await });
+    wait_for_lock_waiters(&w, 3).await;
+    gate.commit().await.unwrap();
+    let (registration, unlink, transfer) = (
+        registration.await.unwrap(),
+        unlink.await.unwrap(),
+        transfer.await.unwrap(),
     );
     transfer.unwrap();
     for result in [registration.map(|_| ()), unlink] {
@@ -727,6 +744,10 @@ async fn home_link_held_owner_can_inspect_and_unlink_but_cannot_register() {
 /// Poll `pg_locks` until some backend of this database is *actually waiting* on a lock (advisory,
 /// row or transaction), not merely "has not finished yet".
 async fn wait_for_lock_waiter(w: &GraphWorld) {
+    wait_for_lock_waiters(w, 1).await
+}
+/// Like [`wait_for_lock_waiter`] but until at least `count` backends are waiting.
+async fn wait_for_lock_waiters(w: &GraphWorld, count: i64) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let waiting: i64 = sqlx::query_scalar(
@@ -735,14 +756,14 @@ async fn wait_for_lock_waiter(w: &GraphWorld) {
             .fetch_one(w.pool())
             .await
             .unwrap();
-            if waiting > 0 {
+            if waiting >= count {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("concurrent operation never reached a lock wait");
+    .expect("concurrent operations never reached their lock waits");
 }
 
 /// Mixed organisation (low-ID Profile without a link, high-ID Profile with a link), physically
@@ -897,4 +918,276 @@ async fn home_link_projector_reactivation_replay_locks_all_profiles_ascending_be
         .unwrap(),
         1
     );
+}
+
+async fn new_org(
+    w: &GraphWorld,
+    u: &User,
+) -> (
+    AccountId,
+    application::service::session_context::OrganizationContext,
+) {
+    use application::service::session_context::OrganizationContext;
+    use kernel::prelude::entity::OrgRole;
+    let org = w
+        .module
+        .create_organization(
+            u.auth_account_id.clone(),
+            CreateOrganizationDto {
+                name: format!("l1gate{}", kernel::generate_id()),
+            },
+        )
+        .await
+        .unwrap();
+    let a = AccountId::new(
+        sqlx::query_scalar::<_, i64>("SELECT id FROM accounts WHERE nanoid=$1")
+            .bind(&org.account_id)
+            .fetch_one(w.pool())
+            .await
+            .unwrap(),
+    );
+    let context = OrganizationContext {
+        org_account_id: a.clone(),
+        org_account_nanoid: org.account_id,
+        role: OrgRole::Owner,
+    };
+    (a, context)
+}
+
+/// Creates an organisation Profile row through the repositories **without** any lifecycle gate
+/// (stand-in for an unguarded writer), using a pre-allocated ID.
+async fn ungated_org_profile(w: &GraphWorld, a: &AccountId, id: i64) -> i64 {
+    use kernel::interfaces::event::EventApplier;
+    use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
+    use kernel::interfaces::repository::DependOnProfileRepository;
+    use kernel::prelude::entity::{Nanoid, Profile, ProfileId};
+    let mut c = w.module.database_connection().connection().await.unwrap();
+    let event = w
+        .module
+        .profile_repository()
+        .save(
+            &mut c,
+            Profile::create(
+                ProfileId::new(id),
+                a.clone(),
+                None,
+                None,
+                None,
+                None,
+                Nanoid::default(),
+            ),
+        )
+        .await
+        .unwrap();
+    let mut profile = None;
+    Profile::apply(&mut profile, event).unwrap();
+    let profile = profile.unwrap();
+    w.module
+        .profile_read_model()
+        .create(&mut c, &profile)
+        .await
+        .unwrap();
+    *profile.id().as_ref()
+}
+
+/// Invariant: an Account's Profile set changes only under that Account's lifecycle gate. The
+/// organisation-Profile creation API therefore queues on the Account gate before it writes
+/// anything (a held gate = a lifecycle transaction that has settled its Profile set).
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn home_link_organization_profile_creation_waits_for_the_account_gate() {
+    use application::dto::profile::CreateProfileDto;
+    use kernel::interfaces::database::DependOnDatabaseConnection as _;
+    let w = world().await;
+    let u = w.new_user().await;
+    w.create_profile(&u, true).await;
+    let (a, context) = new_org(&w, &u).await;
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM profiles WHERE account_id=$1")
+            .bind(a.as_ref())
+            .fetch_one(w.pool())
+            .await
+            .unwrap()
+    };
+    let before = count().await;
+    let mut gate = w.pool().begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('emumet/account-lifecycle/' || $1::text, 0))")
+        .bind(a.as_ref())
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+    let module = w.module.clone();
+    let task = tokio::spawn(async move {
+        use application::service::profile::CreateOrganizationProfileUseCase;
+        module
+            .create_organization_profile(
+                context,
+                CreateProfileDto {
+                    display_name: None,
+                    summary: None,
+                    username: format!("gated{}", kernel::generate_id()),
+                },
+            )
+            .await
+    });
+    wait_for_lock_waiter(&w).await;
+    assert!(!task.is_finished());
+    assert_eq!(
+        count().await,
+        before,
+        "Profile row appeared outside the Account gate"
+    );
+    gate.commit().await.unwrap();
+    task.await.unwrap().unwrap();
+    assert_eq!(count().await, before + 1);
+    let _ = w.module.database_connection();
+}
+
+/// A Profile that appears **after** the lifecycle transaction settled its Profile set (here via a
+/// writer that takes no gate at all) must never make the transaction take a Profile gate out of
+/// order: it fails fast with `Concurrency`, rolls back (releasing the high Profile gate) and the
+/// retry in a new transaction locks the complete set ascending.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn home_link_projector_retries_when_profile_set_grows_after_it_was_settled() {
+    let w = world().await;
+    let u = w.new_user().await;
+    w.create_profile(&u, true).await;
+    let (a, context) = new_org(&w, &u).await;
+    let low = kernel::generate_id();
+    let high = ungated_org_profile(&w, &a, kernel::generate_id()).await;
+    assert!(low < high);
+    let nanoid: String = sqlx::query_scalar("SELECT nanoid FROM profiles WHERE id=$1")
+        .bind(high)
+        .fetch_one(w.pool())
+        .await
+        .unwrap();
+    w.module
+        .register_home_link(
+            &u.auth_account_id,
+            Some(&context),
+            &nanoid,
+            "https://home.example",
+            3,
+        )
+        .await
+        .unwrap();
+    raw_event(&w, &a, AccountEvent::Deactivated).await;
+    let lock = |id: i64, ns: &'static str| {
+        let sql = format!("SELECT pg_advisory_xact_lock(hashtextextended('{ns}' || $1::text, 0))");
+        async move { (sql, id) }
+    };
+    let mut first = w.pool().begin().await.unwrap();
+    let (sql, id) = lock(high, "emumet/profile-lifecycle/").await;
+    sqlx::query(&sql)
+        .bind(id)
+        .execute(&mut *first)
+        .await
+        .unwrap();
+    let module = w.module.clone();
+    let task = tokio::spawn(async move { module.project_batch().await });
+    // The projector holds the Account gate and has settled {high}; it waits for `high`.
+    wait_for_lock_waiter(&w).await;
+    ungated_org_profile(&w, &a, low).await;
+    let mut second = w.pool().begin().await.unwrap();
+    let (sql, id) = lock(low, "emumet/profile-lifecycle/").await;
+    sqlx::query(&sql)
+        .bind(id)
+        .execute(&mut *second)
+        .await
+        .unwrap();
+    first.commit().await.unwrap();
+    // First attempt fails fast (out-of-order request) and releases `high`; the retry queues on
+    // the lowest gate (`low`, held by `second`) without holding `high`.
+    wait_for_lock_waiter(&w).await;
+    let mut probe = w.pool().begin().await.unwrap();
+    for (label, key) in [
+        ("profile gate", format!("emumet/profile-lifecycle/{high}")),
+        (
+            "relationship gate",
+            format!("emumet.profile_relationship:{high}"),
+        ),
+    ] {
+        assert!(
+            sqlx::query_scalar::<_, bool>(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))"
+            )
+            .bind(key)
+            .fetch_one(&mut *probe)
+            .await
+            .unwrap(),
+            "high-ID {label} was held while waiting on the lower Profile gate"
+        );
+    }
+    probe.commit().await.unwrap();
+    second.commit().await.unwrap();
+    task.await.unwrap().unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM profiles WHERE account_id=$1")
+            .bind(a.as_ref())
+            .fetch_one(w.pool())
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM profile_links WHERE owner_account_id=$1 AND state='unlinked'"
+        )
+        .bind(a.as_ref())
+        .fetch_one(w.pool())
+        .await
+        .unwrap(),
+        1
+    );
+}
+
+/// The Profile projector's fresh materialization adds a row to an Account's Profile set, so it
+/// runs in its own transaction under that Account's gate.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn home_link_profile_projector_materialization_waits_for_the_account_gate() {
+    use application::projection::ProjectProfileBatch;
+    let w = world().await;
+    let u = w.new_user().await;
+    w.create_profile(&u, true).await;
+    let (a, _) = new_org(&w, &u).await;
+    let id = ungated_org_profile(&w, &a, kernel::generate_id()).await;
+    sqlx::query("DELETE FROM profiles WHERE id=$1")
+        .bind(id)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM projection_checkpoints WHERE projector_name='profile_projector'")
+        .execute(w.pool())
+        .await
+        .unwrap();
+    let mut gate = w.pool().begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('emumet/account-lifecycle/' || $1::text, 0))")
+        .bind(a.as_ref())
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+    let module = w.module.clone();
+    let task = tokio::spawn(async move { module.project_profile_batch().await });
+    wait_for_lock_waiter(&w).await;
+    assert!(!task.is_finished());
+    let rows = |id: i64| {
+        let pool = w.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM profiles WHERE id=$1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        rows(id).await,
+        0,
+        "row materialized outside the Account gate"
+    );
+    gate.commit().await.unwrap();
+    task.await.unwrap().unwrap();
+    assert_eq!(rows(id).await, 1);
 }

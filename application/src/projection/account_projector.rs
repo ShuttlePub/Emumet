@@ -116,7 +116,12 @@ pub trait ProjectAccountBatch:
                 });
                 let mut create_permission = false;
                 // One Account per bounded DB transaction; Keto is strictly after commit.
-                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                // A Profile gate requested out of order (the Account's Profile set grew after the
+                // set was settled) fails with `Concurrency`: roll back and redo the whole
+                // transaction so the complete set is locked ascending from the start.
+                let mut attempt = 0u8;
+                loop {
+                    let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), async {
                     let mut transaction = self.database_connection().get_transaction().await?;
                     self.home_link_store()
                         .lock_accounts(transaction.connection(), std::slice::from_ref(&account_id))
@@ -303,7 +308,21 @@ pub trait ProjectAccountBatch:
                 .map_err(|_| {
                     error_stack::Report::new(KernelError::Internal)
                         .attach_printable("Account projection lifecycle transaction exceeded 5s")
-                })??;
+                })?;
+                    match outcome {
+                        Err(error)
+                            if matches!(error.current_context(), KernelError::Concurrency)
+                                && attempt < 2 =>
+                        {
+                            attempt += 1;
+                            tracing::warn!(account_id = %account_id.as_ref(), attempt, "Account projection: Profile set changed concurrently; retrying in a new transaction");
+                        }
+                        other => {
+                            other?;
+                            break;
+                        }
+                    }
+                }
                 if let Some(auth_id) = created_auth_for_permission.filter(|_| create_permission) {
                     self.permission_writer()
                         .create_relation(

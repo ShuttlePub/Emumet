@@ -120,6 +120,37 @@ a prior successful permit may run only within its original absolute deadline. Un
 no send. HTTP must hold **zero** DB connections/transactions/locks. L1 tests use test-owned permit
 rows and P0/P1/revoker-precommit pause points; these are not production queue tables.
 
+## Account-owned Profile set invariant
+
+**Invariant:** the set of Profiles an Account owns only grows or shrinks under that Account's
+lifecycle gate. A lifecycle transaction therefore settles the complete Profile set once, right
+after taking the Account gate, and works only on that set. Every path that adds a Profile to,
+removes it from, or moves it between Accounts, as enumerated from the code (writers of
+`profiles.account_id`, Profile creation/deletion, and the Profile/Account projectors):
+
+| Path | Effect on the set | Gate |
+| --- | --- | --- |
+| Personal Account creation (`CreateAccountUseCase`) | adds the first Profile of a **new** Account | exempt by construction: the Account ID is generated inside this transaction and unknown to anyone until commit, so no gate holder can exist |
+| Organisation Profile creation (`CreateOrganizationProfileUseCase`) | adds | Account gate first (RSA key pair is generated **before** the transaction so it does not consume the gate's 5s budget) |
+| Profile transfer accept (`respond.rs`) | removes from source, adds to destination | both Account gates ascending, then the Profile gate |
+| Account projector: deactivation (`delete_owned_profiles`) | removes every owned row | Account gate; set settled up front |
+| Account projector: reactivation (`restore_owned_profiles`) | re-adds from history | Account gate; set (incl. history) settled up front |
+| Profile projector: fresh materialization, owner move or delete | adds/moves/removes a row | deferred to its own transaction: Account gate(s) ascending, Profile gate, re-plan |
+| Profile projector: in-place update of an existing row of the same Account | none | none needed |
+| Cutover username backfill (`profile_cutover_recovery`) | none (username only) | none needed |
+| Migrations / reset (offline, one-off) | out of band | not a runtime path |
+
+There is no runtime Profile deletion API and no Profile `Deleted` event emitter.
+
+**Structural guard.** The gates of one transaction are tracked on its connection. A *new* Profile
+gate is refused with `Concurrency` when it is not above every Profile gate already held, or after
+any relationship gate has been taken. So an unguarded or future writer that adds a Profile after
+the set was settled cannot cause a lock-order inversion: the transaction fails fast, rolls back
+(releasing everything) and is redone in a **new** transaction (the Account/Profile projectors
+retry up to three times per Account/Profile, then propagate and re-read the window). Registration,
+unlink and transfer take their single Profile gate right after the Account gate, so they never
+trip the guard.
+
 ## Migration and recovery
 
 Migration `20261122000200` is additive and rehearsed on empty and populated pre-L1 schemas.
@@ -153,6 +184,8 @@ job rejects zero matches or ignored acceptance tests. Test names below omit thei
 | P0 / revoker-precommit, stalled P1 rollback, local timeout only | `p0_and_unlink_precommit_stop_points_serialize_mock_authorization`, `p1_stalled_permit_rolls_back_and_bounds_revocation_wait`, `lifecycle_timeouts_are_transaction_local_and_plain_transactions_remain_unbounded` |
 | Existing relationship gate precedes link locks | `deactivation_waits_for_existing_relationship_gate_before_locking_links` |
 | Reactivation replay (mixed linked/unlinked Profiles, rows physically deleted): all Profile gates ascending before relationship gates | `home_link_projector_reactivation_replay_locks_all_profiles_ascending_before_relationships` |
+| Profile created after the set was settled: fail fast, release the high gate, retry with the complete set | `home_link_projector_retries_when_profile_set_grows_after_it_was_settled` |
+| Organisation Profile creation and Profile-projector materialization queue on the Account gate | `home_link_organization_profile_creation_waits_for_the_account_gate`, `home_link_profile_projector_materialization_waits_for_the_account_gate` |
 | Missing historical AuthAccount does not block or restore privileges | `missing_auth_history_does_not_block_projection_or_recreate_an_auth_link` |
 | Populated old schema and old-binary migration refusal | `additive_migration_on_populated_main_schema_and_old_binary_refusal` (other fixtures migrate empty schemas) |
 | JWT/current owner/allowlist/mode/username-less API | `home_link_api_auth_origin_modes_and_idempotency_including_non_actor_profile` |
