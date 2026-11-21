@@ -3,6 +3,7 @@ mod auth;
 mod cutover;
 mod error;
 mod handler;
+mod instance_identity;
 mod kratos;
 mod logging;
 mod openapi;
@@ -70,6 +71,9 @@ async fn main() -> Result<(), StackTrace> {
     // keys of Profiles that have none. Both happen before any worker or route is started.
     let app = AppModule::new().await?;
     cutover::provision_profile_keys(&app).await?;
+    // The instance actor identity and its key (post-relay signer). Nothing is repaired: a different
+    // PUBLIC_BASE_URL or a key that cannot be decrypted stops the start-up here.
+    instance_identity::provision_instance_identity(&app).await?;
     // The migrations and the key provisioning above are never interrupted half way. A stop request
     // that arrived meanwhile is honoured now, before any worker or listener exists.
     if shutdown.is_requested() {

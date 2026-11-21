@@ -1,4 +1,5 @@
 use crate::kratos::KratosRegistrationFlowDirectory;
+use application::instance_identity::{DependOnInstanceKeyCache, InstanceKeyCache};
 use driver::crypto::{
     Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
 };
@@ -30,6 +31,7 @@ use kernel::interfaces::repository::{
 };
 use kernel::prelude::entity::{EmailChallengePolicy, ReadinessPolicy};
 use kernel::KernelError;
+use std::sync::Arc;
 
 /// Single wiring root for the HTTP server (ADR 0006 decision 7).
 ///
@@ -62,6 +64,8 @@ pub struct AppModule {
     profile_delivery_sender: HttpProfileDeliverySender,
     remote_actor_resolver: HttpRemoteActorResolver,
     enforcement_probe: driver::registration_enforcement_probe::HttpKratosEnforcementProbe,
+    /// Unlocked instance signing key of this process (bounded, TTL; shared by every clone).
+    instance_key_cache: Arc<InstanceKeyCache>,
 }
 
 /// Production: https only, internal destinations refused. A `test-mode` build run by the AP E2E
@@ -155,6 +159,7 @@ impl AppModule {
             remote_actor_resolver: remote_actor_resolver(),
             enforcement_probe:
                 driver::registration_enforcement_probe::HttpKratosEnforcementProbe::from_env(),
+            instance_key_cache: Arc::new(InstanceKeyCache::default()),
         })
     }
 
@@ -227,6 +232,7 @@ impl AppModule {
                         admin_url: "http://localhost:65535/".to_string(),
                     },
                 ]),
+            instance_key_cache: Arc::new(InstanceKeyCache::default()),
         })
     }
 
@@ -491,5 +497,11 @@ impl kernel::interfaces::repository::DependOnRegistrationEnforcementProbeClient 
         driver::registration_enforcement_probe::HttpKratosEnforcementProbe;
     fn registration_enforcement_probe_client(&self) -> &Self::RegistrationEnforcementProbeClient {
         &self.enforcement_probe
+    }
+}
+
+impl DependOnInstanceKeyCache for AppModule {
+    fn instance_key_cache(&self) -> &InstanceKeyCache {
+        &self.instance_key_cache
     }
 }

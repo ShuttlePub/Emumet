@@ -2,12 +2,13 @@ use crate::error::ErrorStatus;
 use crate::handler::AppModule;
 use application::dto::activitypub::{GetProfileActorDto, GetProfileWebFingerDto};
 use application::dto::profile_inbound::{ProfileInboxDto, ProfileInboxOutcome};
+use application::instance_identity::GetInstanceActorUseCase;
 use application::service::activitypub::{
     GetProfileActorUseCase, GetProfileWebFingerUseCase, ProfileInboxUseCase,
 };
 use axum::extract::FromRef;
 use axum::http::StatusCode;
-use kernel::activitypub::{Actor, WebFingerResponse};
+use kernel::activitypub::{Actor, InstanceActor, WebFingerResponse};
 use kernel::interfaces::http_signing::{
     ActorPublicKey, DependOnHttpSignatureVerifier, HttpSignatureVerificationInput,
     HttpSignatureVerifier, SignatureVerificationResult,
@@ -55,6 +56,11 @@ impl ActivityPubApi {
         dto: GetProfileActorDto,
     ) -> error_stack::Result<Actor, KernelError> {
         self.module.get_profile_actor(dto).await
+    }
+
+    /// The public instance actor document (`{PUBLIC_BASE_URL}/ap/instance`).
+    pub async fn get_instance_actor(&self) -> error_stack::Result<InstanceActor, KernelError> {
+        self.module.get_instance_actor().await
     }
 
     pub async fn get_profile_webfinger(

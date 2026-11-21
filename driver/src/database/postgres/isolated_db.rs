@@ -51,7 +51,21 @@ impl IsolatedDatabase {
         Self::create_with(Some(RESET_MIGRATION_VERSION)).await
     }
 
+    /// 指定した 1 つの migration **だけ**を適用していない独立 DB (それ以外は全て適用済み)。
+    /// 追加 migration を、既存データのある本番相当 DB へ後から適用する検証用。
+    /// 適用は [`Self::apply_reset`] (= 残りの本番 migration の適用) で行う。
+    pub async fn create_without_migration(version: i64) -> Self {
+        Self::create_filtered(move |candidate| candidate != version).await
+    }
+
     async fn create_with(stop_before: Option<i64>) -> Self {
+        match stop_before {
+            None => Self::create_filtered(|_| true).await,
+            Some(version) => Self::create_filtered(move |candidate| candidate < version).await,
+        }
+    }
+
+    async fn create_filtered(keep: impl Fn(i64) -> bool) -> Self {
         let url = env("DATABASE_URL")
             .unwrap()
             .expect("DATABASE_URL must be set for the isolated database tests");
@@ -79,23 +93,18 @@ impl IsolatedDatabase {
             .await
             .unwrap();
         let full = sqlx::migrate!("../migrations");
-        match stop_before {
-            None => full.run(&pool).await.unwrap(),
-            Some(version) => {
-                let partial = sqlx::migrate::Migrator {
-                    migrations: std::borrow::Cow::Owned(
-                        full.migrations
-                            .iter()
-                            .filter(|migration| migration.version < version)
-                            .cloned()
-                            .collect(),
-                    ),
-                    ignore_missing: false,
-                    locking: true,
-                };
-                partial.run(&pool).await.unwrap();
-            }
-        }
+        let partial = sqlx::migrate::Migrator {
+            migrations: std::borrow::Cow::Owned(
+                full.migrations
+                    .iter()
+                    .filter(|migration| keep(migration.version))
+                    .cloned()
+                    .collect(),
+            ),
+            ignore_missing: false,
+            locking: true,
+        };
+        partial.run(&pool).await.unwrap();
         let database = PostgresDatabase::from_pool(pool.clone());
         Self {
             database,

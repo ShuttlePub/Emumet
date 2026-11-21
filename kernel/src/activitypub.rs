@@ -232,6 +232,49 @@ pub struct PublicKey {
 }
 
 // ---------------------------------------------------------------------------
+// Instance actor
+// ---------------------------------------------------------------------------
+
+/// The Emumet instance actor (`{origin}/ap/instance`), the signer of post-relay requests.
+///
+/// An `Application`, not a Profile. `publicKey` is an array so that several keys can be published
+/// at the same time (a later rotation); every key's `owner` is the instance actor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceActor {
+    #[serde(rename = "@context")]
+    pub context: Vec<String>,
+    pub id: String,
+    #[serde(rename = "type")]
+    pub object_type: String,
+    pub public_key: Vec<PublicKey>,
+}
+
+impl InstanceActor {
+    /// Builds the document from the actor id and the published `(key id, public key PEM)` pairs.
+    pub fn new(actor_id: String, keys: impl IntoIterator<Item = (String, String)>) -> Self {
+        let public_key = keys
+            .into_iter()
+            .map(|(id, public_key_pem)| PublicKey {
+                id,
+                owner: actor_id.clone(),
+                public_key_pem,
+            })
+            .collect();
+        InstanceActor {
+            context: vec![
+                "https://www.w3.org/ns/activitystreams".to_string(),
+                "https://w3id.org/security/v1".to_string(),
+            ],
+            id: actor_id,
+            object_type: "Application".to_string(),
+            public_key,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ImageObject
 // ---------------------------------------------------------------------------
 

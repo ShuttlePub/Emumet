@@ -99,6 +99,8 @@ Account / Profile creation and the start-up Profile key provisioning require a m
 - Production: `/run/secrets/master-key-password`
 - Development: `./master-key-password` (create manually, `chmod 600`)
 
+The instance actor (`{PUBLIC_BASE_URL}/ap/instance`, P1 post-relay signer) is provisioned at start-up with the same password: it creates the identity and its key only when neither exists and refuses to start on a different `PUBLIC_BASE_URL`, an undecryptable or damaged key (it never regenerates). See `docs/instance-identity.md`.
+
 ## Architecture
 
 ### Workspace Structure (4 crates with dependency flow)
