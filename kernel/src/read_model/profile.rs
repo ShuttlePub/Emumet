@@ -189,6 +189,8 @@ pub trait ProfileReadModel: Sync + Send + 'static {
         profile: &Profile,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
+    /// Ownership-changing snapshot write. Requires the stored source and target Account gates.
+    /// Content-only callers must use update_content instead.
     fn update(
         &self,
         executor: &mut Self::Connection,

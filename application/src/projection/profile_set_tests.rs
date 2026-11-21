@@ -70,7 +70,8 @@ async fn absent(db: &PostgresDatabase, p: &Profile) {
 async fn same_owner_batch_update_cannot_resurrect_deleted_profile() {
     let _guard = PROJECTOR_TEST_LOCK.lock().await;
     kernel::ensure_generator_initialized();
-    let db = PostgresDatabase::new().await.unwrap();
+    let isolated = driver::database::isolated_db::IsolatedDatabase::create().await;
+    let db = isolated.database.clone();
     clear_checkpoint(&db).await;
     let (a, p) = fixture(&db).await;
     let mut c = db.connection().await.unwrap();
@@ -133,7 +134,8 @@ async fn same_owner_batch_update_cannot_resurrect_deleted_profile() {
 async fn transferred_profile_stays_absent_after_current_owner_deactivation() {
     let _guard = PROJECTOR_TEST_LOCK.lock().await;
     kernel::ensure_generator_initialized();
-    let db = PostgresDatabase::new().await.unwrap();
+    let isolated = driver::database::isolated_db::IsolatedDatabase::create().await;
+    let db = isolated.database.clone();
     clear_checkpoint(&db).await;
     let (a, p) = fixture(&db).await;
     let bid = AccountId::default();
@@ -264,60 +266,63 @@ async fn org_profiles(db: &PostgresDatabase) -> (Account, Vec<Profile>) {
 async fn batch_content_updates_lock_rows_in_profile_id_order() {
     let _guard = PROJECTOR_TEST_LOCK.lock().await;
     kernel::ensure_generator_initialized();
-    let db = PostgresDatabase::new().await.unwrap();
+    let isolated = driver::database::isolated_db::IsolatedDatabase::create().await;
+    let db = isolated.database.clone();
     clear_checkpoint(&db).await;
-    let (_a, profiles) = org_profiles(&db).await;
-    let mut c = db.connection().await.unwrap();
-    // Append in reverse seq order: ordering must be by Profile ID, not seq or HashMap order.
-    for p in profiles.iter().rev() {
-        db.profile_event_store()
-            .persist(
-                &mut c,
-                &Profile::update(
-                    p.id().clone(),
-                    kernel::prelude::entity::FieldAction::Set(ProfileDisplayName::new("new")),
-                    kernel::prelude::entity::FieldAction::Unchanged,
-                    kernel::prelude::entity::FieldAction::Unchanged,
-                    kernel::prelude::entity::FieldAction::Unchanged,
-                ),
+    for _ in 0..20 {
+        let (_a, profiles) = org_profiles(&db).await;
+        let mut c = db.connection().await.unwrap();
+        // Append in reverse seq order: ordering must be by Profile ID, not seq or HashMap order.
+        for p in profiles.iter().rev() {
+            db.profile_event_store()
+                .persist(
+                    &mut c,
+                    &Profile::update(
+                        p.id().clone(),
+                        kernel::prelude::entity::FieldAction::Set(ProfileDisplayName::new("new")),
+                        kernel::prelude::entity::FieldAction::Unchanged,
+                        kernel::prelude::entity::FieldAction::Unchanged,
+                        kernel::prelude::entity::FieldAction::Unchanged,
+                    ),
+                )
+                .await
+                .unwrap();
+        }
+        drop(c);
+        let mut holder = db.get_transaction().await.unwrap();
+        db.home_link_store()
+            .lock_accounts(
+                holder.connection(),
+                std::slice::from_ref(profiles[0].account_id()),
             )
             .await
             .unwrap();
+        db.home_link_store()
+            .lock_profiles(holder.connection(), std::slice::from_ref(profiles[0].id()))
+            .await
+            .unwrap();
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut **holder.connection())
+            .await
+            .unwrap();
+        let other = db.clone();
+        let task =
+            tokio::spawn(async move { ProjectorTest { db: other }.project_profile_batch().await });
+        wait_blocked_by(&db, pid).await;
+        // If the batch locked high first, this NOWAIT would fail. The holder can finish its ascending
+        // set while the batch is stopped on low, so no reverse-order cycle can form.
+        sqlx::query("SELECT id FROM profiles WHERE id=$1 FOR NO KEY UPDATE NOWAIT")
+            .bind(profiles[1].id().as_ref())
+            .execute(&mut **holder.connection())
+            .await
+            .unwrap();
+        db.home_link_store()
+            .lock_profiles(holder.connection(), std::slice::from_ref(profiles[1].id()))
+            .await
+            .unwrap();
+        holder.commit().await.unwrap();
+        task.await.unwrap().unwrap();
     }
-    drop(c);
-    let mut holder = db.get_transaction().await.unwrap();
-    db.home_link_store()
-        .lock_accounts(
-            holder.connection(),
-            std::slice::from_ref(profiles[0].account_id()),
-        )
-        .await
-        .unwrap();
-    db.home_link_store()
-        .lock_profiles(holder.connection(), std::slice::from_ref(profiles[0].id()))
-        .await
-        .unwrap();
-    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(&mut **holder.connection())
-        .await
-        .unwrap();
-    let other = db.clone();
-    let task =
-        tokio::spawn(async move { ProjectorTest { db: other }.project_profile_batch().await });
-    wait_blocked_by(&db, pid).await;
-    // If the batch locked high first, this NOWAIT would fail. The holder can finish its ascending
-    // set while the batch is stopped on low, so no reverse-order cycle can form.
-    sqlx::query("SELECT id FROM profiles WHERE id=$1 FOR NO KEY UPDATE NOWAIT")
-        .bind(profiles[1].id().as_ref())
-        .execute(&mut **holder.connection())
-        .await
-        .unwrap();
-    db.home_link_store()
-        .lock_profiles(holder.connection(), std::slice::from_ref(profiles[1].id()))
-        .await
-        .unwrap();
-    holder.commit().await.unwrap();
-    task.await.unwrap().unwrap();
 }
 
 #[test_with::env(DATABASE_URL)]
@@ -326,7 +331,8 @@ async fn zero_row_content_update_replans_missing_active_row_under_account_gate()
     use kernel::interfaces::event_store::ProfileEventStore;
     let _guard = PROJECTOR_TEST_LOCK.lock().await;
     kernel::ensure_generator_initialized();
-    let db = PostgresDatabase::new().await.unwrap();
+    let isolated = driver::database::isolated_db::IsolatedDatabase::create().await;
+    let db = isolated.database.clone();
     let (_a, p) = fixture(&db).await;
     let mut c = db.connection().await.unwrap();
     let event = db
@@ -392,7 +398,8 @@ async fn zero_row_content_update_replans_missing_active_row_under_account_gate()
 async fn existing_row_is_not_moved_to_a_deactivated_owner() {
     let _guard = PROJECTOR_TEST_LOCK.lock().await;
     kernel::ensure_generator_initialized();
-    let db = PostgresDatabase::new().await.unwrap();
+    let isolated = driver::database::isolated_db::IsolatedDatabase::create().await;
+    let db = isolated.database.clone();
     clear_checkpoint(&db).await;
     let (a, p) = fixture(&db).await;
     let (b, _) = org_profiles(&db).await;
@@ -661,7 +668,8 @@ async fn zero_row_recheck_defers_changed_owner_but_skips_newer_same_owner() {
     use kernel::test_utils::ProfileBuilder;
     let _guard = PROJECTOR_TEST_LOCK.lock().await;
     kernel::ensure_generator_initialized();
-    let db = PostgresDatabase::new().await.unwrap();
+    let isolated = driver::database::isolated_db::IsolatedDatabase::create().await;
+    let db = isolated.database.clone();
     let (a, profiles) = org_profiles(&db).await;
     let (b, _) = org_profiles(&db).await;
     let p = &profiles[0];
@@ -708,7 +716,8 @@ async fn zero_row_recheck_defers_changed_owner_but_skips_newer_same_owner() {
 async fn account_reactivation_repairs_lagging_transfer_with_both_owner_gates() {
     let _guard = PROJECTOR_TEST_LOCK.lock().await;
     kernel::ensure_generator_initialized();
-    let db = PostgresDatabase::new().await.unwrap();
+    let isolated = driver::database::isolated_db::IsolatedDatabase::create().await;
+    let db = isolated.database.clone();
     clear_checkpoint(&db).await;
     let (a, p) = fixture(&db).await;
     let (b, _) = org_profiles(&db).await;
@@ -752,4 +761,29 @@ async fn account_reactivation_repairs_lagging_transfer_with_both_owner_gates() {
         .unwrap()
         .unwrap();
     assert_eq!(stored.account_id(), b.id());
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn incomplete_current_owner_history_never_materializes_profile() {
+    let _guard = PROJECTOR_TEST_LOCK.lock().await;
+    kernel::ensure_generator_initialized();
+    let isolated = driver::database::isolated_db::IsolatedDatabase::create().await;
+    let db = isolated.database.clone();
+    let (a, p) = fixture(&db).await;
+    let mut c = db.connection().await.unwrap();
+    // Simulate the visibility gap of a committed later version before the earlier commit.
+    sqlx::query("DELETE FROM account_events WHERE id=$1 AND version=(SELECT min(version) FROM account_events WHERE id=$1)")
+        .bind(a.id().as_ref()).execute(&mut *c).await.unwrap();
+    sqlx::query("DELETE FROM profiles WHERE id=$1")
+        .bind(p.id().as_ref())
+        .execute(&mut *c)
+        .await
+        .unwrap();
+    drop(c);
+    ProjectorTest { db: db.clone() }
+        .project_profile_batch()
+        .await
+        .unwrap();
+    absent(&db, &p).await;
 }

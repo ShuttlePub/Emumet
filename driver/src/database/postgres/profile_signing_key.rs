@@ -459,7 +459,7 @@ mod test {
             .unwrap()
             .unwrap();
         sqlx::query("DELETE FROM profiles WHERE id=$1")
-            .bind(&profile_id.as_ref())
+            .bind(profile_id.as_ref())
             .execute(&mut *conn)
             .await
             .unwrap();

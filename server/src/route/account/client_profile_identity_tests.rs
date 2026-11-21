@@ -10,7 +10,10 @@ use crate::handler::AppModule;
 use axum::body::Body;
 use axum::http::StatusCode;
 use http_body_util::BodyExt;
-use kernel::interfaces::database::{DatabaseConnection, DependOnDatabaseConnection};
+use kernel::interfaces::database::{
+    DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
+};
+use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
 use kernel::interfaces::repository::{AggregateRepository, DependOnProfileRepository};
 use kernel::prelude::entity::{AccountId, OrgRole, Profile, ProfileId};
@@ -593,29 +596,37 @@ async fn transfer_profile(fixture: &Fixture, profile_nanoid: &str, organization_
         .await
         .unwrap()
     };
+    drop(executor);
     let profile_id = ProfileId::new(profile_id);
-    let event = module
-        .profile_repository()
-        .save(
-            &mut executor,
-            Profile::transfer_account(
-                profile_id.clone(),
-                AccountId::new(from_id),
-                AccountId::new(to_id),
-            ),
-        )
-        .await
-        .unwrap();
-    let (profile, _) = module
-        .profile_repository()
-        .load(&mut executor, &profile_id)
-        .await
-        .unwrap()
-        .into_parts();
-    let _ = event;
+    let deps = module.clone();
     module
-        .profile_read_model()
-        .update_content(&mut executor, &profile, profile.account_id())
+        .transaction_manager()
+        .transaction(move |executor| {
+            Box::pin(async move {
+                deps.home_link_store()
+                    .lock_accounts(executor, &[AccountId::new(from_id), AccountId::new(to_id)])
+                    .await?;
+                deps.home_link_store()
+                    .lock_profiles(executor, std::slice::from_ref(&profile_id))
+                    .await?;
+                deps.profile_repository()
+                    .save(
+                        executor,
+                        Profile::transfer_account(
+                            profile_id.clone(),
+                            AccountId::new(from_id),
+                            AccountId::new(to_id),
+                        ),
+                    )
+                    .await?;
+                let (profile, _) = deps
+                    .profile_repository()
+                    .load(executor, &profile_id)
+                    .await?
+                    .into_parts();
+                deps.profile_read_model().update(executor, &profile).await
+            })
+        })
         .await
         .unwrap();
 }

@@ -857,7 +857,7 @@ async fn delete_profile_row(
         .transaction(move |executor| {
             Box::pin(async move {
                 sqlx::query("DELETE FROM profiles WHERE id=$1")
-                    .bind(&profile_id.as_ref())
+                    .bind(profile_id.as_ref())
                     .execute(&mut **executor)
                     .await
                     .map(|_| ())

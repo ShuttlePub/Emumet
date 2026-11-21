@@ -156,9 +156,12 @@ without ownership in SET. Zero rows triggers a re-read: equal/newer same-owner s
 missing/changed-owner state is deferred to a fresh bounded gated plan. Batch updates lock rows
 in **Profile ID ascending** order, independent of event sequence and hash iteration order.
 Fresh materialization and owner moves check the **folded current owner**, including the
-Account event stream's deactivation, rather than the original Created owner. Account-gated
+Account event stream's deactivation, rather than the original Created owner. Unknown/incomplete
+Account history is skipped for window retry, never replaced by an active read-model fallback. Account-gated
 re-planning repeats this check, so a transferred Profile cannot return after its current owner
-withdraws. Account reactivation explicitly restores identity from history, not an old link.
+withdraws. Account reactivation explicitly restores identity from history, not an old link; before taking
+any gate it also discovers stored source owners of lagging transferred rows, then takes all
+required Account gates ascending. A raced source causes a fresh transaction, not an extra gate.
 Username-only writes (normal setter and cutover recovery) are not set changes. Migrations and
 test-mode reset are offline/test-only exceptions; raw SQL bypassing the driver is outside this
 runtime enforcement boundary (no DB trigger was added).

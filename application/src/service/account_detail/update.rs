@@ -143,10 +143,9 @@ pub trait UpdateAccountDetailUseCase:
                                 Report::new(KernelError::NotFound)
                                     .attach_printable("Profile no longer exists")
                             })?;
-                        if locked_profile.account_id() != &account_id {
-                            return Err(Report::new(KernelError::Concurrency)
-                                .attach_printable("Profile owner changed; retry the edit"));
-                        }
+                        // Preserve the existing edit/transfer behavior: an edit that waited
+                        // for a transfer follows this Profile, not its former Account. The
+                        // expected owner comes from the locked row; this writer cannot move it.
                         let icon =
                             resolve_field_action_image_id(&deps, executor, &dto.icon_url).await?;
                         let banner =
@@ -174,11 +173,29 @@ pub trait UpdateAccountDetailUseCase:
                                 .await?;
                             if !deps
                                 .profile_read_model()
-                                .update_content(executor, rehydrated.aggregate(), &account_id)
+                                .update_content(
+                                    executor,
+                                    rehydrated.aggregate(),
+                                    locked_profile.account_id(),
+                                )
                                 .await?
                             {
-                                return Err(Report::new(KernelError::Concurrency)
-                                    .attach_printable("Profile content changed; retry the edit"));
+                                let stored = deps
+                                    .profile_read_model()
+                                    .find_by_id_unfiltered(executor, profile.id())
+                                    .await?;
+                                if !stored.is_some_and(|p| {
+                                    p.account_id() == locked_profile.account_id()
+                                        && p.version().as_ref() >= rehydrated.version().as_ref()
+                                }) {
+                                    // The row lock above excludes disappearance or
+                                    // transfer here. Never take Account gates after a row lock:
+                                    // roll back so any retry starts with a fresh owner plan.
+                                    return Err(Report::new(KernelError::Concurrency)
+                                        .attach_printable(
+                                            "Profile content changed; retry the edit",
+                                        ));
+                                }
                             }
                         }
 

@@ -130,6 +130,17 @@ async fn set_writers_require_actual_account_gates_in_the_same_transaction() {
         .await
         .is_err());
     drop(holder);
+    let mut target_only = db.get_transaction().await.unwrap();
+    PostgresHomeLinkStore
+        .lock_accounts(target_only.connection(), std::slice::from_ref(b.id()))
+        .await
+        .unwrap();
+    assert!(db
+        .profile_read_model()
+        .update(target_only.connection(), &moved)
+        .await
+        .is_err());
+    drop(target_only);
     let mut tx = db.get_transaction().await.unwrap();
     PostgresHomeLinkStore
         .lock_accounts(tx.connection(), &[a.id().clone(), b.id().clone()])
@@ -257,7 +268,10 @@ fn profile_write_statement_inventory_matches_allowlist() {
                 for (offset, _) in text.match_indices(verb) {
                     let rest = &text[offset + verb.len()..];
                     let kind = if verb.starts_with("update") {
-                        if rest.split("where").next().unwrap().contains("account_id =") {
+                        if ["account_id", "owner_kind"]
+                            .iter()
+                            .any(|column| rest.split("where").next().unwrap().contains(column))
+                        {
                             "owner-update"
                         } else {
                             "content-update"
