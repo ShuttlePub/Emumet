@@ -138,12 +138,15 @@ impl PostgresPostRelayStore {
             .candidate(c, id)
             .await?
             .ok_or_else(|| Report::new(KernelError::NotFound))?;
-        PostgresHomeLinkStore
-            .lock_accounts(c, &[AccountId::new(a)])
-            .await?;
-        PostgresHomeLinkStore
-            .lock_profiles(c, std::slice::from_ref(p))
-            .await?;
+        {
+            let _waiting = c.relay_lock_timer();
+            PostgresHomeLinkStore
+                .lock_accounts(c, &[AccountId::new(a)])
+                .await?;
+            PostgresHomeLinkStore
+                .lock_profiles(c, std::slice::from_ref(p))
+                .await?;
+        }
         if self.candidate(c, id).await? != Some(a) {
             return Err(Report::new(KernelError::Concurrency));
         }
@@ -163,10 +166,13 @@ impl PostgresPostRelayStore {
         };
         // I1 joins existing receipt/Undo relationship work after prepare. Settle its
         // advisory gate BEFORE link rows here, so enqueue never climbs from link to relation.
-        PostgresProfileRelationshipLock
-            .lock_profiles(c, std::slice::from_ref(p))
-            .await?;
-        let links = PostgresHomeLinkStore.list(c, p).await?;
+        let links = {
+            let _waiting = c.relay_lock_timer();
+            PostgresProfileRelationshipLock
+                .lock_profiles(c, std::slice::from_ref(p))
+                .await?;
+            PostgresHomeLinkStore.list(c, p).await?
+        };
         Ok(Gate {
             profile: id,
             owner: a,
@@ -183,6 +189,7 @@ impl PostgresPostRelayStore {
     ) -> error_stack::Result<(Quota, Option<Quota>), KernelError> {
         c.require_account_gate(g.owner)?;
         c.require_profile_gate(g.profile)?;
+        let _waiting = c.relay_lock_timer();
         let q =
             sqlx::query_as::<_, Quota>("SELECT * FROM post_relay_quota WHERE singleton FOR UPDATE")
                 .fetch_one(&mut **c)
@@ -198,6 +205,7 @@ impl PostgresPostRelayStore {
         Ok((q, p))
     }
     async fn lock_slots(&self, c: &mut PostgresConnection) -> error_stack::Result<(), KernelError> {
+        let _waiting = c.relay_lock_timer();
         sqlx::query("SELECT id FROM post_relay_slots ORDER BY id FOR UPDATE")
             .fetch_all(&mut **c)
             .await
@@ -303,6 +311,7 @@ impl PostgresPostRelayStore {
         c: &mut PostgresConnection,
         receipt: &str,
     ) -> error_stack::Result<Option<Job>, KernelError> {
+        let _waiting = c.relay_lock_timer();
         sqlx::query_as::<_, Job>(&format!(
             "{JOB_SELECT} WHERE b.receipt=$1 FOR UPDATE OF b,j"
         ))

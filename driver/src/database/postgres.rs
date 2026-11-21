@@ -150,6 +150,9 @@ pub struct PostgresConnection(
 
 struct LifecycleBudget {
     started_at: tokio::time::Instant,
+    connection_wait_ns: u64,
+    lock_wait_ns: std::sync::atomic::AtomicU64,
+    scheduler_lock_wait_ns: std::sync::atomic::AtomicU64,
     deadline: std::sync::OnceLock<tokio::time::Instant>,
     started: tokio::sync::Notify,
     /// Profile lifecycle gates already held by this transaction (see
@@ -163,6 +166,9 @@ impl Default for LifecycleBudget {
     fn default() -> Self {
         Self {
             started_at: tokio::time::Instant::now(),
+            connection_wait_ns: 0,
+            lock_wait_ns: std::sync::atomic::AtomicU64::new(0),
+            scheduler_lock_wait_ns: std::sync::atomic::AtomicU64::new(0),
             deadline: std::sync::OnceLock::new(),
             started: tokio::sync::Notify::new(),
             profile_gates: std::sync::Mutex::new(std::collections::BTreeSet::new()),
@@ -183,7 +189,35 @@ impl LifecycleBudget {
         }
     }
 }
+/// Acquisition latency, not the duration for which the transaction holds its locks.
+pub(crate) struct RelayLockTimer {
+    started: std::time::Instant,
+    budget: std::sync::Arc<LifecycleBudget>,
+}
+impl Drop for RelayLockTimer {
+    fn drop(&mut self) {
+        self.budget.lock_wait_ns.fetch_add(
+            self.started.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
 impl PostgresConnection {
+    pub(crate) fn relay_lock_timer(&self) -> RelayLockTimer {
+        RelayLockTimer {
+            started: std::time::Instant::now(),
+            budget: self.2.clone(),
+        }
+    }
+    pub(crate) fn record_scheduler_lock_wait(&self, started: std::time::Instant) {
+        let elapsed = started.elapsed().as_nanos() as u64;
+        self.2
+            .lock_wait_ns
+            .fetch_add(elapsed, std::sync::atomic::Ordering::Relaxed);
+        self.2
+            .scheduler_lock_wait_ns
+            .fetch_add(elapsed, std::sync::atomic::Ordering::Relaxed);
+    }
     /// Recorded only after PostgreSQL granted the transaction-scoped Account gate.
     pub(crate) fn note_account_gate(&self, id: i64) {
         self.2.account_gates.lock().unwrap().insert(id);
@@ -240,9 +274,16 @@ impl PostgresConnection {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
     pub(crate) fn lifecycle_budget(&self) -> error_stack::Result<(), KernelError> {
+        self.bounded_transaction()
+    }
+    /// Claim uses the same wall-clock budget without acquiring any lifecycle gates.
+    pub(crate) fn claim_budget(&self) -> error_stack::Result<(), KernelError> {
+        self.bounded_transaction()
+    }
+    fn bounded_transaction(&self) -> error_stack::Result<(), KernelError> {
         if !self.is_transaction() {
             return Err(Report::new(KernelError::Internal)
-                .attach_printable("lifecycle gate requires a transaction"));
+                .attach_printable("bounded operation requires a transaction"));
         }
         self.2.deadline.get_or_init(|| {
             let deadline = self.2.started_at + std::time::Duration::from_secs(5);
@@ -286,7 +327,21 @@ impl PostgresConnection {
     }
 }
 
-impl Connection for PostgresConnection {}
+impl Connection for PostgresConnection {
+    fn timings(&self) -> kernel::interfaces::database::ConnectionTimings {
+        kernel::interfaces::database::ConnectionTimings {
+            connection_wait_ns: self.2.connection_wait_ns,
+            lock_wait_ns: self
+                .2
+                .lock_wait_ns
+                .load(std::sync::atomic::Ordering::Relaxed),
+            scheduler_lock_wait_ns: self
+                .2
+                .scheduler_lock_wait_ns
+                .load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
 
 impl Deref for PostgresConnection {
     type Target = PgConnection;
@@ -402,7 +457,7 @@ async fn commit_with_budget(
             .await
             .map_err(|_| {
                 Report::new(KernelError::Internal)
-                    .attach_printable("lifecycle commit exceeded 5s; do not send on unknown commit")
+                    .attach_printable("bounded commit exceeded 5s; do not send on unknown commit")
             })?
             .convert_error()
     } else {
@@ -456,8 +511,14 @@ impl TransactionManager for PostgresDatabase {
         T: Send + 'a,
     {
         Box::pin(async move {
-            let transaction = self.pool.begin().await.convert_error()?;
-            let budget = std::sync::Arc::new(LifecycleBudget::default());
+            let waiting = std::time::Instant::now();
+            let connection = self.pool.acquire().await.convert_error()?;
+            let connection_wait_ns = waiting.elapsed().as_nanos() as u64;
+            let budget = std::sync::Arc::new(LifecycleBudget {
+                connection_wait_ns,
+                ..LifecycleBudget::default()
+            });
+            let transaction = Transaction::begin(connection).await.convert_error()?;
             let mut conn = PostgresConnection(
                 PostgresConnectionInner::Transaction(transaction),
                 self.pool.clone(),
@@ -465,7 +526,7 @@ impl TransactionManager for PostgresDatabase {
             );
             let result = tokio::select! {
                 result = operation(&mut conn) => result,
-                () = budget.expired() => Err(Report::new(KernelError::Internal).attach_printable("lifecycle transaction exceeded 5s")),
+                () = budget.expired() => Err(Report::new(KernelError::Internal).attach_printable("bounded transaction exceeded 5s")),
             };
             match result {
                 Ok(result) => match conn.0 {

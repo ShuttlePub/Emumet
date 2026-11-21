@@ -54,11 +54,13 @@ async fn batch(
     }
     let start = Instant::now();
     let mut done = 0;
+    let mut queue_samples = Vec::with_capacity(n);
     while done < n {
         let leases = worker.claim(parallel as u16).await.unwrap();
         assert!(!leases.is_empty());
         let mut tasks = tokio::task::JoinSet::new();
         for lease in leases {
+            queue_samples.push(lease.queue_wait_ns);
             let w = worker.clone();
             tasks.spawn(async move { w.deliver(lease).await });
         }
@@ -67,7 +69,13 @@ async fn batch(
             done += 1;
         }
     }
-    start.elapsed()
+    let elapsed = start.elapsed();
+    if prefix == "speed" {
+        queue_samples.sort_unstable();
+        assert_eq!(queue_samples.len(), n);
+        eprintln!("S1_QUEUE bytes={bytes} parallel={parallel} n={n} min_ms={:.3} p50_ms={:.3} p95_ms={:.3} max_ms={:.3}", queue_samples[0] as f64/1e6, queue_samples[n/2] as f64/1e6, queue_samples[(n*95/100).min(n-1)] as f64/1e6, queue_samples[n-1] as f64/1e6);
+    }
+    elapsed
 }
 fn rss() -> u64 {
     std::fs::read_to_string("/proc/self/status")

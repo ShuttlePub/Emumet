@@ -75,6 +75,9 @@ pub struct RelayLease {
     pub profile_id: ProfileId,
     pub token: i64,
     pub lease_until: OffsetDateTime,
+    /// Ready queue latency (due_at -> claim DB time), individually sampled, including preload.
+    /// Intentional retry/backoff before due_at is excluded. No per-success DB row is retained.
+    pub queue_wait_ns: u64,
 }
 /// Lock-free preparation snapshot. NOT permission: release its DB connection before keys, DNS
 /// and signing; authorize_send must recheck after preparation. Never log envelope bytes.

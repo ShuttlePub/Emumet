@@ -1,7 +1,10 @@
 //! Short committed DB phases, immutable bytes, one conservative monotonic deadline.
 use crate::instance_identity::UnlockInstanceSigningKeyUseCase;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use kernel::interfaces::database::{DependOnTransactionManager, TransactionManager};
+use kernel::interfaces::database::{
+    Connection, DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager,
+    TransactionManager,
+};
 use kernel::interfaces::post_relay::*;
 use kernel::KernelError;
 use sha2::{Digest, Sha256};
@@ -14,6 +17,12 @@ pub struct RelayMetrics {
     db_phase_ns: AtomicU64,
     db_slot_wait_ns: AtomicU64,
     db_calls: AtomicU64,
+    connection_wait_ns: AtomicU64,
+    lock_wait_ns: AtomicU64,
+    scheduler_lock_wait_ns: AtomicU64,
+    queued_jobs: AtomicU64,
+    queue_wait_ns: AtomicU64,
+    queue_wait_max_ns: AtomicU64,
     sign_ns: AtomicU64,
     http_ns: AtomicU64,
     authorized_to_http_ns: AtomicU64,
@@ -25,6 +34,12 @@ pub struct RelayMetricsSnapshot {
     pub db_phase_ns: u64,
     pub db_slot_wait_ns: u64,
     pub db_calls: u64,
+    pub connection_wait_ns: u64,
+    pub lock_wait_ns: u64,
+    pub scheduler_lock_wait_ns: u64,
+    pub queued_jobs: u64,
+    pub queue_wait_ns: u64,
+    pub queue_wait_max_ns: u64,
     pub sign_ns: u64,
     pub http_ns: u64,
     pub authorized_to_http_ns: u64,
@@ -37,6 +52,12 @@ impl RelayMetrics {
             db_phase_ns: self.db_phase_ns.load(Ordering::Relaxed),
             db_slot_wait_ns: self.db_slot_wait_ns.load(Ordering::Relaxed),
             db_calls: self.db_calls.load(Ordering::Relaxed),
+            connection_wait_ns: self.connection_wait_ns.load(Ordering::Relaxed),
+            lock_wait_ns: self.lock_wait_ns.load(Ordering::Relaxed),
+            scheduler_lock_wait_ns: self.scheduler_lock_wait_ns.load(Ordering::Relaxed),
+            queued_jobs: self.queued_jobs.load(Ordering::Relaxed),
+            queue_wait_ns: self.queue_wait_ns.load(Ordering::Relaxed),
+            queue_wait_max_ns: self.queue_wait_max_ns.load(Ordering::Relaxed),
             sign_ns: self.sign_ns.load(Ordering::Relaxed),
             http_ns: self.http_ns.load(Ordering::Relaxed),
             authorized_to_http_ns: self.authorized_to_http_ns.load(Ordering::Relaxed),
@@ -45,6 +66,8 @@ impl RelayMetrics {
         }
     }
 }
+type DbConnection<D> =
+    <<D as DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection;
 struct DbPhase<'a> {
     _permit: SemaphorePermit<'a>,
     started: Instant,
@@ -82,7 +105,7 @@ pub struct RelayDelivery<D> {
     pause: Option<Arc<DeliveryPause>>,
     deps: Arc<D>,
     db_slots: Semaphore,
-    pub metrics: RelayMetrics,
+    pub metrics: Arc<RelayMetrics>,
 }
 impl<D> RelayDelivery<D>
 where
@@ -96,7 +119,7 @@ where
         Self {
             deps,
             db_slots: Semaphore::new(4),
-            metrics: RelayMetrics::default(),
+            metrics: Arc::new(RelayMetrics::default()),
             #[cfg(any(test, feature = "test-mode"))]
             pause: None,
         }
@@ -113,6 +136,43 @@ where
             metrics: &self.metrics,
         }
     }
+    fn transaction<'a, F, T>(
+        &'a self,
+        operation: F,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = error_stack::Result<T, KernelError>> + Send + 'a>,
+    >
+    where
+        F: for<'c> FnOnce(
+                &'c mut DbConnection<D>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = error_stack::Result<T, KernelError>>
+                        + Send
+                        + 'c,
+                >,
+            > + Send
+            + 'static,
+        T: Send + 'static,
+    {
+        let metrics = self.metrics.clone();
+        self.deps.transaction_manager().transaction(move |c| {
+            Box::pin(async move {
+                let result = operation(c).await;
+                let timings = c.timings();
+                metrics
+                    .connection_wait_ns
+                    .fetch_add(timings.connection_wait_ns, Ordering::Relaxed);
+                metrics
+                    .lock_wait_ns
+                    .fetch_add(timings.lock_wait_ns, Ordering::Relaxed);
+                metrics
+                    .scheduler_lock_wait_ns
+                    .fetch_add(timings.scheduler_lock_wait_ns, Ordering::Relaxed);
+                result
+            })
+        })
+    }
     #[cfg(any(test, feature = "test-mode"))]
     pub fn with_pause(mut self, pause: Arc<DeliveryPause>) -> Self {
         self.pause = Some(pause);
@@ -128,8 +188,7 @@ where
     ) -> error_stack::Result<Vec<RelayLease>, KernelError> {
         let _slot = self.db_slot().await;
         let d = self.deps.clone();
-        self.deps
-            .transaction_manager()
+        let leases = self
             .transaction(move |c| {
                 Box::pin(async move {
                     d.post_relay_store()
@@ -137,14 +196,22 @@ where
                         .await
                 })
             })
-            .await
+            .await?;
+        for lease in &leases {
+            self.metrics.queued_jobs.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .queue_wait_ns
+                .fetch_add(lease.queue_wait_ns, Ordering::Relaxed);
+            self.metrics
+                .queue_wait_max_ns
+                .fetch_max(lease.queue_wait_ns, Ordering::Relaxed);
+        }
+        Ok(leases)
     }
     pub async fn maintain(&self) -> error_stack::Result<(), KernelError> {
         let _slot = self.db_slot().await;
         let d = self.deps.clone();
         let profiles = self
-            .deps
-            .transaction_manager()
             .transaction(move |c| {
                 Box::pin(async move { d.post_relay_store().maintenance_due(c, 16).await })
             })
@@ -152,16 +219,14 @@ where
         // Bounded one Profile per transaction. Called even when the sending pool is full.
         for p in profiles {
             let d = self.deps.clone();
-            self.deps
-                .transaction_manager()
-                .transaction(move |c| {
-                    Box::pin(async move {
-                        d.post_relay_store().expire_due(c, &p, 128).await?;
-                        d.post_relay_store().purge_expired(c, &p, 128).await?;
-                        Ok(())
-                    })
+            self.transaction(move |c| {
+                Box::pin(async move {
+                    d.post_relay_store().expire_due(c, &p, 128).await?;
+                    d.post_relay_store().purge_expired(c, &p, 128).await?;
+                    Ok(())
                 })
-                .await?;
+            })
+            .await?;
         }
         Ok(())
     }
@@ -175,16 +240,14 @@ where
         let d = self.deps.clone();
         let l = l.clone();
         let random = rand::random();
-        self.deps
-            .transaction_manager()
-            .transaction(move |c| {
-                Box::pin(async move {
-                    d.post_relay_store()
-                        .record_attempt(c, &l, r, o.as_ref(), random)
-                        .await
-                })
+        self.transaction(move |c| {
+            Box::pin(async move {
+                d.post_relay_store()
+                    .record_attempt(c, &l, r, o.as_ref(), random)
+                    .await
             })
-            .await
+        })
+        .await
     }
     pub async fn deliver(&self, lease: RelayLease) -> error_stack::Result<Recorded, KernelError> {
         #[cfg(any(test, feature = "test-mode"))]
@@ -196,12 +259,10 @@ where
             let _slot = self.db_slot().await;
             let d = self.deps.clone();
             let l = lease.clone();
-            self.deps
-                .transaction_manager()
-                .transaction(move |c| {
-                    Box::pin(async move { d.post_relay_store().prepare_send(c, &l).await })
-                })
-                .await?
+            self.transaction(move |c| {
+                Box::pin(async move { d.post_relay_store().prepare_send(c, &l).await })
+            })
+            .await?
         };
         let Some(snapshot) = snapshot else {
             return Ok(Recorded::Stale);
@@ -229,8 +290,6 @@ where
             let _slot = self.db_slot().await;
             let d = self.deps.clone();
             return self
-                .deps
-                .transaction_manager()
                 .transaction(move |c| {
                     Box::pin(async move { d.post_relay_store().hold(c, &lease).await })
                 })
@@ -292,20 +351,18 @@ where
         let authorization = {
             let _slot = self.db_slot().await;
             let d = self.deps.clone();
-            self.deps
-                .transaction_manager()
-                .transaction(move |c| {
-                    Box::pin(async move {
-                        let authorization =
-                            d.post_relay_store().authorize_send(c, &lease, true).await?;
-                        #[cfg(any(test, feature = "test-mode"))]
-                        if let Some(pause) = pause {
-                            pause.at(1).await;
-                        }
-                        Ok(authorization)
-                    })
+            self.transaction(move |c| {
+                Box::pin(async move {
+                    let authorization =
+                        d.post_relay_store().authorize_send(c, &lease, true).await?;
+                    #[cfg(any(test, feature = "test-mode"))]
+                    if let Some(pause) = pause {
+                        pause.at(1).await;
+                    }
+                    Ok(authorization)
                 })
-                .await?
+            })
+            .await?
         }; // successful return means COMMIT acknowledged; uncertain commit returns Err and NO send.
         let permit = match authorization {
             Authorization::Permitted(p) => p,

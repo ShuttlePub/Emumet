@@ -86,6 +86,7 @@ pub(crate) fn spawn(
     let worker = Arc::new(RelayDelivery::new(Arc::new(module)));
     let handle = tokio::spawn(async move {
         let mut tasks = tokio::task::JoinSet::new();
+        let mut claims = tokio::task::JoinSet::new();
         let mut poll = tokio::time::interval(Duration::from_millis(20));
         let mut maintenance = tokio::time::interval(Duration::from_secs(1));
         let mut telemetry = tokio::time::interval(Duration::from_secs(60));
@@ -95,15 +96,23 @@ pub(crate) fn spawn(
                 _=stopped.changed()=>break,
                 _=maintenance.tick()=>{if worker.maintain().await.is_err(){tracing::warn!("post relay maintenance failed");}},
                 Some(result)=tasks.join_next(),if !tasks.is_empty()=>{if !matches!(result,Ok(Ok(_))) {tracing::warn!("post relay attempt failed; fenced lease recovery pending");}},
-                _=telemetry.tick()=>tracing::info!(timings=?worker.metrics.snapshot(),"post relay cumulative timings"),
-                _=poll.tick(),if sender_enabled && tasks.len()<16=>{
-                    match worker.claim((16-tasks.len()) as u16).await {
-                        Ok(leases)=>for lease in leases {let worker=worker.clone(); tasks.spawn(async move {worker.deliver(lease).await});},
-                        Err(_)=>tracing::warn!("post relay claim failed"),
+                Some(result)=claims.join_next(),if !claims.is_empty()=>{
+                    match result {
+                        Ok(Ok(leases))=>for lease in leases {let worker=worker.clone(); tasks.spawn(async move {worker.deliver(lease).await});},
+                        _=>tracing::warn!("post relay claim failed"),
                     }
+                },
+                _=telemetry.tick()=>tracing::info!(timings=?worker.metrics.snapshot(),"post relay cumulative timings"),
+                _=poll.tick(),if sender_enabled && tasks.len()<16 && claims.is_empty()=>{
+                    let worker=worker.clone();
+                    let limit=(16-tasks.len()) as u16;
+                    claims.spawn(async move {worker.claim(limit).await});
                 }
             }
         }
+        // Dropping the transaction on cancellation queues rollback; do not await its lock.
+        claims.abort_all();
+        while claims.join_next().await.is_some() {}
         // Stop claiming then bounded drain. Never reuses a permit on restart.
         let drain = async { while tasks.join_next().await.is_some() {} };
         if tokio::time::timeout(Duration::from_secs(12), drain)
@@ -119,14 +128,8 @@ pub(crate) fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
-    #[test_with::env(DATABASE_URL)]
-    async fn disabled_sender_still_collects_expired_empty_quota() {
-        let d = driver::database::isolated_db::IsolatedDatabase::create().await;
-        // Retained quota outlives deleted Accounts/Profiles; use a historical empty owner slot.
-        sqlx::query("INSERT INTO post_relay_profile_quota(profile_id,owner_account_id,delivery_state,delivery_rows,delivery_bytes,touched_at) VALUES(456,123,true,1,512,clock_timestamp()-interval '31 days')").execute(&d.pool).await.unwrap();
-        sqlx::query("UPDATE post_relay_quota SET delivery_rows=delivery_rows+1,delivery_bytes=delivery_bytes+512 WHERE singleton").execute(&d.pool).await.unwrap();
-        let module = PostRelayModule {
+    fn module(d: &driver::database::isolated_db::IsolatedDatabase) -> PostRelayModule {
+        PostRelayModule {
             db: PostgresDatabase::from_pool(d.pool.clone()),
             encryptor: Argon2Encryptor::default(),
             cache: Arc::new(InstanceKeyCache::default()),
@@ -135,8 +138,72 @@ mod tests {
             transport: HttpPostRelayTransport::new(
                 driver::home_origin::HomeOriginAllowlist::from_json("[]").unwrap(),
             ),
-        };
-        let (stop, handle) = spawn(module, false);
+        }
+    }
+
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn stalled_claim_does_not_block_maintenance_or_shutdown() {
+        let d = driver::database::isolated_db::IsolatedDatabase::create().await;
+        let mut holder = d.pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE post_relay_schedule IN SHARE ROW EXCLUSIVE MODE")
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let (stop, handle) = spawn(module(&d), true);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'LOCK TABLE post_relay_schedule%')")
+                    .fetch_one(&d.pool).await.unwrap();
+                if waiting { break; }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        sqlx::query("INSERT INTO post_relay_profile_quota(profile_id,owner_account_id,delivery_state,delivery_rows,delivery_bytes,touched_at) VALUES(456,123,true,1,512,clock_timestamp()-interval '31 days')").execute(&d.pool).await.unwrap();
+        sqlx::query("UPDATE post_relay_quota SET delivery_rows=delivery_rows+1,delivery_bytes=delivery_bytes+512 WHERE singleton").execute(&d.pool).await.unwrap();
+        let maintained = tokio::time::timeout(Duration::from_millis(1500), async {
+            loop {
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM post_relay_profile_quota WHERE profile_id=456)",
+                )
+                .fetch_one(&d.pool)
+                .await
+                .unwrap();
+                if !exists {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        let _ = stop.send(true);
+        let stopped = tokio::time::timeout(Duration::from_millis(500), handle).await;
+        holder.rollback().await.unwrap();
+        assert!(
+            maintained.is_ok(),
+            "maintenance must run during the 2s scheduler lock wait"
+        );
+        assert!(
+            stopped.is_ok(),
+            "shutdown must not await claim's lock timeout"
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND state='idle in transaction')")
+                    .fetch_one(&d.pool).await.unwrap();
+                if !waiting { break; }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+    }
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn disabled_sender_still_collects_expired_empty_quota() {
+        let d = driver::database::isolated_db::IsolatedDatabase::create().await;
+        // Retained quota outlives deleted Accounts/Profiles; use a historical empty owner slot.
+        sqlx::query("INSERT INTO post_relay_profile_quota(profile_id,owner_account_id,delivery_state,delivery_rows,delivery_bytes,touched_at) VALUES(456,123,true,1,512,clock_timestamp()-interval '31 days')").execute(&d.pool).await.unwrap();
+        sqlx::query("UPDATE post_relay_quota SET delivery_rows=delivery_rows+1,delivery_bytes=delivery_bytes+512 WHERE singleton").execute(&d.pool).await.unwrap();
+        let (stop, handle) = spawn(module(&d), false);
         let collected = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let exists: bool = sqlx::query_scalar(
