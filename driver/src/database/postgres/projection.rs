@@ -10,7 +10,7 @@ use kernel::interfaces::projection::{
 use kernel::prelude::entity::{
     Account, AccountEvent, AccountId, AccountKind, AccountStatus, EventEnvelope, EventId,
     EventVersion, ImageId, Metadata, MetadataEvent, MetadataId, Profile, ProfileDisplayName,
-    ProfileEvent, ProfileId, ProfileSummary, ProfileUsername,
+    ProfileEvent, ProfileSummary, ProfileUsername,
 };
 use kernel::KernelError;
 use serde_json;
@@ -314,8 +314,20 @@ impl ProfileProjectionWriter for PostgresProfileProjectionWriter {
         executor: &mut Self::Connection,
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
+        executor.require_account_gate(*profile.account_id().as_ref())?;
+        let old_owner: Option<i64> =
+            sqlx::query_scalar("SELECT account_id FROM profiles WHERE id=$1")
+                .bind(profile.id().as_ref())
+                .fetch_optional(&mut **executor)
+                .await
+                .convert_error()?;
+        if let Some(id) = old_owner {
+            executor
+                .require_account_gate(id)
+                .map_err(|e| e.change_context(KernelError::Concurrency))?;
+        }
         let con: &mut PgConnection = executor;
-        sqlx::query(
+        let result = sqlx::query(
             //language=postgresql
             r#"
             INSERT INTO profiles (id, account_id, owner_kind, display, summary, icon_id, banner_id, version, nanoid, username)
@@ -331,7 +343,7 @@ impl ProfileProjectionWriter for PostgresProfileProjectionWriter {
                 nanoid = EXCLUDED.nanoid,
                 -- NULL -> value only; a stale fold must not erase a stored one-time username.
                 username = COALESCE(profiles.username, EXCLUDED.username)
-            WHERE profiles.version < EXCLUDED.version
+            WHERE profiles.version < EXCLUDED.version AND profiles.account_id=$10
             "#,
         )
         .bind(profile.id().as_ref())
@@ -343,26 +355,22 @@ impl ProfileProjectionWriter for PostgresProfileProjectionWriter {
         .bind(profile.version().as_ref())
         .bind(profile.nanoid().as_ref())
         .bind(profile.username().as_ref().map(ProfileUsername::as_ref))
+        .bind(old_owner.unwrap_or(*profile.account_id().as_ref()))
         .execute(con)
         .await
         .convert_error()?;
-        Ok(())
-    }
-
-    async fn delete(
-        &self,
-        executor: &mut Self::Connection,
-        profile_id: &ProfileId,
-    ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = executor;
-        sqlx::query(
-            //language=postgresql
-            r#"DELETE FROM profiles WHERE id = $1"#,
-        )
-        .bind(profile_id.as_ref())
-        .execute(con)
-        .await
-        .convert_error()?;
+        if result.rows_affected() == 0 {
+            let actual: Option<i64> =
+                sqlx::query_scalar("SELECT account_id FROM profiles WHERE id=$1")
+                    .bind(profile.id().as_ref())
+                    .fetch_optional(&mut **executor)
+                    .await
+                    .convert_error()?;
+            if actual != Some(old_owner.unwrap_or(*profile.account_id().as_ref())) {
+                return Err(Report::new(KernelError::Concurrency)
+                    .attach_printable("Profile owner changed during projection write; re-plan"));
+            }
+        }
         Ok(())
     }
 }

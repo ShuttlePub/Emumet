@@ -142,11 +142,22 @@ async fn seed_described_local_profile(
         builder = builder.username(username);
     }
     let profile = builder.build();
-    env.module
-        .profile_read_model()
-        .create(&mut executor, &profile)
-        .await
-        .unwrap();
+    {
+        use kernel::interfaces::database::{Transaction, TransactionalDatabaseConnection};
+        use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
+        let mut tx = env.iso.database.get_transaction().await.unwrap();
+        env.module
+            .home_link_store()
+            .lock_accounts(tx.connection(), std::slice::from_ref(profile.account_id()))
+            .await
+            .unwrap();
+        env.module
+            .profile_read_model()
+            .create(tx.connection(), &profile)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
     (profile.id().clone(), profile.nanoid().as_ref().to_string())
 }
 

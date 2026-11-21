@@ -6,7 +6,7 @@
 
 mod resolver;
 mod sender;
-mod target;
+pub(crate) mod target;
 
 #[cfg(any(test, feature = "test-mode"))]
 pub use resolver::inject_test_resolved_actor;

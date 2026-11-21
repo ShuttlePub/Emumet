@@ -229,7 +229,7 @@ mod test {
         let to = create_account(&db, AccountKind::Organization).await;
         let owner_profile = ProfileBuilder::new().account_id(from.id().clone()).build();
         db.profile_read_model()
-            .create(&mut conn, &owner_profile)
+            .create_initial_personal_account_profile(&mut conn, &owner_profile)
             .await
             .unwrap();
         let request_id = ProfileTransferRequestId::new(kernel::generate_id());
@@ -338,7 +338,7 @@ mod test {
             .account_id(personal.id().clone())
             .build();
         db.profile_read_model()
-            .create(&mut conn, &first)
+            .create_initial_personal_account_profile(&mut conn, &first)
             .await
             .unwrap();
 
@@ -346,7 +346,10 @@ mod test {
             .id(ProfileId::new(kernel::generate_id()))
             .account_id(personal.id().clone())
             .build();
-        let result = db.profile_read_model().create(&mut conn, &second).await;
+        let result = db
+            .profile_read_model()
+            .create_initial_personal_account_profile(&mut conn, &second)
+            .await;
         assert!(result.is_err());
         let error_string = format!("{result:?}");
         assert!(
@@ -375,14 +378,22 @@ mod test {
             .id(ProfileId::new(kernel::generate_id()))
             .account_id(org.id().clone())
             .build();
-        db.profile_read_model()
-            .create(&mut conn, &first)
+        use kernel::interfaces::database::{Transaction, TransactionalDatabaseConnection};
+        use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
+        let mut tx = db.get_transaction().await.unwrap();
+        db.home_link_store()
+            .lock_accounts(tx.connection(), std::slice::from_ref(org.id()))
             .await
             .unwrap();
         db.profile_read_model()
-            .create(&mut conn, &second)
+            .create(tx.connection(), &first)
             .await
             .unwrap();
+        db.profile_read_model()
+            .create(tx.connection(), &second)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
 
         let profiles = db
             .profile_read_model()

@@ -175,23 +175,36 @@ pub trait ProfileReadModel: Sync + Send + 'static {
         version: &EventVersion<Profile>,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
+    /// Exemption exclusively for the first Profile of a newly created personal Account.
+    fn create_initial_personal_account_profile(
+        &self,
+        executor: &mut Self::Connection,
+        profile: &Profile,
+    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+
+    /// Requires this transaction to hold the target Account gate.
     fn create(
         &self,
         executor: &mut Self::Connection,
         profile: &Profile,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
+    /// Ownership-changing snapshot write. Requires the stored source and target Account gates.
+    /// Content-only callers must use update_content instead.
     fn update(
         &self,
         executor: &mut Self::Connection,
         profile: &Profile,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 
-    fn delete(
+    /// Cannot add a row or change its owner. False means the caller must re-read: a missing
+    /// row / changed owner needs a fresh gated plan; an equal/newer version can be skipped.
+    fn update_content(
         &self,
         executor: &mut Self::Connection,
-        profile_id: &ProfileId,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
+        profile: &Profile,
+        expected_owner: &AccountId,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
 }
 
 pub trait DependOnProfileReadModel: Sync + Send + DependOnDatabaseConnection {

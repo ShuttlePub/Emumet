@@ -1,8 +1,9 @@
 //! Profile-owned actor signing keys (P1, ADR profile-actor-identity).
 //!
-//! Keys are generated in exactly two places since the P4 cutover: the creation transaction of a
-//! Profile (via [`CreateProfileSigningKeyUseCase`]) and the idempotent start-up provisioning of
-//! Profiles that have none ([`EnsureProfileSigningKeysUseCase`]). They are intentionally not
+//! Keys are generated at Profile creation and during idempotent start-up provisioning of
+//! Profiles that have none ([`EnsureProfileSigningKeysUseCase`]). Organisation creation generates
+//! key material before taking lifecycle gates; its key is persisted atomically with the Profile.
+//! Personal creation uses [`CreateProfileSigningKeyUseCase`] within its transaction. Keys are not
 //! exposed through any HTTP route and no generic "sign anything" API is built on top of them:
 //! signing happens only inside the delivery worker ([`SignProfileRequestUseCase`]).
 
@@ -54,8 +55,38 @@ pub trait CreateProfileSigningKeyUseCase:
         algorithm: SigningAlgorithm,
     ) -> impl Future<Output = error_stack::Result<ProfileSigningKey, KernelError>> + Send {
         async move {
-            let password = self.password_provider().get_password()?;
-            let key_pair = self.signing_key_generator().generate(&password)?;
+            let key_pair = self.generate_profile_key_pair()?;
+            self.store_profile_signing_key(
+                executor,
+                profile_id,
+                profile_nanoid,
+                algorithm,
+                key_pair,
+            )
+            .await
+        }
+    }
+
+    /// CPU-heavy key generation, separated from storing so a caller can run it **before** it opens
+    /// a bounded, gate-holding transaction (RSA generation must not eat the gate's time budget).
+    fn generate_profile_key_pair(
+        &self,
+    ) -> error_stack::Result<kernel::interfaces::crypto::GeneratedKeyPair, KernelError> {
+        let password = self.password_provider().get_password()?;
+        self.signing_key_generator().generate(&password)
+    }
+
+    /// Stores a key pair produced by [`Self::generate_profile_key_pair`] (same uniqueness
+    /// behaviour as [`Self::create_profile_signing_key`]).
+    fn store_profile_signing_key(
+        &self,
+        executor: &mut <<Self as kernel::interfaces::database::DependOnDatabaseConnection>::DatabaseConnection as DatabaseConnection>::Connection,
+        profile_id: ProfileId,
+        profile_nanoid: &Nanoid<Profile>,
+        algorithm: SigningAlgorithm,
+        key_pair: kernel::interfaces::crypto::GeneratedKeyPair,
+    ) -> impl Future<Output = error_stack::Result<ProfileSigningKey, KernelError>> + Send {
+        async move {
             let key_id_uri = ActorUrlBuilder::for_profile(
                 self.public_base_url().as_str(),
                 profile_nanoid.as_ref(),

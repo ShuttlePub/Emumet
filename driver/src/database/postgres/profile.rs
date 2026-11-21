@@ -44,6 +44,41 @@ impl From<ProfileRow> for ProfileProjection {
 
 pub struct PostgresProfileReadModel;
 
+impl PostgresProfileReadModel {
+    async fn insert_profile(
+        &self,
+        executor: &mut PostgresConnection,
+        profile: &Profile,
+    ) -> error_stack::Result<(), KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query(
+            //language=postgresql
+            r#"
+            INSERT INTO profiles (id, account_id, owner_kind, display, summary, icon_id, banner_id, version, nanoid, username)
+            VALUES ($1, $2, (SELECT kind FROM accounts WHERE id = $2), $3, $4, $5, $6, $7, $8, $9)
+            "#,
+        )
+        .bind(profile.id().as_ref())
+        .bind(profile.account_id().as_ref())
+        .bind(
+            profile
+                .display_name()
+                .as_ref()
+                .map(ProfileDisplayName::as_ref),
+        )
+        .bind(profile.summary().as_ref().map(ProfileSummary::as_ref))
+        .bind(profile.icon().as_ref().map(ImageId::as_ref))
+        .bind(profile.banner().as_ref().map(ImageId::as_ref))
+        .bind(profile.version().as_ref())
+        .bind(profile.nanoid().as_ref())
+        .bind(profile.username().as_ref().map(ProfileUsername::as_ref))
+        .execute(con)
+        .await
+        .convert_error()?;
+        Ok(())
+    }
+}
+
 impl ProfileReadModel for PostgresProfileReadModel {
     type Connection = PostgresConnection;
 
@@ -207,37 +242,30 @@ impl ProfileReadModel for PostgresProfileReadModel {
         Ok(())
     }
 
+    async fn create_initial_personal_account_profile(
+        &self,
+        executor: &mut Self::Connection,
+        profile: &Profile,
+    ) -> error_stack::Result<(), KernelError> {
+        let personal: bool = sqlx::query_scalar("SELECT kind='personal' FROM accounts WHERE id=$1")
+            .bind(profile.account_id().as_ref())
+            .fetch_one(&mut **executor)
+            .await
+            .convert_error()?;
+        if !personal {
+            return Err(Report::new(KernelError::Internal).attach_printable(
+                "initial personal Profile exemption cannot create an organisation Profile",
+            ));
+        }
+        self.insert_profile(executor, profile).await
+    }
     async fn create(
         &self,
         executor: &mut Self::Connection,
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = executor;
-        sqlx::query(
-            //language=postgresql
-            r#"
-            INSERT INTO profiles (id, account_id, owner_kind, display, summary, icon_id, banner_id, version, nanoid, username)
-            VALUES ($1, $2, (SELECT kind FROM accounts WHERE id = $2), $3, $4, $5, $6, $7, $8, $9)
-            "#,
-        )
-        .bind(profile.id().as_ref())
-        .bind(profile.account_id().as_ref())
-        .bind(
-            profile
-                .display_name()
-                .as_ref()
-                .map(ProfileDisplayName::as_ref),
-        )
-        .bind(profile.summary().as_ref().map(ProfileSummary::as_ref))
-        .bind(profile.icon().as_ref().map(ImageId::as_ref))
-        .bind(profile.banner().as_ref().map(ImageId::as_ref))
-        .bind(profile.version().as_ref())
-        .bind(profile.nanoid().as_ref())
-        .bind(profile.username().as_ref().map(ProfileUsername::as_ref))
-        .execute(con)
-        .await
-        .convert_error()?;
-        Ok(())
+        executor.require_account_gate(*profile.account_id().as_ref())?;
+        self.insert_profile(executor, profile).await
     }
 
     async fn update(
@@ -245,6 +273,18 @@ impl ProfileReadModel for PostgresProfileReadModel {
         executor: &mut Self::Connection,
         profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
+        executor.require_account_gate(*profile.account_id().as_ref())?;
+        let old_owner: Option<i64> =
+            sqlx::query_scalar("SELECT account_id FROM profiles WHERE id=$1")
+                .bind(profile.id().as_ref())
+                .fetch_optional(&mut **executor)
+                .await
+                .convert_error()?;
+        if let Some(id) = old_owner {
+            executor
+                .require_account_gate(id)
+                .map_err(|e| e.change_context(KernelError::Concurrency))?;
+        }
         let con: &mut PgConnection = executor;
         let result = sqlx::query(
             //language=postgresql
@@ -263,7 +303,7 @@ impl ProfileReadModel for PostgresProfileReadModel {
             -- The whole row is replaced by one snapshot, so a snapshot older than the stored one must
             -- never be written: it would bring back an old owner / display content under a newer
             -- version, and the projector (which only applies newer events) could not repair it.
-            WHERE id = $1 AND version <= $7
+            WHERE id = $1 AND version <= $7 AND account_id = $9
             "#,
         )
         .bind(profile.id().as_ref())
@@ -279,6 +319,7 @@ impl ProfileReadModel for PostgresProfileReadModel {
         .bind(profile.banner().as_ref().map(ImageId::as_ref))
         .bind(profile.version().as_ref())
         .bind(profile.username().as_ref().map(ProfileUsername::as_ref))
+        .bind(old_owner)
         .execute(con)
         .await
         .convert_error()?;
@@ -302,27 +343,34 @@ impl ProfileReadModel for PostgresProfileReadModel {
         Ok(())
     }
 
-    async fn delete(
+    async fn update_content(
         &self,
         executor: &mut Self::Connection,
-        profile_id: &ProfileId,
-    ) -> error_stack::Result<(), KernelError> {
-        let con: &mut PgConnection = executor;
+        profile: &Profile,
+        expected_owner: &AccountId,
+    ) -> error_stack::Result<bool, KernelError> {
         let result = sqlx::query(
-            //language=postgresql
-            r#"
-            DELETE FROM profiles WHERE id = $1
-            "#,
+            r#"UPDATE profiles SET display=$3, summary=$4, icon_id=$5, banner_id=$6,
+                version=$7, username=COALESCE(username,$8)
+               WHERE id=$1 AND account_id=$2 AND version <= $7"#,
         )
-        .bind(profile_id.as_ref())
-        .execute(con)
+        .bind(profile.id().as_ref())
+        .bind(expected_owner.as_ref())
+        .bind(
+            profile
+                .display_name()
+                .as_ref()
+                .map(ProfileDisplayName::as_ref),
+        )
+        .bind(profile.summary().as_ref().map(ProfileSummary::as_ref))
+        .bind(profile.icon().as_ref().map(ImageId::as_ref))
+        .bind(profile.banner().as_ref().map(ImageId::as_ref))
+        .bind(profile.version().as_ref())
+        .bind(profile.username().as_ref().map(ProfileUsername::as_ref))
+        .execute(&mut **executor)
         .await
         .convert_error()?;
-        if result.rows_affected() == 0 {
-            return Err(Report::new(KernelError::NotFound)
-                .attach_printable("Target profile not found for delete"));
-        }
-        Ok(())
+        Ok(result.rows_affected() != 0)
     }
 }
 
@@ -346,6 +394,30 @@ mod test {
         use kernel::KernelError;
 
         use crate::database::PostgresDatabase;
+        async fn gated_update(
+            db: &PostgresDatabase,
+            p: &kernel::prelude::entity::Profile,
+        ) -> error_stack::Result<(), KernelError> {
+            use kernel::interfaces::database::{Transaction, TransactionalDatabaseConnection};
+            use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
+            let mut tx = db.get_transaction().await?;
+            let mut owners = vec![p.account_id().clone()];
+            if let Some(old) = db
+                .profile_read_model()
+                .find_by_id_unfiltered(tx.connection(), p.id())
+                .await?
+            {
+                owners.push(old.account_id().clone());
+            }
+            db.home_link_store()
+                .lock_accounts(tx.connection(), &owners)
+                .await?;
+            db.home_link_store()
+                .lock_profiles(tx.connection(), std::slice::from_ref(p.id()))
+                .await?;
+            db.profile_read_model().update(tx.connection(), p).await?;
+            tx.commit().await
+        }
 
         #[test_with::env(DATABASE_URL)]
         #[tokio::test]
@@ -369,7 +441,7 @@ mod test {
                 .unwrap();
             database
                 .profile_read_model()
-                .create(&mut conn, &profile)
+                .create_initial_personal_account_profile(&mut conn, &profile)
                 .await
                 .unwrap();
 
@@ -413,7 +485,7 @@ mod test {
                 .unwrap();
             database
                 .profile_read_model()
-                .create(&mut conn, &profile)
+                .create_initial_personal_account_profile(&mut conn, &profile)
                 .await
                 .unwrap();
 
@@ -465,14 +537,10 @@ mod test {
                 .unwrap();
             database
                 .profile_read_model()
-                .create(&mut conn, &profile)
+                .create_initial_personal_account_profile(&mut conn, &profile)
                 .await
                 .unwrap();
-            database
-                .profile_read_model()
-                .update(&mut conn, &updated_profile)
-                .await
-                .unwrap();
+            gated_update(&database, &updated_profile).await.unwrap();
 
             let result = database
                 .profile_read_model()
@@ -526,19 +594,14 @@ mod test {
             }
             database
                 .profile_read_model()
-                .create(&mut conn, &profile(&account_id, 1, "v1"))
+                .create_initial_personal_account_profile(&mut conn, &profile(&account_id, 1, "v1"))
                 .await
                 .unwrap();
             // v5 is the transferred, newest state; the older v3 snapshot arrives last.
-            database
-                .profile_read_model()
-                .update(&mut conn, &profile(&org_id, 5, "v5"))
+            gated_update(&database, &profile(&org_id, 5, "v5"))
                 .await
                 .unwrap();
-            let stale = database
-                .profile_read_model()
-                .update(&mut conn, &profile(&account_id, 3, "v3"))
-                .await;
+            let stale = gated_update(&database, &profile(&account_id, 3, "v3")).await;
             assert!(
                 matches!(
                     stale.as_ref().map_err(|e| e.current_context()),
@@ -564,14 +627,10 @@ mod test {
                 Some("v5")
             );
             // The same version (a rehydrate of the stored state) and newer ones are accepted.
-            database
-                .profile_read_model()
-                .update(&mut conn, &profile(&org_id, 5, "v5b"))
+            gated_update(&database, &profile(&org_id, 5, "v5b"))
                 .await
                 .unwrap();
-            database
-                .profile_read_model()
-                .update(&mut conn, &profile(&org_id, 6, "v6"))
+            gated_update(&database, &profile(&org_id, 6, "v6"))
                 .await
                 .unwrap();
             let stored = database
@@ -613,13 +672,13 @@ mod test {
                 .unwrap();
             database
                 .profile_read_model()
-                .create(&mut conn, &profile)
+                .create_initial_personal_account_profile(&mut conn, &profile)
                 .await
                 .unwrap();
 
-            database
-                .profile_read_model()
-                .delete(&mut conn, &profile_id)
+            sqlx::query("DELETE FROM profiles WHERE id=$1")
+                .bind(profile_id.as_ref())
+                .execute(&mut *conn)
                 .await
                 .unwrap();
 

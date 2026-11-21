@@ -4,6 +4,7 @@ use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, TransactionManager,
 };
 use kernel::interfaces::event::EventApplier;
+use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use kernel::interfaces::read_model::{
     DependOnAccountQuery, DependOnProfileQuery, DependOnProfileReadModel,
     DependOnProfileTransferRequestQuery, DependOnProfileTransferRequestReadModel, ProfileReadModel,
@@ -41,6 +42,7 @@ where
         + DependOnProfileQuery
         + DependOnProfileReadModel
         + DependOnProfileRepository
+        + DependOnHomeLinkStore
         + DependOnProfileTransferRequestQuery
         + DependOnProfileTransferRequestReadModel
         + DependOnProfileTransferRequestRepository
@@ -88,6 +90,22 @@ where
                 .transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
+                        deps.home_link_store()
+                            .lock_accounts(
+                                executor,
+                                &[from_account_id.clone(), to_org_account_id.clone()],
+                            )
+                            .await?;
+                        deps.home_link_store()
+                            .lock_profiles(executor, std::slice::from_ref(&profile_id))
+                            .await?;
+                        let owner = deps
+                            .home_link_store()
+                            .owner(executor, &profile_id, &from_account_id)
+                            .await?;
+                        if !owner.active {
+                            return Err(Report::new(KernelError::PermissionDenied));
+                        }
                         // Serialize with every other writer of this Profile (edits, username) before
                         // the event stream is read: the aggregate is then rebuilt from all committed
                         // events, so the projection row written below can never lose a concurrent
@@ -154,6 +172,9 @@ where
                         })?;
                         deps.profile_read_model()
                             .update(executor, &transferred_profile)
+                            .await?;
+                        deps.home_link_store()
+                            .transfer_owner(executor, &profile_id, &to_org_account_id)
                             .await?;
                         Ok(transferred_profile)
                     })

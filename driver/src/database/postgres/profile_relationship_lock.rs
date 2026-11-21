@@ -20,6 +20,9 @@ impl ProfileRelationshipLock for PostgresProfileRelationshipLock {
         let mut ids: Vec<i64> = profiles.iter().map(|id| *id.as_ref()).collect();
         ids.sort_unstable();
         ids.dedup();
+        if !ids.is_empty() {
+            executor.note_relationship_gates_taken();
+        }
         let con: &mut PgConnection = executor;
         for id in ids {
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")

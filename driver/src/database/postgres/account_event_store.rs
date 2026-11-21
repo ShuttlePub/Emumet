@@ -32,6 +32,18 @@ impl TryFrom<EventRow> for EventEnvelope<AccountEvent, Account> {
 
 pub struct PostgresAccountEventStore;
 
+fn is_delivery_lifecycle(event: &AccountEvent) -> bool {
+    matches!(
+        event,
+        AccountEvent::Deactivated
+            | AccountEvent::Reactivated
+            | AccountEvent::Suspended { .. }
+            | AccountEvent::Unsuspended
+            | AccountEvent::Banned { .. }
+            | AccountEvent::Unbanned
+    )
+}
+
 impl AccountEventStore for PostgresAccountEventStore {
     type Connection = PostgresConnection;
 
@@ -110,6 +122,40 @@ impl PostgresAccountEventStore {
         command: &CommandEnvelope<AccountEvent, Account>,
         version: i64,
     ) -> error_stack::Result<(), KernelError> {
+        // Creation/non-lifecycle edits do not contend with relay permission and retain
+        // their existing transaction scope. Only eligibility transitions take the gate.
+        if !is_delivery_lifecycle(command.event()) {
+            return self.persist_gated(executor, command, version).await;
+        }
+        let automatic = executor.begin_atomic().await?;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.persist_gated(executor, command, version),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(Report::new(KernelError::Internal)
+                .attach_printable("lifecycle transaction exceeded 5s"))
+        });
+        if automatic {
+            executor.end_atomic(result.is_ok()).await?;
+        }
+        result
+    }
+
+    async fn persist_gated(
+        &self,
+        executor: &mut PostgresConnection,
+        command: &CommandEnvelope<AccountEvent, Account>,
+        version: i64,
+    ) -> error_stack::Result<(), KernelError> {
+        use kernel::interfaces::home_link::HomeLinkStore;
+        let account_id = kernel::prelude::entity::AccountId::new(*command.id().as_ref());
+        if is_delivery_lifecycle(command.event()) {
+            super::home_link::PostgresHomeLinkStore
+                .lock_accounts(executor, std::slice::from_ref(&account_id))
+                .await?;
+        }
         let con: &mut PgConnection = executor;
 
         let event_name = command.event_name();
@@ -179,6 +225,11 @@ impl PostgresAccountEventStore {
             );
         }
 
+        if matches!(command.event(), AccountEvent::Deactivated) {
+            super::home_link::PostgresHomeLinkStore
+                .deactivate(executor, &account_id, &EventVersion::new(version))
+                .await?;
+        }
         Ok(())
     }
 }

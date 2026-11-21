@@ -1,0 +1,43 @@
+name: Home links lifecycle DB
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+jobs:
+  home-links-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: home_links_test
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 2s --health-timeout 2s --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/home_links_test
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real database acceptance, migration and regressions (no skipped DB tests)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p driver home_link -- --nocapture | tee home-link-driver.log
+          cargo test -p driver home_origin -- --nocapture | tee home-link-origin.log
+          cargo test -p server home_link -- --nocapture | tee home-link-server.log
+          cargo test -p application projection::tests -- --test-threads=1 | tee home-link-projector.log
+          cargo test -p application profile_transfer -- --test-threads=4 | tee home-link-transfer.log
+          cargo test -p server cutover::lifecycle_tests -- --test-threads=4 | tee home-link-lifecycle.log
+          test -z "$(grep -L -E 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' home-link-*.log)"
+          ! grep -E 'test result: .* [1-9][0-9]* ignored;' home-link-*.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: home-links-db
+          path: home-link-*.log

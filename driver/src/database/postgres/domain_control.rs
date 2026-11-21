@@ -253,7 +253,7 @@ mod tests {
             .await
             .unwrap();
         db.profile_read_model()
-            .create(&mut conn, &profile)
+            .create_initial_personal_account_profile(&mut conn, &profile)
             .await
             .unwrap();
         profile.id().clone()

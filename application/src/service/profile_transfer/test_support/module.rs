@@ -357,3 +357,119 @@ pub fn fixture() -> Fixture {
         request_nanoid: request_nanoid.as_ref().to_string(),
     }
 }
+
+// Lifecycle semantics are covered by real-DB home-link tests. This transfer unit double
+// supplies the same owner candidate without pretending to test advisory locks.
+impl kernel::interfaces::home_link::DependOnHomeLinkStore for MockModule {
+    type HomeLinkStore = Self;
+    fn home_link_store(&self) -> &Self {
+        self
+    }
+}
+impl kernel::interfaces::home_link::HomeLinkStore for MockModule {
+    type Connection = MockConnection;
+    async fn lock_accounts(
+        &self,
+        _: &mut MockConnection,
+        _: &[AccountId],
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
+    async fn lock_profiles(
+        &self,
+        _: &mut MockConnection,
+        _: &[ProfileId],
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
+    async fn lock_account_profile_set(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+        _: &[ProfileId],
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
+    async fn owner_candidate(
+        &self,
+        _: &mut MockConnection,
+        _: &str,
+    ) -> error_stack::Result<(ProfileId, AccountId), KernelError> {
+        unimplemented!("not used by transfer")
+    }
+    async fn owner(
+        &self,
+        _: &mut MockConnection,
+        profile: &ProfileId,
+        candidate: &AccountId,
+    ) -> error_stack::Result<kernel::interfaces::home_link::LinkOwner, KernelError> {
+        Ok(kernel::interfaces::home_link::LinkOwner {
+            profile_id: profile.clone(),
+            account_id: candidate.clone(),
+            account_version: EventVersion::new(1),
+            active: true,
+        })
+    }
+    async fn account_snapshot(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+    ) -> error_stack::Result<Option<Account>, KernelError> {
+        unimplemented!("not used by transfer")
+    }
+    async fn caller_owns(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+        _: &AuthAccountId,
+    ) -> error_stack::Result<bool, KernelError> {
+        unimplemented!("not used by transfer")
+    }
+    async fn delete_owned_profiles(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        unimplemented!("not used by transfer")
+    }
+    async fn transfer_owner(
+        &self,
+        _: &mut MockConnection,
+        _: &ProfileId,
+        _: &AccountId,
+    ) -> error_stack::Result<(), KernelError> {
+        Ok(())
+    }
+    async fn list(
+        &self,
+        _: &mut MockConnection,
+        _: &ProfileId,
+    ) -> error_stack::Result<Vec<kernel::interfaces::home_link::HomeLink>, KernelError> {
+        unimplemented!("not used by transfer")
+    }
+    async fn register(
+        &self,
+        _: &mut MockConnection,
+        _: &kernel::interfaces::home_link::LinkOwner,
+        _: &str,
+        _: &str,
+    ) -> error_stack::Result<(kernel::interfaces::home_link::HomeLink, bool), KernelError> {
+        unimplemented!("not used by transfer")
+    }
+    async fn unlink(
+        &self,
+        _: &mut MockConnection,
+        _: &ProfileId,
+        _: &str,
+    ) -> error_stack::Result<(), KernelError> {
+        unimplemented!("not used by transfer")
+    }
+    async fn deactivate(
+        &self,
+        _: &mut MockConnection,
+        _: &AccountId,
+        _: &EventVersion<Account>,
+    ) -> error_stack::Result<(), KernelError> {
+        unimplemented!("not used by transfer")
+    }
+}

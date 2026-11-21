@@ -179,7 +179,7 @@ impl Rehearsal {
             .unwrap();
         self.module
             .profile_read_model()
-            .create(&mut executor, &profile)
+            .create_initial_personal_account_profile(&mut executor, &profile)
             .await
             .unwrap();
         Local {

@@ -851,16 +851,19 @@ async fn delete_profile_row(
     env: &Env,
     profile_id: &ProfileId,
 ) -> error_stack::Result<(), KernelError> {
-    use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
-    let deps = env.module.clone();
     let profile_id = profile_id.clone();
     env.module
         .transaction_manager()
         .transaction(move |executor| {
             Box::pin(async move {
-                deps.profile_read_model()
-                    .delete(executor, &profile_id)
+                sqlx::query("DELETE FROM profiles WHERE id=$1")
+                    .bind(profile_id.as_ref())
+                    .execute(&mut **executor)
                     .await
+                    .map(|_| ())
+                    .map_err(|e| {
+                        error_stack::Report::new(KernelError::Internal).attach_printable(e)
+                    })
             })
         })
         .await
