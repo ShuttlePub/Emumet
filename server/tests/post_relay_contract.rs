@@ -8,7 +8,11 @@
 //! * a small reference receiver that implements `v1.md` section 7 with **no link ledger** reproduces
 //!   every P1 fixture, and also accepts the P2 envelopes (so no P2 rule is hidden in P1);
 //! * the outer-signature vectors, the retransmission invariants and the original-signature evidence;
-//! * a small reference reader that implements `v1.md` section 8 reproduces every inbox fixture.
+//! * a small reference reader that implements `v1.md` section 8 reproduces every inbox fixture, and
+//!   every value it forwards is accepted by the envelope schema;
+//! * the field-format fixtures (timestamps, URLs) agree with the schema and with `v1.md` section 4.5;
+//! * a reference implementation of the header-evidence algorithm (`v1.md` section 4.3) reproduces the
+//!   input/output fixtures.
 //!
 //! The reference code lives only in this test. It is not the production implementation.
 
@@ -230,6 +234,10 @@ fn schema_bounds_match_constants() {
         c("OMITTED_NAMES_MAX")
     );
     assert_eq!(
+        at("/properties/omitted_header_count/maximum"),
+        c("OMITTED_COUNT_MAX")
+    );
+    assert_eq!(
         at("/properties/recipient/properties/link_generation/maximum"),
         c("LINK_GENERATION_MAX")
     );
@@ -328,7 +336,29 @@ fn evidence_bytes(env: &Value) -> usize {
     headers + omitted
 }
 
-/// v1.md 4.4 items 2 and 3.
+fn days_in_month(y: i64, m: i64) -> i64 {
+    match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+/// v1.md 4.5 / 4.4 item 5: the day exists in that month and year. Meant for strings that already
+/// passed the schema pattern.
+fn calendar_ok(ts: &str) -> bool {
+    let (Some(y), Some(m), Some(d)) = (ts.get(0..4), ts.get(5..7), ts.get(8..10)) else {
+        return false;
+    };
+    let (Ok(y), Ok(m), Ok(d)) = (y.parse::<i64>(), m.parse::<i64>(), d.parse::<i64>()) else {
+        return false;
+    };
+    (1..=days_in_month(y, m)).contains(&d)
+}
+
+/// v1.md 4.4 items 2, 3 and 5.
 fn post_auth_checks(env: &Value) -> Result<(), (u16, &'static str)> {
     if decoded_len(env) > constant("INBOX_BODY_MAX_BYTES") as usize {
         return Err((413, "activity_too_large"));
@@ -336,7 +366,87 @@ fn post_auth_checks(env: &Value) -> Result<(), (u16, &'static str)> {
     if evidence_bytes(env) > constant("EVIDENCE_BUDGET_BYTES") as usize {
         return Err((400, "evidence_budget_exceeded"));
     }
+    for ts in [&env["received_at"], &env["verification"]["verified_at"]] {
+        if !calendar_ok(ts.as_str().unwrap_or("")) {
+            return Err((400, "schema_violation"));
+        }
+    }
     Ok(())
+}
+
+/// v1.md 4.5: host, optional port and what follows the authority of an envelope URL.
+fn url_parts(value: &str, allow_http: bool, lowercase: bool) -> Option<(&str, Option<u32>, &str)> {
+    if value.chars().count() > constant("URL_MAX") as usize
+        || !value.bytes().all(|b| (0x21..=0x7e).contains(&b))
+    {
+        return None;
+    }
+    let rest = value
+        .strip_prefix("https://")
+        .or_else(|| allow_http.then(|| value.strip_prefix("http://")).flatten())?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let (host, port) = match authority.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (authority, None),
+    };
+    let alnum = |c: char| c.is_ascii_alphanumeric() && !(lowercase && c.is_ascii_uppercase());
+    let sep = |c: char| c == '.' || c == '-';
+    let chars: Vec<char> = host.chars().collect();
+    let host_ok = !chars.is_empty()
+        && alnum(chars[0])
+        && alnum(chars[chars.len() - 1])
+        && chars.iter().all(|&c| alnum(c) || sep(c))
+        && chars.windows(2).all(|w| !(sep(w[0]) && sep(w[1])));
+    if !host_ok {
+        return None;
+    }
+    let port = match port {
+        None => None,
+        Some(p) => {
+            if p.is_empty()
+                || p.len() > 5
+                || p.starts_with('0')
+                || !p.bytes().all(|b| b.is_ascii_digit())
+            {
+                return None;
+            }
+            let n: u32 = p.parse().ok()?;
+            if !(1..=65535).contains(&n) {
+                return None;
+            }
+            Some(n)
+        }
+    };
+    Some((host, port, tail))
+}
+
+fn is_remote_url(value: &str) -> bool {
+    url_parts(value, true, false).is_some()
+}
+
+/// The schema definition named by `def` in the field-format fixtures.
+fn url_matches_def(def: &str, value: &str) -> bool {
+    match def {
+        "remote_url" => is_remote_url(value),
+        "emumet_url" => {
+            url_parts(value, false, true).is_some_and(|(_, _, tail)| tail.starts_with('/'))
+        }
+        "origin" => {
+            value.chars().count() <= constant("ORIGIN_MAX") as usize
+                && url_parts(value, false, true)
+                    .is_some_and(|(_, port, tail)| tail.is_empty() && port != Some(443))
+        }
+        "instance_actor" => {
+            url_parts(value, false, true).is_some_and(|(_, _, tail)| tail == "/ap/instance")
+        }
+        other => panic!("unknown definition {other}"),
+    }
+}
+
+fn minimal_envelope() -> Value {
+    let c = case("p1", "p1-ok-minimal");
+    serde_json::from_str(&request_body(&c["request"])).unwrap()
 }
 
 fn origin_of(url: &str) -> String {
@@ -399,8 +509,12 @@ fn digest_header_of(body: &[u8]) -> String {
     format!("SHA-256={}", B64.encode(Sha256::digest(body)))
 }
 
-fn signing_string(target: &str, host: &str, date: &str, digest: &str) -> String {
-    format!("(request-target): post {target}\nhost: {host}\ndate: {date}\ndigest: {digest}")
+const ENDPOINT: &str = "/internal/v1/emumet/activities";
+
+/// v1.md section 5: built from the method and target of the request actually received.
+fn signing_string(method: &str, target: &str, host: &str, date: &str, digest: &str) -> String {
+    let method = method.to_ascii_lowercase();
+    format!("(request-target): {method} {target}\nhost: {host}\ndate: {date}\ndigest: {digest}")
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -429,6 +543,13 @@ fn reference_receive(
     let body = body.as_bytes();
 
     // step 0
+    let (method, target) = (s(request, "method"), s(request, "target"));
+    if target != ENDPOINT {
+        return out(404, "not_found");
+    }
+    if method != "POST" {
+        return out(405, "method_not_allowed");
+    }
     let ct = header("content-type").unwrap_or("").to_ascii_lowercase();
     if ct != "application/json" && ct != "application/json; charset=utf-8" {
         return out(415, "unsupported_media_type");
@@ -501,7 +622,7 @@ fn reference_receive(
     if (date_unix - rfc3339_to_unix(now)).unsigned_abs() > constant("DATE_TOLERANCE_SECONDS") {
         return out(401, "date_skew");
     }
-    let message = signing_string(s(request, "target"), host, date, digest);
+    let message = signing_string(method, target, host, date, digest);
     if !rsa_verify(&key_from_pem(s(key, "publicKeyPem")), &message, sig_b64) {
         return out(401, "signature_invalid");
     }
@@ -729,7 +850,8 @@ fn retransmission_changes_only_date_and_signature() {
 fn signature_vectors_verify() {
     let doc = read_json(&fixtures_dir().join("signature-vectors.json"));
     let vectors = doc["vectors"].as_array().unwrap();
-    assert!(vectors.len() >= 5);
+    assert!(vectors.len() >= 7);
+    let mut mismatch = 0;
     for vec in vectors {
         let id = s(vec, "id");
         let key = key_from_pem(&read_text(&fixtures_dir().join(s(vec, "public_key_file"))));
@@ -739,13 +861,14 @@ fn signature_vectors_verify() {
             s(vec, "body_sha256_base64"),
             "{id}"
         );
+        // What a receiver does: build the signing string from the request as received.
         let rebuilt = signing_string(
+            s(vec, "method"),
             s(vec, "target"),
             s(vec, "host"),
             s(vec, "date"),
             s(vec, "digest_header"),
         );
-        assert_eq!(rebuilt, s(vec, "signing_string"), "{id}: signing string");
         assert_eq!(
             s(vec, "signed_headers"),
             "(request-target) host date digest"
@@ -757,14 +880,31 @@ fn signature_vectors_verify() {
             s(vec, "key_id")
         );
         let digest_ok = s(vec, "digest_header") == digest_header_of(body.as_bytes());
-        let sig_ok = rsa_verify(&key, s(vec, "signing_string"), sig);
+        let verifies_rebuilt = rsa_verify(&key, &rebuilt, sig);
+        let verifies_stored = rsa_verify(&key, s(vec, "signing_string"), sig);
         match s(vec, "expect") {
-            "valid" => assert!(digest_ok && sig_ok, "{id}"),
-            "digest_mismatch" => assert!(!digest_ok && sig_ok, "{id}"),
-            "signature_invalid" => assert!(digest_ok && !sig_ok, "{id}"),
+            "valid" => {
+                assert_eq!(rebuilt, s(vec, "signing_string"), "{id}: signing string");
+                assert!(digest_ok && verifies_rebuilt, "{id}");
+            }
+            "digest_mismatch" => {
+                assert_eq!(rebuilt, s(vec, "signing_string"), "{id}: signing string");
+                assert!(!digest_ok && verifies_rebuilt, "{id}");
+            }
+            "signature_invalid" => {
+                assert_eq!(rebuilt, s(vec, "signing_string"), "{id}: signing string");
+                assert!(digest_ok && !verifies_rebuilt, "{id}");
+            }
+            "signing_string_mismatch" => {
+                // The signature is good for another method / target, not for this request.
+                mismatch += 1;
+                assert_ne!(rebuilt, s(vec, "signing_string"), "{id}");
+                assert!(digest_ok && verifies_stored && !verifies_rebuilt, "{id}");
+            }
             other => panic!("{id}: unknown expectation {other}"),
         }
     }
+    assert_eq!(mismatch, 2, "other-target and other-method vectors");
 }
 
 #[test]
@@ -792,6 +932,7 @@ fn original_signature_evidence_can_be_verified_again() {
     let pval = |k: &str| params.iter().find(|(n, _)| n == k).unwrap().1.clone();
     assert_eq!(pval("keyId"), s(&env["verification"], "key_id"));
     let msg = signing_string(
+        s(&env["original_request"], "method"),
         s(&env["original_request"], "request_target"),
         &get("host"),
         &get("date"),
@@ -924,12 +1065,16 @@ fn as_term(t: &str) -> Option<&str> {
     (!t.contains(':') && !t.contains('/')).then_some(t)
 }
 
+fn type_string_ok(t: &str) -> bool {
+    !t.is_empty() && t.chars().count() <= constant("TYPE_STRING_MAX") as usize
+}
+
 fn type_strings(v: &Value) -> Option<Vec<String>> {
     match v {
-        Value::String(t) if !t.is_empty() => Some(vec![t.clone()]),
+        Value::String(t) if type_string_ok(t) => Some(vec![t.clone()]),
         Value::Array(a) if !a.is_empty() && a.len() <= constant("TYPE_ARRAY_MAX") as usize => a
             .iter()
-            .map(|e| e.as_str().filter(|t| !t.is_empty()).map(str::to_string))
+            .map(|e| e.as_str().filter(|t| type_string_ok(t)).map(str::to_string))
             .collect(),
         _ => None,
     }
@@ -1038,6 +1183,9 @@ fn read_inbox(c: &Value) -> Reading {
     let Some(actor) = actor else {
         return Reading::Reject(400, "actor_missing_or_ambiguous");
     };
+    if actor.chars().count() > constant("URL_MAX") as usize || !is_remote_url(&actor) {
+        return Reading::Reject(400, "invalid_actor");
+    }
     let relations: BTreeSet<&str> = types
         .iter()
         .filter_map(|t| as_term(t))
@@ -1088,7 +1236,11 @@ fn read_inbox(c: &Value) -> Reading {
 
 fn forward(obj: &Map<String, Value>, actor: String) -> Reading {
     Reading::Forward {
-        activity_id: obj.get("id").and_then(Value::as_str).map(str::to_string),
+        activity_id: obj
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|i| is_remote_url(i))
+            .map(str::to_string),
         actor,
     }
 }
@@ -1182,9 +1334,307 @@ fn inbox_boundary_fixtures_use_the_constants() {
         count("forward-type-array-16"),
         Some(constant("TYPE_ARRAY_MAX") as usize)
     );
+    let body_of = |id: &str| serde_json::from_str::<Value>(s(&find(id), "body")).unwrap();
+    let chars = |v: &Value| v.as_str().unwrap().chars().count() as u64;
+    assert_eq!(
+        chars(&body_of("forward-actor-exactly-url-max")["actor"]),
+        constant("URL_MAX")
+    );
+    assert_eq!(
+        chars(&body_of("reject-actor-too-long")["actor"]),
+        constant("URL_MAX") + 1
+    );
+    assert_eq!(
+        chars(&body_of("forward-id-exactly-url-max")["id"]),
+        constant("URL_MAX")
+    );
+    assert_eq!(
+        chars(&body_of("forward-id-too-long-becomes-null")["id"]),
+        constant("URL_MAX") + 1
+    );
+    assert_eq!(
+        chars(&body_of("forward-type-string-exactly-max")["type"]),
+        constant("TYPE_STRING_MAX")
+    );
+    assert_eq!(
+        chars(&body_of("reject-type-string-too-long")["type"]),
+        constant("TYPE_STRING_MAX") + 1
+    );
     let too_many = serde_json::from_str::<Value>(s(&find("reject-type-array-17"), "body")).unwrap();
     assert_eq!(
         too_many["type"].as_array().unwrap().len() as u64,
         constant("TYPE_ARRAY_MAX") + 1
     );
+}
+
+#[test]
+fn forwarded_inbox_values_are_accepted_by_the_envelope_schema() {
+    let v = validator();
+    let doc = read_json(&fixtures_dir().join("inbox/activity-reading.json"));
+    let env = minimal_envelope();
+    let mut forwarded = 0;
+    for c in doc["cases"].as_array().unwrap() {
+        if let Reading::Forward { activity_id, actor } = read_inbox(c) {
+            let mut e = env.clone();
+            e["activity"]["id"] = activity_id.map_or(Value::Null, Value::from);
+            e["activity"]["actor"] = actor.into();
+            assert!(
+                v.is_valid(&e),
+                "{}: the extracted values must fit the envelope",
+                s(c, "id")
+            );
+            forwarded += 1;
+        }
+    }
+    assert!(forwarded >= 35, "{forwarded}");
+    // The limit of the reader is the limit of the schema, in both directions.
+    let url_max = constant("URL_MAX") as usize;
+    for (len, ok) in [(url_max, true), (url_max + 1, false)] {
+        let url = format!(
+            "https://remote.example/{}",
+            "a".repeat(len - "https://remote.example/".len())
+        );
+        assert_eq!(url.len(), len);
+        let mut e = env.clone();
+        e["activity"]["id"] = url.clone().into();
+        e["activity"]["actor"] = url.clone().into();
+        assert_eq!(v.is_valid(&e), ok, "URL of {len} characters");
+        assert_eq!(is_remote_url(&url), ok, "reader URL check at {len}");
+    }
+}
+
+#[test]
+fn field_formats_match_the_schema_and_the_reference_checks() {
+    let v = validator();
+    let doc = read_json(&fixtures_dir().join("formats/field-formats.json"));
+    let env = minimal_envelope();
+    let timestamps = doc["timestamps"].as_array().unwrap();
+    assert!(timestamps.len() >= 25);
+    for t in timestamps {
+        let value = s(t, "value");
+        for ptr in ["/received_at", "/verification/verified_at"] {
+            let mut e = env.clone();
+            *e.pointer_mut(ptr).unwrap() = value.into();
+            assert_eq!(
+                v.is_valid(&e),
+                t["schema_valid"] == true,
+                "{ptr} {value:?}: schema"
+            );
+        }
+        if t["schema_valid"] == true {
+            assert_eq!(
+                calendar_ok(value),
+                t["calendar_valid"] == true,
+                "{value:?}: calendar"
+            );
+        }
+        assert_eq!(
+            t["valid"] == true,
+            t["schema_valid"] == true && t["calendar_valid"] == true,
+            "{value:?}"
+        );
+    }
+    let urls = doc["urls"].as_array().unwrap();
+    assert!(urls.len() >= 40);
+    for u in urls {
+        let (def, value) = (s(u, "def"), s(u, "value"));
+        let ptr = format!("/{}", s(&doc["field_for_def"], def).replace('.', "/"));
+        let mut e = env.clone();
+        *e.pointer_mut(&ptr).unwrap() = value.into();
+        let preview: String = value.chars().take(60).collect();
+        assert_eq!(
+            v.is_valid(&e),
+            u["valid"] == true,
+            "{def} {preview:?}: schema"
+        );
+        assert_eq!(
+            url_matches_def(def, value),
+            u["valid"] == true,
+            "{def} {preview:?}: reference check"
+        );
+    }
+}
+
+fn is_secret_header(name: &str) -> bool {
+    matches!(
+        name,
+        "authorization" | "proxy-authorization" | "cookie" | "set-cookie"
+    ) || ["token", "secret", "api-key", "apikey", "password"]
+        .iter()
+        .any(|w| name.contains(w))
+}
+
+/// Header names covered by the signature fields (v1.md 4.3 group 2), pseudo-components skipped.
+fn covered_names(fields: &[(String, String)]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for (n, v) in fields.iter().filter(|(n, _)| n == "signature") {
+        let _ = n;
+        if let Some(p) = v.find("headers=\"") {
+            let rest = &v[p + "headers=\"".len()..];
+            if let Some(end) = rest.find('"') {
+                names.extend(rest[..end].split_whitespace().map(str::to_ascii_lowercase));
+            }
+        }
+    }
+    for (_, v) in fields.iter().filter(|(n, _)| n == "signature-input") {
+        let c: Vec<char> = v.chars().collect();
+        let mut i = 0;
+        while i < c.len() {
+            if c[i] != '(' {
+                i += 1;
+                continue;
+            }
+            i += 1;
+            loop {
+                while i < c.len() && c[i] == ' ' {
+                    i += 1;
+                }
+                if i >= c.len() || c[i] == ')' {
+                    i += 1;
+                    break;
+                }
+                if c[i] != '"' {
+                    i += 1;
+                    continue;
+                }
+                let Some(len) = c[i + 1..].iter().position(|&x| x == '"') else {
+                    i = c.len();
+                    break;
+                };
+                names.push(
+                    c[i + 1..i + 1 + len]
+                        .iter()
+                        .collect::<String>()
+                        .to_ascii_lowercase(),
+                );
+                i += len + 2;
+                let mut in_quotes = false;
+                while i < c.len() && (in_quotes || (c[i] != ' ' && c[i] != ')')) {
+                    if c[i] == '"' {
+                        in_quotes = !in_quotes;
+                    }
+                    i += 1;
+                }
+            }
+        }
+    }
+    names
+        .into_iter()
+        .filter(|n| !n.starts_with('(') && !n.starts_with('@'))
+        .collect()
+}
+
+/// v1.md 4.3, written from the document.
+fn build_evidence(original: &[Value]) -> Value {
+    let budget = constant("EVIDENCE_BUDGET_BYTES") as usize;
+    let mut fields: Vec<(String, String)> = Vec::new();
+    for h in original {
+        for _ in 0..h.get("times").and_then(Value::as_u64).unwrap_or(1) {
+            fields.push((s(h, "name").to_ascii_lowercase(), s(h, "value").to_string()));
+        }
+    }
+    let mut order: Vec<usize> = Vec::new();
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut add = |i: usize| {
+        if seen.insert(i) {
+            order.push(i);
+        }
+    };
+    for (i, (n, _)) in fields.iter().enumerate() {
+        if n == "signature" || n == "signature-input" {
+            add(i);
+        }
+    }
+    for name in covered_names(&fields) {
+        for (i, (n, _)) in fields.iter().enumerate() {
+            if *n == name {
+                add(i);
+            }
+        }
+    }
+    for name in [
+        "digest",
+        "content-digest",
+        "date",
+        "host",
+        "content-type",
+        "content-length",
+    ] {
+        for (i, (n, _)) in fields.iter().enumerate() {
+            if n == name {
+                add(i);
+            }
+        }
+    }
+    let mut kept: Vec<Value> = Vec::new();
+    let mut omitted_names: Vec<String> = Vec::new();
+    let (mut used, mut count) = (0usize, 0u64);
+    for i in order {
+        let (name, value) = &fields[i];
+        let unusable = is_secret_header(name)
+            || name.chars().count() > constant("EVIDENCE_HEADER_NAME_MAX") as usize
+            || !value.bytes().all(|b| (0x20..=0x7e).contains(&b))
+            || value.len() > constant("EVIDENCE_HEADER_VALUE_MAX") as usize
+            || kept.len() >= constant("EVIDENCE_MAX_HEADERS") as usize
+            || used + name.len() + value.len() > budget;
+        if unusable {
+            count = (count + 1).min(constant("OMITTED_COUNT_MAX"));
+            if !omitted_names.contains(name)
+                && omitted_names.len() < constant("OMITTED_NAMES_MAX") as usize
+                && name.chars().count() <= constant("EVIDENCE_HEADER_NAME_MAX") as usize
+                && used + name.len() <= budget
+            {
+                omitted_names.push(name.clone());
+                used += name.len();
+            }
+        } else {
+            kept.push(serde_json::json!({"name": name, "value": value}));
+            used += name.len() + value.len();
+        }
+    }
+    serde_json::json!({
+        "signature_headers": kept,
+        "omitted_header_names": omitted_names,
+        "omitted_header_count": count,
+        "evidence_complete": count == 0,
+    })
+}
+
+#[test]
+fn header_evidence_algorithm_matches_the_fixtures() {
+    let v = validator();
+    let doc = read_json(&fixtures_dir().join("evidence/header-omission.json"));
+    let cases = doc["cases"].as_array().unwrap();
+    assert!(cases.len() >= 14);
+    let env = minimal_envelope();
+    let mut ids = HashSet::new();
+    for c in cases {
+        let id = s(c, "id");
+        assert!(ids.insert(id), "duplicate case {id}");
+        let got = build_evidence(c["original_headers"].as_array().unwrap());
+        assert_eq!(got, c["expect"], "{id}");
+        // What the algorithm produces is always a valid envelope within the budget.
+        let mut e = env.clone();
+        e["original_request"]["signature_headers"] = got["signature_headers"].clone();
+        e["omitted_header_names"] = got["omitted_header_names"].clone();
+        e["omitted_header_count"] = got["omitted_header_count"].clone();
+        e["evidence_complete"] = got["evidence_complete"].clone();
+        assert!(v.is_valid(&e), "{id}: the evidence fits the schema");
+        assert!(
+            post_auth_checks(&e).is_ok(),
+            "{id}: the evidence fits the budget"
+        );
+    }
+    for needed in [
+        "budget-exactly-full",
+        "budget-one-over-omits-the-big-header",
+        "budget-full-name-not-listed",
+        "omitted-names-limit",
+        "too-many-headers",
+        "count-saturates",
+        "candidate-only-once",
+        "rfc9421-components",
+    ] {
+        assert!(ids.contains(needed), "missing case {needed}");
+    }
 }

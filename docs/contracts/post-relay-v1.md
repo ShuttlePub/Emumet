@@ -1,4 +1,4 @@
-# Emumet post-relay contract v1 (revision 1)
+# Emumet post-relay contract v1 (revision 2)
 
 Status: canonical text for P1. This file, `v1.schema.json`, `v1.constants.json` and `fixtures/` form one
 contract. The canonical copy lives in the host repository (`ShuttlePub/host`,
@@ -6,6 +6,12 @@ contract. The canonical copy lives in the host repository (`ShuttlePub/host`,
 pinned to a host commit and checksums and is never edited on its own (see "Snapshot rule").
 
 Words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
+
+Revision 2 (changes made after the C0 review; revision 1 was never merged into an implementation):
+the send deadline starts at `authorized_at` (section 9); the receiver checks the request method and target and
+signs over the real ones (sections 5 and 7); field formats of timestamps and URLs (section 4.5); length limits
+and handling of the extracted `actor`, `id` and `type` (section 8.2); an exact algorithm for the header evidence
+(section 4.3); two new constants (`OMITTED_COUNT_MAX`, `TYPE_STRING_MAX`).
 
 ## 1. Scope
 
@@ -112,31 +118,52 @@ treat a difference as an inconsistent envelope; P1 conformance does not require 
 ### 4.3 Header evidence and its 16 KiB budget
 
 `original_request.signature_headers` keeps the headers a verifier needs to check the original signature
-again. Candidates are, in this order:
+again. The sender builds it from the header fields of the original request (in the order received) with the
+following algorithm. Names are compared and stored in lowercase.
 
-1. `signature` and `signature-input` (when present);
-2. every header named by the `headers` parameter of a Cavage `Signature` or by the covered components of
-   `Signature-Input`, in that order;
-3. `digest`, `content-digest`, `date`, `host`, `content-type`, `content-length`, in the original order.
+Candidates are examined in three groups, in this order:
 
-Names are lowercased. A repeated header is kept as separate entries in the original order. Rules:
+1. every field named `signature` or `signature-input`, in the original order;
+2. every field whose name is covered by the signature: first the names in the `headers` parameter of each
+   `signature` field (Cavage), then the component names in the covered-components lists of each
+   `signature-input` field (RFC 9421), each in the order written. Pseudo-components that are not header
+   fields (`(request-target)`, `(created)`, `(expires)`, and any name starting with `@`) are skipped, and
+   component parameters (`;name=...`) are ignored. For one name, all fields of that name are examined in the
+   original order;
+3. the names `digest`, `content-digest`, `date`, `host`, `content-type`, `content-length`, in that order, each with
+   all fields of that name in the original order.
 
-* Secret-bearing headers are never kept: `authorization`, `proxy-authorization`, `cookie`, `set-cookie`,
-  and any header whose name contains `token`, `secret`, `api-key`, `apikey` or `password`.
-* The budget counts, in UTF-8 bytes, `len(name) + len(value)` of every retained header plus `len(name)` of
-  every listed omitted name. The budget is `EVIDENCE_BUDGET_BYTES`.
-* Candidates are examined in the order above. A candidate is kept when it fits in the remaining budget;
-  otherwise it is omitted completely. A value is never truncated. Examination continues after an omission.
-* Every candidate that is not kept (secret or over budget) is omitted. `omitted_header_count` is the number
-  of omitted header fields (a repeated header counts once per field). `omitted_header_names` lists the
-  distinct omitted names, lowercase, at most `OMITTED_NAMES_MAX` names; names that do not fit are only
-  reflected in the count. It is therefore possible that fewer names than omitted fields are listed.
+A header field of the original request is a candidate only once: it is examined at its first appearance in the
+order above and skipped in later groups. A repeated header is kept as separate entries in the original order.
+
+Each candidate is handled like this, in order:
+
+* A secret-bearing header is omitted: `authorization`, `proxy-authorization`, `cookie`, `set-cookie`, and any
+  header whose name contains `token`, `secret`, `api-key`, `apikey` or `password`.
+* A header whose name is longer than `EVIDENCE_HEADER_NAME_MAX` characters, or whose value is longer than
+  `EVIDENCE_HEADER_VALUE_MAX` characters or contains a character outside printable ASCII (`0x20`-`0x7e`), is
+  omitted. A value is never truncated or altered.
+* When `EVIDENCE_MAX_HEADERS` entries are already kept, the candidate is omitted.
+* Let `used` be the UTF-8 bytes of `len(name) + len(value)` of every kept entry plus `len(name)` of every name
+  already listed in `omitted_header_names`. The candidate is kept when
+  `used + len(name) + len(value)` is at most `EVIDENCE_BUDGET_BYTES`; otherwise it is omitted. Examination
+  continues after an omission, so a later, smaller header can still be kept.
+
+Omitting a candidate adds 1 to `omitted_header_count` (a repeated header counts once per field; the count
+saturates at `OMITTED_COUNT_MAX`). Its name is appended to `omitted_header_names` (distinct names, in the order of
+their first omission) only when it is not listed yet, fewer than `OMITTED_NAMES_MAX` names are listed, the name is at most
+`EVIDENCE_HEADER_NAME_MAX` characters and `used + len(name)` is at most `EVIDENCE_BUDGET_BYTES`; otherwise the
+name is reflected only in the count. It is
+therefore possible that fewer names than omitted fields are listed. This guarantees that the sum of the kept
+entries and the listed omitted names never exceeds the budget.
+
 * `evidence_complete` is `true` if and only if `omitted_header_count` is `0` (then `omitted_header_names`
   is empty). Otherwise it is `false` and the count is at least 1. The schema enforces this.
 * An envelope with incomplete evidence is still valid and is still forwarded.
 
-At most `EVIDENCE_MAX_HEADERS` headers are listed, each name at most `EVIDENCE_HEADER_NAME_MAX` characters
-and each value at most `EVIDENCE_HEADER_VALUE_MAX` printable ASCII characters (`0x20`-`0x7e`).
+The output limits are those of the schema: at most `EVIDENCE_MAX_HEADERS` entries, each name at most
+`EVIDENCE_HEADER_NAME_MAX` characters and each value at most `EVIDENCE_HEADER_VALUE_MAX` printable ASCII
+characters. `fixtures/evidence/header-omission.json` holds input and output cases for this algorithm.
 
 ### 4.4 Checks outside the schema
 
@@ -149,6 +176,25 @@ JSON Schema cannot express these; a receiver MUST perform them:
    `signature_headers` plus the lengths of `omitted_header_names` is at most `EVIDENCE_BUDGET_BYTES`
    (400 `evidence_budget_exceeded`).
 4. The cross-field rules of section 7 step 5.
+5. `received_at` and `verified_at` name an existing calendar date (section 4.5) (400 `schema_violation`).
+
+### 4.5 Field formats
+
+* **Timestamps** (`received_at`, `verified_at`): RFC 3339 in UTC with a literal `Z`:
+  `YYYY-MM-DDTHH:MM:SS` with optional 1-9 fractional digits. Month `01`-`12`, day `01`-`31`, hour `00`-`23`,
+  minute `00`-`59`, second `00`-`59` (a leap second `:60` is not accepted). The schema pattern checks these
+  ranges. Whether the day exists in that month and year (`2026-02-30` does not; `2024-02-29` does) cannot be
+  expressed in the schema, so a receiver MUST check it (item 5 above). Both failures are `schema_violation`.
+* **URLs**: `activity.id` (when not null), `activity.actor`, `verification.key_id` and
+  `verification.signer_actor` are `http` or `https` URLs; `recipient.profile_actor` and `sender.instance_actor`
+  are `https` URLs on the sender's host (the origin match itself is section 7 step 5). Every URL is
+  `scheme://authority` optionally followed by one of `/`, `?` or `#` and then printable ASCII (`0x21`-`0x7e`), at
+  most `URL_MAX` characters. The authority is a host and an optional port, nothing else: no userinfo, no IPv6
+  literal, no empty authority (`https://#` and `https://?x` are invalid). The host is made of ASCII letters,
+  digits and single `.` or `-` separators between them (lowercase only for the origins and Emumet URLs). The
+  port is 1-65535 without leading zeros. The URL being allowed to be fetched (SSRF protection) is a separate
+  matter and is not decided by the envelope format.
+* `fixtures/formats/field-formats.json` lists valid and invalid values for each rule.
 
 ## 5. Outer signature
 
@@ -157,8 +203,11 @@ JSON Schema cannot express these; a receiver MUST perform them:
 * Signed components, exactly and in this order: `(request-target) host date digest`. A signature that
   covers fewer or other components is not accepted.
 * `Signature: keyId="{key id}",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="{base64}"`
-* Signing string: the four lines `(request-target): post /internal/v1/emumet/activities`,
-  `host: {host}`, `date: {date}`, `digest: {digest}` joined with LF, without a trailing LF.
+* Signing string: the four lines `(request-target): {method} {target}`, `host: {host}`, `date: {date}`,
+  `digest: {digest}` joined with LF, without a trailing LF. `{method}` is the lowercase method and `{target}` the
+  request target of the request actually sent (for this endpoint `post /internal/v1/emumet/activities`). The
+  receiver builds the string from the request it received, never from a constant, so a signature made for
+  another method or target does not verify.
 * `Digest: SHA-256={base64 of the SHA-256 of the exact request body bytes}`.
 * `Date`: IMF-fixdate (`Sat, 21 Nov 2026 09:00:00 GMT`), new for every attempt. Allowed skew between `Date`
   and the receiver clock: `DATE_TOLERANCE_SECONDS`, inclusive, in both directions.
@@ -215,6 +264,8 @@ trusts. In P1 that configuration is the only trust input; the receiver holds no 
 
 | Step | Check | Failure (status `reason`) |
 |---|---|---|
+| 0 | the request target is exactly `/internal/v1/emumet/activities` (no query string, no other path) | 404 `not_found` |
+| 0 | the method is `POST` | 405 `method_not_allowed` |
 | 0 | `Content-Type` is `application/json` | 415 `unsupported_media_type` |
 | 0 | body size at most `ENVELOPE_MAX_BYTES` | 413 `envelope_too_large` |
 | 1 | a `Signature` header exists and parses | 401 `signature_missing` / `signature_malformed` |
@@ -224,7 +275,7 @@ trusts. In P1 that configuration is the only trust input; the receiver holds no 
 | 3 | `Host` equals the authority of the configured own origin | 401 `host_mismatch` |
 | 3 | `Digest` exists and equals the SHA-256 of the received body bytes | 401 `digest_missing` / `digest_mismatch` |
 | 3 | `Date` parses and is within `DATE_TOLERANCE_SECONDS` of the receiver clock | 401 `date_invalid` / `date_skew` |
-| 3 | the signature verifies over the signing string with the selected key | 401 `signature_invalid` |
+| 3 | the signature verifies, with the selected key, over the signing string built from the received method, target, `Host`, `Date` and `Digest` (section 5) | 401 `signature_invalid` |
 | 4 | the body is UTF-8 JSON. An integer `version` other than 1 is `unsupported_version`. Then the envelope validates against `v1.schema.json` and passes section 4.4 | 400 `invalid_json` / `unsupported_version` / `schema_violation` / `evidence_budget_exceeded`; 413 `activity_too_large` |
 | 5 | `sender.origin` equals the origin of `keyId` | 403 `sender_origin_mismatch` |
 | 5 | `sender.instance_actor` equals the instance actor confirmed in step 2 | 403 `instance_actor_mismatch` |
@@ -236,7 +287,7 @@ trusts. In P1 that configuration is the only trust input; the receiver holds no 
 The receiver MAY apply its own overload answers: 429 or 503 with `Retry-After`; and 5xx on storage failure.
 The actor of the original Activity is not required to be on the Emumet origin.
 
-Sender classes: 401 and 429/503/5xx are retried, 400, 403, 413 and 415 are permanent (section 6).
+Sender classes: 401 and 429/503/5xx are retried; 400, 403, 404, 405, 413 and 415 (every other 4xx) are permanent (section 6).
 
 ### 7.1 P2 and later (not part of P1 conformance)
 
@@ -261,8 +312,9 @@ is defined here.
 | nesting deeper than `JSON_MAX_DEPTH` (root object = depth 1), or more than `JSON_MAX_NODES` JSON values (every value counts; keys do not) | 400 `too_deep` / `too_many_nodes` |
 | `Content-Type` other than `application/activity+json` or `application/ld+json` | 400 `invalid_content_type` |
 | media types are case-insensitive. Accepted parameters: `charset=utf-8` on both; on `application/ld+json` also `profile="https://www.w3.org/ns/activitystreams"` (or no profile). Any other parameter | 400 `invalid_content_type` |
-| `type` missing, not a non-empty string or non-empty array of non-empty strings, or an array longer than `TYPE_ARRAY_MAX` | 400 `invalid_type` |
+| `type` missing, not a non-empty string or non-empty array of non-empty strings, an array longer than `TYPE_ARRAY_MAX`, or a string longer than `TYPE_STRING_MAX` characters | 400 `invalid_type` |
 | actor missing or ambiguous (authentication is never loosened) | 400 `actor_missing_or_ambiguous` |
+| the single actor id is longer than `URL_MAX` characters or is not a URL in the sense of section 4.5 | 400 `invalid_actor` |
 | ambiguous relation operation (section 8.3) | 400 `ambiguous_relation`, relations unchanged |
 | bad signature, signer does not match the actor | 401 (unchanged existing behavior) |
 | Profile missing, not an actor, owner not active | 404 (unchanged) |
@@ -277,11 +329,23 @@ contexts are never fetched.
 ### 8.2 Extraction
 
 * `actor`: a URL string, an object with a string `id`, or an array (at most `ACTOR_ARRAY_MAX` elements)
-  whose elements all resolve to the same single id. Anything else is `actor_missing_or_ambiguous`.
-* `id`: the string value, otherwise `null`. A missing or non-string `id` never blocks forwarding of a
-  non-Follow/Block Activity.
-* `type`: the recognized ActivityStreams terms are the bare term (`Follow`), the compact form (`as:Follow`)
-  and the full IRI (`https://www.w3.org/ns/activitystreams#Follow`). Everything else is an extension type.
+  whose elements all resolve to the same single id. Anything else is `actor_missing_or_ambiguous`. The single id
+  must then be at most `URL_MAX` characters (counted after JSON unescaping) and a URL as described in section
+  4.5; otherwise the body is rejected with `invalid_actor`. The rule applies to every body (also Follow and
+  Block): the value that authenticates a body is always a value the envelope can carry, so a body is never
+  accepted on the inbox and then turned away by the receiver for its actor.
+* `id`: the string value when it is at most `URL_MAX` characters and a URL as described in section 4.5;
+  otherwise `null` (missing, not a string, too long, not a URL). This is the value of `activity.id`; an unusable
+  `id` never blocks forwarding of a non-Follow/Block Activity and is never rejected, because the envelope
+  schema accepts `null`. The existing relation processing of Follow/Block keeps its own handling of `id`.
+* `type`: every string is at most `TYPE_STRING_MAX` characters (after JSON unescaping), otherwise
+  `invalid_type`. The recognized ActivityStreams terms are the bare term (`Follow`), the compact form
+  (`as:Follow`) and the full IRI (`https://www.w3.org/ns/activitystreams#Follow`). Everything else is an
+  extension type.
+
+Together with the limits of section 8.1 these rules make the reading agree with the envelope schema: every
+forwarded body yields an `activity.actor` and an `activity.id` that the schema accepts (a test checks this on
+every forwarded fixture).
 
 ### 8.3 Routing
 
@@ -310,11 +374,16 @@ updates, and a stored receipt is not proof that a forward happened.
 These are decisions, shared by the units that implement them.
 
 1. **Removal of a link stops sending.** After a link is removed, no new send and no new retry is authorized.
-   A send that was authorized just before the removal may still reach the receiver. "Authorized" means the
-   transaction that gives the job its send permission has committed. That commit time starts an absolute
-   `SEND_DEADLINE_SECONDS` limit (never longer than the remaining 72 hours, or the quarantine expiry for a
-   manual redelivery), and no database transaction, connection or lock is held while the HTTP request runs.
-   A timeout ends the sending; it is not a guarantee that bytes already delivered can be withdrawn.
+   A send that was authorized just before the removal may still reach the receiver. The **boundary** of
+   "authorized" is the commit of the transaction that gives the job its send permission: before that commit a
+   removal wins and nothing is sent; after it, the send may still run. The **origin of the deadline** is
+   `authorized_at`: the database clock time of the last update of the permission (not the worker's clock and not
+   the commit time). The deadline is absolute: `authorized_at + SEND_DEADLINE_SECONDS` (never later than
+   72 hours after `received_at`, or than the quarantine expiry for a manual redelivery). The time the commit
+   itself takes is part of that window and the window is not taken again after the commit. Waiting, DNS,
+   connection, TLS, sending and waiting for the answer all share the one deadline, and no database transaction,
+   connection or lock is held while the HTTP request runs. If the outcome of the commit is unknown, nothing is
+   sent. A timeout ends the sending; it is not a guarantee that bytes already delivered can be withdrawn.
 2. **Unknown references are forwarded** (section 8.3). Only Follow, Block and Undo/Accept/Reject that
    certainly refer to a known Follow/Block are excluded.
 3. **Quarantine for 30 days.** Only a permanent failure and the 72-hour cut-off keep the envelope for
@@ -352,6 +421,7 @@ compares them.
 | `EVIDENCE_HEADER_NAME_MAX` | 128 | characters in a header name |
 | `EVIDENCE_HEADER_VALUE_MAX` | 16384 | characters in a header value |
 | `OMITTED_NAMES_MAX` | 32 | names listed in `omitted_header_names` |
+| `OMITTED_COUNT_MAX` | 1024 | largest `omitted_header_count` (the count saturates) |
 | `REQUEST_TARGET_MAX` | 2048 | characters in `request_target` |
 | `URL_MAX` | 2048 | characters in an id, actor or key URL |
 | `ORIGIN_MAX` | 255 | characters in an origin |
@@ -361,6 +431,7 @@ compares them.
 | `JSON_MAX_DEPTH` | 32 | JSON nesting depth of an inbox body (root object = 1) |
 | `JSON_MAX_NODES` | 100000 | JSON values in an inbox body |
 | `TYPE_ARRAY_MAX` | 16 | entries in `type` |
+| `TYPE_STRING_MAX` | 512 | characters in one `type` string |
 | `ACTOR_ARRAY_MAX` | 16 | entries in an `actor` array |
 | `DATE_TOLERANCE_SECONDS` | 300 | outer `Date` skew, inclusive |
 | `SEND_DEADLINE_SECONDS` | 10 | absolute limit from the send permission |
@@ -380,7 +451,10 @@ Everything is under `fixtures/`. See `fixtures/README.md` for the file formats.
   acceptance without a ledger, and a normal acceptance with a `received_at` about 33 days old.
 * `retransmission.json`: one envelope sent three times; states what is unchanged and what changes.
 * `signature-vectors.json`: outer-signature vectors (valid and invalid) with signing strings.
-* `inbox/activity-reading.json`: the reading and routing rules of section 8.
+* `inbox/activity-reading.json`: the reading and routing rules of section 8, including the length limits of `actor`,
+  `id` and `type` and the agreement with the envelope schema.
+* `formats/field-formats.json`: valid and invalid timestamps, URLs and ports (section 4.5).
+* `evidence/header-omission.json`: original headers in, retained headers, omitted names and count out (section 4.3).
 * `p2/`: informative cases that need a link ledger; each states its precondition. They are separate from P1.
 * `keys/`: public keys and instance actor documents. Private keys are not stored: they were discarded after
   signing. `tools/generate-fixtures.mjs` regenerates everything with new keys.

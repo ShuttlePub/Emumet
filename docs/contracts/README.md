@@ -22,8 +22,9 @@ contract: change the host copy, commit it, then copy the files again and update 
 
 `server/tests/post_relay_contract.rs` runs in CI. It checks the snapshot checksums, that the constants
 in the document, the schema and the fixtures agree, the envelope schema, a reference receiver that holds no
-link ledger (every P1 fixture), the signature vectors, the retransmission invariants, and a reference
-reader for inbox bodies. The reference code is test-only; it is not the implementation. Run it with
+link ledger (every P1 fixture, including the request method and target), the signature vectors, the
+retransmission invariants, the field-format fixtures (timestamps, URLs), a reference implementation of the header-evidence
+algorithm, and a reference reader for inbox bodies (every forwarded value must fit the envelope schema). The reference code is test-only; it is not the implementation. Run it with
 `nix develop -c cargo test -p server --test post_relay_contract`.
 
 The fixtures contain only public test keys. Regenerating them (in the host repository) creates new keys.

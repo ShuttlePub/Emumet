@@ -1,0 +1,75 @@
+{
+  "id": "p1-reject-schema-month-out-of-range",
+  "phase": "P1",
+  "title": "received_at is 2026-99-99T99:99:99Z: the ranges of month, day, hour, minute and second are part of the schema pattern.",
+  "description": "",
+  "preconditions": {
+    "link_ledger": "none",
+    "note": "P1 receivers hold no link ledger. link_id and link_generation are the trusted Emumet's own claim."
+  },
+  "receiver": {
+    "trusted_emumet_origins": [
+      "https://emumet.example",
+      "https://emumet-b.example"
+    ],
+    "own_origin": "https://home.example",
+    "now": "2026-11-21T09:00:00Z",
+    "instance_actor_documents": {
+      "https://emumet.example": {
+        "@context": [
+          "https://www.w3.org/ns/activitystreams",
+          "https://w3id.org/security/v1"
+        ],
+        "id": "https://emumet.example/ap/instance",
+        "type": "Application",
+        "publicKey": [
+          {
+            "id": "https://emumet.example/ap/instance#key-7f3a9c1e",
+            "owner": "https://emumet.example/ap/instance",
+            "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnMS7qBYNOqu/Dl+i8W3x\nCUCgUCirVjFzgGHH6+I/RLE4AbiJFJJzFSkcR2dvhlXNel4UT01RjK3d3q7Jw5ER\nuZMG3psHDKyXTbHqkHilYFi8NYmHVrcFZguS3W1pas59HrqBktL90rzS1sbCPJNA\njrga64OleOO6M33VaZqNq4YJH7EM75ngCgTJajspKdQmgxnbFKyKFrkfxJC5Ka/M\npwprCBTLQUMh471FUT4TqHSiHTNscM0JxnXn7Ay46eEJt4x6ucDRYQD0vbL2Z5WZ\nSgDr47h/YiWV8+EMwdbtzbfb/75LhiuR1ElSh13uWWHNtixCTKgppKf2d2E56NSs\nWQIDAQAB\n-----END PUBLIC KEY-----\n"
+          },
+          {
+            "id": "https://emumet.example/ap/instance#key-2b8d4e60",
+            "owner": "https://emumet.example/ap/instance",
+            "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmbBrjLWeUQePwV26ghgi\nXmrZGQPJKCCt6y55vRwCJTkFUu33SfYCCuwpxphG9cDmPsI+ik+c9n4NqMzVndIg\nH2ztPCawj62EYKO26ffgOiyr7Co4pnrbE3TC7nZDzi+McIS+ysdFXqf67d8jtNVc\nGacLIV2O5GILyot0zgqV548JXcsZCGoqrsIt5jeTgfRU0khLdlT7Napmc7ungyeP\ni83kVK/tKtCZ6DOL5NQB6XqJC2SG3bRlY2r63pr8fRiZG3+Pzla+lCi8vvajLQl1\nefklbd4qsif5S6cofO4ZOcYgazrvxMNvZgCDo2HZkYK/DFsJvAMEDVwtcFbXpaej\nLQIDAQAB\n-----END PUBLIC KEY-----\n"
+          }
+        ]
+      },
+      "https://emumet-b.example": {
+        "@context": [
+          "https://www.w3.org/ns/activitystreams",
+          "https://w3id.org/security/v1"
+        ],
+        "id": "https://emumet-b.example/ap/instance",
+        "type": "Application",
+        "publicKey": [
+          {
+            "id": "https://emumet-b.example/ap/instance#key-b19c0d22",
+            "owner": "https://emumet-b.example/ap/instance",
+            "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0fZ/g4XRkzu/LsI/EoX3\nYflgw8t9GLPq+jL8Ign9PhcyWJlsIzXBQME9c2OzOwOWWSXHQijmLGG9t5dEAisz\nbEZmTAHxSA9gqCDAuH1prttPDdCwN8uCYUE+zY9xLxbumF5NTKJGpNFBWYWntbST\nRlnfbooBdlfLSyeccAeLaGZA35azjN3ZNN0HFNm9O9+JYStCpS5xxVW+SrhKprxm\n2sq9+F0N4uvwC1jNovx2Obx0neDqyT3EnERMVVzcWDTbReF7/JvXXsnyEk/0eh7v\n5jbUuj2oTBT1ojTcN2Rxg7whurcl6Ta+Nn+e+ttZw6LZX7BZy+u4aAqCVbG9Zeua\n4wIDAQAB\n-----END PUBLIC KEY-----\n"
+          }
+        ]
+      }
+    },
+    "already_accepted_receipts": []
+  },
+  "request": {
+    "method": "POST",
+    "target": "/internal/v1/emumet/activities",
+    "headers": {
+      "host": "home.example",
+      "date": "Sat, 21 Nov 2026 08:59:58 GMT",
+      "digest": "SHA-256=b2uRh17638t0/is9IylkydJXGfiyefRClYM09qks00U=",
+      "content-type": "application/json",
+      "content-length": "2103",
+      "signature": "keyId=\"https://emumet.example/ap/instance#key-7f3a9c1e\",algorithm=\"rsa-sha256\",headers=\"(request-target) host date digest\",signature=\"dKQlUtX58kvpxzfYY7zjYxcy9SLk8u6MqbkOrbBz6r3i22MM+GRxvZb9yNFOpf1u1d2047HFaXXRePYLjfO/i6SJdVqSSsoaFok+04LYEnL6eXUMbQ47OdJJIPNNt52Gmv4JrURdVHVSoZsDwvXW9s5tU+ry1NzRt+fL9fC6VL+pyQnCkPGsD6lO8fuonrzCV/cA6IoO+M83VRYvCCG2mduVZ9OqaNeZ8kRdmMiziWg9WNmxa5hGwyyIzFYbxstID+uNDErTvEHZwWoMa+8gyBaqpwI3yvqDU9WijxRr5aKoUDPsG2S7tBVLtwYaMx5jTnf4YDH9+4w9hXRl/+l2oA==\""
+    },
+    "body": "{\"version\":1,\"receipt_id\":\"rcpt_01JD8Q2M7K4N5V6W9X0Y1Z2B1F\",\"received_at\":\"2026-99-99T99:99:99Z\",\"sender\":{\"origin\":\"https://emumet.example\",\"instance_actor\":\"https://emumet.example/ap/instance\"},\"recipient\":{\"origin\":\"https://home.example\",\"profile_actor\":\"https://emumet.example/ap/profiles/p1nano\",\"link_id\":\"link_8f2d6c1a9b3e\",\"link_generation\":1},\"activity\":{\"id\":\"https://remote.example/users/bob/statuses/109/activity\",\"actor\":\"https://remote.example/users/bob\",\"body_encoding\":\"base64\",\"raw_body\":\"eyJAY29udGV4dCI6Imh0dHBzOi8vd3d3LnczLm9yZy9ucy9hY3Rpdml0eXN0cmVhbXMiLCJpZCI6Imh0dHBzOi8vcmVtb3RlLmV4YW1wbGUvdXNlcnMvYm9iL3N0YXR1c2VzLzEwOS9hY3Rpdml0eSIsInR5cGUiOiJDcmVhdGUiLCJhY3RvciI6Imh0dHBzOi8vcmVtb3RlLmV4YW1wbGUvdXNlcnMvYm9iIiwidG8iOiJodHRwczovL3d3dy53My5vcmcvbnMvYWN0aXZpdHlzdHJlYW1zI1B1YmxpYyIsIm9iamVjdCI6eyJpZCI6Imh0dHBzOi8vcmVtb3RlLmV4YW1wbGUvdXNlcnMvYm9iL3N0YXR1c2VzLzEwOSIsInR5cGUiOiJOb3RlIiwiY29udGVudCI6IuOBk+OCk+OBq+OBoeOBryAg5LiW55WMIFx1MDBlOSJ9fQ==\"},\"verification\":{\"result\":\"verified\",\"scheme\":\"cavage\",\"key_id\":\"https://remote.example/users/bob#main-key\",\"signer_actor\":\"https://remote.example/users/bob\",\"verified_at\":\"2026-11-21T08:59:41.014Z\"},\"original_request\":{\"method\":\"POST\",\"request_target\":\"/ap/profiles/p1nano/inbox\",\"signature_headers\":[{\"name\":\"host\",\"value\":\"emumet.example\"},{\"name\":\"date\",\"value\":\"Sat, 21 Nov 2026 08:59:40 GMT\"},{\"name\":\"digest\",\"value\":\"SHA-256=b+3AbafvIB9FJN9HRxWKQW4PUEeWNdZFeUhPy77SRqg=\"},{\"name\":\"content-type\",\"value\":\"application/activity+json\"},{\"name\":\"signature\",\"value\":\"keyId=\\\"https://remote.example/users/bob#main-key\\\",algorithm=\\\"rsa-sha256\\\",headers=\\\"(request-target) host date digest\\\",signature=\\\"PTwV1bHf8WXTfP9t2VnXmW4bBaCp+LRZ1yGBYetInVcmZR8H08gPgszxVK0e63d7WhAkiGc356b2o8E37RNWcC0iOvBvF85e72Dd+TtwG5XLxjtKuvf2ankpgKjfDO71uT7+q7zMbUCNST5NNb2kSy2J1i68OqlJ3XwvCQf50Xg2Xjq/hgsPrxJz4d6QOD1D16zxxVwbDZiqx9EPSScNNOY5vCxdlct9mp2WqdDB2kCjtpeyk2WzatNGdfiCduaq6uupHLWq0p7pCq9LTRzVHoPyWVL+c579SItFK17mmAm6FQy0imqNYqjA9Th+g6KLClfstzdAtkhaxzLxZtuuOA==\\\"\"}]},\"evidence_complete\":true,\"omitted_header_names\":[],\"omitted_header_count\":0}"
+  },
+  "expect": {
+    "result": "reject",
+    "status": 400,
+    "reason": "schema_violation",
+    "sender_class": "permanent"
+  }
+}

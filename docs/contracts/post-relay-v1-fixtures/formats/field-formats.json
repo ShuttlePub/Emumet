@@ -1,0 +1,533 @@
+{
+  "note": "v1.md section 4.5. `timestamps`: `schema_valid` is the result of the schema pattern, `calendar_valid` the day-exists check outside the schema; `valid` needs both. `urls`: `def` names the schema definition (remote_url = activity.actor, emumet_url = recipient.profile_actor, origin = recipient.origin, instance_actor = sender.instance_actor); `valid` is the result of the schema (a value longer than URL_MAX is invalid).",
+  "field_for_def": {
+    "remote_url": "activity.actor",
+    "emumet_url": "recipient.profile_actor",
+    "origin": "recipient.origin",
+    "instance_actor": "sender.instance_actor"
+  },
+  "timestamps": [
+    {
+      "value": "2026-11-21T09:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": true,
+      "valid": true
+    },
+    {
+      "value": "2026-11-21T09:00:00.1Z",
+      "schema_valid": true,
+      "calendar_valid": true,
+      "valid": true
+    },
+    {
+      "value": "2026-11-21T09:00:00.123456789Z",
+      "schema_valid": true,
+      "calendar_valid": true,
+      "valid": true
+    },
+    {
+      "value": "2026-01-01T00:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": true,
+      "valid": true
+    },
+    {
+      "value": "2026-12-31T23:59:59Z",
+      "schema_valid": true,
+      "calendar_valid": true,
+      "valid": true
+    },
+    {
+      "value": "2024-02-29T00:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": true,
+      "valid": true,
+      "note": "leap day"
+    },
+    {
+      "value": "2000-02-29T00:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": true,
+      "valid": true,
+      "note": "leap day of a century divisible by 400"
+    },
+    {
+      "value": "2026-02-30T10:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "passes the pattern; the day does not exist in that month and year (checked outside the schema)"
+    },
+    {
+      "value": "2026-02-29T10:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "passes the pattern; the day does not exist in that month and year (checked outside the schema)"
+    },
+    {
+      "value": "2026-04-31T10:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "passes the pattern; the day does not exist in that month and year (checked outside the schema)"
+    },
+    {
+      "value": "2026-06-31T10:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "passes the pattern; the day does not exist in that month and year (checked outside the schema)"
+    },
+    {
+      "value": "2026-09-31T10:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "passes the pattern; the day does not exist in that month and year (checked outside the schema)"
+    },
+    {
+      "value": "2026-11-31T10:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "passes the pattern; the day does not exist in that month and year (checked outside the schema)"
+    },
+    {
+      "value": "1900-02-29T00:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "1900 is not a leap year"
+    },
+    {
+      "value": "2100-02-29T00:00:00Z",
+      "schema_valid": true,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "2100 is not a leap year"
+    },
+    {
+      "value": "2026-99-99T99:99:99Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-13-01T00:00:00Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-00-10T00:00:00Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-00T00:00:00Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-32T00:00:00Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-21T24:00:00Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-21T09:60:00Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-21T09:00:60Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-21T09:00:00+00:00",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-21t09:00:00z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-21T09:00:00",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-21 09:00:00Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-21T09:00:00.Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "2026-11-21T09:00:00.1234567890Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "26-11-21T09:00:00Z",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    },
+    {
+      "value": "",
+      "schema_valid": false,
+      "calendar_valid": false,
+      "valid": false,
+      "note": "rejected by the schema pattern"
+    }
+  ],
+  "urls": [
+    {
+      "def": "remote_url",
+      "value": "https://remote.example/users/bob",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "http://remote.example/u",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example:8443/u",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "https://Remote.Example/u",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example#frag",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example?x=1",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example:65535/u",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "https://a.b-c.example/u",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example/users/bob#main-key",
+      "valid": true
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": true,
+      "note": "exactly URL_MAX (2048) characters"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": false,
+      "note": "URL_MAX + 1 characters"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://#",
+      "valid": false,
+      "note": "empty authority"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://?x",
+      "valid": false,
+      "note": "empty authority"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://",
+      "valid": false,
+      "note": "empty authority"
+    },
+    {
+      "def": "remote_url",
+      "value": "https:///path",
+      "valid": false,
+      "note": "empty authority"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://user@remote.example/u",
+      "valid": false,
+      "note": "userinfo"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://user:pw@remote.example/",
+      "valid": false,
+      "note": "userinfo"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://[::1]/u",
+      "valid": false,
+      "note": "IPv6 literal"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example:0/u",
+      "valid": false,
+      "note": "port 0"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example:65536/u",
+      "valid": false,
+      "note": "port above 65535"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example:08080/u",
+      "valid": false,
+      "note": "leading zero in the port"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example:/u",
+      "valid": false,
+      "note": "empty port"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example:443x/u",
+      "valid": false,
+      "note": "port with a letter"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote..example/u",
+      "valid": false,
+      "note": "empty label"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://-remote.example/u",
+      "valid": false,
+      "note": "leading hyphen"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example./u",
+      "valid": false,
+      "note": "trailing dot"
+    },
+    {
+      "def": "remote_url",
+      "value": "ftp://remote.example/u",
+      "valid": false,
+      "note": "scheme"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example/with space",
+      "valid": false,
+      "note": "space"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://remote.example/ü",
+      "valid": false,
+      "note": "non-ASCII path"
+    },
+    {
+      "def": "remote_url",
+      "value": "https://rémote.example/u",
+      "valid": false,
+      "note": "non-ASCII host"
+    },
+    {
+      "def": "remote_url",
+      "value": "//remote.example/u",
+      "valid": false,
+      "note": "no scheme"
+    },
+    {
+      "def": "remote_url",
+      "value": "remote.example/u",
+      "valid": false,
+      "note": "no scheme"
+    },
+    {
+      "def": "emumet_url",
+      "value": "https://emumet.example/ap/profiles/p1nano",
+      "valid": true
+    },
+    {
+      "def": "emumet_url",
+      "value": "https://emumet.example:8443/ap/x",
+      "valid": true
+    },
+    {
+      "def": "emumet_url",
+      "value": "https://emumet.example",
+      "valid": false,
+      "note": "no path"
+    },
+    {
+      "def": "emumet_url",
+      "value": "http://emumet.example/x",
+      "valid": false,
+      "note": "http"
+    },
+    {
+      "def": "emumet_url",
+      "value": "https://Emumet.example/x",
+      "valid": false,
+      "note": "uppercase host"
+    },
+    {
+      "def": "emumet_url",
+      "value": "https://#/x",
+      "valid": false,
+      "note": "empty authority"
+    },
+    {
+      "def": "emumet_url",
+      "value": "https://user@emumet.example/x",
+      "valid": false,
+      "note": "userinfo"
+    },
+    {
+      "def": "emumet_url",
+      "value": "https://emumet.example:99999/x",
+      "valid": false,
+      "note": "port"
+    },
+    {
+      "def": "origin",
+      "value": "https://home.example",
+      "valid": true
+    },
+    {
+      "def": "origin",
+      "value": "https://home.example:8443",
+      "valid": true
+    },
+    {
+      "def": "origin",
+      "value": "https://home.example:443",
+      "valid": false,
+      "note": "default port"
+    },
+    {
+      "def": "origin",
+      "value": "https://home.example/",
+      "valid": false,
+      "note": "path"
+    },
+    {
+      "def": "origin",
+      "value": "https://home.example:0",
+      "valid": false,
+      "note": "port 0"
+    },
+    {
+      "def": "origin",
+      "value": "https://HOME.example",
+      "valid": false,
+      "note": "uppercase"
+    },
+    {
+      "def": "origin",
+      "value": "http://home.example",
+      "valid": false,
+      "note": "http"
+    },
+    {
+      "def": "origin",
+      "value": "https://home.example:99999",
+      "valid": false,
+      "note": "port"
+    },
+    {
+      "def": "instance_actor",
+      "value": "https://emumet.example/ap/instance",
+      "valid": true
+    },
+    {
+      "def": "instance_actor",
+      "value": "https://emumet.example:8443/ap/instance",
+      "valid": true
+    },
+    {
+      "def": "instance_actor",
+      "value": "https://emumet.example/ap/other",
+      "valid": false,
+      "note": "other path"
+    },
+    {
+      "def": "instance_actor",
+      "value": "https://emumet.example/ap/instance/",
+      "valid": false,
+      "note": "trailing slash"
+    },
+    {
+      "def": "instance_actor",
+      "value": "http://emumet.example/ap/instance",
+      "valid": false,
+      "note": "http"
+    }
+  ]
+}
