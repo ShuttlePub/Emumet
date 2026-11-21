@@ -5,7 +5,7 @@ use crate::handler::AppModule;
 use application::service::home_link::HomeLinkUseCase;
 use application::service::session_context::OrganizationContext;
 use axum::extract::FromRef;
-use kernel::home_link::HomeLink;
+use kernel::interfaces::home_link::HomeLink;
 use kernel::KernelError;
 use std::sync::Arc;
 #[derive(Clone)]

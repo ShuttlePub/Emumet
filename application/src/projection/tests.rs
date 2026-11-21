@@ -1623,3 +1623,36 @@ mod account_report {
         assert_eq!(checkpoint(&projector.db).await, checkpoint_2);
     }
 }
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn missing_auth_history_does_not_block_projection_or_recreate_an_auth_link() {
+    let _guard = PROJECTOR_TEST_LOCK.lock().await;
+    kernel::ensure_generator_initialized();
+    let projector = ProjectorTest {
+        db: PostgresDatabase::new().await.unwrap(),
+    };
+    clear_checkpoint(&projector.db).await;
+    let account = AccountId::default();
+    let absent_auth = AuthAccountId::default();
+    persist_account_events(&projector.db, &account, &absent_auth, false).await;
+    projector.project_batch().await.unwrap();
+    let mut c = projector.db.connection().await.unwrap();
+    assert!(projector
+        .db
+        .account_read_model()
+        .find_by_id_including_deleted(&mut c, &account)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM auth_emumet_accounts WHERE emumet_id=$1"
+        )
+        .bind(account.as_ref())
+        .fetch_one(&mut *c)
+        .await
+        .unwrap(),
+        0
+    );
+}

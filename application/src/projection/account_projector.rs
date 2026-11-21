@@ -1,8 +1,8 @@
-use kernel::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use kernel::interfaces::database::{
     DependOnDatabaseConnection, Savepoint, Transaction, TransactionalDatabaseConnection,
 };
 use kernel::interfaces::event::EventApplier;
+use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use kernel::interfaces::permission::{
     AccountRelation, DependOnPermissionWriter, PermissionWriter, RelationTarget,
 };
@@ -16,7 +16,10 @@ use kernel::interfaces::read_model::{
     AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
     DependOnProfileReadModel, MetadataReadModel,
 };
-use kernel::interfaces::repository::{DependOnFollowRepository, FollowRepository};
+use kernel::interfaces::repository::{
+    AuthAccountRepository, DependOnAuthAccountRepository, DependOnFollowRepository,
+    FollowRepository,
+};
 use kernel::prelude::entity::{
     Account, AccountEvent, AccountId, AccountKind, EventEnvelope, FollowTargetId, Profile,
     ProfileId,
@@ -41,10 +44,12 @@ pub const ACCOUNT_PROJECTOR_BATCH_LIMIT: i64 = 1000;
 /// Transactional log tailing projector for account projections (ADR 0006
 /// decision 4/6). One poll reads the seq window, folds the batch per aggregate
 /// in version order, writes the projection through the version-gated writer and
-/// advances the checkpoint — all in one transaction.
+/// advances the checkpoint. Each Account has its own bounded gate-bearing transaction;
+/// permission service calls occur after commit and checkpointing is separate.
 pub trait ProjectAccountBatch:
     DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
     + DependOnHomeLinkStore
+    + DependOnAuthAccountRepository
     + DependOnAccountEventLog
     + DependOnProjectionCheckpointStore
     + DependOnAccountProjectionWriter
@@ -217,9 +222,22 @@ pub trait ProjectAccountBatch:
                                         self.restore_owned_profiles(executor, account_id).await?;
                                     }
                                     if let Some(auth_id) = created_auth_account_id {
-                                        self.account_read_model()
-                                            .link_auth_account(executor, account_id, &auth_id)
-                                            .await?;
+                                        // Historical events can outlive the AuthAccount. Do not
+                                        // resurrect a linkage/permission or stall all lifecycle
+                                        // replay on that expected absence. Other DB errors propagate.
+                                        if self
+                                            .auth_account_repository()
+                                            .find_by_id(executor, &auth_id)
+                                            .await?
+                                            .is_some()
+                                        {
+                                            self.account_read_model()
+                                                .link_auth_account(executor, account_id, &auth_id)
+                                                .await?;
+                                        } else {
+                                            create_permission = false;
+                                            tracing::warn!(account_id = %account_id.as_ref(), "Account projection: historical AuthAccount absent; linkage skipped");
+                                        }
                                     }
                                 }
                                 (None, _) => {
@@ -344,6 +362,7 @@ pub trait ProjectAccountBatch:
 impl<T> ProjectAccountBatch for T where
     T: DependOnDatabaseConnection<DatabaseConnection: TransactionalDatabaseConnection>
         + DependOnHomeLinkStore
+        + DependOnAuthAccountRepository
         + DependOnAccountEventLog
         + DependOnProjectionCheckpointStore
         + DependOnAccountProjectionWriter

@@ -1,13 +1,13 @@
 //! Current-owner API for the P1 home-link ledger. No relay acceptance/delivery is enabled.
 use crate::service::session_context::OrganizationContext;
 use error_stack::Report;
-use kernel::home_link::{
-    DependOnHomeLinkStore, DependOnHomeOriginPolicy, HomeLink, HomeLinkStore, HomeOriginPolicy,
-    LinkOwner,
-};
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnTransactionManager, TransactionManager,
+};
+use kernel::interfaces::home_link::{
+    DependOnHomeLinkStore, DependOnHomeOriginPolicy, HomeLink, HomeLinkStore, HomeOriginPolicy,
+    LinkOwner,
 };
 use kernel::prelude::entity::AuthAccountId;
 use kernel::KernelError;
@@ -34,7 +34,9 @@ async fn authorize<T: DependOnHomeLinkStore>(
     } else {
         store.caller_owns(c, &owner.account_id, auth).await?
     };
-    if !allowed || !owner.active {
+    // State inspection and revocation remain available to the current owner while held.
+    // Registration checks active eligibility separately under this same gate.
+    if !allowed {
         return Err(Report::new(KernelError::PermissionDenied));
     }
     Ok(owner)
@@ -86,6 +88,9 @@ pub trait HomeLinkUseCase:
                     .transaction(move |c| {
                         Box::pin(async move {
                             let owner = authorize(&worker, c, &auth, org.as_ref(), &nanoid).await?;
+                            if !owner.active {
+                                return Err(Report::new(KernelError::PermissionDenied));
+                            }
                             worker
                                 .home_link_store()
                                 .register(c, &owner, &actor, &origin)

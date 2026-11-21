@@ -520,7 +520,7 @@ impl DependOnInstanceKeyCache for AppModule {
     }
 }
 
-impl kernel::home_link::DependOnHomeOriginPolicy for AppModule {
+impl kernel::interfaces::home_link::DependOnHomeOriginPolicy for AppModule {
     type HomeOriginPolicy = driver::home_origin::HomeOriginAllowlist;
     fn home_origin_policy(&self) -> &Self::HomeOriginPolicy {
         &self.home_origin_policy

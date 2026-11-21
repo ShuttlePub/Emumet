@@ -1,10 +1,10 @@
 use super::resolve_actor_with_active_membership;
 use error_stack::Report;
-use kernel::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, TransactionManager,
 };
 use kernel::interfaces::event::EventApplier;
+use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use kernel::interfaces::read_model::{
     DependOnAccountQuery, DependOnProfileQuery, DependOnProfileReadModel,
     DependOnProfileTransferRequestQuery, DependOnProfileTransferRequestReadModel, ProfileReadModel,

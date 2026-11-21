@@ -13,10 +13,10 @@ use axum::http::Request;
 use driver::home_origin::HomeOriginAllowlist;
 use driver::webhook::HostResolver;
 use http_body_util::BodyExt;
-use kernel::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, Transaction, TransactionalDatabaseConnection,
 };
+use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use kernel::interfaces::repository::{AggregateRepository, DependOnAccountRepository};
 use kernel::prelude::entity::{Account, AccountEvent, AccountId, EventVersion};
 use serde_json::{json, Value};
@@ -663,4 +663,63 @@ async fn home_link_register_unlink_and_real_transfer_race_keeps_only_current_own
         .list_home_links(&old.auth_account_id, None, &p.nanoid)
         .await
         .is_err());
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn home_link_held_owner_can_inspect_and_unlink_but_cannot_register() {
+    let w = world().await;
+    let stranger = w.new_user().await;
+    for event in [
+        AccountEvent::Banned {
+            reason: "L1 held-owner regression".into(),
+            banned_at: time::OffsetDateTime::now_utc(),
+        },
+        AccountEvent::Suspended {
+            reason: "L1 held-owner regression".into(),
+            suspended_at: time::OffsetDateTime::now_utc(),
+            expires_at: None,
+        },
+    ] {
+        let u = w.new_user().await;
+        let p = w.create_profile(&u, false).await;
+        let link = register(&w, &u, &p).await;
+        let base = format!("/api/v1/profiles/{}/links", p.nanoid);
+        let delete = format!("{base}/{}", link["id"].as_str().unwrap());
+        raw_event(&w, &owner(&w, &p).await, event).await;
+        w.module.project_batch().await.unwrap();
+        let (status, list) = request(&w, Some(&u), "GET", &base, None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list["items"][0]["state"], "active");
+        assert_eq!(list["items"][0]["generation"], 1);
+        assert_eq!(
+            request(
+                &w,
+                Some(&u),
+                "POST",
+                &base,
+                Some(json!({"origin":"https://home.example","trust_mode":3})),
+                None
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            request(&w, Some(&stranger), "DELETE", &delete, None, None)
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                request(&w, Some(&u), "DELETE", &delete, None, None).await.0,
+                StatusCode::NO_CONTENT
+            );
+        }
+        let (status, list) = request(&w, Some(&u), "GET", &base, None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list["items"][0]["state"], "unlinked");
+        assert_eq!(list["items"][0]["generation"], 2);
+    }
 }

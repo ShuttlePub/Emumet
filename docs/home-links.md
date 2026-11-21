@@ -30,6 +30,9 @@ S1 treats it as policy hold, rechecking owner/link/deadline on recovery without 
 A Profile need not have its one-time username yet to register a home. This was confirmed by the
 parent in question-2e1578885ec63c95572a82436f587b2e: registration requires an active owner;
 I1/S1 still refuse non-actor inbox/send eligibility under the existing federation rules.
+Current owners may GET/DELETE while suspended or banned; only registration/send/manual-redelivery
+require active eligibility (parent decision question-146fc797f523469ca5c83ce8daca1f33). The normal JWT
+and organization-context middleware is unchanged; no authentication exception is introduced.
 
 ## Authority and replay boundary
 
@@ -39,6 +42,8 @@ registration, ownership transfer, unlink and the reusable permission-check port.
 is evaluated against current time. BAN/suspension hold the link (ID/generation unchanged).
 Incomplete streams (including seq commit inversion) fail closed for authorization; the projector
 warns and preserves its existing window retry rather than falling back to a projection.
+If a historical Created event refers to an AuthAccount that no longer exists, projection continues
+without recreating its auth linkage or Keto owner relation; unrelated DB/lifecycle errors still roll back.
 
 Current Profile ownership is rechecked on its locked row; normal transfer writes its Profile event,
 Profile row and ledger ownership in one transaction. The pre-gate owner is only a candidate.
@@ -95,6 +100,8 @@ the final snapshot, including a deactivate/reactivate pair in one batch. The wri
 also prevents a truncated window ending on an old deactivation from deleting a newer active
 Profile/link. Keto calls happen **after commit**, never under a gate or DB transaction. Profile
 restoration locks IDs in order; deactivation deletes every owned Profile, not LIMIT 1.
+The existing Profile relationship advisory gate is acquired before link locks, including on
+deactivation append, because the subsequent physical deletion may cascade into relationship tables.
 A defensive DB trigger refuses an uncoordinated physical Profile deletion with active links.
 
 `LinkCancellationParticipant::cancel_link_generation` is the Q1 transaction participation port:
@@ -141,8 +148,11 @@ job rejects zero matches or ignored acceptance tests. Test names below omit thei
 | Deactivation commit, logical deletion, all Profiles, replay barrier | `deactivation_commit_revokes_all_profiles_with_rows_remaining_and_fences_replay` |
 | Authority despite projection lag; BAN and suspension expiry | `write_side_ban_is_seen_while_projection_is_active`, `suspension_uses_committed_state_and_expiry_without_unlinking` |
 | P0 / revoker-precommit, stalled P1 rollback, local timeout only | `p0_and_unlink_precommit_stop_points_serialize_mock_authorization`, `p1_stalled_permit_rolls_back_and_bounds_revocation_wait`, `lifecycle_timeouts_are_transaction_local_and_plain_transactions_remain_unbounded` |
+| Existing relationship gate precedes link locks | `deactivation_waits_for_existing_relationship_gate_before_locking_links` |
+| Missing historical AuthAccount does not block or restore privileges | `missing_auth_history_does_not_block_projection_or_recreate_an_auth_link` |
 | Populated old schema and old-binary migration refusal | `additive_migration_on_populated_main_schema_and_old_binary_refusal` (other fixtures migrate empty schemas) |
 | JWT/current owner/allowlist/mode/username-less API | `home_link_api_auth_origin_modes_and_idempotency_including_non_actor_profile` |
+| Held owner may inspect/unlink, but not register; no stranger access | `home_link_held_owner_can_inspect_and_unlink_but_cannot_register` |
 | Transfer retains identity; prior owner loses operations | `home_link_transfer_preserves_identity_and_old_owner_cannot_list_register_or_unlink` |
 | Register / unlink / actual transfer race | `home_link_register_unlink_and_real_transfer_race_keeps_only_current_owner` |
 | Same-batch deactivation/reactivation; stale replay leaves new home | `home_link_projector_same_batch_deactivate_reactivate_and_stale_replay_keep_new_link` |

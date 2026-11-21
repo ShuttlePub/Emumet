@@ -96,6 +96,52 @@ async fn seed_history(r: &Rehearsal, username: Option<&str>, set_later: bool) ->
 }
 
 async fn deactivate(r: &Rehearsal, local: &Local) {
+    let has_ledger: bool =
+        sqlx::query_scalar("SELECT to_regclass('public.profile_links') IS NOT NULL")
+            .fetch_one(&r.iso.pool)
+            .await
+            .unwrap();
+    if !has_ledger {
+        // Historical pre-L1 binary fixture, not a production compatibility bypass. The current
+        // writer correctly refuses to deactivate without its ledger. Reproduce the old binary's
+        // durable event, Account projection and physical Profile removal explicitly instead.
+        let mut connection = r.module.database_connection().connection().await.unwrap();
+        let account = r
+            .module
+            .account_repository()
+            .load(&mut connection, local.account.id())
+            .await
+            .unwrap();
+        let command = Account::deactivate(
+            local.account.id().clone(),
+            account.aggregate().version().clone(),
+        );
+        sqlx::query("INSERT INTO account_events(id,version,event_name,data) VALUES ($1,$2,$3,$4)")
+            .bind(command.id().as_ref())
+            .bind(kernel::generate_id())
+            .bind(command.event_name())
+            .bind(serde_json::to_value(command.event()).unwrap())
+            .execute(&r.iso.pool)
+            .await
+            .unwrap();
+        let account = r
+            .module
+            .account_repository()
+            .load(&mut connection, local.account.id())
+            .await
+            .unwrap();
+        r.module
+            .account_read_model()
+            .update(&mut connection, account.aggregate())
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM profiles WHERE account_id = $1")
+            .bind(local.account.id().as_ref())
+            .execute(&r.iso.pool)
+            .await
+            .unwrap();
+        return;
+    }
     r.module
         .deactivate_account(
             &local.auth_account_id,

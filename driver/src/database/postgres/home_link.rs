@@ -1,12 +1,14 @@
 //! Shared transaction gate and durable link ledger. See docs/home-links.md.
 use super::account_repository::PostgresAccountRepository;
+use super::profile_relationship_lock::PostgresProfileRelationshipLock;
 use crate::database::{PostgresConnection, PostgresDatabase};
 use crate::ConvertError;
 use error_stack::Report;
-use kernel::home_link::{
+use kernel::interfaces::home_link::{
     DependOnHomeLinkStore, HomeLink, HomeLinkStore, LinkCancellationParticipant, LinkOwner,
 };
 use kernel::interfaces::repository::AggregateRepository;
+use kernel::interfaces::repository::ProfileRelationshipLock;
 use kernel::prelude::entity::{
     Account, AccountId, AccountStatus, AuthAccountId, EventVersion, ProfileId,
 };
@@ -203,7 +205,12 @@ impl HomeLinkStore for PostgresHomeLinkStore {
                 .fetch_all(&mut **c)
                 .await
                 .convert_error()?;
-        self.lock_profiles(c, &ids.into_iter().map(ProfileId::new).collect::<Vec<_>>())
+        let ids = ids.into_iter().map(ProfileId::new).collect::<Vec<_>>();
+        self.lock_profiles(c, &ids).await?;
+        // Profile deletion cascades into existing relationship tables. Take their
+        // established gate before link locks / future Q1 quota or job locks.
+        PostgresProfileRelationshipLock
+            .lock_profiles(c, &ids)
             .await?;
         sqlx::query("DELETE FROM profiles WHERE account_id=$1")
             .bind(account.as_ref())
@@ -300,7 +307,12 @@ impl HomeLinkStore for PostgresHomeLinkStore {
         // Caller owns Account gate. Include ledger-only identities and ALL owned live Profiles.
         let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM profiles WHERE account_id=$1 UNION SELECT profile_id FROM profile_links WHERE owner_account_id=$1 ORDER BY 1")
             .bind(account.as_ref()).fetch_all(&mut **c).await.convert_error()?;
-        self.lock_profiles(c, &ids.into_iter().map(ProfileId::new).collect::<Vec<_>>())
+        let ids = ids.into_iter().map(ProfileId::new).collect::<Vec<_>>();
+        self.lock_profiles(c, &ids).await?;
+        // Profile deletion cascades into existing relationship tables. Take their
+        // established gate before link locks / future Q1 quota or job locks.
+        PostgresProfileRelationshipLock
+            .lock_profiles(c, &ids)
             .await?;
         let links = sqlx::query_as::<_,LinkRow>("SELECT * FROM profile_links WHERE owner_account_id=$1 AND registered_account_version < $2 AND state='active' ORDER BY id FOR UPDATE")
             .bind(account.as_ref()).bind(version.as_ref()).fetch_all(&mut **c).await.convert_error()?;

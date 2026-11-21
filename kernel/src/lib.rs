@@ -6,7 +6,7 @@ mod entity;
 mod error;
 mod event;
 mod event_store;
-pub mod home_link;
+mod home_link;
 mod http_signing;
 pub mod id;
 mod login_consent;
@@ -32,6 +32,9 @@ pub mod prelude {
 
 #[cfg(feature = "interfaces")]
 pub mod interfaces {
+    pub mod home_link {
+        pub use crate::home_link::*;
+    }
     pub mod crypto {
         pub use crate::crypto::*;
     }
@@ -208,10 +211,10 @@ macro_rules! impl_database_delegation {
             }
         }
 
-        impl $crate::home_link::DependOnHomeLinkStore for $impl_type {
-            type HomeLinkStore = <$db_type as $crate::home_link::DependOnHomeLinkStore>::HomeLinkStore;
+        impl $crate::interfaces::home_link::DependOnHomeLinkStore for $impl_type {
+            type HomeLinkStore = <$db_type as $crate::interfaces::home_link::DependOnHomeLinkStore>::HomeLinkStore;
             fn home_link_store(&self) -> &Self::HomeLinkStore {
-                $crate::home_link::DependOnHomeLinkStore::home_link_store(&self.$field)
+                $crate::interfaces::home_link::DependOnHomeLinkStore::home_link_store(&self.$field)
             }
         }
 

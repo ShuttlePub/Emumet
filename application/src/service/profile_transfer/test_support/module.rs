@@ -360,13 +360,13 @@ pub fn fixture() -> Fixture {
 
 // Lifecycle semantics are covered by real-DB home-link tests. This transfer unit double
 // supplies the same owner candidate without pretending to test advisory locks.
-impl kernel::home_link::DependOnHomeLinkStore for MockModule {
+impl kernel::interfaces::home_link::DependOnHomeLinkStore for MockModule {
     type HomeLinkStore = Self;
     fn home_link_store(&self) -> &Self {
         self
     }
 }
-impl kernel::home_link::HomeLinkStore for MockModule {
+impl kernel::interfaces::home_link::HomeLinkStore for MockModule {
     type Connection = MockConnection;
     async fn lock_accounts(
         &self,
@@ -394,8 +394,8 @@ impl kernel::home_link::HomeLinkStore for MockModule {
         _: &mut MockConnection,
         profile: &ProfileId,
         candidate: &AccountId,
-    ) -> error_stack::Result<kernel::home_link::LinkOwner, KernelError> {
-        Ok(kernel::home_link::LinkOwner {
+    ) -> error_stack::Result<kernel::interfaces::home_link::LinkOwner, KernelError> {
+        Ok(kernel::interfaces::home_link::LinkOwner {
             profile_id: profile.clone(),
             account_id: candidate.clone(),
             account_version: EventVersion::new(1),
@@ -436,16 +436,16 @@ impl kernel::home_link::HomeLinkStore for MockModule {
         &self,
         _: &mut MockConnection,
         _: &ProfileId,
-    ) -> error_stack::Result<Vec<kernel::home_link::HomeLink>, KernelError> {
+    ) -> error_stack::Result<Vec<kernel::interfaces::home_link::HomeLink>, KernelError> {
         unimplemented!("not used by transfer")
     }
     async fn register(
         &self,
         _: &mut MockConnection,
-        _: &kernel::home_link::LinkOwner,
+        _: &kernel::interfaces::home_link::LinkOwner,
         _: &str,
         _: &str,
-    ) -> error_stack::Result<(kernel::home_link::HomeLink, bool), KernelError> {
+    ) -> error_stack::Result<(kernel::interfaces::home_link::HomeLink, bool), KernelError> {
         unimplemented!("not used by transfer")
     }
     async fn unlink(

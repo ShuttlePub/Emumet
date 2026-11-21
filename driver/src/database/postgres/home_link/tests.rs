@@ -628,3 +628,37 @@ async fn gate_budget_also_counts_time_spent_before_the_gate() {
         "the 5s budget must not restart when a gate is acquired"
     );
 }
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn deactivation_waits_for_existing_relationship_gate_before_locking_links() {
+    let w = IsolatedDatabase::create().await;
+    let (a, ps) = fixture(&w.database, 1).await;
+    let p = &ps[0];
+    let link = register(&w.database, p, "https://home.example")
+        .await
+        .unwrap()
+        .0;
+    let mut relationship = w.database.get_transaction().await.unwrap();
+    PostgresProfileRelationshipLock
+        .lock_profiles(relationship.connection(), std::slice::from_ref(p.id()))
+        .await
+        .unwrap();
+    let db = w.database.clone();
+    let task = tokio::spawn(async move { deactivate(&db, &a).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!task.is_finished());
+    let mut probe = w.database.get_transaction().await.unwrap();
+    sqlx::query("SELECT id FROM profile_links WHERE id=$1 FOR UPDATE NOWAIT")
+        .bind(&link.id)
+        .fetch_one(&mut **probe.connection())
+        .await
+        .expect("link must not be locked while waiting on the earlier relationship gate");
+    probe.commit().await.unwrap();
+    relationship.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(links(&w.database, p).await[0].state, "unlinked");
+}

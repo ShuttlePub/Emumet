@@ -1,4 +1,4 @@
-use kernel::home_link::HomeLink;
+use kernel::interfaces::home_link::HomeLink;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 #[derive(Deserialize, ToSchema)]

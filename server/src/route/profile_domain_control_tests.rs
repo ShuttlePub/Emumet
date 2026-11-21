@@ -18,9 +18,10 @@ use kernel::interfaces::read_model::{
     AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
 };
 use kernel::interfaces::repository::{
-    AggregateRepository, AuthAccountRepository, AuthHostRepository, DependOnAuthAccountRepository,
-    DependOnAuthHostRepository, DependOnOrganizationMembershipRepository,
-    DependOnProfileRepository, OrganizationMembershipRepository,
+    AggregateRepository, AuthAccountRepository, AuthHostRepository, DependOnAccountRepository,
+    DependOnAuthAccountRepository, DependOnAuthHostRepository,
+    DependOnOrganizationMembershipRepository, DependOnProfileRepository,
+    OrganizationMembershipRepository,
 };
 use kernel::prelude::entity::{
     Account, AccountKind, AuthAccountId, AuthHostId, CreatedAt, Nanoid, OrgRole,
@@ -39,6 +40,7 @@ const AUDIENCE: &str = "emumet";
 
 struct User {
     token: String,
+    auth_account_id: AuthAccountId,
     personal: Account,
     profile: Profile,
 }
@@ -161,7 +163,7 @@ impl Harness {
         profile
     }
 
-    async fn seed_account(&self, kind: AccountKind) -> Account {
+    async fn seed_account(&self, kind: AccountKind, auth_id: &AuthAccountId) -> Account {
         let account = AccountBuilder::new()
             .kind(kind)
             .name(unique_account_name())
@@ -172,6 +174,33 @@ impl Harness {
             .connection()
             .await
             .unwrap();
+        // L1 checks lifecycle eligibility against the event source, not this projection.
+        // Auth linkage / organization membership is separately seeded by the caller below.
+        let command = match account.kind() {
+            AccountKind::Personal => Account::create(
+                account.id().clone(),
+                account.name().clone(),
+                account.is_bot().clone(),
+                account.nanoid().clone(),
+                auth_id.clone(),
+            ),
+            AccountKind::Organization => Account::create_organization(
+                account.id().clone(),
+                account.name().clone(),
+                account.is_bot().clone(),
+                account.nanoid().clone(),
+                auth_id.clone(),
+            ),
+        };
+        let event = self
+            .module
+            .account_repository()
+            .save(&mut executor, command)
+            .await
+            .unwrap();
+        let mut account = None;
+        Account::apply(&mut account, event).unwrap();
+        let account = account.unwrap();
         self.module
             .account_read_model()
             .create(&mut executor, &account)
@@ -189,7 +218,9 @@ impl Harness {
             .host(self.host_id.clone())
             .client_id(subject.clone())
             .build();
-        let personal = self.seed_account(AccountKind::Personal).await;
+        let personal = self
+            .seed_account(AccountKind::Personal, &auth_account_id)
+            .await;
         {
             let mut executor = self
                 .module
@@ -210,6 +241,7 @@ impl Harness {
         }
         let profile = self.seed_profile(&personal).await;
         User {
+            auth_account_id,
             token: self.token_for(&subject),
             personal,
             profile,
@@ -217,7 +249,9 @@ impl Harness {
     }
 
     async fn organization_with_member(&self, member: &User, role: OrgRole) -> Account {
-        let org = self.seed_account(AccountKind::Organization).await;
+        let org = self
+            .seed_account(AccountKind::Organization, &member.auth_account_id)
+            .await;
         self.add_member(&org, member, role).await;
         org
     }

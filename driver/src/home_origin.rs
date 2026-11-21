@@ -4,7 +4,7 @@ use crate::profile_delivery::target::{
 };
 use crate::webhook::{is_forbidden_domain, is_forbidden_ip, HostResolver, SystemResolver};
 use error_stack::Report;
-use kernel::home_link::HomeOriginPolicy;
+use kernel::interfaces::home_link::HomeOriginPolicy;
 use kernel::KernelError;
 use std::collections::BTreeSet;
 use std::sync::Arc;

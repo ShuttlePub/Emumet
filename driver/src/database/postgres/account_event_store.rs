@@ -149,7 +149,7 @@ impl PostgresAccountEventStore {
         command: &CommandEnvelope<AccountEvent, Account>,
         version: i64,
     ) -> error_stack::Result<(), KernelError> {
-        use kernel::home_link::HomeLinkStore;
+        use kernel::interfaces::home_link::HomeLinkStore;
         let account_id = kernel::prelude::entity::AccountId::new(*command.id().as_ref());
         if is_delivery_lifecycle(command.event()) {
             super::home_link::PostgresHomeLinkStore
