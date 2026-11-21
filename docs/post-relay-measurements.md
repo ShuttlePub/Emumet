@@ -154,8 +154,9 @@ to exclude Q1 **and its dependent later migrations**, retaining the populated-ma
 
 ## Four-core / 8 GiB address-space measurement (2026-11-22)
 
-Same Ryzen 9 7900 host, release build, code identical to the final head except for test-only
-changes. **Sender process (production worker + Q1 ports + pinned HTTP adapter + measurement
+Same Ryzen 9 7900 host, release build, pre-review code at `2311aa0` (production sender
+unchanged through `b028983`); superseded by the R1–R3 rerun below. **Sender process
+(production worker + Q1 ports + pinned HTTP adapter + measurement
 harness) pinned with `taskset -c 0-3` and `ulimit -v 8388608` (8 GiB virtual address space);
 PostgreSQL 17 pinned to cores 4-7 (separate process, Unix socket); the HTTP recipient is an
 external child process pinned to cores 8-9** (so recipient CPU does not compete with the
