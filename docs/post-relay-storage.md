@@ -21,13 +21,19 @@ the supplied connection; it never opens another transaction or commits a handler
   Profile limits map to 429, global limits/unknown physical capacity to 503, each Retry-After 1s;
   persistence errors are retryable 5xx. Never return an unaudited unlinked 202.
 - S1: claim_due in a separate short transaction (job-only SKIP LOCKED; never climb to gates).
+  prepare_send reads immutable bytes/recipient/expiry in a separate lock-free short transaction,
+  fenced by the live lease and generation, before key/signature/DNS/policy preparation. It creates
+  NO permission. Close that connection before external preparation.
   renew_lease, authorize_send, record_attempt, finish_success, hold use the common lifecycle order.
   authorize_send takes an origin policy decision already prepared OUTSIDE the transaction.
   Authorization::Permitted is only a proposed permit: a successful COMMIT is the start of sending.
   Unknown commit => NO send. No connection/transaction is carried by SendPermit.
 - The final permission UPDATE samples clock_timestamp once. Its absolute deadline is the lesser
   of authorized_at +10s and received_at +72h (manual: original quarantine expiry). Commit latency
-  consumes that deadline. S1 must convert it to a monotonic deadline, never restart its clock,
+  consumes that deadline. S1 can conservatively anchor (send_deadline - authorized_at) to an
+  Instant taken BEFORE the authorization transaction, subtracting all elapsed/commit time; never
+  use a separately skewed application wall clock to extend it. Convert to a monotonic deadline,
+  never restart its clock,
   never reuse after process restart, and perform HTTP with zero held DB connections/locks.
 - Lease: 30s, globally non-reused sequence fencing token, independent attempt ID. A claim cannot
   reclaim before both lease and old permission deadline. Sixteen fixed DB permit slots, max four
@@ -123,8 +129,8 @@ attempts, half quarantine+audit); compressible fixtures bound CI disk use. Bulk 
 is offline setup, outside lifecycle transactions; it is not a timed production admission. Every
 measured unlink/deactivation/purge still uses the unchanged 2s/3s/5s bounds. Local result (PG17.9,
 debug, Unix socket, AMD Ryzen 9 7900, 24 logical CPUs/64GiB host, Linux 7.3.5): Profile unlink
-1.957ms; Account deactivation of seven remaining Profiles 6.418ms; retained physical bodies after
-commit 16,000; worst 128-body cleanup batch 17.912ms. These are measurements, not production SLOs.
+1.997ms; Account deactivation of seven remaining Profiles 6.705ms; retained physical bodies after
+commit 16,000; worst 128-body cleanup batch 16.915ms. These are measurements, not production SLOs.
 The initial uncompressed probe is what rejected physical deletion, not the compressible CI fixture.
 
 Row-count test at 256 and 768 successful 64KiB relays: ZERO remaining body/job/attempt/dead-letter/
@@ -205,6 +211,9 @@ binaries may reject the additional migration; never drop accepted bodies to make
 - transfer/reprojection: server home_link_transfer_preserves_identity_and_old_owner_cannot_list_register_or_unlink; home_link_projector_same_batch_deactivate_reactivate_and_stale_replay_keep_new_link
 - unlinked isolation/process rate: post_relay_unlinked_hourly_bounded_and_exhaustion_does_not_spend_linked_reservations; post_relay_rate_is_shared_by_two_separate_processes_not_process_local
 - operator frame/fixed snapshot: post_relay_manual_one_shot_same_envelope_original_30_day_expiry_and_audit_protected; post_relay_operator_snapshot_batches_exclusion_discard_confirmation_and_unlink_fencing
+- immutable preparation without permission: post_relay_preparation_is_not_permission_and_stale_or_revoked_lease_gets_no_body
+- global rate/DB clock/renew/hold: post_relay_global_rate_and_db_received_clock_and_renew_hold_are_shared_state
+- manual crash (no repeated permission): post_relay_manual_committed_permission_is_not_repeated_after_worker_crash
 - purge fault/capacity unknown/mismatch: post_relay_purge_failure_rolls_back_and_reports_backlog_without_resurrecting_body; post_relay_capacity_unknown_stale_thresholds_hysteresis_and_mismatch_fail_closed
 - empty/populated main/old-binary refusal: post_relay_empty_and_populated_main_migration_operator_refuses_mismatch_without_migration (all other isolated fixtures migrate empty DBs)
 - shipped command/no-migrate: server/tests/post_relay_capacity.rs, real binary and real DB, no skipped acceptance in post-relay-storage.yml (PostgreSQL16).

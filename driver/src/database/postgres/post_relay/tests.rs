@@ -1572,3 +1572,76 @@ async fn post_relay_manual_committed_permission_is_not_repeated_after_worker_cra
     ));
     consistent(db, later).await;
 }
+
+#[tokio::test]
+#[test_with::env(DATABASE_URL)]
+async fn post_relay_preparation_is_not_permission_and_stale_or_revoked_lease_gets_no_body() {
+    let d = IsolatedDatabase::create().await;
+    let db = &d.database;
+    let (_, ps) = fixture(db, 1, true).await;
+    let p = &ps[0];
+    let now = clock();
+    physical(db, now).await;
+    admit(db, p, "preparation", now, 43).await;
+    assert!(sqlx::query("UPDATE post_relay_bodies SET envelope=convert_to('changed','UTF8') WHERE receipt='preparation'").execute(&d.pool).await.is_err());
+    assert!(sqlx::query("UPDATE post_relay_bodies SET origin='https://elsewhere.example',generation=generation+1 WHERE receipt='preparation'").execute(&d.pool).await.is_err());
+    let lease = claim(db, now, 1).await.remove(0);
+    let mut tx = db.get_transaction().await.unwrap();
+    let prepared = at(now)
+        .prepare_send(tx.connection(), &lease)
+        .await
+        .unwrap()
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(prepared.envelope, vec![b'x'; 43]);
+    assert_eq!(prepared.recipient.origin, "https://home.example");
+    assert_eq!(prepared.expires_at, now + AUTOMATIC_TTL);
+    assert!(!prepared.manual);
+    assert_eq!(
+        number(
+            &d,
+            "SELECT count(*) FROM post_relay_jobs WHERE authorized_at IS NOT NULL"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        number(
+            &d,
+            "SELECT count(*) FROM post_relay_slots WHERE token IS NOT NULL"
+        )
+        .await,
+        0
+    );
+    let mut stale = lease.clone();
+    stale.token += 1;
+    let mut tx = db.get_transaction().await.unwrap();
+    assert!(at(now)
+        .prepare_send(tx.connection(), &stale)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(at(now + LEASE_TTL)
+        .prepare_send(tx.connection(), &lease)
+        .await
+        .unwrap()
+        .is_none());
+    tx.commit().await.unwrap();
+    unlink(db, p).await;
+    let mut tx = db.get_transaction().await.unwrap();
+    assert!(at(now)
+        .prepare_send(tx.connection(), &lease)
+        .await
+        .unwrap()
+        .is_none());
+    tx.commit().await.unwrap();
+    assert!(matches!(
+        authorize(db, &lease, now).await,
+        Authorization::Stale
+    ));
+    assert_eq!(
+        number(&d, "SELECT count(*) FROM post_relay_bodies").await,
+        1
+    );
+    consistent(db, now).await;
+}

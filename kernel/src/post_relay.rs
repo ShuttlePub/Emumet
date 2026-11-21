@@ -51,6 +51,14 @@ pub struct RelayLease {
     pub token: i64,
     pub lease_until: OffsetDateTime,
 }
+/// Lock-free preparation snapshot. NOT permission: release its DB connection before keys, DNS
+/// and signing; authorize_send must recheck after preparation. Never log envelope bytes.
+pub struct RelayPreparation {
+    pub recipient: RelayRecipient,
+    pub envelope: Vec<u8>,
+    pub expires_at: OffsetDateTime,
+    pub manual: bool,
+}
 /// NOT permission until the containing transaction commits successfully. Never reuse after
 /// restart or unknown commit. No database connection survives this value.
 pub struct SendPermit {
@@ -202,6 +210,12 @@ pub trait PostRelayStore: Send + Sync + 'static {
         c: &mut Self::Connection,
         limit: u16,
     ) -> impl Future<Output = error_stack::Result<Vec<RelayLease>, KernelError>> + Send;
+    /// A separate short read transaction, no lifecycle/job locks and no new permit.
+    fn prepare_send(
+        &self,
+        c: &mut Self::Connection,
+        lease: &RelayLease,
+    ) -> impl Future<Output = error_stack::Result<Option<RelayPreparation>, KernelError>> + Send;
     fn renew_lease(
         &self,
         c: &mut Self::Connection,

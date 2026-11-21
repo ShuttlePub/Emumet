@@ -403,6 +403,13 @@ impl PostRelayStore for PostgresPostRelayStore {
     ) -> error_stack::Result<Vec<RelayLease>, KernelError> {
         self.claim(c, limit).await
     }
+    async fn prepare_send(
+        &self,
+        c: &mut Self::Connection,
+        l: &RelayLease,
+    ) -> error_stack::Result<Option<RelayPreparation>, KernelError> {
+        self.preparation(c, l).await
+    }
     async fn renew_lease(
         &self,
         c: &mut Self::Connection,

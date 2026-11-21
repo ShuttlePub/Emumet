@@ -20,6 +20,26 @@ impl PostgresPostRelayStore {
             })
             .collect()
     }
+    pub(super) async fn preparation(
+        &self,
+        c: &mut PostgresConnection,
+        l: &RelayLease,
+    ) -> error_stack::Result<Option<RelayPreparation>, KernelError> {
+        tx(c)?;
+        let now = self.now(c).await?;
+        // Snapshot only: never retain locks while preparing keys/signatures/SSRF policy.
+        let row=sqlx::query("SELECT b.link_id,b.generation,b.origin,b.envelope,(j.operation_id IS NOT NULL) AS manual,CASE WHEN j.operation_id IS NULL THEN b.automatic_expires_at ELSE d.expires_at END AS expires_at FROM post_relay_bodies b JOIN post_relay_jobs j USING(receipt) JOIN profile_links h ON h.id=b.link_id LEFT JOIN post_relay_dead_letters d USING(receipt) WHERE b.receipt=$1 AND j.token=$2 AND b.profile_id=$3 AND j.lease_until>$4 AND j.authorized_at IS NULL AND h.state='active' AND h.generation=b.generation AND (CASE WHEN j.operation_id IS NULL THEN b.automatic_expires_at ELSE d.expires_at END)>$4").bind(&l.receipt).bind(l.token).bind(l.profile_id.as_ref()).bind(now).fetch_optional(&mut **c).await.convert_error()?;
+        Ok(row.map(|r| RelayPreparation {
+            recipient: RelayRecipient {
+                link_id: r.get("link_id"),
+                generation: r.get("generation"),
+                origin: r.get("origin"),
+            },
+            envelope: r.get("envelope"),
+            expires_at: r.get("expires_at"),
+            manual: r.get("manual"),
+        }))
+    }
     pub(super) async fn renew(
         &self,
         c: &mut PostgresConnection,
