@@ -18,6 +18,7 @@ use kernel::interfaces::database::{
     DatabaseConnection, DependOnDatabaseConnection, DependOnTransactionManager, TransactionManager,
 };
 use kernel::interfaces::event::EventApplier;
+use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use kernel::interfaces::http_signing::{
     HttpSignatureVerificationInput, HttpSignatureVerifier, SignatureVerificationResult,
 };
@@ -166,6 +167,12 @@ async fn an_edit_racing_a_transfer_keeps_the_new_owner_and_the_edit() {
                 .transaction_manager()
                 .transaction(move |executor| {
                     Box::pin(async move {
+                        deps.home_link_store()
+                            .lock_accounts(executor, &[from.clone(), to.clone()])
+                            .await?;
+                        deps.home_link_store()
+                            .lock_profiles(executor, std::slice::from_ref(&profile_id))
+                            .await?;
                         deps.profile_read_model()
                             .lock_by_id_for_update(executor, &profile_id)
                             .await?

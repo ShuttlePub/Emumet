@@ -14,7 +14,7 @@ use kernel::interfaces::projection::{
 };
 use kernel::interfaces::read_model::{
     AccountReadModel, DependOnAccountReadModel, DependOnMetadataReadModel,
-    DependOnProfileReadModel, MetadataReadModel,
+    DependOnProfileReadModel, MetadataReadModel, ProfileReadModel,
 };
 use kernel::interfaces::repository::{
     AuthAccountRepository, DependOnAuthAccountRepository, DependOnFollowRepository,
@@ -123,9 +123,23 @@ pub trait ProjectAccountBatch:
                 loop {
                     let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), async {
                     let mut transaction = self.database_connection().get_transaction().await?;
-                    self.home_link_store()
-                        .lock_accounts(transaction.connection(), std::slice::from_ref(&account_id))
-                        .await?;
+                    // A reactivation can repair a lagging transferred row. Discover its stored
+                    // source owners before taking any gate, then hold source + target ascending.
+                    let mut account_gates = vec![account_id.clone()];
+                    let restore_candidate = self.account_read_model()
+                        .find_by_id_including_deleted(transaction.connection(), &account_id).await?
+                        .is_some_and(|a| a.deleted_at().is_some());
+                    if restore_candidate {
+                        let history = self.profile_event_log().find_streams_touching_account(transaction.connection(), &account_id).await?;
+                        let mut ids: Vec<_> = history.iter().map(|e| *e.envelope.id.as_ref()).collect();
+                        ids.sort_unstable(); ids.dedup();
+                        for id in ids {
+                            if let Some(p) = self.profile_read_model().find_by_id_unfiltered(transaction.connection(), &ProfileId::new(id)).await? {
+                                account_gates.push(p.account_id().clone());
+                            }
+                        }
+                    }
+                    self.home_link_store().lock_accounts(transaction.connection(), &account_gates).await?;
                     // Shared lock order: Account gate -> Profile gates ascending -> relationship
                     // gates ascending -> links. The deactivation replay below and the
                     // reactivation restore further down use different Profile sets, so settle

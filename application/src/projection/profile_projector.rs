@@ -8,11 +8,11 @@ use kernel::interfaces::projection::{
     ProfileEventLog, ProfileProjectionWriter, ProjectionCheckpointStore,
 };
 use kernel::interfaces::read_model::{
-    AccountReadModel, DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
+    DependOnAccountReadModel, DependOnProfileReadModel, ProfileReadModel,
 };
 use kernel::prelude::entity::{AccountId, EventEnvelope, Profile, ProfileEvent, ProfileId};
 use kernel::KernelError;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::future::Future;
 
 pub const PROFILE_PROJECTOR_NAME: &str = "profile_projector";
@@ -25,10 +25,10 @@ pub const PROFILE_PROJECTOR_BATCH_LIMIT: i64 = 1000;
 pub enum GroupPlan {
     /// Nothing to write (already projected, skipped, or an incomplete stream).
     Skip,
-    /// Write `entity` (`None` = delete). `owners` are the Accounts whose Profile set the write
+    /// Write `entity`. `owners` are the Accounts whose Profile set the write
     /// changes: empty for an in-place update of an existing row of the same Account.
     Write {
-        entity: Option<Profile>,
+        entity: Profile,
         owners: Vec<AccountId>,
     },
 }
@@ -69,35 +69,6 @@ pub trait ProjectProfileBatch:
                 return Ok(GroupPlan::Skip);
             }
 
-            // On the fresh-materialization path (existing is None), check that
-            // the parent account has not been cascade-deleted.  If the account
-            // has been deleted (deleted_at present), skip upsert so the
-            // projector does not resurrect rows that the Account projector
-            // intentionally removed.
-            if existing.is_none() {
-                let account_id = pending.iter().find_map(|event| match &event.event {
-                    ProfileEvent::Created { account_id, .. } => Some(account_id.clone()),
-                    _ => None,
-                });
-                if let Some(aid) = account_id {
-                    let executor = transaction.connection();
-                    if let Ok(Some(account)) = self
-                        .account_read_model()
-                        .find_by_id_including_deleted(executor, &aid)
-                        .await
-                    {
-                        if account.deleted_at().is_some() {
-                            tracing::debug!(
-                                account_id = %aid.as_ref(),
-                                "profile projector: skipping upsert for profile {} (parent account deleted)",
-                                profile_id.as_ref()
-                            );
-                            return Ok(GroupPlan::Skip);
-                        }
-                    }
-                }
-            }
-
             let previous_owner = existing
                 .as_ref()
                 .map(|profile| profile.account_id().clone());
@@ -112,13 +83,26 @@ pub trait ProjectProfileBatch:
                     return Ok(GroupPlan::Skip);
                 }
             }
-            // Only a write that adds a Profile to, removes it from, or moves it between Accounts
-            // changes an Account's Profile set. Those run under the Account gate(s).
-            let new_owner = entity.as_ref().map(|profile| profile.account_id().clone());
+            // There is no Profile Deleted event. A missing fold is incomplete, never a DELETE.
+            let Some(entity) = entity else {
+                return Ok(GroupPlan::Skip);
+            };
+            let new_owner = entity.account_id().clone();
             let mut owners = Vec::new();
-            if previous_owner != new_owner || previous_owner.is_none() {
+            if previous_owner.as_ref() != Some(&new_owner) {
+                // Check the FOLDED current owner (not Created's original owner), including an
+                // existing row's transfer. Repeated under its Account gate before insertion/move.
+                let snapshot = self
+                    .home_link_store()
+                    .account_snapshot(transaction.connection(), &new_owner)
+                    .await?;
+                // Unknown/incomplete Account history is not evidence that the owner is live.
+                // The window will retry; never fall back to a potentially stale active read model.
+                if snapshot.is_none_or(|a| a.deleted_at().is_some()) {
+                    return Ok(GroupPlan::Skip);
+                }
                 owners.extend(previous_owner);
-                owners.extend(new_owner);
+                owners.push(new_owner);
                 owners.sort_by_key(|id| *id.as_ref());
                 owners.dedup();
             }
@@ -126,51 +110,50 @@ pub trait ProjectProfileBatch:
         }
     }
 
-    /// Writes a planned group inside a savepoint; a failing write is logged and skipped (the
-    /// window re-read retries), exactly as before.
+    /// A same-owner write cannot insert or change ownership. On zero rows re-read under READ
+    /// COMMITTED: only a newer same-owner snapshot is skippable; disappearance/transfer is deferred.
     fn write_profile_group<'a>(
         &'a self,
         transaction: &'a mut <Self::DatabaseConnection as TransactionalDatabaseConnection>::Transaction,
         profile_id: &'a ProfileId,
-        entity: Option<Profile>,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send + 'a {
+        entity: Profile,
+        owners: &'a [AccountId],
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send + 'a {
         async move {
             let savepoint = transaction.savepoint().await?;
-            let write_result: error_stack::Result<(), KernelError> = {
-                let executor = transaction.connection();
-                async {
-                    match entity {
-                        Some(profile) => {
-                            self.profile_projection_writer()
-                                .upsert(executor, &profile)
-                                .await?;
-                        }
-                        None => {
-                            self.profile_projection_writer()
-                                .delete(executor, profile_id)
-                                .await?;
-                        }
-                    }
-                    Ok(())
-                }
-                .await
+            let result = if owners.is_empty() {
+                self.profile_read_model()
+                    .update_content(transaction.connection(), &entity, entity.account_id())
+                    .await
+            } else {
+                self.profile_projection_writer()
+                    .upsert(transaction.connection(), &entity)
+                    .await
+                    .map(|()| true)
             };
-            match write_result {
-                Ok(()) => {
-                    let executor = transaction.connection();
-                    savepoint.commit(executor).await?;
+            match result {
+                Ok(true) => {
+                    savepoint.commit(transaction.connection()).await?;
+                    Ok(true)
+                }
+                Ok(false) => {
+                    savepoint.commit(transaction.connection()).await?;
+                    let stored = self
+                        .profile_read_model()
+                        .find_by_id_unfiltered(transaction.connection(), profile_id)
+                        .await?;
+                    Ok(stored.is_some_and(|p| {
+                        p.account_id() == entity.account_id()
+                            && p.version().as_ref() >= entity.version().as_ref()
+                    }))
                 }
                 Err(error) => {
-                    let executor = transaction.connection();
-                    savepoint.rollback(executor).await?;
-                    tracing::warn!(
-                        ?error,
-                        profile_id = %profile_id.as_ref(),
-                        "profile projection skipped"
-                    );
+                    savepoint.rollback(transaction.connection()).await?;
+                    // Do not advance the checkpoint after a failed structural gate assertion or
+                    // owner race. The poll must re-read its window in a fresh transaction.
+                    Err(error)
                 }
             }
-            Ok(())
         }
     }
 
@@ -214,8 +197,15 @@ pub trait ProjectProfileBatch:
                             return Err(error_stack::Report::new(KernelError::Concurrency)
                                 .attach_printable("Profile owner changed while taking its gates"));
                         }
-                        self.write_profile_group(&mut transaction, profile_id, entity)
-                            .await?;
+                        if !self
+                            .write_profile_group(&mut transaction, profile_id, entity, &locked_for)
+                            .await?
+                        {
+                            return Err(error_stack::Report::new(KernelError::Concurrency)
+                                .attach_printable(
+                                "Profile disappeared or changed owner; re-plan with Account gates",
+                            ));
+                        }
                     }
                     transaction.commit().await
                 })
@@ -266,11 +256,11 @@ pub trait ProjectProfileBatch:
             }
             let max_seq = events.last().map(|event| event.seq).unwrap_or(checkpoint);
 
-            let mut groups: HashMap<ProfileId, Vec<EventEnvelope<ProfileEvent, Profile>>> =
-                HashMap::new();
+            let mut groups: BTreeMap<i64, Vec<EventEnvelope<ProfileEvent, Profile>>> =
+                BTreeMap::new();
             for event in events {
                 groups
-                    .entry(ProfileId::new(*event.envelope.id.as_ref()))
+                    .entry(*event.envelope.id.as_ref())
                     .or_default()
                     .push(event.envelope);
             }
@@ -280,7 +270,8 @@ pub trait ProjectProfileBatch:
             // Account-gated transaction below: the set only changes under the Account's gate.
             let mut deferred: Vec<(ProfileId, Vec<EventEnvelope<ProfileEvent, Profile>>)> =
                 Vec::new();
-            for (profile_id, envelopes) in groups {
+            for (id, envelopes) in groups {
+                let profile_id = ProfileId::new(id);
                 match self
                     .plan_profile_group(&mut transaction, &profile_id, envelopes.clone())
                     .await?
@@ -290,8 +281,12 @@ pub trait ProjectProfileBatch:
                         deferred.push((profile_id, envelopes));
                     }
                     GroupPlan::Write { entity, .. } => {
-                        self.write_profile_group(&mut transaction, &profile_id, entity)
-                            .await?;
+                        if !self
+                            .write_profile_group(&mut transaction, &profile_id, entity, &[])
+                            .await?
+                        {
+                            deferred.push((profile_id, envelopes));
+                        }
                     }
                 }
             }

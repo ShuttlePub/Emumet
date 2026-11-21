@@ -1,7 +1,7 @@
 use crate::database::{Connection, DatabaseConnection, DependOnDatabaseConnection};
 use crate::entity::{
     Account, AccountEvent, AccountId, AccountReport, AccountReportEvent, EventEnvelope, Metadata,
-    MetadataEvent, MetadataId, Profile, ProfileEvent, ProfileId,
+    MetadataEvent, MetadataId, Profile, ProfileEvent,
 };
 use crate::KernelError;
 use std::future::Future;
@@ -135,12 +135,6 @@ pub trait ProfileProjectionWriter: Sync + Send + 'static {
         &self,
         executor: &mut Self::Connection,
         profile: &Profile,
-    ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
-
-    fn delete(
-        &self,
-        executor: &mut Self::Connection,
-        profile_id: &ProfileId,
     ) -> impl Future<Output = error_stack::Result<(), KernelError>> + Send;
 }
 

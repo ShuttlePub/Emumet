@@ -79,6 +79,7 @@ impl HomeLinkStore for PostgresHomeLinkStore {
         for id in ids {
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('emumet/account-lifecycle/' || $1::text, 0))")
                 .bind(id).execute(&mut **c).await.convert_error()?;
+            c.note_account_gate(id);
         }
         Ok(())
     }
@@ -220,6 +221,7 @@ impl HomeLinkStore for PostgresHomeLinkStore {
         c: &mut Self::Connection,
         account: &AccountId,
     ) -> error_stack::Result<(), KernelError> {
+        c.require_account_gate(*account.as_ref())?;
         let ids: Vec<i64> =
             sqlx::query_scalar("SELECT id FROM profiles WHERE account_id=$1 ORDER BY id")
                 .bind(account.as_ref())

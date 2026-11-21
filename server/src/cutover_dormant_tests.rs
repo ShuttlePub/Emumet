@@ -87,7 +87,11 @@ async fn seed_history(r: &Rehearsal, username: Option<&str>, set_later: bool) ->
         .unwrap();
     r.module
         .profile_read_model()
-        .update(&mut conn, profile.aggregate())
+        .update_content(
+            &mut conn,
+            profile.aggregate(),
+            profile.aggregate().account_id(),
+        )
         .await
         .unwrap();
     drop(conn);

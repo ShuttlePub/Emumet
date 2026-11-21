@@ -122,34 +122,52 @@ rows and P0/P1/revoker-precommit pause points; these are not production queue ta
 
 ## Account-owned Profile set invariant
 
-**Invariant:** the set of Profiles an Account owns only grows or shrinks under that Account's
-lifecycle gate. A lifecycle transaction therefore settles the complete Profile set once, right
-after taking the Account gate, and works only on that set. Every path that adds a Profile to,
-removes it from, or moves it between Accounts, as enumerated from the code (writers of
-`profiles.account_id`, Profile creation/deletion, and the Profile/Account projectors):
+**Invariant:** adding/removing a Profile or changing its owner requires the affected Account
+lifecycle gate(s). A same-owner content update is not a set write: it cannot INSERT or SET
+`account_id` / `owner_kind`, even when a row is deleted or transferred after planning.
 
-| Path | Effect on the set | Gate |
+Runtime SQL allowlist (checked by `profile_write_statement_inventory_matches_allowlist`):
+
+| Statement | Driver entry | Required Account gates |
 | --- | --- | --- |
-| Personal Account creation (`CreateAccountUseCase`) | adds the first Profile of a **new** Account | exempt by construction: the Account ID is generated inside this transaction and unknown to anyone until commit, so no gate holder can exist |
-| Organisation Profile creation (`CreateOrganizationProfileUseCase`) | adds | Account gate first (RSA key pair is generated **before** the transaction so it does not consume the gate's 5s budget) |
-| Profile transfer accept (`respond.rs`) | removes from source, adds to destination | both Account gates ascending, then the Profile gate |
-| Account projector: deactivation (`delete_owned_profiles`) | removes every owned row | Account gate; set settled up front |
-| Account projector: reactivation (`restore_owned_profiles`) | re-adds from history | Account gate; set (incl. history) settled up front |
-| Profile projector: fresh materialization, owner move or delete | adds/moves/removes a row | deferred to its own transaction: Account gate(s) ascending, Profile gate, re-plan |
-| Profile projector: in-place update of an existing row of the same Account | none | none needed |
-| Cutover username backfill (`profile_cutover_recovery`) | none (username only) | none needed |
-| Migrations / reset (offline, one-off) | out of band | not a runtime path |
+| INSERT | `ProfileReadModel::create` → private `insert_profile` (profile.rs) | target |
+| INSERT … ON CONFLICT DO UPDATE | `ProfileProjectionWriter::upsert` (projection.rs) | target and the stored source, if any |
+| UPDATE that SETs ownership | `ProfileReadModel::update` (profile.rs), transfer acceptance only | stored source and target |
+| DELETE WHERE account_id | `HomeLinkStore::delete_owned_profiles` (home_link.rs) | that Account |
 
-There is no runtime Profile deletion API and no Profile `Deleted` event emitter.
+INSERT/upsert is one statement category; ownership UPDATE and Account-scoped DELETE are the
+other two. There is no Profile `Deleted` event or runtime per-Profile DELETE entry.
 
-**Structural guard.** The gates of one transaction are tracked on its connection. A *new* Profile
-gate is refused with `Concurrency` when it is not above every Profile gate already held, or after
-any relationship gate has been taken. So an unguarded or future writer that adds a Profile after
-the set was settled cannot cause a lock-order inversion: the transaction fails fast, rolls back
-(releasing everything) and is redone in a **new** transaction (the Account/Profile projectors
-retry up to three times per Account/Profile, then propagate and re-read the window). Registration,
-unlink and transfer take their single Profile gate right after the Account gate, so they never
-trip the guard.
+`lock_accounts` records each ID **after** PostgreSQL grants its transaction-scoped advisory
+lock. Each set-writing entry checks this connection's transaction and recorded IDs **before**
+issuing a write (and checks both owners for a move). Missing proof is an immediate error, not a
+best-effort convention. A new transaction clears the proof; savepoint rollback restores the
+pre-savepoint gate record because PostgreSQL releases locks acquired after that savepoint.
+Owner-changing SQL also predicates on the observed source owner, so a raced source cannot be
+silently overwritten. The private INSERT is shared with the explicitly named
+`create_initial_personal_account_profile` exemption: only the first Profile of a **new**
+personal Account, whose ID is generated inside the creation transaction and invisible until
+commit. The exemption rejects organisation Accounts. Organisation creation generates RSA
+material **before** taking the Account gate, then saves events/Profile/key atomically.
+
+Both Profile projector branches (batch and gated same-owner re-plan) and Profile editing use
+`update_content`: `WHERE id=… AND account_id=<expected owner> AND version<=<snapshot>`,
+without ownership in SET. Zero rows triggers a re-read: equal/newer same-owner state is skipped;
+missing/changed-owner state is deferred to a fresh bounded gated plan. Batch updates lock rows
+in **Profile ID ascending** order, independent of event sequence and hash iteration order.
+Fresh materialization and owner moves check the **folded current owner**, including the
+Account event stream's deactivation, rather than the original Created owner. Account-gated
+re-planning repeats this check, so a transferred Profile cannot return after its current owner
+withdraws. Account reactivation explicitly restores identity from history, not an old link.
+Username-only writes (normal setter and cutover recovery) are not set changes. Migrations and
+test-mode reset are offline/test-only exceptions; raw SQL bypassing the driver is outside this
+runtime enforcement boundary (no DB trigger was added).
+
+**Order guard.** A new Profile gate below one already held, or any new Profile gate after a
+relationship gate, fails with `Concurrency`; re-entry into an already held Profile gate is
+allowed. Callers roll back and retry in a **new** transaction with the full ordered set. The
+Account/Profile projectors retry at most three times per unit and propagate exhaustion without
+advancing the checkpoint. External permission calls remain outside gate-bearing transactions.
 
 ## Migration and recovery
 

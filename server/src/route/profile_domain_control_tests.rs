@@ -155,11 +155,25 @@ impl Harness {
         let mut profile = None;
         Profile::apply(&mut profile, event).expect("apply profile event");
         let profile = profile.expect("profile");
+        use kernel::interfaces::database::{Transaction, TransactionalDatabaseConnection};
+        use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
+        let mut tx = self
+            .module
+            .database_connection()
+            .get_transaction()
+            .await
+            .unwrap();
+        self.module
+            .home_link_store()
+            .lock_accounts(tx.connection(), std::slice::from_ref(profile.account_id()))
+            .await
+            .unwrap();
         self.module
             .profile_read_model()
-            .create(&mut executor, &profile)
+            .create(tx.connection(), &profile)
             .await
-            .expect("seed profile");
+            .unwrap();
+        tx.commit().await.unwrap();
         profile
     }
 

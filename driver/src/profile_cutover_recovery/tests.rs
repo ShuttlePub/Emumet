@@ -92,7 +92,7 @@ async fn profile(
     Profile::apply(&mut entity, event).unwrap();
     if projected {
         db.profile_read_model()
-            .create(&mut con, &entity.unwrap())
+            .create_initial_personal_account_profile(&mut con, &entity.unwrap())
             .await
             .unwrap();
     }

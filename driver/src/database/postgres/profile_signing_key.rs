@@ -305,7 +305,7 @@ mod test {
             .unwrap();
         let profile = ProfileBuilder::new().account_id(account_id).build();
         db.profile_read_model()
-            .create(&mut conn, &profile)
+            .create_initial_personal_account_profile(&mut conn, &profile)
             .await
             .unwrap();
         (profile.id().clone(), profile.nanoid().as_ref().to_string())
@@ -458,8 +458,9 @@ mod test {
             .await
             .unwrap()
             .unwrap();
-        db.profile_read_model()
-            .delete(&mut conn, &profile_id)
+        sqlx::query("DELETE FROM profiles WHERE id=$1")
+            .bind(&profile_id.as_ref())
+            .execute(&mut *conn)
             .await
             .unwrap();
         let retained = repository
@@ -470,7 +471,10 @@ mod test {
         assert_eq!(retained[0].id(), key.id());
         // The projector re-materializes the same Profile id: the key is attached again.
         db.profile_read_model()
-            .create(&mut conn, &kernel::prelude::entity::Profile::from(profile))
+            .create_initial_personal_account_profile(
+                &mut conn,
+                &kernel::prelude::entity::Profile::from(profile),
+            )
             .await
             .unwrap();
         assert_eq!(

@@ -154,6 +154,7 @@ struct LifecycleBudget {
     /// Profile lifecycle gates already held by this transaction (see
     /// [`PostgresConnection::acquire_profile_gate`]).
     profile_gates: std::sync::Mutex<std::collections::BTreeSet<i64>>,
+    account_gates: std::sync::Mutex<std::collections::BTreeSet<i64>>,
     /// A relationship gate was taken: no *new* Profile gate may follow (Profile -> relationship).
     relationship_gates_taken: std::sync::atomic::AtomicBool,
 }
@@ -164,6 +165,7 @@ impl Default for LifecycleBudget {
             deadline: std::sync::OnceLock::new(),
             started: tokio::sync::Notify::new(),
             profile_gates: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            account_gates: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             relationship_gates_taken: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -181,6 +183,18 @@ impl LifecycleBudget {
     }
 }
 impl PostgresConnection {
+    /// Recorded only after PostgreSQL granted the transaction-scoped Account gate.
+    pub(crate) fn note_account_gate(&self, id: i64) {
+        self.2.account_gates.lock().unwrap().insert(id);
+    }
+    pub(crate) fn require_account_gate(&self, id: i64) -> error_stack::Result<(), KernelError> {
+        if !self.is_transaction() || !self.2.account_gates.lock().unwrap().contains(&id) {
+            return Err(Report::new(KernelError::Internal).attach_printable(format!(
+                "Profile set write requires Account gate {id} in this transaction"
+            )));
+        }
+        Ok(())
+    }
     pub(crate) fn is_transaction(&self) -> bool {
         matches!(self.0, PostgresConnectionInner::Transaction(_))
     }
@@ -292,7 +306,11 @@ impl DerefMut for PostgresConnection {
 
 pub struct PostgresTransaction(PostgresConnection);
 
-pub struct PostgresSavepoint;
+pub struct PostgresSavepoint {
+    account_gates: std::collections::BTreeSet<i64>,
+    profile_gates: std::collections::BTreeSet<i64>,
+    relationship_gates_taken: bool,
+}
 
 impl Savepoint for PostgresSavepoint {
     type Connection = PostgresConnection;
@@ -319,6 +337,12 @@ impl Savepoint for PostgresSavepoint {
             .execute(&mut *con)
             .await
             .convert_error()?;
+        *executor.2.account_gates.lock().unwrap() = self.account_gates;
+        *executor.2.profile_gates.lock().unwrap() = self.profile_gates;
+        executor.2.relationship_gates_taken.store(
+            self.relationship_gates_taken,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         Ok(())
     }
 }
@@ -348,7 +372,15 @@ impl DbTransaction for PostgresTransaction {
             .execute(con)
             .await
             .convert_error()?;
-        Ok(PostgresSavepoint)
+        Ok(PostgresSavepoint {
+            account_gates: self.0 .2.account_gates.lock().unwrap().clone(),
+            profile_gates: self.0 .2.profile_gates.lock().unwrap().clone(),
+            relationship_gates_taken: self
+                .0
+                 .2
+                .relationship_gates_taken
+                .load(std::sync::atomic::Ordering::SeqCst),
+        })
     }
 }
 

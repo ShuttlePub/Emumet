@@ -1,3 +1,6 @@
+#[path = "profile_set_tests.rs"]
+mod profile_set;
+
 use super::{ProjectAccountBatch, ProjectMetadataBatch, ProjectProfileBatch};
 use driver::database::PostgresDatabase;
 use kernel::impl_database_delegation;
@@ -564,6 +567,19 @@ mod profile {
         .execute(&mut *conn)
         .await
         .unwrap();
+        db.account_event_store()
+            .persist(
+                &mut conn,
+                &Account::create(
+                    account_id.clone(),
+                    AccountName::new(format!("test-{}", account_id.as_ref())),
+                    AccountIsBot::new(false),
+                    Nanoid::default(),
+                    AuthAccountId::default(),
+                ),
+            )
+            .await
+            .unwrap();
         let command = Profile::create(
             profile_id.clone(),
             account_id,
@@ -647,6 +663,19 @@ mod profile {
         .await
         .unwrap();
         let nanoid = Nanoid::<Profile>::default();
+        db.account_event_store()
+            .persist(
+                &mut conn,
+                &Account::create(
+                    account_id.clone(),
+                    AccountName::new(format!("test-{}", account_id.as_ref())),
+                    AccountIsBot::new(false),
+                    Nanoid::default(),
+                    AuthAccountId::default(),
+                ),
+            )
+            .await
+            .unwrap();
         let command = Profile::create_with_username(
             profile_id.clone(),
             account_id,
@@ -729,10 +758,9 @@ mod profile {
         {
             let mut conn = projector.db.connection().await.unwrap();
             for id in [&created_with, &created_without, &legacy] {
-                projector
-                    .db
-                    .profile_read_model()
-                    .delete(&mut conn, id)
+                sqlx::query("DELETE FROM profiles WHERE id=$1")
+                    .bind(id.as_ref())
+                    .execute(&mut *conn)
                     .await
                     .unwrap();
             }
@@ -844,7 +872,11 @@ mod profile {
 
         // 4. the edit's stale projection (username None, newer version) is written and committed
         db.profile_read_model()
-            .update(edit_tx.connection(), stale.aggregate())
+            .update_content(
+                edit_tx.connection(),
+                stale.aggregate(),
+                stale.aggregate().account_id(),
+            )
             .await
             .unwrap();
         edit_tx.commit().await.unwrap();
@@ -856,14 +888,30 @@ mod profile {
 
         // The projector (stale folds included) keeps it ...
         {
+            use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
             use kernel::interfaces::projection::{
                 DependOnProfileProjectionWriter, ProfileProjectionWriter,
             };
-            let mut conn = db.connection().await.unwrap();
-            db.profile_projection_writer()
-                .upsert(&mut conn, stale.aggregate())
+            let mut tx = db.get_transaction().await.unwrap();
+            db.home_link_store()
+                .lock_accounts(
+                    tx.connection(),
+                    std::slice::from_ref(stale.aggregate().account_id()),
+                )
                 .await
                 .unwrap();
+            db.home_link_store()
+                .lock_profiles(
+                    tx.connection(),
+                    std::slice::from_ref(stale.aggregate().id()),
+                )
+                .await
+                .unwrap();
+            db.profile_projection_writer()
+                .upsert(tx.connection(), stale.aggregate())
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
         }
         project_until_caught_up(&projector).await;
         assert_eq!(stored().await.as_deref(), Some(username_value.as_str()));
@@ -871,8 +919,9 @@ mod profile {
         // ... and a rebuild from the event history restores it.
         {
             let mut conn = db.connection().await.unwrap();
-            db.profile_read_model()
-                .delete(&mut conn, &profile_id)
+            sqlx::query("DELETE FROM profiles WHERE id=$1")
+                .bind(&profile_id.as_ref())
+                .execute(&mut *conn)
                 .await
                 .unwrap();
         }

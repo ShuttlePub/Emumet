@@ -43,12 +43,22 @@ pub(crate) async fn seed_profile_for(
         .id(profile_id.clone())
         .account_id(account_id.clone())
         .build();
-    let mut conn = database.connection().await.unwrap();
-    database
-        .profile_read_model()
-        .create(&mut conn, &profile)
-        .await
-        .unwrap();
+    {
+        use kernel::interfaces::database::{Transaction, TransactionalDatabaseConnection};
+        use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
+        let mut tx = database.get_transaction().await.unwrap();
+        database
+            .home_link_store()
+            .lock_accounts(tx.connection(), std::slice::from_ref(profile.account_id()))
+            .await
+            .unwrap();
+        database
+            .profile_read_model()
+            .create(tx.connection(), &profile)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
     profile_id
 }
 

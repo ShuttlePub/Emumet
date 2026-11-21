@@ -547,11 +547,23 @@ async fn home_link_projector_revokes_and_deletes_every_profile_of_an_organizatio
         let mut profile = None;
         Profile::apply(&mut profile, event).unwrap();
         let profile = profile.unwrap();
-        w.module
-            .profile_read_model()
-            .create(&mut c, &profile)
+        let mut tx = w
+            .module
+            .database_connection()
+            .get_transaction()
             .await
             .unwrap();
+        w.module
+            .home_link_store()
+            .lock_accounts(tx.connection(), std::slice::from_ref(profile.account_id()))
+            .await
+            .unwrap();
+        w.module
+            .profile_read_model()
+            .create(tx.connection(), &profile)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
         drop(c);
         w.module
             .register_home_link(
@@ -831,11 +843,23 @@ async fn home_link_projector_reactivation_replay_locks_all_profiles_ascending_be
         let mut profile = None;
         Profile::apply(&mut profile, event).unwrap();
         let profile = profile.unwrap();
-        w.module
-            .profile_read_model()
-            .create(&mut c, &profile)
+        let mut tx = w
+            .module
+            .database_connection()
+            .get_transaction()
             .await
             .unwrap();
+        w.module
+            .home_link_store()
+            .lock_accounts(tx.connection(), std::slice::from_ref(profile.account_id()))
+            .await
+            .unwrap();
+        w.module
+            .profile_read_model()
+            .create(tx.connection(), &profile)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
         drop(c);
         if linked {
             w.module
@@ -960,7 +984,6 @@ async fn new_org(
 /// (stand-in for an unguarded writer), using a pre-allocated ID.
 async fn ungated_org_profile(w: &GraphWorld, a: &AccountId, id: i64) -> i64 {
     use kernel::interfaces::event::EventApplier;
-    use kernel::interfaces::read_model::{DependOnProfileReadModel, ProfileReadModel};
     use kernel::interfaces::repository::DependOnProfileRepository;
     use kernel::prelude::entity::{Nanoid, Profile, ProfileId};
     let mut c = w.module.database_connection().connection().await.unwrap();
@@ -984,11 +1007,11 @@ async fn ungated_org_profile(w: &GraphWorld, a: &AccountId, id: i64) -> i64 {
     let mut profile = None;
     Profile::apply(&mut profile, event).unwrap();
     let profile = profile.unwrap();
-    w.module
-        .profile_read_model()
-        .create(&mut c, &profile)
-        .await
-        .unwrap();
+    // Deliberately model a writer that bypasses the driver for this order-guard test.
+    sqlx::query("INSERT INTO profiles (id,account_id,owner_kind,version,nanoid) VALUES ($1,$2,'organization',$3,$4)")
+        .bind(profile.id().as_ref()).bind(profile.account_id().as_ref())
+        .bind(profile.version().as_ref()).bind(profile.nanoid().as_ref())
+        .execute(&mut *c).await.unwrap();
     *profile.id().as_ref()
 }
 

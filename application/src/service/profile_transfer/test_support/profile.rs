@@ -183,12 +183,22 @@ impl ProfileReadModel for MockProfileReadModel {
         Ok(())
     }
 
-    async fn delete(
+    async fn create_initial_personal_account_profile(
         &self,
-        _executor: &mut Self::Connection,
-        _profile_id: &ProfileId,
+        executor: &mut Self::Connection,
+        profile: &Profile,
     ) -> error_stack::Result<(), KernelError> {
-        Ok(())
+        self.create(executor, profile).await
+    }
+
+    async fn update_content(
+        &self,
+        executor: &mut Self::Connection,
+        profile: &Profile,
+        _expected_owner: &AccountId,
+    ) -> error_stack::Result<bool, KernelError> {
+        self.update(executor, profile).await?;
+        Ok(true)
     }
 }
 

@@ -118,7 +118,11 @@ pub trait CreateAccountUseCase:
                                 .attach_printable("Failed to construct profile from created event")
                         })?;
 
-                        if let Err(e) = deps.profile_read_model().create(executor, &profile).await {
+                        if let Err(e) = deps
+                            .profile_read_model()
+                            .create_initial_personal_account_profile(executor, &profile)
+                            .await
+                        {
                             tracing::error!(?e, "Failed to create profile read model");
                             return Err(e);
                         }

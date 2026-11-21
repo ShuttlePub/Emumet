@@ -29,12 +29,22 @@ use kernel::prelude::entity::{
     ProfileId,
 };
 use kernel::KernelError;
+use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
 use std::collections::HashMap;
 
 struct Env {
     module: TestModule,
     auth_account_id: AuthAccountId,
     _password_file: tempfile::NamedTempFile,
+}
+
+async fn gated_profile_update(module: &TestModule, p: &Profile) {
+    let mut tx = module.database.get_transaction().await.unwrap();
+    let old = module.profile_read_model().find_by_id_unfiltered(tx.connection(), p.id()).await.unwrap().unwrap();
+    module.home_link_store().lock_accounts(tx.connection(), &[old.account_id().clone(), p.account_id().clone()]).await.unwrap();
+    module.home_link_store().lock_profiles(tx.connection(), std::slice::from_ref(p.id())).await.unwrap();
+    module.profile_read_model().update(tx.connection(), p).await.unwrap();
+    tx.commit().await.unwrap();
 }
 
 async fn env() -> Env {
@@ -626,11 +636,7 @@ async fn profile_transfer_keeps_username_actor_uri_and_key_owner() {
         .load(&mut conn, &created.profile_id)
         .await
         .unwrap();
-    env.module
-        .profile_read_model()
-        .update(&mut conn, rehydrated.aggregate())
-        .await
-        .unwrap();
+    gated_profile_update(&env.module, rehydrated.aggregate()).await;
     drop(conn);
 
     let owner_after: i64 = sqlx::query_scalar("SELECT account_id FROM profiles WHERE id = $1")
@@ -771,6 +777,8 @@ async fn username_request_authorized_for_the_old_owner_is_refused_after_a_concur
 
     // The transfer: same aggregate commands as the accept use case, left uncommitted.
     let mut transfer = env.module.database.get_transaction().await.unwrap();
+    env.module.home_link_store().lock_accounts(transfer.connection(), &[AccountId::new(from_account), org_id.clone()]).await.unwrap();
+    env.module.home_link_store().lock_profiles(transfer.connection(), std::slice::from_ref(&created.profile_id)).await.unwrap();
     let transfer_pid: i32 = {
         let con: &mut sqlx::PgConnection = transfer.connection();
         sqlx::query_scalar("SELECT pg_backend_pid()")
@@ -932,11 +940,7 @@ async fn transfer_waiting_behind_a_username_write_keeps_the_username() {
             .load(&mut conn, &profile_id)
             .await
             .unwrap();
-        module
-            .profile_read_model()
-            .update(&mut conn, rehydrated.aggregate())
-            .await
-            .unwrap();
+        gated_profile_update(&module, rehydrated.aggregate()).await;
     });
     wait_until_blocked_by(&env, setter_pid).await;
     setter.commit().await.unwrap();

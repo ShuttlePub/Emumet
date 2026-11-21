@@ -1,8 +1,9 @@
 //! Profile-owned actor signing keys (P1, ADR profile-actor-identity).
 //!
-//! Keys are generated in exactly two places since the P4 cutover: the creation transaction of a
-//! Profile (via [`CreateProfileSigningKeyUseCase`]) and the idempotent start-up provisioning of
-//! Profiles that have none ([`EnsureProfileSigningKeysUseCase`]). They are intentionally not
+//! Keys are generated at Profile creation and during idempotent start-up provisioning of
+//! Profiles that have none ([`EnsureProfileSigningKeysUseCase`]). Organisation creation generates
+//! key material before taking lifecycle gates; its key is persisted atomically with the Profile.
+//! Personal creation uses [`CreateProfileSigningKeyUseCase`] within its transaction. Keys are not
 //! exposed through any HTTP route and no generic "sign anything" API is built on top of them:
 //! signing happens only inside the delivery worker ([`SignProfileRequestUseCase`]).
 

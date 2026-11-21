@@ -615,7 +615,7 @@ async fn transfer_profile(fixture: &Fixture, profile_nanoid: &str, organization_
     let _ = event;
     module
         .profile_read_model()
-        .update(&mut executor, &profile)
+        .update_content(&mut executor, &profile, profile.account_id())
         .await
         .unwrap();
 }

@@ -170,17 +170,25 @@ impl Harness {
             .account_id(account.id().clone())
             .nanoid(Nanoid::default())
             .build();
-        let mut executor = self
+        use kernel::interfaces::database::{Transaction, TransactionalDatabaseConnection};
+        use kernel::interfaces::home_link::{DependOnHomeLinkStore, HomeLinkStore};
+        let mut tx = self
             .module
             .database_connection()
-            .connection()
+            .get_transaction()
+            .await
+            .unwrap();
+        self.module
+            .home_link_store()
+            .lock_accounts(tx.connection(), std::slice::from_ref(profile.account_id()))
             .await
             .unwrap();
         self.module
             .profile_read_model()
-            .create(&mut executor, &profile)
+            .create(tx.connection(), &profile)
             .await
-            .expect("seed profile");
+            .unwrap();
+        tx.commit().await.unwrap();
         profile
     }
 

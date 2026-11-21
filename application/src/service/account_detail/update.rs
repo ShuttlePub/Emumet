@@ -135,13 +135,18 @@ pub trait UpdateAccountDetailUseCase:
                             .ok_or_else(|| Report::new(KernelError::NotFound))?;
                         // Serialize with a concurrent transfer / username write on the same Profile
                         // before its event stream is saved and re-read (see the transfer use case).
-                        deps.profile_read_model()
+                        let locked_profile = deps
+                            .profile_read_model()
                             .lock_by_id_for_update(executor, profile.id())
                             .await?
                             .ok_or_else(|| {
                                 Report::new(KernelError::NotFound)
                                     .attach_printable("Profile no longer exists")
                             })?;
+                        if locked_profile.account_id() != &account_id {
+                            return Err(Report::new(KernelError::Concurrency)
+                                .attach_printable("Profile owner changed; retry the edit"));
+                        }
                         let icon =
                             resolve_field_action_image_id(&deps, executor, &dto.icon_url).await?;
                         let banner =
@@ -167,9 +172,14 @@ pub trait UpdateAccountDetailUseCase:
                                 .profile_repository()
                                 .load(executor, profile.id())
                                 .await?;
-                            deps.profile_read_model()
-                                .update(executor, rehydrated.aggregate())
-                                .await?;
+                            if !deps
+                                .profile_read_model()
+                                .update_content(executor, rehydrated.aggregate(), &account_id)
+                                .await?
+                            {
+                                return Err(Report::new(KernelError::Concurrency)
+                                    .attach_printable("Profile content changed; retry the edit"));
+                            }
                         }
 
                         let mut existing_fields = deps

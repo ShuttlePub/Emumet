@@ -1,3 +1,6 @@
+#[path = "profile_set_tests.rs"]
+mod profile_set;
+
 use super::*;
 use crate::database::postgres::isolated_db::IsolatedDatabase;
 use kernel::interfaces::database::{
@@ -58,7 +61,16 @@ async fn fixture(db: &PostgresDatabase, count: usize) -> (Account, Vec<Profile>)
         let mut p = None;
         Profile::apply(&mut p, event).unwrap();
         let p = p.unwrap();
-        db.profile_read_model().create(&mut c, &p).await.unwrap();
+        let mut tx = db.get_transaction().await.unwrap();
+        PostgresHomeLinkStore
+            .lock_accounts(tx.connection(), std::slice::from_ref(p.account_id()))
+            .await
+            .unwrap();
+        db.profile_read_model()
+            .create(tx.connection(), &p)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
         profiles.push(p);
     }
     (a, profiles)
