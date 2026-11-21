@@ -8,7 +8,7 @@ impl PostgresPostRelayStore {
         tx(c)?;
         let limit = batch(limit)?;
         let now = self.now(c).await?;
-        let rows=sqlx::query("WITH picked AS (SELECT receipt FROM post_relay_jobs WHERE due_at<=$1 AND (operation_id IS NULL OR authorized_at IS NULL) AND (lease_until IS NULL OR lease_until<=$1) AND (send_deadline IS NULL OR send_deadline<=$1) ORDER BY due_at,receipt FOR UPDATE SKIP LOCKED LIMIT $2) UPDATE post_relay_jobs j SET token=nextval('post_relay_fence'),lease_until=$3,authorized_at=NULL,send_deadline=NULL,attempt_id=NULL FROM picked p,post_relay_bodies b WHERE j.receipt=p.receipt AND b.receipt=j.receipt RETURNING j.receipt,b.profile_id,j.token,j.lease_until").bind(now).bind(limit).bind(now+LEASE_TTL).fetch_all(&mut **c).await.convert_error()?;
+        let rows=sqlx::query("WITH picked AS (SELECT j.receipt FROM post_relay_jobs j JOIN post_relay_bodies b USING(receipt) JOIN profile_links l ON l.id=b.link_id WHERE l.state='active' AND l.generation=b.generation AND j.due_at<=$1 AND (j.operation_id IS NULL OR j.authorized_at IS NULL) AND (j.lease_until IS NULL OR j.lease_until<=$1) AND (j.send_deadline IS NULL OR j.send_deadline<=$1) ORDER BY j.due_at,j.receipt FOR UPDATE OF j SKIP LOCKED LIMIT $2) UPDATE post_relay_jobs j SET token=nextval('post_relay_fence'),lease_until=$3,authorized_at=NULL,send_deadline=NULL,attempt_id=NULL FROM picked p,post_relay_bodies b WHERE j.receipt=p.receipt AND b.receipt=j.receipt RETURNING j.receipt,b.profile_id,j.token,j.lease_until").bind(now).bind(limit).bind(now+LEASE_TTL).fetch_all(&mut **c).await.convert_error()?;
         rows.into_iter()
             .map(|r| {
                 Ok(RelayLease {

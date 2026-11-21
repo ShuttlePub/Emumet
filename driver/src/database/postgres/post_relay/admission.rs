@@ -43,7 +43,16 @@ impl PostgresPostRelayStore {
         if current != r.recipient {
             return Err(Report::new(KernelError::Concurrency));
         }
-        let (q, p) = self.quota(c, &g).await?;
+        let (q, p) = match self.quota(c, &g).await {
+            Ok(value) => value,
+            Err(e) if matches!(e.current_context(), KernelError::Rejected) => {
+                return Ok(Admission::Limited {
+                    scope: LimitScope::Global,
+                    retry_after_secs: 1,
+                })
+            }
+            Err(e) => return Err(e),
+        };
         let now = self.now(c).await?;
         if r.received_at > now {
             return Err(Report::new(KernelError::Validation));

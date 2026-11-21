@@ -316,7 +316,7 @@ async fn reset_clears_only_legacy_federation_data() {
     }
     // `apply_reset` applies every remaining production migration, so migrations numbered after the
     // reset (new tables of later features) may add tables. Each table that existed before must be
-    // unchanged; a table added by a later migration starts empty.
+    // unchanged; a later table is empty unless its migration explicitly seeds fixed state.
     let after = retained_snapshot(&iso.pool).await;
     let after_existing: Snapshot = after
         .iter()
@@ -325,9 +325,15 @@ async fn reset_clears_only_legacy_federation_data() {
         .collect();
     assert_eq!(before, after_existing, "no retained table may change");
     for (table, (rows, _)) in after.iter().filter(|(t, _)| !before.contains_key(*t)) {
+        // Q1 seeds only fixed singleton/permit-slot state, never a body or receipt.
+        let expected_rows = match table.as_str() {
+            "post_relay_quota" | "post_relay_capacity" | "post_relay_counters" => 1,
+            "post_relay_slots" => 16,
+            _ => 0,
+        };
         assert_eq!(
-            *rows, 0,
-            "{table} was added by a later migration and starts empty"
+            *rows, expected_rows,
+            "{table}: explicit later-migration seed count"
         );
     }
     assert_eq!(count(&iso.pool, LEDGER).await, 1);

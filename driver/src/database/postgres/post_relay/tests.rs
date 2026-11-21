@@ -504,6 +504,7 @@ async fn post_relay_unlink_fences_new_authorization_and_stale_results_but_keeps_
     admit(db, p, "not-started", now, 40).await;
     let not_started = claim(db, now, 1).await.remove(0);
     unlink(db, p).await;
+    assert!(claim(db, now + LEASE_TTL, 128).await.is_empty());
     assert_eq!(
         number(&d, "SELECT body_count FROM post_relay_quota").await,
         0
@@ -719,6 +720,14 @@ async fn post_relay_unlinked_hourly_bounded_and_exhaustion_does_not_spend_linked
         .execute(&d.pool)
         .await
         .unwrap();
+    let (_, newly_unlinked) = fixture(db, 1, false).await;
+    assert_eq!(
+        admit(db, &newly_unlinked[0], "header-full", t, 7).await,
+        Admission::Limited {
+            scope: LimitScope::Global,
+            retry_after_secs: 1
+        }
+    );
     let (_, linked) = fixture(db, 1, true).await;
     assert_eq!(
         admit(db, &linked[0], "linked-still-open", t, 64).await,
@@ -1314,13 +1323,27 @@ async fn post_relay_full_profile_and_multi_account_logical_cancellation_is_bound
         let mut t = db.get_transaction().await.unwrap();
         let g = STORE.gate(t.connection(), p.id()).await.unwrap();
         STORE.quota(t.connection(), &g).await.unwrap();
-        let link = g.links.iter().find(|l| l.state == "active").unwrap();
-        sqlx::query("INSERT INTO post_relay_bodies(receipt,profile_id,link_id,generation,origin,received_at,automatic_expires_at,envelope,logical_bytes) SELECT 'full-'||$1::text||'-'||n,$1,$2,$3,$4,$5,$5+interval '72 hours',convert_to(repeat('x',264339+CASE WHEN n=2000 THEN 912 ELSE 0 END),'UTF8'),268435+CASE WHEN n=2000 THEN 912 ELSE 0 END FROM generate_series(1,2000) n").bind(p.id().as_ref()).bind(&link.id).bind(link.generation).bind(&link.origin).bind(now).execute(&mut **t.connection()).await.unwrap();
-        sqlx::query("INSERT INTO post_relay_jobs(receipt,due_at,total_attempts) SELECT receipt,$2,16 FROM post_relay_bodies WHERE profile_id=$1").bind(p.id().as_ref()).bind(now).execute(&mut **t.connection()).await.unwrap();
-        sqlx::query("INSERT INTO post_relay_attempts(receipt,number,at,status,reason) SELECT receipt,n,$2,503,'retry' FROM post_relay_bodies CROSS JOIN generate_series(1,16) n WHERE profile_id=$1").bind(p.id().as_ref()).bind(now).execute(&mut **t.connection()).await.unwrap();
-        sqlx::query("INSERT INTO post_relay_dead_letters(receipt,terminal_at,expires_at,reason) SELECT receipt,$2,$2+interval '30 days','permanent' FROM post_relay_bodies WHERE profile_id=$1 AND seq%2=0").bind(p.id().as_ref()).bind(now).execute(&mut **t.connection()).await.unwrap();
-        sqlx::query("INSERT INTO post_relay_audits(receipt,profile_id,link_id,reason,total_attempts,terminal_at,expires_at) SELECT b.receipt,b.profile_id,b.link_id,'permanent',16,$2,$2+interval '30 days' FROM post_relay_bodies b JOIN post_relay_dead_letters d USING(receipt) WHERE b.profile_id=$1").bind(p.id().as_ref()).bind(now).execute(&mut **t.connection()).await.unwrap();
-        sqlx::query("DELETE FROM post_relay_jobs WHERE receipt IN(SELECT receipt FROM post_relay_dead_letters)").execute(&mut **t.connection()).await.unwrap();
+        let link = g
+            .links
+            .iter()
+            .find(|l| l.state == "active")
+            .unwrap()
+            .clone();
+        t.commit().await.unwrap();
+        // Offline fixture seeding is NOT an admission/revocation transaction. On a 2-vCPU
+        // runner generating 512MiB can exceed 3s by itself. Keep that setup out of the
+        // production gate budget; the measured unlink/deactivate below retain every bound.
+        let mut seed = d.pool.begin().await.unwrap();
+        sqlx::query("INSERT INTO post_relay_bodies(receipt,profile_id,link_id,generation,origin,received_at,automatic_expires_at,envelope,logical_bytes) SELECT 'full-'||$1::text||'-'||n,$1,$2,$3,$4,$5,$5+interval '72 hours',convert_to(repeat('x',264339+CASE WHEN n=2000 THEN 912 ELSE 0 END),'UTF8'),268435+CASE WHEN n=2000 THEN 912 ELSE 0 END FROM generate_series(1,2000) n").bind(p.id().as_ref()).bind(&link.id).bind(link.generation).bind(&link.origin).bind(now).execute(&mut *seed).await.unwrap();
+        sqlx::query("INSERT INTO post_relay_jobs(receipt,due_at,total_attempts) SELECT receipt,$2,16 FROM post_relay_bodies WHERE profile_id=$1").bind(p.id().as_ref()).bind(now).execute(&mut *seed).await.unwrap();
+        sqlx::query("INSERT INTO post_relay_attempts(receipt,number,at,status,reason) SELECT receipt,n,$2,503,'retry' FROM post_relay_bodies CROSS JOIN generate_series(1,16) n WHERE profile_id=$1").bind(p.id().as_ref()).bind(now).execute(&mut *seed).await.unwrap();
+        sqlx::query("INSERT INTO post_relay_dead_letters(receipt,terminal_at,expires_at,reason) SELECT receipt,$2,$2+interval '30 days','permanent' FROM post_relay_bodies WHERE profile_id=$1 AND seq%2=0").bind(p.id().as_ref()).bind(now).execute(&mut *seed).await.unwrap();
+        sqlx::query("INSERT INTO post_relay_audits(receipt,profile_id,link_id,reason,total_attempts,terminal_at,expires_at) SELECT b.receipt,b.profile_id,b.link_id,'permanent',16,$2,$2+interval '30 days' FROM post_relay_bodies b JOIN post_relay_dead_letters d USING(receipt) WHERE b.profile_id=$1").bind(p.id().as_ref()).bind(now).execute(&mut *seed).await.unwrap();
+        sqlx::query("DELETE FROM post_relay_jobs WHERE receipt IN(SELECT receipt FROM post_relay_dead_letters)").execute(&mut *seed).await.unwrap();
+        seed.commit().await.unwrap();
+        let mut t = db.get_transaction().await.unwrap();
+        let g = STORE.gate(t.connection(), p.id()).await.unwrap();
+        STORE.quota(t.connection(), &g).await.unwrap();
         sqlx::query("INSERT INTO post_relay_link_usage(link_id,profile_id,body_count,body_bytes,auto_jobs) VALUES($1,$2,2000,536870912,1000)").bind(&link.id).bind(p.id().as_ref()).execute(&mut **t.connection()).await.unwrap();
         STORE
             .delta(

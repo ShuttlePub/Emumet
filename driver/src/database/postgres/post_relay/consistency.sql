@@ -1,5 +1,5 @@
 WITH live AS (
- SELECT b.*,j.operation_id,j.receipt AS job_receipt,d.receipt AS dead_receipt FROM post_relay_bodies b
+ SELECT b.receipt,b.profile_id,b.link_id,b.logical_bytes,j.operation_id,j.receipt AS job_receipt,d.receipt AS dead_receipt FROM post_relay_bodies b
  JOIN profile_links l ON l.id=b.link_id LEFT JOIN post_relay_jobs j USING(receipt)
  LEFT JOIN post_relay_dead_letters d USING(receipt)
  WHERE l.state='active' AND l.generation=b.generation

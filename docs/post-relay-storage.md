@@ -119,10 +119,12 @@ Immediate logical erasure is NOT a claim of immediate disk/MVCC/backup erasure. 
 and volume headroom; physical sampling continues to stop new admission if cleanup cannot keep up.
 
 Final adapter full-limit test: eight Profiles, EXACT 512MiB/2000 bodies each (half jobs with 16
-attempts, half quarantine+audit); compressible fixtures bound CI disk use. Local result (PG17.9,
+attempts, half quarantine+audit); compressible fixtures bound CI disk use. Bulk fixture generation
+is offline setup, outside lifecycle transactions; it is not a timed production admission. Every
+measured unlink/deactivation/purge still uses the unchanged 2s/3s/5s bounds. Local result (PG17.9,
 debug, Unix socket, AMD Ryzen 9 7900, 24 logical CPUs/64GiB host, Linux 7.3.5): Profile unlink
-2.887ms; Account deactivation of seven remaining Profiles 8.121ms; retained physical bodies after
-commit 16,000; worst 128-body cleanup batch 24.320ms. These are measurements, not production SLOs.
+1.957ms; Account deactivation of seven remaining Profiles 6.418ms; retained physical bodies after
+commit 16,000; worst 128-body cleanup batch 17.912ms. These are measurements, not production SLOs.
 The initial uncompressed probe is what rejected physical deletion, not the compressible CI fixture.
 
 Row-count test at 256 and 768 successful 64KiB relays: ZERO remaining body/job/attempt/dead-letter/
