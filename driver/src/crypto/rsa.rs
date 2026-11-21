@@ -1,6 +1,7 @@
 use error_stack::{Report, Result};
 use kernel::interfaces::crypto::{
-    RawKeyGenerator, RawKeyPair, SignatureVerifier, Signer, SigningAlgorithm,
+    PreparedSigner, PreparedSignerFactory, RawKeyGenerator, RawKeyPair, SignatureVerifier, Signer,
+    SigningAlgorithm,
 };
 use kernel::KernelError;
 use rand::rngs::OsRng;
@@ -76,6 +77,50 @@ impl Signer for Rsa2048Signer {
     }
 }
 
+/// Parses an RSA-2048 private key once into a signer that holds the parsed key.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Rsa2048PreparedSignerFactory;
+
+impl PreparedSignerFactory for Rsa2048PreparedSignerFactory {
+    fn prepare(
+        &self,
+        private_key_pem: &[u8],
+        algorithm: SigningAlgorithm,
+    ) -> Result<Box<dyn PreparedSigner>, KernelError> {
+        if algorithm != SigningAlgorithm::Rsa2048 {
+            return Err(Report::new(KernelError::Internal)
+                .attach_printable(format!("Not an RSA-2048 key: {algorithm}")));
+        }
+        let pem_str = std::str::from_utf8(private_key_pem).map_err(|e| {
+            Report::new(KernelError::Internal)
+                .attach_printable(format!("Invalid UTF-8 in private key PEM: {e}"))
+        })?;
+        let private_key = RsaPrivateKey::from_pkcs8_pem(pem_str).map_err(|e| {
+            Report::new(KernelError::Internal)
+                .attach_printable(format!("Failed to parse private key PEM: {e}"))
+        })?;
+        Ok(Box::new(Rsa2048PreparedSigner {
+            signing_key: SigningKey::<Sha256>::new(private_key),
+        }))
+    }
+}
+
+/// RSA-2048 (PKCS#1 v1.5 + SHA-256) signer over an already parsed key. The `rsa` private key
+/// zeroizes itself on drop; `Debug` prints nothing of it.
+struct Rsa2048PreparedSigner {
+    signing_key: SigningKey<Sha256>,
+}
+
+impl PreparedSigner for Rsa2048PreparedSigner {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KernelError> {
+        Ok(self.signing_key.sign(data).to_bytes().to_vec())
+    }
+
+    fn algorithm(&self) -> SigningAlgorithm {
+        SigningAlgorithm::Rsa2048
+    }
+}
+
 /// RSA-2048 signature verifier using PKCS#1 v1.5 + SHA-256
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Rsa2048Verifier;
@@ -147,6 +192,34 @@ mod tests {
             .verify(data, &signature, key_pair.public_key_pem.as_bytes())
             .unwrap();
         assert!(is_valid);
+    }
+
+    #[test]
+    fn prepared_signer_signs_like_the_per_call_signer_and_rejects_other_algorithms() {
+        let key_pair = Rsa2048RawGenerator.generate_raw().unwrap();
+        let prepared = Rsa2048PreparedSignerFactory
+            .prepare(&key_pair.private_key_pem, SigningAlgorithm::Rsa2048)
+            .unwrap();
+        let data = b"prepared signer";
+        // PKCS#1 v1.5 is deterministic: both paths produce the same bytes.
+        assert_eq!(
+            prepared.sign(data).unwrap(),
+            Rsa2048Signer.sign(data, &key_pair.private_key_pem).unwrap()
+        );
+        assert_eq!(prepared.algorithm(), SigningAlgorithm::Rsa2048);
+        assert!(Rsa2048Verifier
+            .verify(
+                data,
+                &prepared.sign(data).unwrap(),
+                key_pair.public_key_pem.as_bytes()
+            )
+            .unwrap());
+        assert!(Rsa2048PreparedSignerFactory
+            .prepare(&key_pair.private_key_pem, SigningAlgorithm::Ed25519)
+            .is_err());
+        assert!(Rsa2048PreparedSignerFactory
+            .prepare(b"not a pem", SigningAlgorithm::Rsa2048)
+            .is_err());
     }
 
     #[test]

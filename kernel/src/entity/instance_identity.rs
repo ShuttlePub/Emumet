@@ -128,8 +128,15 @@ pub struct InstanceIdentity {
     pub created_at: OffsetDateTime,
 }
 
-/// An instance signing key. At most one non-revoked key exists (database unique index); K1
-/// creates exactly one and never revokes it.
+/// An instance signing key. Signing and publication are separate states:
+///
+/// * **active** (neither retired nor revoked): the key that signs, and is published. At most one
+///   exists (database unique index); K1 creates exactly one and never changes its state;
+/// * **retired** (`retired_at` set): no longer signs but is still published, so earlier signatures
+///   stay verifiable;
+/// * **revoked** (`revoked_at` set): neither signs nor is published.
+///
+/// Moving a key between these states is K2.
 ///
 /// `revision` is the cache-coherence token of the in-process key cache (cache key = key id +
 /// revision): it changes whenever K2 changes the state of a key whose id stays the same. K1
@@ -143,7 +150,20 @@ pub struct InstanceSigningKey {
     pub public_key_pem: String,
     pub key_id_uri: String,
     pub created_at: OffsetDateTime,
+    pub retired_at: Option<OffsetDateTime>,
     pub revoked_at: Option<OffsetDateTime>,
+}
+
+impl InstanceSigningKey {
+    /// The key that signs (not retired, not revoked).
+    pub fn is_active(&self) -> bool {
+        self.retired_at.is_none() && self.revoked_at.is_none()
+    }
+
+    /// Whether the public key is published in the instance actor document (not revoked).
+    pub fn is_published(&self) -> bool {
+        self.revoked_at.is_none()
+    }
 }
 
 /// Persistence of the instance identity and key.
@@ -168,7 +188,7 @@ pub trait InstanceIdentityRepository: Sync + Send + 'static {
         executor: &mut Self::Connection,
     ) -> impl Future<Output = error_stack::Result<Option<InstanceIdentity>, KernelError>> + Send;
 
-    /// All keys, revoked ones included, oldest first. A stored row that cannot be read back is an
+    /// All keys, retired and revoked ones included, oldest first. A stored row that cannot be read back is an
     /// `Internal` error.
     fn find_signing_keys(
         &self,

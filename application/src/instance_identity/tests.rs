@@ -1,14 +1,18 @@
 use super::*;
 use driver::crypto::{
-    Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
+    Argon2Encryptor, FilePasswordProvider, Rsa2048PreparedSignerFactory, Rsa2048RawGenerator,
+    Rsa2048Verifier,
 };
 use driver::database::isolated_db::IsolatedDatabase;
 use driver::database::PostgresDatabase;
 use kernel::interfaces::config::PublicBaseUrl;
-use kernel::interfaces::crypto::{DependOnRawKeyGenerator, EncryptedPrivateKey, RawKeyGenerator};
+use kernel::interfaces::crypto::{
+    DependOnRawKeyGenerator, EncryptedPrivateKey, PreparedSigner, RawKeyGenerator,
+};
 use kernel::interfaces::database::DependOnDatabaseConnection;
 use sqlx::Executor;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use zeroize::Zeroizing;
 
 const BASE: &str = "https://emumet.example";
 
@@ -37,6 +41,44 @@ impl KeyEncryptor for CountingEncryptor {
     }
 }
 
+/// Counts how often a PEM is parsed into a signer (`prepares`) and how often a parsed signer signs
+/// (`signs`).
+struct CountingSignerFactory {
+    inner: Rsa2048PreparedSignerFactory,
+    prepares: Arc<AtomicUsize>,
+    signs: Arc<AtomicUsize>,
+}
+
+struct CountingSigner {
+    inner: Box<dyn PreparedSigner>,
+    signs: Arc<AtomicUsize>,
+}
+
+impl PreparedSignerFactory for CountingSignerFactory {
+    fn prepare(
+        &self,
+        private_key_pem: &[u8],
+        algorithm: SigningAlgorithm,
+    ) -> error_stack::Result<Box<dyn PreparedSigner>, KernelError> {
+        self.prepares.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(CountingSigner {
+            inner: self.inner.prepare(private_key_pem, algorithm)?,
+            signs: self.signs.clone(),
+        }))
+    }
+}
+
+impl PreparedSigner for CountingSigner {
+    fn sign(&self, data: &[u8]) -> error_stack::Result<Vec<u8>, KernelError> {
+        self.signs.fetch_add(1, Ordering::SeqCst);
+        self.inner.sign(data)
+    }
+
+    fn algorithm(&self) -> SigningAlgorithm {
+        self.inner.algorithm()
+    }
+}
+
 /// One "process": its own cache, counters and password, on a shared database.
 #[derive(Clone)]
 struct TestModule {
@@ -44,7 +86,7 @@ struct TestModule {
     password_provider: Arc<FilePasswordProvider>,
     raw_key_generator: Arc<Rsa2048RawGenerator>,
     key_encryptor: Arc<CountingEncryptor>,
-    signer: Rsa2048Signer,
+    signer_factory: Arc<CountingSignerFactory>,
     verifier: Rsa2048Verifier,
     public_base_url: PublicBaseUrl,
     cache: Arc<InstanceKeyCache>,
@@ -73,10 +115,10 @@ impl DependOnKeyEncryptor for TestModule {
     }
 }
 
-impl DependOnSigner for TestModule {
-    type Signer = Rsa2048Signer;
-    fn signer(&self) -> &Self::Signer {
-        &self.signer
+impl DependOnPreparedSignerFactory for TestModule {
+    type PreparedSignerFactory = CountingSignerFactory;
+    fn prepared_signer_factory(&self) -> &Self::PreparedSignerFactory {
+        self.signer_factory.as_ref()
     }
 }
 
@@ -132,7 +174,11 @@ impl Env {
                 inner: Argon2Encryptor::default(),
                 decrypts: decrypts.clone(),
             }),
-            signer: Rsa2048Signer,
+            signer_factory: Arc::new(CountingSignerFactory {
+                inner: Rsa2048PreparedSignerFactory,
+                prepares: Arc::new(AtomicUsize::new(0)),
+                signs: Arc::new(AtomicUsize::new(0)),
+            }),
             verifier: Rsa2048Verifier,
             public_base_url: PublicBaseUrl::new(base_url.to_string()),
             cache: Arc::new(InstanceKeyCache::default()),
@@ -246,6 +292,7 @@ async fn unique_constraints_alone_keep_one_identity_and_one_active_key() {
                 pair.public_key_pem,
                 origin.key_id_uri(&id),
                 now,
+                None,
                 None,
             );
             let key_created = repository.create_signing_key(&mut connection, &key).await;
@@ -533,55 +580,83 @@ async fn an_identity_without_an_active_key_is_not_repaired_by_generating_one() {
 
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
-async fn several_public_keys_are_expressed_and_a_second_active_key_is_impossible() {
+async fn an_identity_whose_keys_are_all_retired_has_no_active_key_either() {
+    let env = Env::new().await;
+    let (module, _) = env.process();
+    module.ensure_instance_identity().await.unwrap();
+    sqlx::query("UPDATE instance_signing_keys SET retired_at = now()")
+        .execute(&env.iso.pool)
+        .await
+        .unwrap();
+
+    let (restarted, _) = env.process();
+    let error = restarted.ensure_instance_identity().await.unwrap_err();
+    assert_eq!(problem(&error), Some(&InstanceIdentityProblem::NoActiveKey));
+    assert_eq!(env.counts().await, (1, 1));
+}
+
+/// A new key as K2's rotation would add it (K1 itself never adds a second key).
+fn new_key(module: &TestModule, origin: &InstanceOrigin) -> InstanceSigningKey {
+    let pair = Rsa2048RawGenerator.generate_raw().unwrap();
+    let id = InstanceSigningKeyId::generate();
+    let encrypted = module
+        .key_encryptor()
+        .encrypt(
+            &pair.private_key_pem,
+            b"instance-identity-password",
+            pair.algorithm,
+        )
+        .unwrap();
+    InstanceSigningKey::new(
+        id.clone(),
+        1,
+        pair.algorithm,
+        encrypted,
+        pair.public_key_pem,
+        origin.key_id_uri(&id),
+        time::OffsetDateTime::now_utc(),
+        None,
+        None,
+    )
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_second_active_key_is_impossible() {
     let env = Env::new().await;
     let (module, _) = env.process();
     module.ensure_instance_identity().await.unwrap();
     let origin = InstanceOrigin::parse(BASE).unwrap();
-    let first_uri = module.get_instance_actor().await.unwrap().public_key[0]
-        .id
-        .clone();
-
-    let new_key = |module: &TestModule| {
-        let pair = Rsa2048RawGenerator.generate_raw().unwrap();
-        let id = InstanceSigningKeyId::generate();
-        let encrypted = module
-            .key_encryptor()
-            .encrypt(
-                &pair.private_key_pem,
-                b"instance-identity-password",
-                pair.algorithm,
-            )
-            .unwrap();
-        InstanceSigningKey::new(
-            id.clone(),
-            1,
-            pair.algorithm,
-            encrypted,
-            pair.public_key_pem,
-            origin.key_id_uri(&id),
-            time::OffsetDateTime::now_utc(),
-            None,
-        )
-    };
-    let repository = module.instance_identity_repository();
     let mut executor = module.database_connection().connection().await.unwrap();
 
-    // A second *active* key is rejected by the database (not replaced, not added).
-    let rejected = repository
-        .create_signing_key(&mut executor, &new_key(&module))
+    let rejected = module
+        .instance_identity_repository()
+        .create_signing_key(&mut executor, &new_key(&module, &origin))
         .await
         .unwrap_err();
     assert_eq!(rejected.current_context(), &KernelError::Concurrency);
     assert_eq!(env.counts().await, (1, 1));
+}
 
-    // A rotation (K2) revokes the first key first; then the second can be added and both ids
-    // stay distinct. Only the non-revoked key is published.
-    sqlx::query("UPDATE instance_signing_keys SET revoked_at = now()")
+/// Publication and signing are separate: with exactly one active key, the document still lists
+/// every key that has not been revoked.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn the_document_publishes_every_unrevoked_key_while_exactly_one_key_is_active() {
+    let env = Env::new().await;
+    let (module, _) = env.process();
+    let first = module.ensure_instance_identity().await.unwrap();
+    let origin = InstanceOrigin::parse(BASE).unwrap();
+    let repository = module.instance_identity_repository();
+
+    // K2's rotation: the first key stops signing (retired) but stays published, then the new active
+    // key is added.
+    sqlx::query("UPDATE instance_signing_keys SET retired_at = now()")
         .execute(&env.iso.pool)
         .await
         .unwrap();
-    let second = new_key(&module);
+    let second = new_key(&module, &origin);
+    let mut executor = module.database_connection().connection().await.unwrap();
     repository
         .create_signing_key(&mut executor, &second)
         .await
@@ -589,11 +664,59 @@ async fn several_public_keys_are_expressed_and_a_second_active_key_is_impossible
     drop(executor);
     assert_eq!(env.counts().await, (1, 2));
 
+    // Two public keys are published, both owned by the instance actor; the keys are distinct.
+    let actor = module.get_instance_actor().await.unwrap();
+    let ids: Vec<&str> = actor.public_key.iter().map(|key| key.id.as_str()).collect();
+    assert_eq!(ids, [first.key_id_uri.as_str(), second.key_id_uri.as_str()]);
+    assert!(actor
+        .public_key
+        .iter()
+        .all(|key| key.owner == origin.actor_id()));
+    assert_ne!(
+        actor.public_key[0].public_key_pem,
+        actor.public_key[1].public_key_pem
+    );
+
+    // Exactly one key is active: the new one signs, and a third active key is rejected.
+    let (restarted, _) = env.process();
+    let report = restarted.ensure_instance_identity().await.unwrap();
+    assert!(!report.created);
+    assert_eq!(report.key_id_uri, second.key_id_uri);
+    let unlocked = restarted.unlock_instance_signing_key().await.unwrap();
+    assert_eq!(unlocked.key_id_uri(), second.key_id_uri);
+    let signature = unlocked.sign(b"payload").unwrap();
+    assert!(Rsa2048Verifier
+        .verify(
+            b"payload",
+            &signature,
+            actor.public_key[1].public_key_pem.as_bytes()
+        )
+        .unwrap());
+    assert!(!Rsa2048Verifier
+        .verify(
+            b"payload",
+            &signature,
+            actor.public_key[0].public_key_pem.as_bytes()
+        )
+        .unwrap());
+    let mut executor = module.database_connection().connection().await.unwrap();
+    let rejected = repository
+        .create_signing_key(&mut executor, &new_key(&module, &origin))
+        .await
+        .unwrap_err();
+    assert_eq!(rejected.current_context(), &KernelError::Concurrency);
+    drop(executor);
+    assert_eq!(env.counts().await, (1, 2));
+
+    // A revoked key is no longer published; the active key and the document stay valid.
+    sqlx::query("UPDATE instance_signing_keys SET revoked_at = now() WHERE key_id_uri = $1")
+        .bind(&first.key_id_uri)
+        .execute(&env.iso.pool)
+        .await
+        .unwrap();
     let actor = module.get_instance_actor().await.unwrap();
     assert_eq!(actor.public_key.len(), 1);
     assert_eq!(actor.public_key[0].id, second.key_id_uri);
-    assert_ne!(actor.public_key[0].id, first_uri);
-    assert_eq!(actor.public_key[0].owner, origin.actor_id());
 }
 
 #[test_with::env(DATABASE_URL)]
@@ -622,6 +745,7 @@ async fn a_key_id_is_never_reused() {
         "pem".to_string(),
         uri.clone(),
         time::OffsetDateTime::now_utc(),
+        None,
         None,
     );
     assert_eq!(origin.key_id_uri(reused.id()), uri);
@@ -665,11 +789,13 @@ async fn identity_and_key_material_are_immutable_in_the_database() {
             "{statement}"
         );
     }
-    // The state of a key (revocation, revision) is the only thing that may change (K2).
-    sqlx::query("UPDATE instance_signing_keys SET revision = revision + 1")
-        .execute(&env.iso.pool)
-        .await
-        .unwrap();
+    // The state of a key (retirement, revocation, revision) is the only thing that may change (K2).
+    sqlx::query(
+        "UPDATE instance_signing_keys SET revision = revision + 1, retired_at = now(), revoked_at = now()",
+    )
+    .execute(&env.iso.pool)
+    .await
+    .unwrap();
 }
 
 #[test_with::env(DATABASE_URL)]
@@ -693,9 +819,88 @@ async fn the_kdf_does_not_run_per_use() {
         assert!(key
             .key_id_uri()
             .starts_with("https://emumet.example/ap/instance#key-"));
-        assert!(!key.private_key_pem().is_empty());
+        assert!(!key.sign(b"payload").unwrap().is_empty());
     }
     assert_eq!(decrypts.load(Ordering::SeqCst), after_start);
+}
+
+/// The cache holds a parsed signer: however many times the key is used, the PEM was decrypted and
+/// parsed once (at unlock), and every signature goes through the parsed handle.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_cache_holds_a_parsed_signer_that_signs_without_parsing_again() {
+    let env = Env::new().await;
+    let (module, decrypts) = env.process();
+    module.ensure_instance_identity().await.unwrap();
+    let factory = module.signer_factory.clone();
+    // Start-up: one decrypt, one parse, one self-check signature.
+    assert_eq!(decrypts.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.prepares.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.signs.load(Ordering::SeqCst), 1);
+
+    let public_key_pem = module.get_instance_actor().await.unwrap().public_key[0]
+        .public_key_pem
+        .clone();
+    let mut tasks = Vec::new();
+    for worker in 0..8 {
+        let module = module.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut signatures = Vec::new();
+            for attempt in 0..25 {
+                let key = module.unlock_instance_signing_key().await.unwrap();
+                let data = format!("request {worker}-{attempt}").into_bytes();
+                signatures.push((data.clone(), key.sign(&data).unwrap()));
+            }
+            signatures
+        }));
+    }
+    let mut signed = 0;
+    for task in tasks {
+        for (data, signature) in task.await.unwrap() {
+            assert!(Rsa2048Verifier
+                .verify(&data, &signature, public_key_pem.as_bytes())
+                .unwrap());
+            signed += 1;
+        }
+    }
+    assert_eq!(signed, 200);
+    assert_eq!(decrypts.load(Ordering::SeqCst), 1, "no KDF per signature");
+    assert_eq!(
+        factory.prepares.load(Ordering::SeqCst),
+        1,
+        "no PEM parse per signature"
+    );
+    assert_eq!(factory.signs.load(Ordering::SeqCst), 201);
+}
+
+/// A key that decrypts but is not a usable private key is refused, like any other damage.
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn a_decryptable_but_unparsable_private_key_is_refused() {
+    let env = Env::new().await;
+    let (module, _) = env.process();
+    module.ensure_instance_identity().await.unwrap();
+    let encrypted = module
+        .key_encryptor()
+        .encrypt(
+            b"not a pem",
+            b"instance-identity-password",
+            SigningAlgorithm::Rsa2048,
+        )
+        .unwrap();
+    let json = serde_json::to_string(&encrypted).unwrap();
+    env.damage(&format!(
+        "UPDATE instance_signing_keys SET encrypted_private_key = '{json}'::jsonb"
+    ))
+    .await;
+
+    let (restarted, _) = env.process();
+    let error = restarted.ensure_instance_identity().await.unwrap_err();
+    assert_eq!(
+        problem(&error),
+        Some(&InstanceIdentityProblem::UnparsableKey)
+    );
+    assert_eq!(env.counts().await, (1, 1));
 }
 
 #[test_with::env(DATABASE_URL)]
@@ -706,9 +911,7 @@ async fn unlocked_key_signs_and_verifies_with_the_published_public_key() {
     module.ensure_instance_identity().await.unwrap();
     let unlocked = module.unlock_instance_signing_key().await.unwrap();
     let actor = module.get_instance_actor().await.unwrap();
-    let signature = Rsa2048Signer
-        .sign(b"payload", unlocked.private_key_pem())
-        .unwrap();
+    let signature = unlocked.sign(b"payload").unwrap();
     assert!(Rsa2048Verifier
         .verify(
             b"payload",
@@ -773,9 +976,16 @@ async fn migration_applies_to_a_database_that_already_has_the_current_schema() {
     assert!(module.ensure_instance_identity().await.unwrap().created);
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum KeyState {
+    Active,
+    Retired,
+    Revoked,
+}
+
 fn dummy_key(
     origin: &InstanceOrigin,
-    revoked: bool,
+    state: KeyState,
     algorithm: SigningAlgorithm,
 ) -> InstanceSigningKey {
     let id = InstanceSigningKeyId::generate();
@@ -792,7 +1002,8 @@ fn dummy_key(
         String::new(),
         origin.key_id_uri(&id),
         time::OffsetDateTime::now_utc(),
-        revoked.then(time::OffsetDateTime::now_utc),
+        (state == KeyState::Retired).then(time::OffsetDateTime::now_utc),
+        (state == KeyState::Revoked).then(time::OffsetDateTime::now_utc),
     )
 }
 
@@ -800,29 +1011,43 @@ fn dummy_key(
 fn key_selection_rules() {
     let origin = InstanceOrigin::parse(BASE).unwrap();
     let identity = InstanceIdentity::new(origin.clone(), time::OffsetDateTime::now_utc());
-    let active = dummy_key(&origin, false, SigningAlgorithm::Rsa2048);
-    let revoked = dummy_key(&origin, true, SigningAlgorithm::Rsa2048);
+    let active = dummy_key(&origin, KeyState::Active, SigningAlgorithm::Rsa2048);
+    let retired = dummy_key(&origin, KeyState::Retired, SigningAlgorithm::Rsa2048);
+    let revoked = dummy_key(&origin, KeyState::Revoked, SigningAlgorithm::Rsa2048);
 
-    let keys = [revoked.clone(), active.clone()];
+    // Retired and revoked keys never sign; only the active one is selected.
+    let keys = [revoked.clone(), retired.clone(), active.clone()];
     assert_eq!(
         select_active_key(&origin, &identity, &keys).unwrap().id(),
         active.id()
     );
+    assert!(active.is_active() && active.is_published());
+    assert!(!retired.is_active() && retired.is_published());
+    assert!(!revoked.is_active() && !revoked.is_published());
 
-    let none = [revoked.clone()];
-    assert_eq!(
-        problem(&select_active_key(&origin, &identity, &none).unwrap_err()),
-        Some(&InstanceIdentityProblem::NoActiveKey)
-    );
+    for none in [
+        vec![revoked.clone()],
+        vec![retired.clone()],
+        vec![revoked.clone(), retired.clone()],
+    ] {
+        assert_eq!(
+            problem(&select_active_key(&origin, &identity, &none).unwrap_err()),
+            Some(&InstanceIdentityProblem::NoActiveKey)
+        );
+    }
     let two = [
         active.clone(),
-        dummy_key(&origin, false, SigningAlgorithm::Rsa2048),
+        dummy_key(&origin, KeyState::Active, SigningAlgorithm::Rsa2048),
     ];
     assert_eq!(
         problem(&select_active_key(&origin, &identity, &two).unwrap_err()),
         Some(&InstanceIdentityProblem::MultipleActiveKeys)
     );
-    let ed = [dummy_key(&origin, false, SigningAlgorithm::Ed25519)];
+    let ed = [dummy_key(
+        &origin,
+        KeyState::Active,
+        SigningAlgorithm::Ed25519,
+    )];
     assert_eq!(
         problem(&select_active_key(&origin, &identity, &ed).unwrap_err()),
         Some(&InstanceIdentityProblem::UnsupportedAlgorithm)
@@ -842,7 +1067,19 @@ fn unlocked(id: &InstanceSigningKeyId, revision: i64) -> UnlockedInstanceSigning
         revision,
         key_id_uri: format!("https://emumet.example/ap/instance#key-{id}"),
         algorithm: SigningAlgorithm::Rsa2048,
-        private_key_pem: Zeroizing::new(b"not-a-real-key".to_vec()),
+        signer: Box::new(NullSigner),
+    }
+}
+
+struct NullSigner;
+
+impl PreparedSigner for NullSigner {
+    fn sign(&self, _data: &[u8]) -> error_stack::Result<Vec<u8>, KernelError> {
+        Ok(b"not-a-real-key".to_vec())
+    }
+
+    fn algorithm(&self) -> SigningAlgorithm {
+        SigningAlgorithm::Rsa2048
     }
 }
 
@@ -946,5 +1183,6 @@ fn unlocked_key_debug_never_prints_the_private_key() {
     let key = unlocked(&id, 1);
     let debug = format!("{key:?}");
     assert!(!debug.contains("not-a-real-key"));
+    assert!(!debug.contains("NullSigner"));
     assert!(debug.contains("REDACTED"));
 }

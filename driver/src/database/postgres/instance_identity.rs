@@ -48,6 +48,7 @@ struct InstanceSigningKeyRow {
     public_key_pem: String,
     key_id_uri: String,
     created_at: OffsetDateTime,
+    retired_at: Option<OffsetDateTime>,
     revoked_at: Option<OffsetDateTime>,
 }
 
@@ -78,6 +79,7 @@ impl TryFrom<InstanceSigningKeyRow> for InstanceSigningKey {
             value.public_key_pem,
             value.key_id_uri,
             value.created_at,
+            value.retired_at,
             value.revoked_at,
         ))
     }
@@ -129,7 +131,7 @@ impl InstanceIdentityRepository for PostgresInstanceIdentityRepository {
         sqlx::query_as::<_, InstanceSigningKeyRow>(
             //language=postgresql
             r#"
-            SELECT id, revision, algorithm, encrypted_private_key, public_key_pem, key_id_uri, created_at, revoked_at
+            SELECT id, revision, algorithm, encrypted_private_key, public_key_pem, key_id_uri, created_at, retired_at, revoked_at
             FROM instance_signing_keys
             ORDER BY created_at, id
             "#,
@@ -188,8 +190,8 @@ impl InstanceIdentityRepository for PostgresInstanceIdentityRepository {
         let result = sqlx::query(
             //language=postgresql
             r#"
-            INSERT INTO instance_signing_keys (id, revision, algorithm, encrypted_private_key, public_key_pem, key_id_uri, created_at, revoked_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO instance_signing_keys (id, revision, algorithm, encrypted_private_key, public_key_pem, key_id_uri, created_at, retired_at, revoked_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(signing_key.id().as_str())
@@ -199,6 +201,7 @@ impl InstanceIdentityRepository for PostgresInstanceIdentityRepository {
         .bind(&signing_key.public_key_pem)
         .bind(&signing_key.key_id_uri)
         .bind(signing_key.created_at)
+        .bind(signing_key.retired_at)
         .bind(signing_key.revoked_at)
         .execute(con)
         .await;

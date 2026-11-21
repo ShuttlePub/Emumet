@@ -17,9 +17,10 @@ use error_stack::Report;
 use kernel::activitypub::InstanceActor;
 use kernel::interfaces::config::DependOnPublicBaseUrl;
 use kernel::interfaces::crypto::{
-    DependOnKeyEncryptor, DependOnPasswordProvider, DependOnSignatureVerifier, DependOnSigner,
-    DependOnSigningKeyGenerator, KeyEncryptor, PasswordProvider, SignatureVerifier, Signer,
-    SigningAlgorithm, SigningKeyGenerator,
+    DependOnKeyEncryptor, DependOnPasswordProvider, DependOnPreparedSignerFactory,
+    DependOnSignatureVerifier, DependOnSigningKeyGenerator, KeyEncryptor, PasswordProvider,
+    PreparedSigner, PreparedSignerFactory, SignatureVerifier, SigningAlgorithm,
+    SigningKeyGenerator,
 };
 use kernel::interfaces::database::{
     DatabaseConnection, DependOnTransactionManager, TransactionManager,
@@ -35,7 +36,6 @@ use std::fmt::{Debug, Display, Formatter};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use zeroize::Zeroizing;
 
 /// Why the stored instance identity was refused. Attached to the error so that callers and tests
 /// can tell the cases apart; none of them is repaired automatically.
@@ -45,7 +45,7 @@ pub enum InstanceIdentityProblem {
     OriginMismatch,
     /// Keys exist without an identity (impossible through this code; a damaged database).
     KeysWithoutIdentity,
-    /// An identity exists but has no active (non-revoked) key.
+    /// An identity exists but has no active (signing) key: every key is retired or revoked.
     NoActiveKey,
     /// More than one active key (the database unique index forbids it; a damaged database).
     MultipleActiveKeys,
@@ -55,6 +55,8 @@ pub enum InstanceIdentityProblem {
     UnsupportedAlgorithm,
     /// The private key cannot be decrypted with the configured master key password.
     UndecryptableKey,
+    /// The decrypted private key is not a usable key (cannot be parsed for signing).
+    UnparsableKey,
     /// The private key does not belong to the stored public key.
     KeyPairMismatch,
 }
@@ -73,6 +75,7 @@ impl Display for InstanceIdentityProblem {
             Self::UndecryptableKey => {
                 "the instance private key cannot be decrypted with the configured master key password"
             }
+            Self::UnparsableKey => "the decrypted instance private key cannot be parsed for signing",
             Self::KeyPairMismatch => "the instance private key does not match the stored public key",
         })
     }
@@ -98,7 +101,7 @@ pub fn select_active_key<'a>(
     {
         return Err(refuse(InstanceIdentityProblem::KeyIdUriMismatch));
     }
-    let mut active = keys.iter().filter(|key| key.revoked_at.is_none());
+    let mut active = keys.iter().filter(|key| key.is_active());
     let key = active
         .next()
         .ok_or_else(|| refuse(InstanceIdentityProblem::NoActiveKey))?;
@@ -120,14 +123,19 @@ pub const INSTANCE_KEY_CACHE_MAX_ENTRIES: usize = 2;
 /// Default lifetime of a cached entry.
 pub const INSTANCE_KEY_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 
-/// The decrypted instance private key. It lives in memory only: it is zeroized when the last
-/// reference is dropped and `Debug` never prints it.
+/// The unlocked instance signing key: the private key is decrypted **and parsed once** into a
+/// [`PreparedSigner`], so signing with it neither runs the KDF nor parses the PEM again. The PEM
+/// is not kept; the parsed key lives in memory only (it zeroizes itself on drop) and `Debug`
+/// never prints it.
+///
+/// This is the handle boundary of K2: a revoked or retired key is replaced by loading another
+/// handle under a different key id / revision, and nothing else holds key material.
 pub struct UnlockedInstanceSigningKey {
     key_id: InstanceSigningKeyId,
     revision: i64,
     key_id_uri: String,
     algorithm: SigningAlgorithm,
-    private_key_pem: Zeroizing<Vec<u8>>,
+    signer: Box<dyn PreparedSigner>,
 }
 
 impl UnlockedInstanceSigningKey {
@@ -148,9 +156,10 @@ impl UnlockedInstanceSigningKey {
         self.algorithm
     }
 
-    /// For the signer only. Never log it, put it in a DTO or write it anywhere.
-    pub fn private_key_pem(&self) -> &[u8] {
-        &self.private_key_pem
+    /// Signs with the parsed key (the S1 sender signs every attempt through this). No KDF, no PEM
+    /// parse.
+    pub fn sign(&self, data: &[u8]) -> error_stack::Result<Vec<u8>, KernelError> {
+        self.signer.sign(data)
     }
 }
 
@@ -159,7 +168,7 @@ impl Debug for UnlockedInstanceSigningKey {
         f.debug_struct("UnlockedInstanceSigningKey")
             .field("key_id_uri", &self.key_id_uri)
             .field("revision", &self.revision)
-            .field("private_key_pem", &"[REDACTED]")
+            .field("signer", &"[REDACTED]")
             .finish()
     }
 }
@@ -279,7 +288,7 @@ pub trait UnlockInstanceSigningKeyUseCase:
     + Send
     + DependOnInstanceIdentityRepository
     + DependOnKeyEncryptor
-    + DependOnSigner
+    + DependOnPreparedSignerFactory
     + DependOnSignatureVerifier
     + DependOnPasswordProvider
     + DependOnPublicBaseUrl
@@ -313,12 +322,15 @@ pub trait UnlockInstanceSigningKeyUseCase:
                         .decrypt(key.encrypted_private_key(), &password)
                         .map_err(|e| e.attach_printable(InstanceIdentityProblem::UndecryptableKey))
                         .map_err(|e| e.change_context(KernelError::Internal))?;
-                    let signature = self
-                        .signer()
-                        .sign(SELF_CHECK_PAYLOAD, &private_key_pem)
-                        .map_err(|e| {
-                            e.attach_printable(InstanceIdentityProblem::KeyPairMismatch)
-                        })?;
+                    // Parsed once here; the PEM is dropped (and zeroized) at the end of this block.
+                    let signer = self
+                        .prepared_signer_factory()
+                        .prepare(&private_key_pem, *key.algorithm())
+                        .map_err(|e| e.attach_printable(InstanceIdentityProblem::UnparsableKey))?;
+                    drop(private_key_pem);
+                    let signature = signer.sign(SELF_CHECK_PAYLOAD).map_err(|e| {
+                        e.attach_printable(InstanceIdentityProblem::KeyPairMismatch)
+                    })?;
                     let matches = self
                         .signature_verifier()
                         .verify(
@@ -335,7 +347,7 @@ pub trait UnlockInstanceSigningKeyUseCase:
                         revision: *key.revision(),
                         key_id_uri: key.key_id_uri.clone(),
                         algorithm: *key.algorithm(),
-                        private_key_pem,
+                        signer,
                     })
                 })
                 .await
@@ -349,7 +361,7 @@ impl<T> UnlockInstanceSigningKeyUseCase for T where
         + Send
         + DependOnInstanceIdentityRepository
         + DependOnKeyEncryptor
-        + DependOnSigner
+        + DependOnPreparedSignerFactory
         + DependOnSignatureVerifier
         + DependOnPasswordProvider
         + DependOnPublicBaseUrl
@@ -425,6 +437,7 @@ pub trait EnsureInstanceIdentityUseCase:
                                     origin.key_id_uri(&key_id),
                                     now,
                                     None,
+                                    None,
                                 );
                                 repository
                                     .create_identity(
@@ -472,7 +485,7 @@ pub trait GetInstanceActorUseCase:
     'static + Sync + Send + DependOnInstanceIdentityRepository + DependOnPublicBaseUrl
 {
     /// The public instance actor document: id `{PUBLIC_BASE_URL}/ap/instance`, type `Application`,
-    /// and every published (non-revoked) public key. The stored state is validated on every read, so
+    /// and every published (not revoked) public key: the active one and any retired ones. The stored state is validated on every read, so
     /// a damaged or mismatching identity is a 500 rather than a document with wrong URLs.
     fn get_instance_actor(
         &self,
@@ -494,7 +507,7 @@ pub trait GetInstanceActorUseCase:
             Ok(InstanceActor::new(
                 origin.actor_id(),
                 keys.iter()
-                    .filter(|key| key.revoked_at.is_none())
+                    .filter(|key| key.is_published())
                     .map(|key| (key.key_id_uri.clone(), key.public_key_pem.clone())),
             ))
         }

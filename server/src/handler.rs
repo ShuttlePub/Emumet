@@ -1,7 +1,8 @@
 use crate::kratos::KratosRegistrationFlowDirectory;
 use application::instance_identity::{DependOnInstanceKeyCache, InstanceKeyCache};
 use driver::crypto::{
-    Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
+    Argon2Encryptor, FilePasswordProvider, Rsa2048PreparedSignerFactory, Rsa2048RawGenerator,
+    Rsa2048Signer, Rsa2048Verifier,
 };
 use driver::database::PostgresDatabase;
 use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
@@ -16,8 +17,8 @@ use driver::storage::{NoopProfileMediaCopyGateway, S3ImageStorage};
 use driver::webhook::{AeadWebhookSecretCipher, HttpWebhookSender};
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
-    DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
-    DependOnSignatureVerifier, DependOnSigner,
+    DependOnKeyEncryptor, DependOnPasswordProvider, DependOnPreparedSignerFactory,
+    DependOnRawKeyGenerator, DependOnSignatureVerifier, DependOnSigner,
 };
 use kernel::interfaces::http_signing::{DependOnHttpSignatureVerifier, DependOnHttpSigner};
 use kernel::interfaces::login_consent::{
@@ -45,6 +46,7 @@ pub struct AppModule {
     raw_key_generator: Rsa2048RawGenerator,
     key_encryptor: Argon2Encryptor,
     signer: Rsa2048Signer,
+    prepared_signer_factory: Rsa2048PreparedSignerFactory,
     verifier: Rsa2048Verifier,
     http_signer: HttpSignerImpl,
     http_signature_verifier: HttpSignatureVerifierImpl,
@@ -139,6 +141,7 @@ impl AppModule {
             raw_key_generator: Rsa2048RawGenerator,
             key_encryptor: Argon2Encryptor::default(),
             signer: Rsa2048Signer,
+            prepared_signer_factory: Rsa2048PreparedSignerFactory,
             verifier: Rsa2048Verifier,
             http_signer: HttpSignerImpl,
             http_signature_verifier: HttpSignatureVerifierImpl::new()?,
@@ -201,6 +204,7 @@ impl AppModule {
             raw_key_generator: Rsa2048RawGenerator,
             key_encryptor: Argon2Encryptor::default(),
             signer: Rsa2048Signer,
+            prepared_signer_factory: Rsa2048PreparedSignerFactory,
             verifier: Rsa2048Verifier,
             http_signer: HttpSignerImpl,
             http_signature_verifier: HttpSignatureVerifierImpl::new()?,
@@ -352,6 +356,13 @@ impl DependOnSigner for AppModule {
     type Signer = Rsa2048Signer;
     fn signer(&self) -> &Self::Signer {
         &self.signer
+    }
+}
+
+impl DependOnPreparedSignerFactory for AppModule {
+    type PreparedSignerFactory = Rsa2048PreparedSignerFactory;
+    fn prepared_signer_factory(&self) -> &Self::PreparedSignerFactory {
+        &self.prepared_signer_factory
     }
 }
 

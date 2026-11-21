@@ -99,6 +99,25 @@ pub trait Signer: Send + Sync {
     fn sign(&self, data: &[u8], private_key_pem: &[u8]) -> Result<Vec<u8>, KernelError>;
 }
 
+/// A private key that has already been parsed and is ready to sign: signing with it does not parse
+/// the PEM again. It lives in memory only and must not expose or print the key.
+pub trait PreparedSigner: Send + Sync {
+    /// Signs data with the same scheme as [`Signer::sign`] (PKCS#1 v1.5 + SHA-256 for RSA).
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KernelError>;
+
+    fn algorithm(&self) -> SigningAlgorithm;
+}
+
+/// Parses a private key PEM once into a [`PreparedSigner`]. Used by the long-lived instance key
+/// cache; the per-call [`Signer`] used for Profile keys is unchanged.
+pub trait PreparedSignerFactory: Send + Sync {
+    fn prepare(
+        &self,
+        private_key_pem: &[u8],
+        algorithm: SigningAlgorithm,
+    ) -> Result<Box<dyn PreparedSigner>, KernelError>;
+}
+
 /// Trait for verifying signatures with a public key
 pub trait SignatureVerifier: Send + Sync {
     /// Verify a signature using the public key
@@ -130,6 +149,11 @@ pub trait DependOnKeyEncryptor: Send + Sync {
 pub trait DependOnSigner: Send + Sync {
     type Signer: Signer;
     fn signer(&self) -> &Self::Signer;
+}
+
+pub trait DependOnPreparedSignerFactory: Send + Sync {
+    type PreparedSignerFactory: PreparedSignerFactory;
+    fn prepared_signer_factory(&self) -> &Self::PreparedSignerFactory;
 }
 
 pub trait DependOnSignatureVerifier: Send + Sync {
