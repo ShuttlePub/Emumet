@@ -61,7 +61,7 @@ impl IsolatedDatabase {
     /// L1 (home links) の migration だけを適用していない、現行 main の schema の独立 DB。
     /// 既存データのある DB へ additive migration を後から適用する検証用。
     pub async fn create_before_home_links() -> Self {
-        Self::create_without_migration(20261122000200).await
+        Self::create_with(Some(20261122000200)).await
     }
 
     async fn create_with(stop_before: Option<i64>) -> Self {

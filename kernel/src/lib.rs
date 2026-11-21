@@ -11,6 +11,7 @@ mod http_signing;
 pub mod id;
 mod login_consent;
 mod permission;
+mod post_relay;
 mod projection;
 mod read_model;
 mod repository;
@@ -32,6 +33,9 @@ pub mod prelude {
 
 #[cfg(feature = "interfaces")]
 pub mod interfaces {
+    pub mod post_relay {
+        pub use crate::post_relay::*;
+    }
     pub mod home_link {
         pub use crate::home_link::*;
     }
@@ -208,6 +212,13 @@ macro_rules! impl_database_delegation {
             type AuthHostRepository = <$db_type as $crate::interfaces::repository::DependOnAuthHostRepository>::AuthHostRepository;
             fn auth_host_repository(&self) -> &Self::AuthHostRepository {
                 $crate::interfaces::repository::DependOnAuthHostRepository::auth_host_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::post_relay::DependOnPostRelayStore for $impl_type {
+            type PostRelayStore = <$db_type as $crate::interfaces::post_relay::DependOnPostRelayStore>::PostRelayStore;
+            fn post_relay_store(&self) -> &Self::PostRelayStore {
+                $crate::interfaces::post_relay::DependOnPostRelayStore::post_relay_store(&self.$field)
             }
         }
 

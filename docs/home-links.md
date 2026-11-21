@@ -109,12 +109,14 @@ A defensive DB trigger refuses an uncoordinated physical Profile deletion with a
 
 `LinkCancellationParticipant::cancel_link_generation` is the Q1 transaction participation port:
 L1 calls it with the invalidated **previous active generation**, after all relevant link locks,
-before commit. Its current PostgreSQL implementation is intentionally empty because L1 has no
-relay queue. Q1 replaces that DB-only implementation to cancel/delete jobs/quarantine and release
-capacity on the supplied connection; it must not enqueue post-commit cleanup or wait for HTTP.
-Failure must propagate to roll back the entire revocation transaction.
+before commit. Q1 now fences the old generation and releases aggregate logical job/quarantine
+capacity on that connection. Physical removal is bounded later (128 bodies/transaction): the
+persisted unlinked/released ledger is the durable cleanup predicate, not a post-commit enqueue.
+This packet-authorized fallback follows an uncompressed full Account deletion that exceeded the
+3s statement bound. See [storage evidence and ports](post-relay-storage.md). No HTTP is awaited.
+Failure propagates to roll back the entire revocation transaction.
 
-Send authorization is not implemented here. S1 must use the same gate/owner/link read, store its
+Q1 provides the send-authorization port (no HTTP worker). S1 uses the same gate/owner/link read, stores its
 permit and commit **before** network I/O (plan A). Revocation committed first => no new permit;
 a prior successful permit may run only within its original absolute deadline. Unknown commit =>
 no send. HTTP must hold **zero** DB connections/transactions/locks. L1 tests use test-owned permit

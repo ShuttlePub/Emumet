@@ -6,6 +6,7 @@ pub mod http_signing;
 pub mod hydra;
 pub mod keto;
 pub mod kratos;
+pub mod post_relay;
 pub mod profile_cutover_recovery;
 pub mod profile_delivery;
 pub mod registration_enforcement_probe;

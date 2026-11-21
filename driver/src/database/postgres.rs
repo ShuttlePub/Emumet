@@ -20,6 +20,7 @@ mod metadata_repository;
 mod mute;
 mod organization_membership;
 mod outbox_activity;
+mod post_relay;
 mod profile;
 mod profile_block;
 mod profile_delivery;
@@ -194,6 +195,14 @@ impl PostgresConnection {
             )));
         }
         Ok(())
+    }
+    pub(crate) fn require_profile_gate(&self, id: i64) -> error_stack::Result<(), KernelError> {
+        if self.is_transaction() && self.2.profile_gates.lock().unwrap().contains(&id) {
+            Ok(())
+        } else {
+            Err(Report::new(KernelError::Internal)
+                .attach_printable("post relay requires the Profile gate"))
+        }
     }
     pub(crate) fn is_transaction(&self) -> bool {
         matches!(self.0, PostgresConnectionInner::Transaction(_))
