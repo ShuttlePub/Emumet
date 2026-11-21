@@ -111,6 +111,12 @@ EXACTLY 536,870,912 bytes/Profile with that final header. Use ONLY a disposable 
 psql "$DISPOSABLE_DATABASE_URL" -X -f tools/measure-post-relay-cancellation.sql
 ~~~
 
+The committed EXACT-limit reproducer was also run against its own disposable DB: all eight
+Profiles were 2000 bodies / 536,870,912 logical bytes. Physical deletion of one Profile took
+456.414ms; deletion of the remaining seven hit statement_timeout at 3000.221ms and rolled back.
+The disposable DB was then dropped. Local timing samples use development PostgreSQL with
+fsync=off and synchronous_commit=on, not production durability/performance settings.
+
 As explicitly authorized in issue #121's packet, Q1 therefore uses the bounded physical-delete
 fallback: L1's THREE revokers invalidate the link/generation and release aggregate link/Profile/
 global logical reservations IN THE SAME transaction. Gate proof is required. Failure rolls back
@@ -131,7 +137,7 @@ measured unlink/deactivation/purge still uses the unchanged 2s/3s/5s bounds. Loc
 debug, Unix socket, AMD Ryzen 9 7900, 24 logical CPUs/64GiB host, Linux 7.3.5): Profile unlink
 1.997ms; Account deactivation of seven remaining Profiles 6.705ms; retained physical bodies after
 commit 16,000; worst 128-body cleanup batch 16.915ms. These are measurements, not production SLOs.
-The initial uncompressed probe is what rejected physical deletion, not the compressible CI fixture.
+Both uncompressed probes reject all-in-transaction physical deletion, not the compressible CI fixture.
 
 Row-count test at 256 and 768 successful 64KiB relays: ZERO remaining body/job/attempt/dead-letter/
 audit/link-usage rows at both checkpoints, ONE Profile quota and fixed 16 slots/counters. Success
