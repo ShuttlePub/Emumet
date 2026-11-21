@@ -1,6 +1,8 @@
 use crate::kratos::KratosRegistrationFlowDirectory;
+use application::instance_identity::{DependOnInstanceKeyCache, InstanceKeyCache};
 use driver::crypto::{
-    Argon2Encryptor, FilePasswordProvider, Rsa2048RawGenerator, Rsa2048Signer, Rsa2048Verifier,
+    Argon2Encryptor, FilePasswordProvider, Rsa2048PreparedSignerFactory, Rsa2048RawGenerator,
+    Rsa2048Signer, Rsa2048Verifier,
 };
 use driver::database::PostgresDatabase;
 use driver::http_signing::{HttpSignatureVerifierImpl, HttpSignerImpl};
@@ -15,8 +17,8 @@ use driver::storage::{NoopProfileMediaCopyGateway, S3ImageStorage};
 use driver::webhook::{AeadWebhookSecretCipher, HttpWebhookSender};
 use kernel::interfaces::config::{DependOnPublicBaseUrl, PublicBaseUrl};
 use kernel::interfaces::crypto::{
-    DependOnKeyEncryptor, DependOnPasswordProvider, DependOnRawKeyGenerator,
-    DependOnSignatureVerifier, DependOnSigner,
+    DependOnKeyEncryptor, DependOnPasswordProvider, DependOnPreparedSignerFactory,
+    DependOnRawKeyGenerator, DependOnSignatureVerifier, DependOnSigner,
 };
 use kernel::interfaces::http_signing::{DependOnHttpSignatureVerifier, DependOnHttpSigner};
 use kernel::interfaces::login_consent::{
@@ -30,6 +32,7 @@ use kernel::interfaces::repository::{
 };
 use kernel::prelude::entity::{EmailChallengePolicy, ReadinessPolicy};
 use kernel::KernelError;
+use std::sync::Arc;
 
 /// Single wiring root for the HTTP server (ADR 0006 decision 7).
 ///
@@ -43,6 +46,7 @@ pub struct AppModule {
     raw_key_generator: Rsa2048RawGenerator,
     key_encryptor: Argon2Encryptor,
     signer: Rsa2048Signer,
+    prepared_signer_factory: Rsa2048PreparedSignerFactory,
     verifier: Rsa2048Verifier,
     http_signer: HttpSignerImpl,
     http_signature_verifier: HttpSignatureVerifierImpl,
@@ -62,6 +66,8 @@ pub struct AppModule {
     profile_delivery_sender: HttpProfileDeliverySender,
     remote_actor_resolver: HttpRemoteActorResolver,
     enforcement_probe: driver::registration_enforcement_probe::HttpKratosEnforcementProbe,
+    /// Unlocked instance signing key of this process (bounded, TTL; shared by every clone).
+    instance_key_cache: Arc<InstanceKeyCache>,
 }
 
 /// Production: https only, internal destinations refused. A `test-mode` build run by the AP E2E
@@ -135,6 +141,7 @@ impl AppModule {
             raw_key_generator: Rsa2048RawGenerator,
             key_encryptor: Argon2Encryptor::default(),
             signer: Rsa2048Signer,
+            prepared_signer_factory: Rsa2048PreparedSignerFactory,
             verifier: Rsa2048Verifier,
             http_signer: HttpSignerImpl,
             http_signature_verifier: HttpSignatureVerifierImpl::new()?,
@@ -155,6 +162,7 @@ impl AppModule {
             remote_actor_resolver: remote_actor_resolver(),
             enforcement_probe:
                 driver::registration_enforcement_probe::HttpKratosEnforcementProbe::from_env(),
+            instance_key_cache: Arc::new(InstanceKeyCache::default()),
         })
     }
 
@@ -196,6 +204,7 @@ impl AppModule {
             raw_key_generator: Rsa2048RawGenerator,
             key_encryptor: Argon2Encryptor::default(),
             signer: Rsa2048Signer,
+            prepared_signer_factory: Rsa2048PreparedSignerFactory,
             verifier: Rsa2048Verifier,
             http_signer: HttpSignerImpl,
             http_signature_verifier: HttpSignatureVerifierImpl::new()?,
@@ -227,6 +236,7 @@ impl AppModule {
                         admin_url: "http://localhost:65535/".to_string(),
                     },
                 ]),
+            instance_key_cache: Arc::new(InstanceKeyCache::default()),
         })
     }
 
@@ -346,6 +356,13 @@ impl DependOnSigner for AppModule {
     type Signer = Rsa2048Signer;
     fn signer(&self) -> &Self::Signer {
         &self.signer
+    }
+}
+
+impl DependOnPreparedSignerFactory for AppModule {
+    type PreparedSignerFactory = Rsa2048PreparedSignerFactory;
+    fn prepared_signer_factory(&self) -> &Self::PreparedSignerFactory {
+        &self.prepared_signer_factory
     }
 }
 
@@ -491,5 +508,11 @@ impl kernel::interfaces::repository::DependOnRegistrationEnforcementProbeClient 
         driver::registration_enforcement_probe::HttpKratosEnforcementProbe;
     fn registration_enforcement_probe_client(&self) -> &Self::RegistrationEnforcementProbeClient {
         &self.enforcement_probe
+    }
+}
+
+impl DependOnInstanceKeyCache for AppModule {
+    fn instance_key_cache(&self) -> &InstanceKeyCache {
+        &self.instance_key_cache
     }
 }

@@ -1,8 +1,10 @@
 mod discovery;
 mod inbox_support;
+pub(crate) mod instance_actor;
 pub(crate) mod profile_actor;
 pub(crate) mod profile_inbox;
 
+pub(crate) use instance_actor::__path_get_instance_actor;
 pub(crate) use profile_actor::{__path_get_profile_actor, __path_profile_webfinger};
 pub(crate) use profile_inbox::__path_post_profile_inbox;
 

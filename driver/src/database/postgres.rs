@@ -10,6 +10,7 @@ mod block;
 mod domain_control;
 mod follow;
 mod image;
+mod instance_identity;
 #[cfg(any(test, feature = "test-mode"))]
 pub mod isolated_db;
 mod metadata;

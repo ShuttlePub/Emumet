@@ -18,6 +18,33 @@ async fn app() -> axum::Router {
     build_test_router(module)
 }
 
+/// The router on an isolated database whose instance identity is provisioned, the way start-up
+/// leaves a real deployment (a missing identity is a 500 on `/ap/instance`, by design).
+async fn app_with_instance_identity() -> (
+    axum::Router,
+    driver::database::isolated_db::IsolatedDatabase,
+    tempfile::NamedTempFile,
+) {
+    use application::instance_identity::EnsureInstanceIdentityUseCase;
+    kernel::ensure_generator_initialized();
+    let iso = driver::database::isolated_db::IsolatedDatabase::create().await;
+    let password = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(password.path(), b"route-smoke-password").unwrap();
+    let module = AppModule::new_for_oauth2_test(
+        "http://localhost:65535".into(),
+        "http://localhost:65535".into(),
+    )
+    .await
+    .expect("AppModule init failed (is DATABASE_URL set?)")
+    .with_database(iso.database.clone())
+    .with_password_provider(driver::crypto::FilePasswordProvider::with_paths(
+        password.path(),
+        password.path(),
+    ));
+    module.ensure_instance_identity().await.unwrap();
+    (build_test_router(module), iso, password)
+}
+
 struct RouteCase {
     method: String,
     uri: String,
@@ -60,7 +87,7 @@ fn is_activitypub_operation(operation: &serde_json::Value) -> bool {
         .and_then(|tags| tags.as_array())
         .into_iter()
         .flatten()
-        .any(|tag| tag.as_str() == Some("ProfileActor"))
+        .any(|tag| matches!(tag.as_str(), Some("ProfileActor" | "InstanceActor")))
 }
 
 fn load_routes_from_openapi() -> Vec<RouteCase> {
@@ -108,7 +135,7 @@ fn load_routes_from_openapi() -> Vec<RouteCase> {
 async fn all_openapi_routes_are_reachable() {
     let cases = load_routes_from_openapi();
     assert!(!cases.is_empty(), "No routes found in OpenAPI spec");
-    let router = app().await;
+    let (router, _iso, _password) = app_with_instance_identity().await;
 
     for case in &cases {
         let mut request = Request::builder()
@@ -878,4 +905,26 @@ fn main_provisions_profile_keys_before_workers_and_routes() {
     assert!(provision < position("ProjectionWorker::spawn"));
     assert!(provision < position("spawn_profile_delivery_worker("));
     assert!(provision < position("root_router::build_root_router("));
+}
+
+/// The instance identity is provisioned (or refused: the start-up fails) before any worker or
+/// listener exists, so a served `/ap/instance` always has a validated identity behind it.
+#[test]
+fn main_provisions_the_instance_identity_before_workers_and_routes() {
+    let main_rs = include_str!("../main.rs");
+    let position = |needle: &str| {
+        main_rs
+            .find(needle)
+            .unwrap_or_else(|| panic!("main.rs must contain {needle}"))
+    };
+    let identity = position("instance_identity::provision_instance_identity(&app)");
+    assert!(position("cutover::provision_profile_keys(&app)") < identity);
+    assert!(identity < position("ProjectionWorker::spawn"));
+    assert!(identity < position("spawn_profile_delivery_worker("));
+    assert!(identity < position("root_router::build_root_router("));
+    assert!(
+        main_rs[identity..]
+            .starts_with("instance_identity::provision_instance_identity(&app).await?"),
+        "a failing provisioning must stop the start-up"
+    );
 }

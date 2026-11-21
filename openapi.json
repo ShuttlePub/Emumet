@@ -52,6 +52,30 @@
         }
       }
     },
+    "/ap/instance": {
+      "get": {
+        "tags": [
+          "InstanceActor"
+        ],
+        "description": "The Emumet instance actor (type Application), the signer of post-relay requests to a ShuttlePub home. Actor id: {PUBLIC_BASE_URL}/ap/instance; publicKey is an array (several keys can be published at once), each key id is {PUBLIC_BASE_URL}/ap/instance#key-{opaque-id} and its owner is the instance actor. Public keys only: the private key is never exposed. The URLs come from the configured PUBLIC_BASE_URL, not from the request Host. Anonymous. A stored identity that does not match the configuration is a 500, never a regenerated one.",
+        "operationId": "get_instance_actor",
+        "responses": {
+          "200": {
+            "description": "Instance actor document",
+            "content": {
+              "application/activity+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceActor"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The instance identity is missing or inconsistent with the configuration"
+          }
+        }
+      }
+    },
     "/ap/profiles/{profile_nanoid}": {
       "get": {
         "tags": [
@@ -4370,6 +4394,36 @@
           }
         }
       },
+      "InstanceActor": {
+        "type": "object",
+        "description": "The Emumet instance actor (`{origin}/ap/instance`), the signer of post-relay requests.\n\nAn `Application`, not a Profile. `publicKey` is an array so that several keys can be published\nat the same time (a later rotation); every key's `owner` is the instance actor.",
+        "required": [
+          "@context",
+          "id",
+          "type",
+          "publicKey"
+        ],
+        "properties": {
+          "@context": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "publicKey": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicKey"
+            }
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
       "InviteMemberRequest": {
         "type": "object",
         "required": [
@@ -6112,6 +6166,10 @@
     {
       "name": "Report",
       "description": "Account moderation reports"
+    },
+    {
+      "name": "InstanceActor",
+      "description": "The Emumet instance actor ({PUBLIC_BASE_URL}/ap/instance, type Application): the signer of post-relay requests to a ShuttlePub home. Anonymous; publishes public keys only."
     },
     {
       "name": "ProfileActor",

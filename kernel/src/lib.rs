@@ -48,8 +48,9 @@ pub mod interfaces {
     }
     pub mod repository {
         pub use crate::entity::{
-            DependOnProfileSigningKeyRepository, DependOnSigningKeyRepository,
-            ProfileSigningKeyRepository, SigningKeyRepository,
+            DependOnInstanceIdentityRepository, DependOnProfileSigningKeyRepository,
+            DependOnSigningKeyRepository, InstanceIdentityRepository, ProfileSigningKeyRepository,
+            SigningKeyRepository,
         };
         pub use crate::repository::*;
     }
@@ -87,6 +88,7 @@ pub mod interfaces {
 /// - DependOnImageRepository
 /// - DependOnSigningKeyRepository
 /// - DependOnProfileSigningKeyRepository
+/// - DependOnInstanceIdentityRepository
 ///
 /// # Usage
 /// ```ignore
@@ -244,6 +246,13 @@ macro_rules! impl_database_delegation {
             type ProfileSigningKeyRepository = <$db_type as $crate::interfaces::repository::DependOnProfileSigningKeyRepository>::ProfileSigningKeyRepository;
             fn profile_signing_key_repository(&self) -> &Self::ProfileSigningKeyRepository {
                 $crate::interfaces::repository::DependOnProfileSigningKeyRepository::profile_signing_key_repository(&self.$field)
+            }
+        }
+
+        impl $crate::interfaces::repository::DependOnInstanceIdentityRepository for $impl_type {
+            type InstanceIdentityRepository = <$db_type as $crate::interfaces::repository::DependOnInstanceIdentityRepository>::InstanceIdentityRepository;
+            fn instance_identity_repository(&self) -> &Self::InstanceIdentityRepository {
+                $crate::interfaces::repository::DependOnInstanceIdentityRepository::instance_identity_repository(&self.$field)
             }
         }
 

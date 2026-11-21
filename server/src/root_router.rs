@@ -3,7 +3,7 @@
 //! Extracted from `main` so that tests can build the very same router the server serves and
 //! assert which routes exist on it. Since the P4 cutover it serves the Profile federation model:
 //!
-//! - mounted: Profile actor document, Profile WebFinger and Profile inbox (P1/P3i), the Profile
+//! - mounted: the instance actor document (`/ap/instance`, P1 post-relay), Profile actor document, Profile WebFinger and Profile inbox (P1/P3i), the Profile
 //!   identity read, Follow / unfollow, individual block / mute and the followers / following
 //!   reads (E8/P3o/P3i), the domain-controls routes (D8P storage; D8R enables block writes, which
 //!   detach the existing relations with the blocked domain in the same transaction), the one-time
@@ -15,6 +15,7 @@ use crate::api;
 use crate::auth::{self, JwksCache, OidcConfig};
 use crate::handler::AppModule;
 use crate::route::account::{AccountRouter, AdminAccountRouter, OrgAccountRouter};
+use crate::route::activitypub::instance_actor::InstanceActorRouter;
 use crate::route::activitypub::profile_actor::ProfileActorRouter;
 use crate::route::activitypub::profile_inbox::ProfileInboxRouter;
 use crate::route::healthz::HealthzRouter;
@@ -102,6 +103,7 @@ pub(crate) fn build_root_router(
         .nest(
             "/ap",
             axum::Router::new()
+                .route_instance_actor()
                 .route_profile_actor()
                 .route_profile_inbox()
                 .route_retired_account_federation(),
