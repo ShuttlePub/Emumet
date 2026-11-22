@@ -50,12 +50,19 @@ pub async fn burst(
         }
     }
     let (mut ok, mut limited, mut other) = (0, 0, 0);
+    let mut unclassified: std::collections::BTreeMap<(u16, bool), usize> = Default::default();
     while let Some(r) = set.join_next().await {
         match r.unwrap() {
             (202, _) => ok += 1,
             (429, true) => limited += 1,
-            _ => other += 1,
+            (status, retry_after) => {
+                other += 1;
+                *unclassified.entry((status, retry_after)).or_default() += 1;
+            }
         }
+    }
+    if other > 0 {
+        eprintln!("unclassified responses (status, has Retry-After) -> count: {unclassified:?}");
     }
     (ok, limited, other, started.elapsed())
 }

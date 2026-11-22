@@ -249,7 +249,11 @@ runs `server/tests/e2e_post_relay/` (`cargo test -p server --features test-mode 
 e2e_post_relay -- --ignored --test-threads=1`), keeps `result.log` / `stack.log`, and removes its own
 stack afterwards (`T1_KEEP_STACK=1` keeps it). CI job `post-relay` in `.github/workflows/e2e.yml` runs
 the same script. A missing stack, DB or image fails the run; nothing is skipped. The mock receiver
-(`receiver.rs`) keeps no link state and verifies exactly contract section 3.3's P1 procedure.
+(`receiver.rs`) keeps no link state and verifies exactly contract section 3.3's P1 procedure,
+including the checks JSON Schema cannot express (section 4.4: decoded body at most 1 MiB → 413
+`activity_too_large`, evidence budget 16 KiB → 400 `evidence_budget_exceeded`, `received_at` /
+`verified_at` naming an existing calendar day → 400 `schema_violation`); case 26/27 sends each
+limit exactly at and one past the boundary with a correct outer signature.
 `test-mode` is used only for `EMUMET_TEST_RELAY_ORIGINS` (loopback HTTP peers) in the test-owned
 server and operator processes; the release image is run beside them without it and refuses a
 non-allowlisted destination.
@@ -263,9 +267,20 @@ reports nothing (freshness expires) and never invents healthy data. Environment:
 `SERVER_CMD` (a binary or a `docker run` of the release image), `SUPPLIER_MEASURE_CMD` (prints
 `FREE_BYTES TOTAL_BYTES`; use it for a managed database or another volume), `SUPPLIER_CLOCK_CMD`
 (prints RFC3339 from the validating DB's clock; default: compose PostgreSQL `clock_timestamp()`),
-`SUPPLIER_INTERVAL_SECS`,
+`SUPPLIER_INTERVAL_SECS`, `SUPPLIER_STATS_FILE`,
 `SUPPLIER_ONCE=1`. In production the same contract is supplied by the deployment monitor; this
 script is the reference for the test stack.
+
+The period is a **fixed rate**: cycle N starts at `first_start + N x interval` and the time spent
+measuring/reporting is deducted from the sleep (a sleep after the work would stretch 30 s to 30 s
+plus the work time). A cycle that takes longer than the period is never hidden: it is written to
+stderr (`capacity supplier cycle overran its period`) and to `SUPPLIER_STATS_FILE` as
+`cycle <start_epoch_ms> <elapsed_ms> ok|overrun|failed`; the next cycle then starts immediately
+(the missed slot is skipped, no burst). T1 checks the period of the real supplier as 30 s ± 2 s
+(the allowance covers the DB-clock read after the grid tick and the 250 ms poll; 45 s is not a
+pass, because the 90 s freshness must hold with three periods), that the real supplier recorded no
+overrun, and, with stubbed work, that the period stays fixed and overruns are recorded
+(`supplier::capacity_supplier_keeps_a_fixed_period_deducting_work_time_and_records_overruns`).
 
 The timestamp is obtained **before** measuring, so collection/reporting time consumes the
 90 s freshness budget. A monitor-host clock ahead of PostgreSQL is not a valid sampling clock:
@@ -300,6 +315,16 @@ never carry a receipt, actor, origin, body or credential.
 | `repeated_401` (critical) | a job got 401 three times (receiver cannot verify us) | check instance key/origin configuration with the receiver |
 | `db_lock_wait` / `db_connection_pressure` (warning) | sessions waiting on a lock > 1 s / connections ≥ 80% of `max_connections` | find the blocker; lower the processes' pools |
 | `projector_stalled` (critical) | account projector checkpoint not advancing for > 60 s | restart the projector process; unlink/deactivation are applied late until then |
+| `quota_admission_refusing` (warning) | a Profile (429) or the global quota (503) is at a limit where the next admission is refused: body count/bytes, delivery rows/bytes, evaluated with the admission's own predicates for the smallest new body | find what holds the quota (below); this row alone is instantaneous |
+| `quota_rejection_sustained` (critical, from `alerts-sustain.sh`) | `quota_admission_refusing` was present in **every** evaluation for 5 minutes (`ALERT_SUSTAIN_SECS`, default 300 = ten 30 s evaluations; a longer silence of the monitor than `ALERT_SUSTAIN_GAP_SECS`=120 s restarts the window). It clears at the first evaluation without the refusing row | same as above; senders keep retrying with `Retry-After: 1` meanwhile |
+| `quarantine_full_rejecting` (critical) | a Profile's quota is full **and nothing of it is still being delivered** (no job): the held bodies are quarantine/operator-held, so new Relays stay refused (429) until recovery or the 30-day expiry (up to 30 days, even if the home recovered) | operator recovery required: Profile capacity → `preview` → bounded `redeliver`, or explicit `discard` with reason (below) |
+
+Scope of the refusal alerts: they observe the *persistent* quota causes through the database. A
+refusal by the token bucket (rate) alone leaves no database trace and is **not** covered; that
+needs the HTTP access log / edge metrics of the deployment (429/503 on
+`/ap/profiles/*/inbox`). Physical-capacity or stale-sample 503s are covered by their own critical
+alerts above. `alerts.sh` exits non-zero if any evaluation part fails (alerts.sql, the reservation
+check, its statement file or the sustain filter): a missing evaluation is never "nothing firing".
 
 Not in SQL: Ory outage is visible as fixed JWKS ready/unavailable/timeout log states and
 protected-API failures (the relay itself keeps delivering; case 20); shutdown-bound exceeded is the
@@ -311,7 +336,12 @@ fixed deadline-exceeded warning; cumulative timings are the `post relay cumulati
 query fires, that admission/delivery behave as designed, and that the alarm clears on recovery:
 missing/stale/low capacity and hysteresis (`capacity.rs`), quota saturation, a deliberately
 inflated reservation, purge delay, a near deadline, repeated 401, a held lock, connection
-pressure and a stalled projector. Recovery steps: restore the cause, wait one sampling period
+pressure and a stalled projector. `alarms_sustained_quota_rejection_and_quarantine_full_fire_and_clear`
+keeps probing the real inbox while a Profile (429) and then the global quota (503) are at the
+limit: the instantaneous row fires at once, the sustained alert only after the window (4 s in the
+test), a refusal that clears inside the window never fires it and the window restarts from zero,
+`quarantine_full_rejecting` fires for the real quarantined body of a full Profile and not for the
+global case, and everything clears after recovery (the next probe is accepted with 202). Recovery steps: restore the cause, wait one sampling period
 (30 s) and confirm the alert row is gone; for backlog, preview a bounded redelivery
 (`server post-relay preview ...`), confirm it, and inspect `status`. Emergency send stop is
 `POST_RELAY_SENDER_ENABLED=false` on every sending process (reception continues and fills

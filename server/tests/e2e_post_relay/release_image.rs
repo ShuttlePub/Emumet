@@ -199,6 +199,30 @@ async fn case29_release_image_operator_commands_run_beside_a_live_worker() {
     // Image redeliver: the quarantined links point at the loopback receiver, the release binary has no
     // test-origin exception and the container has no egress: it must refuse and change nothing.
     let redo = uuid::Uuid::new_v4().to_string();
+    let redo_preview_args = [
+        "post-relay",
+        "preview",
+        "--action",
+        "redeliver",
+        "--profile-id",
+        cpid.as_str(),
+        "--operation",
+        redo.as_str(),
+        "--operator",
+        "t1-image-operator",
+        "--reason",
+        "t1 release image",
+    ];
+    let redo_preview = img.run(&redo_preview_args).await;
+    assert!(
+        redo_preview.ok,
+        "the read-only redeliver preview succeeds: {}",
+        redo_preview.stderr
+    );
+    let redo_confirm = last_json(&redo_preview.stdout)["confirmation"]
+        .as_str()
+        .expect("a real confirmation value from the preview")
+        .to_string();
     let redo_args = [
         "post-relay",
         "redeliver",
@@ -211,7 +235,7 @@ async fn case29_release_image_operator_commands_run_beside_a_live_worker() {
         "--reason",
         "t1 release image",
         "--confirm",
-        "5:0:0",
+        redo_confirm.as_str(),
     ];
     let r = img.run(&redo_args).await;
     assert!(

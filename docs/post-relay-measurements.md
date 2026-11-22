@@ -393,13 +393,21 @@ in the following ways, none of which this document claims to have closed:**
 
 ## T1 measurements (plan §11.2, 2026-11-22)
 
-T1 adds an end-to-end acceptance suite (`server/tests/e2e_post_relay`, 33 tests, all passing in
-one whole run, see `docs/post-relay-operations.md` "T1"); it does **not** add a new sender or
-change the delivery path. Its code diff against `main` touches only the test-mode operator
-transport and a utoipa description, so the S1 sender/Q1 ports measured here are the code on
-`main`. The performance items below were therefore **re-run with the existing S1 release
-harness** (same `--ignored` release tests as the S1 sections above) on the T1 branch
-(base `5b0b7b5` + T1 commits, application test binary built with `--release`).
+> **Time points.** The first four subsections below (environment, throughput, ten-minute run,
+> timing-out origin) describe the first T1 measurement, taken when the E2E suite had 33 tests.
+> Later review rounds changed the branch: the suite now has 36 tests (final result is recorded in
+> the PR), and besides test code the branch carries a few small product changes against `main`:
+> capacity-report refusal codes (`server/src/post_relay_cli.rs`, `driver/src/post_relay.rs`), the
+> database-clock check of capacity sample times (`maintenance.rs`), the test-mode-only operator
+> transport and a utoipa description. None of them is on the delivery path measured here (S1
+> sender / Q1 ports), which is why the throughput and ten-minute figures were not re-taken. The
+> physical-stability section at the end **was** re-measured on the final code (head `d7ba4d1`).
+
+T1 adds an end-to-end acceptance suite (`server/tests/e2e_post_relay`, 33 tests at the time of
+the first measurement, see `docs/post-relay-operations.md` "T1"); it does **not** add a new sender
+or change the delivery path. The performance items below were therefore **re-run with the
+existing S1 release harness** (same `--ignored` release tests as the S1 sections above) on the T1
+branch (base `5b0b7b5` + T1 commits, application test binary built with `--release`).
 
 ### Environment (honest description)
 
@@ -471,15 +479,68 @@ rounds, 64 KiB, four real ten-second timeouts per mixed window:
 Median alone 215.78/s, mixed 218.90/s: **ratio 1.0144 (target ≥ 0.80)**. A ratio above 1 is
 noise from co-tenant load, not a speed-up; rounds vary 203–252/s.
 
-### Physical storage after the run (snapshot, not under load)
+### Physical storage after the first run (snapshot, not under load; superseded by the next section)
 
 `pg_database_size` of the measurement database after both runs: **7,425 kB** (all relay tables
-empty/fixed-size). `pg_stat_user_tables` dead-tuple/vacuum counters were **not** obtained (the
-postmaster was stopped and restarted between the run and the query; no per-table statistics were
-available), and WAL volume attributable to this run is **not measured** (the cluster `pg_wal` is
-shared with earlier measurement databases). MVCC/WAL/vacuum behaviour under sustained load is
-therefore **not claimed** by T1. Physical-capacity *supply and fail-closed* is covered
-functionally by the E2E capacity-supply test, not by a size measurement.
+empty/fixed-size). The dead-tuple/vacuum counters and WAL volume were **not** obtained in that
+first run (postmaster restarted before the query; shared `pg_wal`). The next section replaces
+that gap.
+
+### Physical stability under sustained load (plan §11.2; head `d7ba4d1`, 2026-11-22)
+
+**Environment (honest).** A *dedicated* PostgreSQL 17.9 cluster created by `initdb` for this run
+only (nothing else ever ran in it, so WAL and statistics are attributable): default settings
+(`fsync` on, `autovacuum` on, `autovacuum_naptime` 1 min, default scale factors,
+`shared_buffers` 128 MB, `max_wal_size` 1 GB, `track_io_timing` on, `log_autovacuum_min_duration=0`),
+Unix socket, pinned to cores 4-7, on the same shared Ryzen 9 7900 host (24 logical cores; load
+average 4.6-7.1 from other processes on the host). Same S1 release harness
+(`s1_final_real_http_release_measurement`, release build): sender `taskset -c 0-3` with
+`ulimit -v 8 GiB`, external streaming receiver on cores 8-9, plain HTTP, no TLS, four origins,
+16 Profiles, synthetic 65,536-byte bodies. A `psql` sampler read the cluster every 30 s
+(`pg_stat_user_tables`, `pg_class` sizes, `pg_stat_wal`, `pg_stat_checkpointer`, `pg_stat_activity`);
+the run is the 600.12 s steady phase (the harness's earlier 128-delivery throughput phases ran in
+four other disposable databases of the same cluster first and are excluded from the table; the
+sampler followed the newest database). Samples are 20 of the steady database at t = 0...571 s
+plus the cluster totals. It is not a 4-vCPU VM, not TLS, not production SLO evidence, and the
+synthetic body is highly compressible (the `bytea` stays inline: TOAST relations were 0 bytes, so
+**external TOAST growth/vacuum is not exercised by this run**).
+
+**Result: 135,104 deliveries in 600.12 s (225.1/s including admission), RSS flat at
+66,880-66,884 KiB over the last minutes, every minute sample `live_bodies=0`, `lock_waiters=0`.**
+
+| quantity (steady database, 30 s samples; "start" = its first sample, taken about 30 s into the run) | start | middle (t=300 s) | end (t=571 s) | max over run |
+|---|---:|---:|---:|---:|
+| database size | 19.2 MB (t=0) | 34.3 MB | 35.0 MB | 35.0 MB (flat 32-35 MB from t=60 s) |
+| `post_relay_bodies` heap / indexes / TOAST | 5.4 MB / 0.86 MB / 0 | 13.9 MB / 3.2 MB / 0 | 13.9 MB / 3.2 MB / 0 | 15.1 MB / 3.2 MB / 0 |
+| `post_relay_jobs` heap + indexes | 0.48 + 0.43 MB | 1.19 + 1.73 MB | 1.19 + 1.74 MB | 1.30 + 1.74 MB |
+| `post_relay_attempts` heap + indexes | 0.18 + 0.37 MB | 0.18 + 1.40 MB | 0.36 + 1.40 MB | 0.42 + 1.40 MB |
+| `post_relay_profile_quota` heap + indexes | 0.50 + 0.10 MB | 1.18 + 0.35 MB | 1.19 + 0.36 MB | 1.28 + 0.36 MB |
+| `post_relay_schedule` heap + indexes | 0.16 + 0.08 MB | 0.39 + 0.27 MB | 0.72 + 0.36 MB | 0.72 + 0.36 MB |
+| single-row tables (quota, capacity, counters, slots 16 rows) | 8 kB heap each | 8 kB | 8 kB | 8 kB |
+| `n_live_tup` bodies / jobs | 36 / 36 | 26 / 26 | 31 / 48 | bounded by the in-flight window |
+| autovacuum runs per hot table | 0 | 5 | 8-9 | one per about minute (`vacuum_count` 0: manual vacuum never ran) |
+| WAL generated since the first sample (`pg_stat_wal`) | 0 | 530 MB | 1,034 MB | **1.81 MB/s, about 8.4 KB per delivery** |
+| `pg_wal` directory | 64 MB | 608 MB | 1,008 MB | 1,008 MB (plateau = `max_wal_size` 1 GB; requested checkpoints rose 4 → 6, none timed) |
+| oldest backend `xmin` age / longest open transaction | 3 xids / 0 s | 0 / 0 s | 2 / 0 s | **3 xids / 0 s: no long transaction pins the vacuum horizon** |
+
+Maximum `n_dead_tup` seen per table (a 30 s sample can sit just before the next autovacuum):
+jobs 37,265, profile_quota 37,304, schedule 25,408, bodies 12,371, attempts 12,371, link_usage
+3,222, quota/capacity/counters/slots at most 414. These counts are bounded and drop back after
+each autovacuum (for example bodies: 13,866 removed per run, `6 are dead but not yet removable`,
+removable cutoff 49 XIDs old at the end of the vacuum), and the relation sizes plateau after the
+first two minutes instead of growing with the 135,104 deliveries. The autovacuum log shows
+`index scans: 1` per run and reusable index pages. Rows deleted per table equal rows inserted
+minus the live window (bodies: 133,333 inserted / 133,302 deleted at t=571 s): terminal rows do
+not accumulate (`audits`, `dead_letters`, `operations`, `unlinked`: 0 live, 0 bytes of heap).
+
+What this does and does not show. It shows, on a default-configured dedicated cluster, bounded
+MVCC garbage, relation/index sizes that plateau, WAL that is recycled within `max_wal_size`, no
+horizon-pinning transaction and regular autovacuum during 10 minutes of sustained success-path
+load. It does **not** show: behaviour with large quarantined volume or the 2,000-body Profile
+limit populated (the case 25 functional test covers semantics only), external TOAST (the bodies
+are compressible), vacuum after a mass delete, replication/backup retention of WAL, a production
+storage layer (`fsync` was on, but the disk is a local one of a shared host), or runs longer
+than 10 minutes.
 
 ### Items reused from S1 (not re-measured by T1)
 
@@ -495,7 +556,8 @@ TLS handshake/session reuse and real network RTT; cgroup memory accounting; a 4-
 PostgreSQL co-located; a fixed 100 arrivals/s schedule for 10 minutes (the run above is
 admission-saturated, 189/s); moving the full body reservation into quarantine and checking the
 reservation against the capacity limit under volume (E2E case 25 verifies the behaviour at
-functional scale only); MVCC/WAL/vacuum physical growth under sustained load; production-scale
+functional scale only); external TOAST/vacuum behaviour with incompressible bodies and a populated
+quarantine (the physical-stability section covers the success path only); production-scale
 queues (100,000 ready jobs) and failure-traffic mixes. Regression suites (Profile actor,
 WebFinger, Follow, domain block, login/consent E2E) and the OpenAPI regeneration check are
 covered by CI and the workspace test run, not by these measurements.
