@@ -472,8 +472,22 @@ async fn post_relay_runtime_empty_migration_and_stopped_sender_preserve_populate
         .bytes()
         .await
         .unwrap();
+    // The fixture writes both events and their read models. Do this with the child stopped,
+    // otherwise its live projector can race the fixture's read-model create (seen in coverage).
+    server.term().await;
     let (_, profiles) = fixture(&db.database, &home.uri()).await;
     enqueue(&db, &profiles[0], "stopped-job").await;
+    let mut server = Running::start(
+        &db,
+        &dir,
+        "http://127.0.0.1:1",
+        &home.uri(),
+        &[
+            ("POST_RELAY_SENDER_ENABLED", "false"),
+            ("POST_RELAY_INBOX_ENABLED", "false"),
+        ],
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(150)).await;
     let token: i64 =
         sqlx::query_scalar("SELECT token FROM post_relay_jobs WHERE receipt='stopped-job'")
