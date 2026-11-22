@@ -1,4 +1,4 @@
-# Post-relay sending and recovery (P1 S1)
+# Post-relay sending and recovery (P1 S1 / B1)
 
 The queue is separate from Profile federation delivery. S1 does not enable inbox forwarding
 (I1), change the relay contract, rotate keys (K2), or add a management HTTP API.
@@ -163,3 +163,54 @@ Throughput/latency are measured targets, not production SLOs. See the environmen
 measurements in post-relay-measurements.md. Approximate catch-up time is backlog/(measured
 send capacity - continuing arrival rate), only if the denominator is positive and deadlines
 can still be met. Report unmet targets to the lead before I1 activation.
+
+## Ory-independent runtime (B1)
+
+Startup applies the existing migrations and checks/provisions Profile and instance keys first.
+Key corruption, password failure and public-origin mismatch remain fatal; Ory is **not** a
+fallback for these dependencies. The listener is bound before starting the relay pool (a bind
+failure cannot leave a sender running). The root router then serves the instance document,
+HTTP-signature-guarded inbox and ordinary routes alongside the sender and retention worker.
+Neither reception, its queue transaction, nor relay authorization/HTTP delivery calls Ory.
+JWKS warm-up runs separately and is never a listener/inbox readiness condition. Connection
+refusal and an Ory peer that accepts but stops responding therefore do not stop cold start.
+Login/consent routes still call the same A1 use cases/clients; their URLs, cookies, scope,
+redirects and error handling have not changed. They are not promised usable during an Ory outage.
+
+* `JWKS_TIMEOUT_MS`: default **3000**, integer **1..60000**. One acquisition deadline covers
+  refresh-mutex wait, discovery, JWKS connect/headers **and bodies** together. The HTTP client
+  also bounds connect/request waits. Failed discovery/fetch is rate-limited by the existing
+  **300-second** minimum refetch interval, including cold-start failures. A later eligible
+  kid-miss retries lazily; there is no persistent/disk JWKS cache or background retry loop.
+* JWT-protected routes remain **401/fail-closed** without a usable matching key. Cached matching
+  keys continue validating RS256 signatures, issuer, audience and expiry without Ory I/O.
+  Failed refresh never replaces known keys with a bypass, and unknown kids are still denied.
+* `SERVER_SHUTDOWN_TIMEOUT_SECS`: default **25**, integer **1..300**. On SIGTERM/SIGINT, new
+  relay claims stop immediately, HTTP stops accepting connections, warm-up is cancelled, and
+  worker stop signals are sent **before** waiting for HTTP requests. HTTP, S1 relay drain
+  (at most **12s**) and webhook drain (at most **20s**) run concurrently within this one overall
+  deadline. An incomplete inbound body or unresponsive outbound peer cannot extend it. After
+  it, the runtime cancels remaining async work and logs a fixed deadline-exceeded warning.
+  Set the deployment termination grace **above** this configured bound, with scheduling margin.
+
+Signals received during migrations/key provisioning remain latched and are honored before
+serving; these existing local initialization transactions are not cancelled halfway through.
+The serving-phase drain bound is not a new time limit on migrations or key generation.
+A hard kill or drain cutoff can leave committed work with its original **30s** lease. Restart
+never reuses an old permit or resets the **72h** automatic deadline: S1 reclaims after lease
+expiry with a new fence/authorization and original absolute send deadline rules. Unknown
+send outcomes may duplicate delivery; stale results cannot restore bodies or quota.
+No down migration or schema change is introduced. Empty-DB migration and populated restart
+are exercised by B1; destructive rollback is not a recovery procedure.
+
+`POST_RELAY_SENDER_ENABLED=false` still stops sending only (maintenance continues), and
+`POST_RELAY_INBOX_ENABLED` still defaults to **false**. Neither flag is enabled as an outage
+workaround. Watch fixed JWKS ready/unavailable/timeout states, refresh elapsed time, runtime
+startup, stop/drain bound and deadline-exceeded logs together with queue/lease telemetry.
+
+B1 acceptance is `cargo test -p server --features test-mode --test post_relay_runtime` with
+`DATABASE_URL` set (missing DB fails, never skips). It uses real child processes, PostgreSQL,
+HTTP-signature inbox requests and HTTP receivers, but seeds links directly; the real-user
+registration/full relay E2E belongs to T1. The `test-mode`-only
+`EMUMET_TEST_RELAY_ORIGINS` JSON peer list permits loopback HTTP solely in that test build;
+the switch/constructor are compiled out of normal builds. Never deploy `test-mode` images.

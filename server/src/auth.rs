@@ -11,6 +11,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 
+#[cfg(test)]
+#[path = "auth_outage_tests.rs"]
+mod outage_tests;
+
 // ---------------------------------------------------------------------------
 // OidcConfig
 // ---------------------------------------------------------------------------
@@ -133,14 +137,23 @@ pub struct JwksCache {
     issuer_url: String,
     http_client: reqwest::Client,
     min_refetch_interval: Duration,
+    timeout: Duration,
 }
 
 impl JwksCache {
+    #[cfg(test)]
     pub fn new(issuer_url: String, min_refetch_interval: Duration) -> Self {
+        Self::with_timeout(issuer_url, min_refetch_interval, Duration::from_secs(3))
+    }
+
+    pub fn with_timeout(
+        issuer_url: String,
+        min_refetch_interval: Duration,
+        timeout: Duration,
+    ) -> Self {
         let initial_last_fetch = Instant::now()
             .checked_sub(min_refetch_interval + Duration::from_secs(1))
             .unwrap_or_else(Instant::now);
-
         Self {
             inner: RwLock::new(JwksCacheInner {
                 jwks: None,
@@ -149,119 +162,100 @@ impl JwksCache {
             }),
             refresh_mutex: Mutex::new(()),
             issuer_url,
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .connect_timeout(timeout)
+                .timeout(timeout)
+                .build()
+                .expect("JWKS HTTP client configuration"),
             min_refetch_interval,
+            timeout,
         }
     }
 
-    /// Construct a `JwksCache` with a pre-populated `JwkSet` (test helper).
-    /// The refetch interval is set to zero so re-fetches are always eligible.
+    /// Pre-populated process-local keys; never a disk cache of authentication material.
     #[cfg(test)]
     pub fn new_with_jwks(issuer_url: String, jwks: JwkSet) -> Self {
-        let past = Instant::now()
-            .checked_sub(Duration::from_secs(1))
-            .unwrap_or_else(Instant::now);
-        Self {
-            inner: RwLock::new(JwksCacheInner {
-                jwks: Some(jwks),
-                jwks_uri: None,
-                last_fetch: past,
-            }),
-            refresh_mutex: Mutex::new(()),
-            issuer_url,
-            http_client: reqwest::Client::new(),
-            min_refetch_interval: Duration::from_secs(0),
-        }
+        let mut cache = Self::new(issuer_url, Duration::ZERO);
+        cache.inner.get_mut().jwks = Some(jwks);
+        cache
     }
 
-    /// Attempt to initialise the cache by performing OIDC Discovery and fetching
-    /// the JWKS. Failures are logged but do not panic (lazy initialisation).
+    pub fn spawn_warmup(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move { self.try_init().await })
+    }
+
+    /// Best-effort warm-up/lazy refresh, never a listener readiness requirement.
+    /// One deadline includes mutex wait, discovery, headers AND response bodies. Failures retain
+    /// known keys, but never create a key or bypass JWT validation. Failed discovery is throttled
+    /// too, so an uncached outage cannot turn concurrent authentication requests into a herd.
     pub async fn try_init(&self) {
-        let discovery_url = format!(
-            "{}/.well-known/openid-configuration",
-            self.issuer_url.trim_end_matches('/')
+        let started = Instant::now();
+        match tokio::time::timeout(self.timeout, self.refresh_if_due()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(())) => tracing::warn!(state = "unavailable", "JWKS refresh failed"),
+            Err(_) => tracing::warn!(state = "timeout", "JWKS refresh deadline exceeded"),
+        }
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "JWKS refresh completed"
         );
-
-        let discovery: OidcDiscovery = match self.http_client.get(&discovery_url).send().await {
-            Ok(resp) => match resp.json().await {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!("JwksCache: failed to parse OIDC discovery: {e}");
-                    return;
-                }
-            },
-            Err(e) => {
-                tracing::warn!("JwksCache: OIDC discovery request failed ({discovery_url}): {e}");
-                return;
-            }
-        };
-
-        let jwks_uri = discovery.jwks_uri.clone();
-        self.fetch_jwks_inner(&jwks_uri).await;
-        // Update jwks_uri after successful discovery.
-        self.inner.write().await.jwks_uri = Some(jwks_uri);
     }
 
-    /// Fetch JWKS from the given URI and update the cache atomically.
-    async fn fetch_jwks_inner(&self, jwks_uri: &str) {
-        match self.http_client.get(jwks_uri).send().await {
-            Ok(resp) => match resp.json::<JwkSet>().await {
-                Ok(jwks) => {
-                    let mut inner = self.inner.write().await;
-                    inner.jwks = Some(jwks);
-                    inner.last_fetch = Instant::now();
-                    tracing::info!("JwksCache: JWKS refreshed from {jwks_uri}");
-                }
-                Err(e) => {
-                    self.inner.write().await.last_fetch = Instant::now();
-                    tracing::warn!("JwksCache: failed to parse JWKS response: {e}");
-                }
-            },
-            Err(e) => {
-                self.inner.write().await.last_fetch = Instant::now();
-                tracing::warn!("JwksCache: JWKS fetch failed ({jwks_uri}): {e}");
-            }
-        }
-    }
-
-    /// Look up a decoding key by `kid`.
-    ///
-    /// If the key is not found **and** the minimum refetch interval has elapsed,
-    /// the JWKS is re-fetched once before returning. A mutex ensures only one
-    /// concurrent refresh.
-    pub async fn get_key(&self, kid: &str) -> Option<DecodingKey> {
-        // First attempt: check current cache.
-        if let Some(key) = self.key_from_cache(kid).await {
-            return Some(key);
-        }
-
-        // Acquire refresh mutex to prevent thundering herd.
+    async fn refresh_if_due(&self) -> Result<(), ()> {
         let _guard = self.refresh_mutex.lock().await;
+        let uri = {
+            let mut inner = self.inner.write().await;
+            if inner.last_fetch.elapsed() < self.min_refetch_interval {
+                return Ok(());
+            }
+            // Record every attempted acquisition, including discovery failure/cancellation.
+            inner.last_fetch = Instant::now();
+            inner.jwks_uri.clone()
+        };
+        let uri = if let Some(uri) = uri {
+            uri
+        } else {
+            let discovery_url = format!(
+                "{}/.well-known/openid-configuration",
+                self.issuer_url.trim_end_matches('/')
+            );
+            let discovery: OidcDiscovery = self
+                .http_client
+                .get(discovery_url)
+                .send()
+                .await
+                .map_err(|_| ())?
+                .error_for_status()
+                .map_err(|_| ())?
+                .json()
+                .await
+                .map_err(|_| ())?;
+            self.inner.write().await.jwks_uri = Some(discovery.jwks_uri.clone());
+            discovery.jwks_uri
+        };
+        let jwks: JwkSet = self
+            .http_client
+            .get(uri)
+            .send()
+            .await
+            .map_err(|_| ())?
+            .error_for_status()
+            .map_err(|_| ())?
+            .json()
+            .await
+            .map_err(|_| ())?;
+        self.inner.write().await.jwks = Some(jwks);
+        tracing::info!(state = "ready", "JWKS refreshed");
+        Ok(())
+    }
 
-        // Re-check cache: another task may have refreshed while we waited.
+    /// Cached hits perform no network I/O. Misses get one bounded, single-flight refresh.
+    pub async fn get_key(&self, kid: &str) -> Option<DecodingKey> {
         if let Some(key) = self.key_from_cache(kid).await {
             return Some(key);
         }
-
-        // Check if we are allowed to re-fetch.
-        let elapsed = self.inner.read().await.last_fetch.elapsed();
-
-        if elapsed >= self.min_refetch_interval {
-            tracing::info!("JwksCache: kid '{kid}' not found – re-fetching JWKS");
-
-            let jwks_uri = self.inner.read().await.jwks_uri.clone();
-
-            if let Some(uri) = jwks_uri {
-                self.fetch_jwks_inner(&uri).await;
-            } else {
-                self.try_init().await;
-            }
-
-            // Second attempt after re-fetch.
-            return self.key_from_cache(kid).await;
-        }
-
-        None
+        self.try_init().await;
+        self.key_from_cache(kid).await
     }
 
     /// Extract a `DecodingKey` for the given `kid` from the current in-memory cache.

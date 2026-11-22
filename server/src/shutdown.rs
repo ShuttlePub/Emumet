@@ -1,7 +1,8 @@
 //! SIGTERM / SIGINT handling for the server process.
 //!
 //! `docker stop`, systemd and Kubernetes send SIGTERM; a terminal sends SIGINT. Both take the same
-//! graceful path: stop serving, then run the existing worker shutdown sequence.
+//! graceful path: stop new relay claims and serving together, then drain concurrently within
+//! the configured serving-phase deadline.
 //!
 //! The signal streams are created at the very top of `main`, before logging, the JWKS fetch, the
 //! database connection and the migrations. From then on a signal is recorded by tokio (it replaces
