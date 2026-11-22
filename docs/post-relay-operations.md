@@ -228,3 +228,81 @@ configuration or timeout default. The suite seeds links directly; the real-user
 registration/full relay E2E belongs to T1. The `test-mode`-only
 `EMUMET_TEST_RELAY_ORIGINS` JSON peer list permits loopback HTTP solely in that test build;
 the switch/constructor are compiled out of normal builds. Never deploy `test-mode` images.
+
+## T1: end-to-end acceptance, capacity supply and alarms
+
+T1 proves the Emumet → P1 mock receiver path with real Kratos/Hydra/Keto, the server built from
+source, and the locally built release image. It does **not** certify ShuttlePub's production
+receiver or the whole P1 service set, and it does not change a default: `POST_RELAY_INBOX_ENABLED`
+stays false (the T1 suite turns it on in its own test processes; see
+[post-relay-inbox-intake.md](post-relay-inbox-intake.md) and host decision D68 for the
+conditions to enable it).
+
+### Running it
+
+    bash e2e/post-relay/run.sh
+
+`e2e/post-relay/compose.yml` (project `emumet-post-relay-e2e`, loopback ports 15450 / 14433-14434 /
+14444-14445 / 14466-14467) starts PostgreSQL and the upstream Ory images. `run.sh` builds the
+release `Dockerfile` **locally** (`emumet-t1-release:local`; nothing is pushed, tagged or released),
+runs `server/tests/e2e_post_relay/` (`cargo test -p server --features test-mode --test
+e2e_post_relay -- --ignored --test-threads=1`), keeps `result.log` / `stack.log`, and removes its own
+stack afterwards (`T1_KEEP_STACK=1` keeps it). CI job `post-relay` in `.github/workflows/e2e.yml` runs
+the same script. A missing stack, DB or image fails the run; nothing is skipped. The mock receiver
+(`receiver.rs`) keeps no link state and verifies exactly contract section 3.3's P1 procedure.
+`test-mode` is used only for `EMUMET_TEST_RELAY_ORIGINS` (loopback HTTP peers) in the test-owned
+server and operator processes; the release image is run beside them without it and refuses a
+non-allowlisted destination.
+
+### Physical capacity supply (Q1 rules)
+
+`e2e/post-relay/capacity-supplier.sh` measures the PostgreSQL **data volume** (not the Emumet
+container) every `SUPPLIER_INTERVAL_SECS` (default 30; at most 30 s) and reports it with
+`server capacity report`; admission fails closed 90 s after the last sample. A failed measurement
+reports nothing (freshness expires) and never invents healthy data. Environment: `DATABASE_URL`,
+`SERVER_CMD` (a binary or a `docker run` of the release image), `SUPPLIER_MEASURE_CMD` (prints
+`FREE_BYTES TOTAL_BYTES`; use it for a managed database or another volume), `SUPPLIER_INTERVAL_SECS`,
+`SUPPLIER_ONCE=1`. In production the same contract is supplied by the deployment monitor; this
+script is the reference for the test stack.
+
+### Alarm conditions
+
+`e2e/post-relay/alerts.sql` is a read-only query (run every 30 s by `alerts.sh`, which also runs
+`consistency.sql`) returning one row per firing alert: fixed alert name, severity, value. Names
+never carry a receipt, actor, origin, body or credential.
+
+| alert | fires when | first response |
+|---|---|---|
+| `physical_capacity_missing_or_stale` (critical) | no sample, a sample older than 90 s, or one from the future | restore the supplier; admission is already failing closed (503) |
+| `physical_capacity_threshold` (critical) | accepting=false: free < 12 GiB or < 12% (resumes at hysteresis) | free space; do not discard quarantine early |
+| `quota_*` (warning ≥ 80%, critical ≥ 95%) | global or per-Profile body count/bytes, delivery rows/bytes, audit/operator rows | find the failing destination; quarantine is never discarded automatically |
+| `reservation_flag_inconsistent` / `reservation_mismatch` (critical) | quota reservations differ from the stored rows | stop new load, run the read-only consistency query, open an incident |
+| `purge_delay` (warning) | expired bodies, quarantine, audits, operator or unlinked rows are > 5 min past expiry | check maintenance process / DB locks |
+| `cancelled_body_backlog` (warning) | bodies of unlinked/replaced links are > 5 min old | same as above |
+| `deadline_near_backlog` (warning) | automatic jobs whose 72 h cutoff is within 6 h | restore the destination or accept quarantine at the cutoff |
+| `repeated_401` (critical) | a job got 401 three times (receiver cannot verify us) | check instance key/origin configuration with the receiver |
+| `db_lock_wait` / `db_connection_pressure` (warning) | sessions waiting on a lock > 1 s / connections ≥ 80% of `max_connections` | find the blocker; lower the processes' pools |
+| `projector_stalled` (critical) | account projector checkpoint not advancing for > 60 s | restart the projector process; unlink/deactivation are applied late until then |
+
+Not in SQL: Ory outage is visible as fixed JWKS ready/unavailable/timeout log states and
+protected-API failures (the relay itself keeps delivering; case 20); shutdown-bound exceeded is the
+fixed deadline-exceeded warning; cumulative timings are the `post relay cumulative timings` line.
+
+### T1 alarm runbook (what the E2E injects)
+
+`alarms.rs` injects each condition against the real server and database and checks that the
+query fires, that admission/delivery behave as designed, and that the alarm clears on recovery:
+missing/stale/low capacity and hysteresis (`capacity.rs`), quota saturation, a deliberately
+inflated reservation, purge delay, a near deadline, repeated 401, a held lock, connection
+pressure and a stalled projector. Recovery steps: restore the cause, wait one sampling period
+(30 s) and confirm the alert row is gone; for backlog, preview a bounded redelivery
+(`server post-relay preview ...`), confirm it, and inspect `status`. Emergency send stop is
+`POST_RELAY_SENDER_ENABLED=false` on every sending process (reception continues and fills
+quarantine/quota; watch the alarms above).
+
+### What T1 does not claim
+
+`check_reservations` has no production caller; the supported check is the read-only
+`consistency.sql` statement used by `alerts.sh`. Debug-build E2E timing is not performance
+evidence; throughput and the 10-minute run are recorded in
+[post-relay-measurements.md](post-relay-measurements.md) with their environment.
