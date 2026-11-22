@@ -279,9 +279,20 @@ async fn alarms_lock_wait_connection_pressure_and_projector_failure() {
 
     // Projector failure: the checkpoint cannot be written, so the account projector fails every tick,
     // logs its fixed line and the lag alert fires; repairing clears it.
-    w.db.exec("UPDATE projection_checkpoints SET updated_at = clock_timestamp() - interval '2 minutes' WHERE projector_name = 'account_projector'").await;
-    w.db.exec("CREATE FUNCTION t1_ckpt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 't1 checkpoint blocked'; END $$").await;
-    w.db.exec("CREATE TRIGGER t1_ckpt BEFORE INSERT OR UPDATE ON projection_checkpoints FOR EACH ROW EXECUTE FUNCTION t1_ckpt()").await;
+    // Publish the backdated checkpoint and write failure atomically. Otherwise a normal tick
+    // can refresh updated_at between the UPDATE and trigger creation, hiding the lag for 60 s.
+    let mut fault = w.db.iso.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE projection_checkpoints IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *fault)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE projection_checkpoints SET updated_at = clock_timestamp() - interval '2 minutes' WHERE projector_name = 'account_projector'")
+        .execute(&mut *fault).await.unwrap();
+    sqlx::query("CREATE FUNCTION t1_ckpt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 't1 checkpoint blocked'; END $$")
+        .execute(&mut *fault).await.unwrap();
+    sqlx::query("CREATE TRIGGER t1_ckpt BEFORE INSERT OR UPDATE ON projection_checkpoints FOR EACH ROW EXECUTE FUNCTION t1_ckpt()")
+        .execute(&mut *fault).await.unwrap();
+    fault.commit().await.unwrap();
     let _ = w
         .server
         .create_account(
