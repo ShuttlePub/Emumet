@@ -3,7 +3,9 @@
 //! Run: bash e2e/post-relay/run.sh   (starts the stack, builds the release image, runs this suite)
 #![allow(dead_code)]
 mod db;
+mod delivery;
 mod emumet;
+mod intake;
 mod ory;
 mod receiver;
 mod stack;

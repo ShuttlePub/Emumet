@@ -262,7 +262,9 @@ impl RemotePeer {
         for (k, v) in &inbound.signed_headers {
             headers.insert(k.to_ascii_lowercase(), v.clone());
         }
-        let signed = HttpSignerImpl
+        let extra_names: Vec<String> = inbound.signed_headers.iter().map(|(k, _)| k.to_ascii_lowercase()).collect();
+        let cavage_headers = if extra_names.is_empty() {
+            HttpSignerImpl
             .sign(
                 &HttpSigningRequest { method: "POST".into(), url: format!("{PUBLIC}{target}"), headers: headers.clone(), body: Some(inbound.body.clone()) },
                 &self.private_pem,
@@ -270,9 +272,33 @@ impl RemotePeer {
                 &SigningAlgorithm::Rsa2048,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .cavage_headers
+        } else {
+            // The shipped signer only covers (request-target) host date digest; extra covered
+            // headers (to overflow the evidence budget) need a hand-built Cavage signature.
+            use rsa::pkcs1::DecodeRsaPrivateKey;
+            use rsa::pkcs8::DecodePrivateKey;
+            use rsa::signature::{SignatureEncoding, Signer};
+            let pem = String::from_utf8(self.private_pem.clone()).unwrap();
+            let key = rsa::RsaPrivateKey::from_pkcs8_pem(&pem).or_else(|_| rsa::RsaPrivateKey::from_pkcs1_pem(&pem)).unwrap();
+            let mut names = vec!["(request-target)".to_string(), "host".into(), "date".into(), "digest".into()];
+            names.extend(extra_names.clone());
+            let lines: Vec<String> = names
+                .iter()
+                .map(|n| if n == "(request-target)" { format!("(request-target): post {target}") } else { format!("{n}: {}", headers[n]) })
+                .collect();
+            let signature = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(key).sign(lines.join("\n").as_bytes());
+            let header = format!(
+                "keyId=\"{}\",algorithm=\"rsa-sha256\",headers=\"{}\",signature=\"{}\"",
+                self.key_id,
+                names.join(" "),
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, signature.to_bytes())
+            );
+            std::collections::HashMap::from([("signature".to_string(), header)])
+        };
         let mut request = client().post(server.url(&target)).header("content-type", inbound.content_type).body(inbound.body.clone());
-        for (k, v) in headers.into_iter().chain(signed.cavage_headers) {
+        for (k, v) in headers.into_iter().chain(cavage_headers) {
             request = request.header(k, v);
         }
         for (k, v) in inbound.plain_headers {
