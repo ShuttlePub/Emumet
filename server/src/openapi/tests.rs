@@ -387,7 +387,7 @@ fn profile_policy_contract_is_registered_with_authorization_and_errors() {
             "the received activity table must mention {activity}"
         );
     }
-    for status in ["202", "400", "401", "404", "422"] {
+    for status in ["202", "400", "401", "404", "413", "422", "429", "503"] {
         assert!(
             inbox["responses"].get(status).is_some(),
             "inbox must document {status}"

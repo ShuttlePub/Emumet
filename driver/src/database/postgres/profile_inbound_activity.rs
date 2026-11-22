@@ -13,6 +13,7 @@ use time::OffsetDateTime;
 
 #[derive(sqlx::FromRow)]
 struct InboundActivityRow {
+    observed_relation: bool,
     receiver_profile_id: i64,
     actor_url: String,
     activity_id: String,
@@ -38,9 +39,9 @@ impl InboundActivityRepository for PostgresInboundActivityRepository {
             r#"
             INSERT INTO profile_inbound_activities (
                 receiver_profile_id, actor_url, activity_id, activity_type,
-                receive_count, first_received_at, last_received_at
+                receive_count, first_received_at, last_received_at, observed_relation
             )
-            VALUES ($1, $2, $3, $4, 1, $5, $5)
+            VALUES ($1, $2, $3, $4, 1, $5, $5, $4 IN ('Follow', 'Block'))
             ON CONFLICT (receiver_profile_id, actor_url, activity_id) DO NOTHING
             "#,
         )
@@ -66,7 +67,8 @@ impl InboundActivityRepository for PostgresInboundActivityRepository {
             r#"
             UPDATE profile_inbound_activities SET
                 receive_count = receive_count + 1,
-                last_received_at = GREATEST(last_received_at, $4)
+                last_received_at = GREATEST(last_received_at, $4),
+                observed_relation = observed_relation OR $5
             WHERE receiver_profile_id = $1 AND actor_url = $2 AND activity_id = $3
             RETURNING receive_count
             "#,
@@ -75,6 +77,10 @@ impl InboundActivityRepository for PostgresInboundActivityRepository {
         .bind(activity.actor.as_str())
         .bind(activity.activity_id.as_str())
         .bind(activity.received_at)
+        .bind(matches!(
+            activity.activity_type.as_str(),
+            "Follow" | "Block"
+        ))
         .fetch_one(con)
         .await
         .convert_error()?;
@@ -96,7 +102,7 @@ impl InboundActivityRepository for PostgresInboundActivityRepository {
         let row = sqlx::query_as::<_, InboundActivityRow>(
             //language=postgresql
             r#"
-            SELECT receiver_profile_id, actor_url, activity_id, activity_type,
+            SELECT observed_relation, receiver_profile_id, actor_url, activity_id, activity_type,
                    receive_count, first_received_at, last_received_at
             FROM profile_inbound_activities
             WHERE receiver_profile_id = $1 AND actor_url = $2 AND activity_id = $3
@@ -110,6 +116,7 @@ impl InboundActivityRepository for PostgresInboundActivityRepository {
         .convert_error()?;
         row.map(|row| {
             Ok(InboundActivityRecord {
+                observed_relation: row.observed_relation,
                 receiver: ProfileId::new(row.receiver_profile_id),
                 actor: GraphActorUrl::new(row.actor_url)?,
                 activity_id: GraphActivityId::new(row.activity_id)?,
@@ -120,6 +127,24 @@ impl InboundActivityRepository for PostgresInboundActivityRepository {
             })
         })
         .transpose()
+    }
+
+    async fn has_observed_relation(
+        &self,
+        executor: &mut Self::Connection,
+        receiver: &ProfileId,
+        activity_id: &GraphActivityId,
+    ) -> error_stack::Result<bool, KernelError> {
+        let con: &mut PgConnection = executor;
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM profile_inbound_activities \
+             WHERE receiver_profile_id = $1 AND activity_id = $2 AND observed_relation)",
+        )
+        .bind(receiver.as_ref())
+        .bind(activity_id.as_str())
+        .fetch_one(con)
+        .await
+        .convert_error()
     }
 
     async fn purge_received_before(

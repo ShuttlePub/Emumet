@@ -30,6 +30,15 @@ pub trait InboundActivityRepository: Sync + Send + 'static {
         activity_id: &GraphActivityId,
     ) -> impl Future<Output = error_stack::Result<Option<InboundActivityRecord>, KernelError>> + Send;
 
+    /// Type evidence is scoped to the receiving Profile, not the current signer.
+    /// This never authorizes a relation mutation and ignores prior-Undo guard markers.
+    fn has_observed_relation(
+        &self,
+        executor: &mut Self::Connection,
+        receiver: &ProfileId,
+        activity_id: &GraphActivityId,
+    ) -> impl Future<Output = error_stack::Result<bool, KernelError>> + Send;
+
     /// `cutoff` より前に初めて受信した記録を消す (保持期間の管理用)。消した件数を返す。
     ///
     /// `UndoFollow` の記録は消さない: 元の Follow より先に届いた Undo の目印で、消すと保持期間より

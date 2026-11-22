@@ -4,7 +4,9 @@ mod profile_inbound;
 pub(crate) mod remote_actor;
 
 pub use profile_actor::{GetProfileActorUseCase, GetProfileWebFingerUseCase};
-pub use profile_inbound::ProfileInboxUseCase;
+pub use profile_inbound::{
+    InboxOverload, ProfileInboxUseCase, ProfileRelayInboxDto, ProfileRelayInboxUseCase,
+};
 #[cfg(any(test, feature = "test-mode"))]
 pub use remote_actor::inject_test_remote_actor;
 

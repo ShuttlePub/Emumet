@@ -757,7 +757,7 @@ async fn unsupported_activities_are_acknowledged_without_changing_any_relation()
     assert_eq!(count(&world, "profile_follows").await, 1);
     assert_eq!(
         count(&world, "profile_inbound_activities").await,
-        inbound_before
+        inbound_before + 1 // authenticated Block is D63 evidence, not a relation update
     );
     assert_eq!(count(&world, "profile_delivery_jobs").await, jobs_before);
 }
@@ -772,10 +772,6 @@ async fn malformed_references_are_refused_before_anything_is_stored() {
     let mut cases = vec![
         // Follow without a usable object.
         json!({"id": peer.activity_id("f1"), "type": "Follow", "actor": peer.actor_url}),
-        // Undo / Accept / Reject without an object.
-        json!({"id": peer.activity_id("u1"), "type": "Undo", "actor": peer.actor_url}),
-        json!({"id": peer.activity_id("a1"), "type": "Accept", "actor": peer.actor_url}),
-        json!({"id": peer.activity_id("r1"), "type": "Reject", "actor": peer.actor_url, "object": 5}),
         // Embedded Follow without an id.
         peer.undo(
             &peer.activity_id("u2"),
@@ -792,6 +788,18 @@ async fn malformed_references_are_refused_before_anything_is_stored() {
             peer.post(&world, &profile.nanoid, case).await,
             StatusCode::UNPROCESSABLE_ENTITY,
             "{case}"
+        );
+    }
+    // Unknown references are valid relay input, even with the relay flag off.
+    for kind in ["Undo", "Accept", "Reject"] {
+        assert_eq!(
+            peer.post(
+                &world,
+                &profile.nanoid,
+                &json!({"id":peer.activity_id(kind),"type":kind,"actor":peer.actor_url})
+            )
+            .await,
+            ACCEPTED
         );
     }
     // Invalid activity id.
@@ -831,7 +839,7 @@ async fn a_failing_accept_reservation_rolls_the_relation_change_back() {
         .unwrap();
     assert_eq!(
         peer.post(&world, &profile.nanoid, &body).await,
-        StatusCode::INTERNAL_SERVER_ERROR
+        StatusCode::SERVICE_UNAVAILABLE
     );
     assert_eq!(
         count(&world, "profile_follows").await,
@@ -880,7 +888,7 @@ async fn a_failing_relation_commit_leaves_no_accept_job() {
         .unwrap();
     assert_eq!(
         peer.post(&world, &profile.nanoid, &body).await,
-        StatusCode::INTERNAL_SERVER_ERROR
+        StatusCode::SERVICE_UNAVAILABLE
     );
     assert_eq!(count(&world, "profile_follows").await, 0);
     assert_eq!(count(&world, "profile_delivery_jobs").await, 0);

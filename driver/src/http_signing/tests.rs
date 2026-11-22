@@ -319,6 +319,23 @@ async fn test_valid_cavage_signature_passes() {
     let request = signed_verification_request(&private_key_pem, key_id, b"hello").await;
     let verifier = test_verifier(key_id, public_key_pem);
 
+    let evidence = verifier.verify_with_evidence(&request).await.unwrap();
+    let kernel::interfaces::http_signing::SignatureEvidenceResult::Valid(evidence) = evidence
+    else {
+        panic!("signature rejected")
+    };
+    assert_eq!(evidence.key_id, key_id);
+    assert_eq!(evidence.owner, "https://remote.example/users/alice");
+    assert_eq!(
+        evidence.scheme,
+        kernel::interfaces::http_signing::SignatureScheme::Cavage
+    );
+    assert!(
+        (time::OffsetDateTime::now_utc() - evidence.verified_at)
+            .whole_seconds()
+            .abs()
+            <= 1
+    );
     let result = verifier.verify(&request).await.unwrap();
 
     assert_eq!(
