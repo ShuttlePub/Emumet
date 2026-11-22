@@ -205,7 +205,15 @@ impl JwksCache {
         let _guard = self.refresh_mutex.lock().await;
         let uri = {
             let mut inner = self.inner.write().await;
-            if inner.last_fetch.elapsed() < self.min_refetch_interval {
+            // A cold/unusable cache must recover promptly after Ory starts. Keep unknown-kid
+            // refreshes against populated caches at the existing interval, without a cold outage
+            // forcing five minutes of authentication failure after the provider recovers.
+            let interval = if inner.jwks.as_ref().is_none_or(|jwks| jwks.keys.is_empty()) {
+                self.min_refetch_interval.min(Duration::from_secs(1))
+            } else {
+                self.min_refetch_interval
+            };
+            if inner.last_fetch.elapsed() < interval {
                 return Ok(());
             }
             // Record every attempted acquisition, including discovery failure/cancellation.

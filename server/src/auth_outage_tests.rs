@@ -159,3 +159,47 @@ async fn uncached_acquisition_then_cached_outage_preserves_validation() {
         Err(StatusCode::UNAUTHORIZED)
     );
 }
+
+#[tokio::test]
+async fn failed_or_empty_warmup_recovers_before_cached_refetch_interval() {
+    let keys = generate_test_keys();
+    for empty in [false, true] {
+        let peer = MockServer::start().await;
+        let issuer = peer.uri();
+        discovery(&peer, &format!("{issuer}/keys")).await;
+        let response = if empty {
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"keys": []}))
+        } else {
+            ResponseTemplate::new(503)
+        };
+        Mock::given(path("/keys"))
+            .respond_with(response)
+            .mount(&peer)
+            .await;
+        let cache = cache(issuer.clone(), Duration::from_secs(300));
+        cache.try_init().await;
+        let valid = token(&keys, &issuer, "emumet", 3600);
+        assert_eq!(
+            validate(cache.clone(), &issuer, &valid).await,
+            Err(StatusCode::UNAUTHORIZED)
+        );
+        peer.reset().await;
+        discovery(&peer, &format!("{issuer}/keys")).await;
+        Mock::given(path("/keys"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&keys.jwk_set))
+            .mount(&peer)
+            .await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert!(
+            validate(cache.clone(), &issuer, &valid).await.is_ok(),
+            "cold cache recovers without the 300s populated-cache throttle"
+        );
+        let before = peer.received_requests().await.unwrap().len();
+        assert!(cache.get_key("unknown").await.is_none());
+        assert_eq!(
+            peer.received_requests().await.unwrap().len(),
+            before,
+            "populated cache still throttles unknown kids"
+        );
+    }
+}

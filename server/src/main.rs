@@ -160,6 +160,7 @@ async fn main() -> Result<(), StackTrace> {
         result = &mut serving => Some(result),
     };
 
+    tracing::info!("Stop requested; shutting down");
     // Stop new claims at signal receipt, NOT after HTTP's graceful shutdown (a request can hang).
     // Already claimed/authorized work retains S1's bounded drain and original fenced lease.
     tracing::info!(

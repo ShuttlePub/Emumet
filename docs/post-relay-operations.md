@@ -179,9 +179,11 @@ redirects and error handling have not changed. They are not promised usable duri
 
 * `JWKS_TIMEOUT_MS`: default **3000**, integer **1..60000**. One acquisition deadline covers
   refresh-mutex wait, discovery, JWKS connect/headers **and bodies** together. The HTTP client
-  also bounds connect/request waits. Failed discovery/fetch is rate-limited by the existing
-  **300-second** minimum refetch interval, including cold-start failures. A later eligible
-  kid-miss retries lazily; there is no persistent/disk JWKS cache or background retry loop.
+  also bounds connect/request waits. Unknown-kid refreshes with a populated cache retain the
+  existing **300-second** minimum interval. An absent/empty cache retries lazily after at least
+  **1 second**, so a failed cold-start warm-up cannot lock out authentication for five minutes
+  after Ory recovers. Concurrent refreshes remain single-flight and deadline-bounded. There is
+  no persistent/disk JWKS cache or background retry loop.
 * JWT-protected routes remain **401/fail-closed** without a usable matching key. Cached matching
   keys continue validating RS256 signatures, issuer, audience and expiry without Ory I/O.
   Failed refresh never replaces known keys with a bypass, and unknown kids are still denied.
