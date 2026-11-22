@@ -96,7 +96,9 @@ impl Running {
             log,
         };
         let client = client();
-        let result = tokio::time::timeout(Duration::from_secs(30), async {
+        // Includes one-time RSA key generation. Do not conflate CPU-bound provisioning with
+        // a JWKS dependency: the stalled-Ory cases separately assert the stricter 30s bound.
+        let result = tokio::time::timeout(Duration::from_secs(120), async {
             loop {
                 assert!(
                     server.child.try_wait().unwrap().is_none(),
@@ -117,7 +119,7 @@ impl Running {
         .await;
         assert!(
             result.is_ok(),
-            "cold start must not wait for 60s JWKS deadline: {}",
+            "startup including one-time key provisioning exceeded its bound: {}",
             server.logs()
         );
         server
@@ -387,8 +389,21 @@ async fn post_relay_runtime_cold_start_outages_serve_instance_and_forward_signed
         .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(120)))
         .mount(&fetch_stall)
         .await;
-    for ory in [refused_url, discovery_stall.uri(), fetch_stall.uri()] {
+    for (index, ory) in [refused_url, discovery_stall.uri(), fetch_stall.uri()]
+        .into_iter()
+        .enumerate()
+    {
+        let started = Instant::now();
         let mut server = Running::start(&db, &dir, &ory, &home.uri(), &[]).await;
+        // First/refused start provisions both key sets; subsequent processes still have a cold
+        // JWKS cache, but no random/CPU-dependent RSA generation in this latency assertion.
+        if index > 0 {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "cold JWKS startup must not wait for the 60s acquisition deadline: {}",
+                server.logs()
+            );
+        }
         let instance: serde_json::Value = client()
             .get(format!("{}/ap/instance", server.base))
             .send()
