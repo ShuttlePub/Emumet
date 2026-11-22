@@ -390,3 +390,112 @@ in the following ways, none of which this document claims to have closed:**
   implicit UPDATE locks are not separately attributed. Pool acquisition and each ready-job wait
   are now measured separately as defined above.
 - Production volumes and mixed workloads beyond four logical origins / 16 Profiles are untested.
+
+## T1 measurements (plan §11.2, 2026-11-22)
+
+T1 adds an end-to-end acceptance suite (`server/tests/e2e_post_relay`, 33 tests, all passing in
+one whole run, see `docs/post-relay-operations.md` "T1"); it does **not** add a new sender or
+change the delivery path. Its code diff against `main` touches only the test-mode operator
+transport and a utoipa description, so the S1 sender/Q1 ports measured here are the code on
+`main`. The performance items below were therefore **re-run with the existing S1 release
+harness** (same `--ignored` release tests as the S1 sections above) on the T1 branch
+(base `5b0b7b5` + T1 commits, application test binary built with `--release`).
+
+### Environment (honest description)
+
+- Same Ryzen 9 7900 host as S1 (12 physical / 24 logical cores, ~64 GiB, Linux 7.3.5), release
+  build, PostgreSQL 17 on the same host over a Unix socket (disposable root DB `t1_perf_164620`).
+- Sender process `taskset -c 0-3` + `ulimit -v 8388608` (8 GiB **virtual address space**, not a
+  cgroup limit); PostgreSQL `taskset -c 4-7`; the HTTP recipient is an external process on
+  cores 8-9. Plain HTTP, **no TLS**, loopback. Four Tokio worker threads, 16 Profiles,
+  four logical origins, synthetic 65,536-byte and 1,400,000-byte (≈1.34 MiB envelope scale) bodies.
+- **The host was shared with other lanes' workloads** (load average about 10–12 on 24 logical
+  cores before and during the run; not excluded). The numbers are lower and noisier than the S1
+  R1–R3 rerun on the same machine (e.g. 64 KiB serial 125–184/s here vs. 230/s there). They are
+  not a 4-vCPU/8 GiB VM and not production SLOs.
+- A first attempt at 16:27 JST was killed by the tooling (the background process was reaped when
+  the shell call returned) after the first sample; it is discarded. The results below are from
+  the second complete run (610.05 s + 81.77 s).
+
+### Throughput (128 deliveries/sample, rolling refill, KDF counted)
+
+| Envelope bytes | concurrency | deliveries/s | CPU ticks | RSS before → after KiB | KDF calls |
+|---:|---:|---:|---:|---:|---:|
+| 65,536 | 1 | 125.38 | 68 | 14,604 → 29,468 | 1 |
+| 65,536 | 16 (4/origin) | 185.93 | 65 | 29,540 → 34,044 | 1 |
+| 1,400,000 | 1 | 93.88 | 96 | 33,636 → 61,376 | 1 |
+| 1,400,000 | 16 (4/origin) | 167.28 | 84 | 53,976 → 90,932 | 1 |
+
+Per-sample spread on this loaded host is
+large (the aborted attempt's first 64 KiB serial sample measured 184.14/s), so treat each cell
+as ±30 % at best. Target comparison: 64 KiB ≥ 100/s met (125–186/s), ≈1.34 MiB ≥ 20/s met
+(94–167/s), **in a plain-HTTP, non-VM environment**.
+
+### Ten-minute continuous run (65,536-byte, batches of 64, bounded 16)
+
+**113,664 successes in 600.05 s, 189.43/s including continuing admission** (admission shares the
+sender cores; this is not a fixed 100/s arrival schedule). Sampled once a minute:
+
+| seconds | successes | RSS KiB | DB connections | live bodies / lock waiters | KDF calls |
+|---:|---:|---:|---:|---:|---:|
+| 0.4 | 64 | 53,964 | 7 | 0 / 0 | 1 |
+| 60.1 | 9,792 | 55,392 | 10 | 0 / 0 | 1 |
+| 120.3 | 21,120 | 55,448 | 10 | 0 / 0 | 1 |
+| 300.2 | 51,520 | 32,100 | 10 | 0 / 0 | 1 |
+| 480.2 | 86,976 | 31,712 | 10 | 0 / 0 | 1 |
+| 600.0 | 113,664 | 31,200 | 10 | 0 / 0 | 1 |
+
+RSS does not grow (it drops from ~55 MB to ~32 MB between 120 s and 300 s, presumably the
+allocator returning the earlier 1.4 MB samples' memory — not verified — then stays within
+31,200–31,716 KiB over the last 300 s). The pool is bounded
+at 10 (cap 16). **One KDF for all 113,664 deliveries, so KDF is not per delivery.** At each of
+the eleven minute samples (`S1_TABLE_COUNTS`) jobs, bodies, attempts, dead letters, audits,
+operations, unlinked rows and link-usage rows were **0**; the fixed rows (slots 16, schedule 16,
+profile quota 16, quota/capacity/counters 1) never changed, so the live rows do not grow with the
+success total. The E2E case 22 (`retention::case22_…`) verifies the same property through the
+real API/inbox path (no job/attempt/terminal row after success or cancel).
+Mean per job (ms, over all 113,664): DB phase 10.90, DB-slot wait 22.22, pool acquisition 0.20,
+relay lock acquisition 7.27, ready-queue wait 144.2, maximum ready-queue wait 806.6.
+
+### Healthy origins beside a timing-out origin
+
+Three healthy origins, one recipient that never answers (30 s), 12 s windows, median of three
+rounds, 64 KiB, four real ten-second timeouts per mixed window:
+
+| round | alone/s | mixed healthy/s | slow timeouts |
+|---:|---:|---:|---:|
+| 0 | 215.78 | 218.90 | 4 |
+| 1 | 209.42 | 203.37 | 4 |
+| 2 | 252.31 | 231.56 | 4 |
+
+Median alone 215.78/s, mixed 218.90/s: **ratio 1.0144 (target ≥ 0.80)**. A ratio above 1 is
+noise from co-tenant load, not a speed-up; rounds vary 203–252/s.
+
+### Physical storage after the run (snapshot, not under load)
+
+`pg_database_size` of the measurement database after both runs: **7,425 kB** (all relay tables
+empty/fixed-size). `pg_stat_user_tables` dead-tuple/vacuum counters were **not** obtained (the
+postmaster was stopped and restarted between the run and the query; no per-table statistics were
+available), and WAL volume attributable to this run is **not measured** (the cluster `pg_wal` is
+shared with earlier measurement databases). MVCC/WAL/vacuum behaviour under sustained load is
+therefore **not claimed** by T1. Physical-capacity *supply and fail-closed* is covered
+functionally by the E2E capacity-supply test, not by a size measurement.
+
+### Items reused from S1 (not re-measured by T1)
+
+- Unlink / deactivation / projector latency with the sender at each stop point and with a silent
+  peer (1.3–10.9 ms; 1.3–6.7 ms while a 30 s HTTP request is pending): S1 section "Unlink /
+  deactivation latency…" and the R1–R3 regressions. T1's lifecycle cases (16–19) verify the
+  behaviour end to end but T1 did not re-time it.
+- Per-job timing breakdown definitions, DB/lock/queue wait instruments: S1 R1–R3 section.
+
+### Not measured by T1
+
+TLS handshake/session reuse and real network RTT; cgroup memory accounting; a 4-vCPU VM with
+PostgreSQL co-located; a fixed 100 arrivals/s schedule for 10 minutes (the run above is
+admission-saturated, 189/s); moving the full body reservation into quarantine and checking the
+reservation against the capacity limit under volume (E2E case 25 verifies the behaviour at
+functional scale only); MVCC/WAL/vacuum physical growth under sustained load; production-scale
+queues (100,000 ready jobs) and failure-traffic mixes. Regression suites (Profile actor,
+WebFinger, Follow, domain block, login/consent E2E) and the OpenAPI regeneration check are
+covered by CI and the workspace test run, not by these measurements.
