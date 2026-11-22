@@ -6,7 +6,11 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 async fn post(w: &World, profile: &str, v: &Value) -> u16 {
-    w.peer.deliver_json(&w.server, profile, v).await.status().as_u16()
+    w.peer
+        .deliver_json(&w.server, profile, v)
+        .await
+        .status()
+        .as_u16()
 }
 async fn forwarded(w: &World) -> usize {
     w.db.count("post_relay_bodies").await as usize
@@ -23,7 +27,10 @@ async fn case02_raw_bytes_unknown_fields_non_ascii_and_whitespace_survive() {
         w.peer.actor
     )
     .into_bytes();
-    let r = w.peer.post(&w.server, &a.profile, Inbound::new(raw.clone())).await;
+    let r = w
+        .peer
+        .post(&w.server, &a.profile, Inbound::new(raw.clone()))
+        .await;
     assert_eq!(r.status(), 202, "{}", r.text().await.unwrap());
     let got = w.receiver.wait_accepted(1, Duration::from_secs(30)).await;
     assert_eq!(got[0].raw_body, raw, "raw bytes must not be re-serialized");
@@ -49,9 +56,15 @@ async fn case03_to_string_actor_object_no_id_ld_json_and_array_object_are_forwar
         let r = w.peer.post(&w.server, &a.profile, inbound).await;
         assert_eq!(r.status(), 202, "variant {i}: {}", r.text().await.unwrap());
     }
-    let got = w.receiver.wait_accepted(bodies.len(), Duration::from_secs(40)).await;
+    let got = w
+        .receiver
+        .wait_accepted(bodies.len(), Duration::from_secs(40))
+        .await;
     for (body, _) in &bodies {
-        assert!(got.iter().any(|g| &g.raw_body == body), "a variant was altered or dropped");
+        assert!(
+            got.iter().any(|g| &g.raw_body == body),
+            "a variant was altered or dropped"
+        );
     }
     // An Activity without id is forwarded with id = null (never invented).
     assert!(got.iter().any(|g| g.envelope["activity"]["id"].is_null()));
@@ -64,11 +77,20 @@ async fn case04_duplicate_keys_type_arrays_and_oversized_original_headers() {
     let a = w.linked("c04", 0).await;
     let actor = w.peer.actor.clone();
     // Duplicate keys at the top level and nested are both 400, nothing admitted.
-    let top = format!(r#"{{"type":"Create","type":"Note","actor":"{actor}","object":{{"type":"Note"}}}}"#);
-    let nested = format!(r#"{{"type":"Create","actor":"{actor}","object":{{"type":"Note","content":"a","content":"b"}}}}"#);
-    let deep = format!(r#"{{"type":"Create","actor":"{actor}","object":{{"a":[{{"b":{{"c":1,"c":2}}}}]}}}}"#);
+    let top = format!(
+        r#"{{"type":"Create","type":"Note","actor":"{actor}","object":{{"type":"Note"}}}}"#
+    );
+    let nested = format!(
+        r#"{{"type":"Create","actor":"{actor}","object":{{"type":"Note","content":"a","content":"b"}}}}"#
+    );
+    let deep = format!(
+        r#"{{"type":"Create","actor":"{actor}","object":{{"a":[{{"b":{{"c":1,"c":2}}}}]}}}}"#
+    );
     for body in [top, nested, deep] {
-        let r = w.peer.post(&w.server, &a.profile, Inbound::new(body.into_bytes())).await;
+        let r = w
+            .peer
+            .post(&w.server, &a.profile, Inbound::new(body.into_bytes()))
+            .await;
         assert_eq!(r.status(), 400);
     }
     assert_eq!(forwarded(&w).await, 0);
@@ -84,11 +106,20 @@ async fn case04_duplicate_keys_type_arrays_and_oversized_original_headers() {
     // ones are never stored, and the envelope says the evidence is incomplete.
     let mut inbound = Inbound::new(serde_json::to_vec(&w.peer.note("headers")).unwrap());
     for i in 0..6 {
-        inbound.signed_headers.push((format!("x-pad-{i}"), "p".repeat(3000)));
+        inbound
+            .signed_headers
+            .push((format!("x-pad-{i}"), "p".repeat(3000)));
     }
-    inbound.signed_headers.push(("x-api-token".into(), "super-secret-token-value-9f3".into()));
-    inbound.plain_headers.push(("cookie".into(), "session=cookie-secret-value-77a".into()));
-    inbound.plain_headers.push(("authorization".into(), "Bearer authorization-secret-value-1d2".into()));
+    inbound
+        .signed_headers
+        .push(("x-api-token".into(), "super-secret-token-value-9f3".into()));
+    inbound
+        .plain_headers
+        .push(("cookie".into(), "session=cookie-secret-value-77a".into()));
+    inbound.plain_headers.push((
+        "authorization".into(),
+        "Bearer authorization-secret-value-1d2".into(),
+    ));
     let r = w.peer.post(&w.server, &a.profile, inbound).await;
     assert_eq!(r.status(), 202);
     let got = w.receiver.wait_accepted(2, Duration::from_secs(30)).await;
@@ -96,11 +127,24 @@ async fn case04_duplicate_keys_type_arrays_and_oversized_original_headers() {
     assert_eq!(e["evidence_complete"], false);
     assert!(e["omitted_header_count"].as_u64().unwrap() >= 1);
     let text = String::from_utf8_lossy(&got[1].outer_body);
-    for secret in ["super-secret-token-value-9f3", "cookie-secret-value-77a", "authorization-secret-value-1d2"] {
-        assert!(!text.contains(secret), "secret header value leaked into the envelope");
+    for secret in [
+        "super-secret-token-value-9f3",
+        "cookie-secret-value-77a",
+        "authorization-secret-value-1d2",
+    ] {
+        assert!(
+            !text.contains(secret),
+            "secret header value leaked into the envelope"
+        );
     }
-    for h in e["original_request"]["signature_headers"].as_array().unwrap() {
-        assert!(h["value"].as_str().unwrap().len() <= 3000 || h["name"] == "signature", "values are never truncated mid-way");
+    for h in e["original_request"]["signature_headers"]
+        .as_array()
+        .unwrap()
+    {
+        assert!(
+            h["value"].as_str().unwrap().len() <= 3000 || h["name"] == "signature",
+            "values are never truncated mid-way"
+        );
     }
 }
 
@@ -126,9 +170,16 @@ async fn case05_follow_block_excluded_known_and_unknown_undo_accept_reject() {
     let embedded_reject = json!({"type":"Reject","id":w.peer.activity_id(),"actor":actor,"object":{"type":"Block","id":w.peer.activity_id(),"actor":actor,"object":target}});
     for v in [&embedded_undo, &embedded_accept, &embedded_reject] {
         let s = post(&w, &a.profile, v).await;
-        assert!(s == 202 || s == 408 || s == 422, "known-relation reference status {s}");
+        assert!(
+            s == 202 || s == 408 || s == 422,
+            "known-relation reference status {s}"
+        );
     }
-    assert_eq!(forwarded(&w).await, 0, "known Follow/Block references must not be forwarded");
+    assert_eq!(
+        forwarded(&w).await,
+        0,
+        "known Follow/Block references must not be forwarded"
+    );
     // Unknown references (URL only, missing, mixed) are forwarded in full.
     let unknown_url = json!({"type":"Undo","id":w.peer.activity_id(),"actor":actor,"object":format!("{}/activities/unknown-1", w.peer.server.uri())});
     let missing = json!({"type":"Accept","id":w.peer.activity_id(),"actor":actor});
@@ -139,7 +190,9 @@ async fn case05_follow_block_excluded_known_and_unknown_undo_accept_reject() {
     let got = w.receiver.wait_accepted(3, Duration::from_secs(40)).await;
     assert_eq!(got.len(), 3);
     for v in [&unknown_url, &missing, &mixed] {
-        assert!(got.iter().any(|g| g.raw_body == serde_json::to_vec(v).unwrap()));
+        assert!(got
+            .iter()
+            .any(|g| g.raw_body == serde_json::to_vec(v).unwrap()));
     }
 }
 
@@ -168,8 +221,20 @@ async fn case06_early_undo_defense_and_independent_profiles() {
     assert_eq!(post(&w, &a.profile, &shared).await, 202);
     assert_eq!(post(&w, &b.profile, &shared).await, 202);
     let got = w.receiver.wait_accepted(3, Duration::from_secs(40)).await;
-    let for_a = got.iter().filter(|g| g.envelope["recipient"]["link_id"] == a.link_id && g.raw_body == serde_json::to_vec(&shared).unwrap()).count();
-    let for_b = got.iter().filter(|g| g.envelope["recipient"]["link_id"] == b.link_id && g.raw_body == serde_json::to_vec(&shared).unwrap()).count();
+    let for_a = got
+        .iter()
+        .filter(|g| {
+            g.envelope["recipient"]["link_id"] == a.link_id
+                && g.raw_body == serde_json::to_vec(&shared).unwrap()
+        })
+        .count();
+    let for_b = got
+        .iter()
+        .filter(|g| {
+            g.envelope["recipient"]["link_id"] == b.link_id
+                && g.raw_body == serde_json::to_vec(&shared).unwrap()
+        })
+        .count();
     assert_eq!((for_a, for_b), (1, 1));
 }
 
@@ -184,8 +249,16 @@ async fn case07_failure_after_receipt_persistence_rolls_back_and_retry_is_not_lo
     w.db.exec("CREATE TRIGGER t1_fail BEFORE INSERT ON post_relay_bodies FOR EACH ROW EXECUTE FUNCTION t1_fail()").await;
     let undo = json!({"type":"Undo","id":w.peer.activity_id(),"actor":w.peer.actor,"object":format!("{}/activities/early", w.peer.server.uri())});
     let r = w.peer.deliver_json(&w.server, &a.profile, &undo).await;
-    assert!(r.status().is_server_error(), "storage failure must be a retryable 5xx, got {}", r.status());
-    assert_eq!(w.db.count("profile_inbound_activities").await, before_receipts, "receipt rows must roll back with the job");
+    assert!(
+        r.status().is_server_error(),
+        "storage failure must be a retryable 5xx, got {}",
+        r.status()
+    );
+    assert_eq!(
+        w.db.count("profile_inbound_activities").await,
+        before_receipts,
+        "receipt rows must roll back with the job"
+    );
     assert_eq!(forwarded(&w).await, 0);
     w.db.exec("DROP TRIGGER t1_fail ON post_relay_bodies").await;
     // The retry of the same request creates the job and is delivered.
@@ -211,7 +284,15 @@ async fn case08_one_activity_is_delivered_independently_to_multiple_profiles() {
         assert_eq!(post(&w, &p.profile, &activity).await, 202);
     }
     let got = w.receiver.wait_accepted(3, Duration::from_secs(40)).await;
-    let mut links: Vec<String> = got.iter().map(|g| g.envelope["recipient"]["link_id"].as_str().unwrap().to_string()).collect();
+    let mut links: Vec<String> = got
+        .iter()
+        .map(|g| {
+            g.envelope["recipient"]["link_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
     links.sort();
     let mut want = vec![a.link_id.clone(), b.link_id.clone(), c.link_id.clone()];
     want.sort();
@@ -229,16 +310,29 @@ async fn case08_one_activity_is_delivered_independently_to_multiple_profiles() {
 async fn case09_unlinked_profile_leaves_only_a_body_free_hourly_bucket() {
     let w = World::setup().await;
     let user = w.user("c09").await;
-    let (_, profile) = w.server.create_account(&user.jwt, &format!("t1_c09_{}", &uuid::Uuid::new_v4().simple().to_string()[..8])).await;
+    let (_, profile) = w
+        .server
+        .create_account(
+            &user.jwt,
+            &format!("t1_c09_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
+        )
+        .await;
     let marker = "UNLINKED-BODY-MARKER-4c1f";
     for _ in 0..3 {
         assert_eq!(post(&w, &profile, &w.peer.note(marker)).await, 202);
     }
     assert_eq!(w.db.count("post_relay_bodies").await, 0);
     assert_eq!(w.db.count("post_relay_jobs").await, 0);
-    assert_eq!(w.db.count("post_relay_unlinked").await, 1, "one Profile + no_home + hour bucket");
+    assert_eq!(
+        w.db.count("post_relay_unlinked").await,
+        1,
+        "one Profile + no_home + hour bucket"
+    );
     assert_eq!(w.db.i64("SELECT count FROM post_relay_unlinked").await, 3);
-    let row: String = sqlx::query_scalar("SELECT row_to_json(u)::text FROM post_relay_unlinked u").fetch_one(&w.db.iso.pool).await.unwrap();
+    let row: String = sqlx::query_scalar("SELECT row_to_json(u)::text FROM post_relay_unlinked u")
+        .fetch_one(&w.db.iso.pool)
+        .await
+        .unwrap();
     assert!(!row.contains(marker) && !row.contains(&w.peer.actor));
     assert_eq!(w.receiver.attempts().len(), 0);
     // Rejection of the remote actor ID / body in the logs too.

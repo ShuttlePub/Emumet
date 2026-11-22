@@ -81,26 +81,47 @@ impl TestModule {
             cache: Arc::new(InstanceKeyCache::new(2, Duration::from_secs(900))),
             encryptor: Argon2Encryptor::default(),
             origin: PublicBaseUrl::new(PUBLIC.to_string()),
-            transport: HttpPostRelayTransport::new(HomeOriginAllowlist::from_json("[]").unwrap()).with_test_origins(vec![receiver_origin.to_string()]),
+            transport: HttpPostRelayTransport::new(HomeOriginAllowlist::from_json("[]").unwrap())
+                .with_test_origins(vec![receiver_origin.to_string()]),
         }
     }
     pub fn worker(&self) -> Arc<RelayDelivery<TestModule>> {
         Arc::new(RelayDelivery::new(Arc::new(self.clone())))
     }
     pub fn paused_worker(&self, point: u8) -> (Arc<RelayDelivery<TestModule>>, Arc<DeliveryPause>) {
-        let pause = Arc::new(DeliveryPause { point, ..Default::default() });
-        (Arc::new(RelayDelivery::new(Arc::new(self.clone())).with_pause(pause.clone())), pause)
+        let pause = Arc::new(DeliveryPause {
+            point,
+            ..Default::default()
+        });
+        (
+            Arc::new(RelayDelivery::new(Arc::new(self.clone())).with_pause(pause.clone())),
+            pause,
+        )
     }
     /// Operator path: quarantine the receipt (permanent failure) and stage a manual redelivery
     /// exactly like `server post-relay redeliver` does through the store.
     pub async fn stage_manual(&self, profile_id: i64, receipt: &str, operation: &str) {
         let db = &self.db;
         let mut t = db.get_transaction().await.unwrap();
-        let lease = db.post_relay_store().claim_due(t.connection(), 1).await.unwrap().remove(0);
+        let lease = db
+            .post_relay_store()
+            .claim_due(t.connection(), 1)
+            .await
+            .unwrap()
+            .remove(0);
         t.commit().await.unwrap();
         assert_eq!(lease.receipt, receipt);
         let mut t = db.get_transaction().await.unwrap();
-        db.post_relay_store().record_attempt(t.connection(), &lease, AttemptResult::Permanent { status: Some(403) }, None, 0).await.unwrap();
+        db.post_relay_store()
+            .record_attempt(
+                t.connection(),
+                &lease,
+                AttemptResult::Permanent { status: Some(403) },
+                None,
+                0,
+            )
+            .await
+            .unwrap();
         t.commit().await.unwrap();
         let request = OperatorRequest {
             id: operation.into(),
@@ -111,8 +132,14 @@ impl TestModule {
             reason: "race test".into(),
         };
         let mut t = db.get_transaction().await.unwrap();
-        db.post_relay_store().begin_operator(t.connection(), &request).await.unwrap();
-        db.post_relay_store().operator_redeliver(t.connection(), &request.id).await.unwrap();
+        db.post_relay_store()
+            .begin_operator(t.connection(), &request)
+            .await
+            .unwrap();
+        db.post_relay_store()
+            .operator_redeliver(t.connection(), &request.id)
+            .await
+            .unwrap();
         t.commit().await.unwrap();
     }
 }

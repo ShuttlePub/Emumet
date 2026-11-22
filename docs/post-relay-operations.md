@@ -274,7 +274,7 @@ never carry a receipt, actor, origin, body or credential.
 | alert | fires when | first response |
 |---|---|---|
 | `physical_capacity_missing_or_stale` (critical) | no sample, a sample older than 90 s, or one from the future | restore the supplier; admission is already failing closed (503) |
-| `physical_capacity_threshold` (critical) | accepting=false: free < 12 GiB or < 12% (resumes at hysteresis) | free space; do not discard quarantine early |
+| `physical_capacity_threshold` (critical) | accepting=false: free < 10 GiB or < 10% (admission resumes only at 12 GiB and 12%) | free space; do not discard quarantine early |
 | `quota_*` (warning ≥ 80%, critical ≥ 95%) | global or per-Profile body count/bytes, delivery rows/bytes, audit/operator rows | find the failing destination; quarantine is never discarded automatically |
 | `reservation_flag_inconsistent` / `reservation_mismatch` (critical) | quota reservations differ from the stored rows | stop new load, run the read-only consistency query, open an incident |
 | `purge_delay` (warning) | expired bodies, quarantine, audits, operator or unlinked rows are > 5 min past expiry | check maintenance process / DB locks |

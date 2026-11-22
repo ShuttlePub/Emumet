@@ -14,20 +14,20 @@ mod lifecycle;
 mod operator;
 mod ory;
 mod ory_outage;
+mod races;
 mod receiver;
-mod release_image;
 mod receiver_p1;
+mod release_image;
+mod retention;
 mod stack;
 mod supplier;
-mod races;
-mod retention;
 mod worker;
 mod world;
 
 use receiver::Behavior;
 use serde_json::json;
-use std::time::Duration;
 use stack::PUBLIC;
+use std::time::Duration;
 use world::*;
 
 const NEEDS_STACK: &str = "needs the T1 stack: bash e2e/post-relay/run.sh";
@@ -52,18 +52,36 @@ async fn case01_real_auth_profile_link_signed_inbox_to_relay() {
     let e = &accepted[0].envelope;
     assert_eq!(e["recipient"]["link_id"], a.link_id);
     assert_eq!(e["recipient"]["link_generation"], 1);
-    assert_eq!(e["sender"]["instance_actor"], format!("{PUBLIC}/ap/instance"));
+    assert_eq!(
+        e["sender"]["instance_actor"],
+        format!("{PUBLIC}/ap/instance")
+    );
     assert_eq!(e["verification"]["result"], "verified");
     assert_eq!(accepted[0].raw_body, serde_json::to_vec(&activity).unwrap());
-    assert!(w.receiver.instance_fetches() >= 1, "instance key must be fetched over HTTP");
+    assert!(
+        w.receiver.instance_fetches() >= 1,
+        "instance key must be fetched over HTTP"
+    );
     let sig = &accepted[0].headers["signature"];
-    assert!(sig.contains(&format!("keyId=\"{PUBLIC}/ap/instance#key-")), "{sig}");
+    assert!(
+        sig.contains(&format!("keyId=\"{PUBLIC}/ap/instance#key-")),
+        "{sig}"
+    );
 
     // Case 22: success leaves no job / attempts / body / per-delivery terminal row.
     w.receipts_gone().await;
-    for table in ["post_relay_jobs", "post_relay_attempts", "post_relay_bodies", "post_relay_dead_letters", "post_relay_audits"] {
+    for table in [
+        "post_relay_jobs",
+        "post_relay_attempts",
+        "post_relay_bodies",
+        "post_relay_dead_letters",
+        "post_relay_audits",
+    ] {
         assert_eq!(w.db.count(table).await, 0, "{table}");
     }
-    assert_eq!(w.db.i64("SELECT succeeded FROM post_relay_counters").await, 1);
+    assert_eq!(
+        w.db.i64("SELECT succeeded FROM post_relay_counters").await,
+        1
+    );
     let _ = (Behavior::Accept, json!({}), NEEDS_STACK);
 }

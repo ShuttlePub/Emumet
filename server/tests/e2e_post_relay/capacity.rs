@@ -7,8 +7,14 @@ use std::time::Duration;
 const GIB: u64 = 1024 * 1024 * 1024;
 
 async fn probe(w: &World, profile: &str) -> (u16, Option<String>) {
-    let r = w.peer.deliver_json(&w.server, profile, &w.peer.note("capacity probe")).await;
-    let retry = r.headers().get("retry-after").map(|v| v.to_str().unwrap().to_string());
+    let r = w
+        .peer
+        .deliver_json(&w.server, profile, &w.peer.note("capacity probe"))
+        .await;
+    let retry = r
+        .headers()
+        .get("retry-after")
+        .map(|v| v.to_str().unwrap().to_string());
     (r.status().as_u16(), retry)
 }
 
@@ -29,41 +35,103 @@ async fn capacity_supply_every_30s_fails_closed_after_90s_and_applies_thresholds
     let a = w.linked("cap", 0).await;
     let b = w.linked("capb", 1).await;
     let url = w.db.url();
-    expect_admission(&w, &a.profile, true, "real df sample of the PostgreSQL volume admits").await;
+    expect_admission(
+        &w,
+        &a.profile,
+        true,
+        "real df sample of the PostgreSQL volume admits",
+    )
+    .await;
 
     // The continuous supplier samples every 30 s: the stored sample advances without help.
-    let first: f64 = sqlx::query_scalar("SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity").fetch_one(&w.db.iso.pool).await.unwrap();
+    let first: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity",
+    )
+    .fetch_one(&w.db.iso.pool)
+    .await
+    .unwrap();
     tokio::time::sleep(Duration::from_secs(34)).await;
-    let second: f64 = sqlx::query_scalar("SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity").fetch_one(&w.db.iso.pool).await.unwrap();
-    assert!(second - first >= 25.0 && second - first <= 40.0, "supplier period was {}s", second - first);
+    let second: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity",
+    )
+    .fetch_one(&w.db.iso.pool)
+    .await
+    .unwrap();
+    assert!(
+        second - first >= 25.0 && second - first <= 40.0,
+        "supplier period was {}s",
+        second - first
+    );
     let age = w.db.i64("SELECT extract(epoch FROM clock_timestamp()-sampled_at)::bigint FROM post_relay_capacity").await;
     assert!(age <= 31, "sample age {age}s");
     w.supplier.stop().await;
 
     // Freshness: 90 s. Time injection moves the stored sample into the past.
-    w.db.exec("UPDATE post_relay_capacity SET sampled_at = clock_timestamp() - interval '80 seconds'").await;
+    w.db.exec(
+        "UPDATE post_relay_capacity SET sampled_at = clock_timestamp() - interval '80 seconds'",
+    )
+    .await;
     expect_admission(&w, &a.profile, true, "80 s old sample is still fresh").await;
-    w.db.exec("UPDATE post_relay_capacity SET sampled_at = clock_timestamp() - interval '100 seconds'").await;
+    w.db.exec(
+        "UPDATE post_relay_capacity SET sampled_at = clock_timestamp() - interval '100 seconds'",
+    )
+    .await;
     expect_admission(&w, &a.profile, false, "100 s old sample fails closed").await;
     assert!(firing(&evaluate(&w.db).await, "physical_capacity_missing_or_stale").is_some());
-    w.db.exec("UPDATE post_relay_capacity SET sampled_at = NULL").await;
+    w.db.exec("UPDATE post_relay_capacity SET sampled_at = NULL")
+        .await;
     expect_admission(&w, &a.profile, false, "missing sample fails closed").await;
     // A failing measurement reports nothing: freshness is allowed to expire, no invented sample.
     let warned = Supplier::failing_measurement(&url).await;
     assert!(warned.contains("measurement failed"), "{warned}");
-    assert_eq!(w.db.i64("SELECT count(*) FROM post_relay_capacity WHERE sampled_at IS NULL").await, 1);
+    assert_eq!(
+        w.db.i64("SELECT count(*) FROM post_relay_capacity WHERE sampled_at IS NULL")
+            .await,
+        1
+    );
     Supplier::report(&url, 50 * GIB, 100 * GIB).await;
-    expect_admission(&w, &a.profile, true, "a fresh healthy sample recovers admission").await;
+    expect_admission(
+        &w,
+        &a.profile,
+        true,
+        "a fresh healthy sample recovers admission",
+    )
+    .await;
 
     // Thresholds: stop below 10 GiB OR below 10 %, recover only at >= 12 GiB AND >= 12 %.
     let steps: [(u64, u64, bool, &str); 12] = [
-        (10 * GIB, 100 * GIB, true, "exactly 10 GiB / 10 % is allowed while healthy"),
+        (
+            10 * GIB,
+            100 * GIB,
+            true,
+            "exactly 10 GiB / 10 % is allowed while healthy",
+        ),
         (10 * GIB - 1, 100 * GIB, false, "just below 10 GiB stops"),
-        (11 * GIB, 100 * GIB, false, "11 GiB / 11 % does not recover (hysteresis)"),
-        (12 * GIB - 1, 100 * GIB, false, "just below 12 GiB does not recover"),
+        (
+            11 * GIB,
+            100 * GIB,
+            false,
+            "11 GiB / 11 % does not recover (hysteresis)",
+        ),
+        (
+            12 * GIB - 1,
+            100 * GIB,
+            false,
+            "just below 12 GiB does not recover",
+        ),
         (12 * GIB, 100 * GIB, true, "12 GiB / 12 % recovers"),
-        (11 * GIB, 100 * GIB, true, "11 GiB while healthy keeps admitting"),
-        (50 * GIB, 1000 * GIB, false, "5 % free stops although >= 10 GiB"),
+        (
+            11 * GIB,
+            100 * GIB,
+            true,
+            "11 GiB while healthy keeps admitting",
+        ),
+        (
+            50 * GIB,
+            1000 * GIB,
+            false,
+            "5 % free stops although >= 10 GiB",
+        ),
         (100 * GIB, 1000 * GIB, false, "10 % does not recover"),
         (119 * GIB, 1000 * GIB, false, "11.9 % does not recover"),
         (120 * GIB, 1000 * GIB, true, "12 % and >= 12 GiB recovers"),
@@ -75,7 +143,11 @@ async fn capacity_supply_every_30s_fails_closed_after_90s_and_applies_thresholds
         Supplier::report(&url, free, total).await;
         expect_admission(&w, &a.profile, accepted, why).await;
         let alerts = evaluate(&w.db).await;
-        assert_eq!(firing(&alerts, "physical_capacity_threshold").is_some(), !accepted, "{why}: alert");
+        assert_eq!(
+            firing(&alerts, "physical_capacity_threshold").is_some(),
+            !accepted,
+            "{why}: alert"
+        );
         if !accepted && !cancelled_while_stopped {
             // Low capacity never prevents cancellation: unlinking still works.
             let (status, _) = w.server.unlink(&b.user.jwt, &b.profile, &b.link_id).await;
@@ -84,17 +156,42 @@ async fn capacity_supply_every_30s_fails_closed_after_90s_and_applies_thresholds
         }
     }
     // A sample that is not newer than the stored one is refused and changes nothing.
-    let before: f64 = sqlx::query_scalar("SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity").fetch_one(&w.db.iso.pool).await.unwrap();
-    let old = (time::OffsetDateTime::now_utc() - time::Duration::seconds(200)).format(&time::format_description::well_known::Rfc3339).unwrap();
+    let before: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity",
+    )
+    .fetch_one(&w.db.iso.pool)
+    .await
+    .unwrap();
+    let old = (time::OffsetDateTime::now_utc() - time::Duration::seconds(200))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
     let out = tokio::process::Command::new(env!("CARGO_BIN_EXE_server"))
-        .args(["capacity", "report", "--free-bytes", "1", "--total-bytes", "100", "--sampled-at", &old])
+        .args([
+            "capacity",
+            "report",
+            "--free-bytes",
+            "1",
+            "--total-bytes",
+            "100",
+            "--sampled-at",
+            &old,
+        ])
         .env("DATABASE_URL", &url)
         .output()
         .await
         .unwrap();
     assert!(!out.status.success(), "an old sample must be refused");
-    let text = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
-    assert!(!text.contains("postgres://") && !text.contains("develop"), "no credentials in CLI errors");
-    let after: f64 = sqlx::query_scalar("SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity").fetch_one(&w.db.iso.pool).await.unwrap();
+    let text =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !text.contains("postgres://") && !text.contains("develop"),
+        "no credentials in CLI errors"
+    );
+    let after: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity",
+    )
+    .fetch_one(&w.db.iso.pool)
+    .await
+    .unwrap();
     assert_eq!(before, after);
 }

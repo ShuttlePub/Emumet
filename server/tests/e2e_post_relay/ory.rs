@@ -19,7 +19,8 @@ pub struct User {
 
 pub fn jwt_subject(jwt: &str) -> String {
     let payload = jwt.split('.').nth(1).expect("jwt payload");
-    let bytes = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload).unwrap();
+    let bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload).unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     v["sub"].as_str().unwrap().to_string()
 }
@@ -81,7 +82,10 @@ async fn ensure_client() {
         .await
         .expect("Hydra admin unreachable");
     assert!(
-        matches!(response.status(), StatusCode::CREATED | StatusCode::CONFLICT),
+        matches!(
+            response.status(),
+            StatusCode::CREATED | StatusCode::CONFLICT
+        ),
         "Hydra client creation failed: {}",
         response.status()
     );
@@ -118,25 +122,39 @@ async fn kratos_login(email: &str) -> String {
         .post(format!("{KRATOS_PUBLIC}/self-service/login?flow={id}"))
         .header("accept", "application/json")
         .header("cookie", &csrf_cookie)
-        .json(&json!({"method":"password","identifier":email,"password":PASSWORD,"csrf_token":csrf}))
+        .json(
+            &json!({"method":"password","identifier":email,"password":PASSWORD,"csrf_token":csrf}),
+        )
         .send()
         .await
         .expect("Kratos login failed");
-    assert!(login.status().is_success(), "Kratos login status {}", login.status());
+    assert!(
+        login.status().is_success(),
+        "Kratos login status {}",
+        login.status()
+    );
     login
         .headers()
         .get_all(SET_COOKIE)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .find_map(|c| {
-            c.starts_with("ory_kratos_session=")
-                .then(|| c.split(';').next().unwrap().trim_start_matches("ory_kratos_session=").to_string())
+            c.starts_with("ory_kratos_session=").then(|| {
+                c.split(';')
+                    .next()
+                    .unwrap()
+                    .trim_start_matches("ory_kratos_session=")
+                    .to_string()
+            })
         })
         .expect("no Kratos session cookie")
 }
 
 async fn hydra_flow(session: &str) -> String {
-    let client = Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
     let mut next = format!(
         "{HYDRA_PUBLIC}/oauth2/auth?client_id={CLIENT_ID}&response_type=code&scope=openid&redirect_uri={REDIRECT_URI}&audience=account&state=t1-state"
     );
@@ -152,7 +170,11 @@ async fn hydra_flow(session: &str) -> String {
                 .unwrap_or_else(|| panic!("no authorization code in {url}"));
         }
         assert!(seen.insert(next.clone()), "redirect loop at {next}");
-        let host = format!("{}:{}", url.host_str().unwrap(), url.port_or_known_default().unwrap());
+        let host = format!(
+            "{}:{}",
+            url.host_str().unwrap(),
+            url.port_or_known_default().unwrap()
+        );
         let mut cookies = jar.get(&host).cloned().unwrap_or_default();
         if host == LOGIN_ADDR {
             cookies.push(format!("ory_kratos_session={session}"));
@@ -171,19 +193,40 @@ async fn hydra_flow(session: &str) -> String {
                 cookies.push(pair);
             }
         }
-        assert!(response.status().is_redirection(), "oauth2 hop status {}", response.status());
-        let location = response.headers().get(LOCATION).unwrap().to_str().unwrap().to_string();
-        next = if location.starts_with("http") { location } else { url.join(&location).unwrap().to_string() };
+        assert!(
+            response.status().is_redirection(),
+            "oauth2 hop status {}",
+            response.status()
+        );
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        next = if location.starts_with("http") {
+            location
+        } else {
+            url.join(&location).unwrap().to_string()
+        };
     }
     panic!("oauth2 flow exceeded hop limit");
 }
 
 async fn exchange(code: &str) -> String {
-    let basic = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, format!("{CLIENT_ID}:{CLIENT_SECRET}"));
+    let basic = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        format!("{CLIENT_ID}:{CLIENT_SECRET}"),
+    );
     let response: serde_json::Value = Client::new()
         .post(format!("{HYDRA_PUBLIC}/oauth2/token"))
         .header(AUTHORIZATION, format!("Basic {basic}"))
-        .form(&[("grant_type", "authorization_code"), ("code", code), ("redirect_uri", REDIRECT_URI)])
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", REDIRECT_URI),
+        ])
         .send()
         .await
         .unwrap()
@@ -192,5 +235,8 @@ async fn exchange(code: &str) -> String {
         .json()
         .await
         .unwrap();
-    response["access_token"].as_str().expect("access_token").to_string()
+    response["access_token"]
+        .as_str()
+        .expect("access_token")
+        .to_string()
 }

@@ -44,7 +44,10 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { sender: true, port: None }
+        Self {
+            sender: true,
+            port: None,
+        }
     }
 }
 
@@ -68,7 +71,15 @@ impl World {
         let server = Emumet::start(&config).await;
         receiver.set_fetch_base(&server.base);
         receiver2.set_fetch_base(&server.base);
-        Self { db, receiver, receiver2, server, supplier, peer: std::sync::Arc::new(RemotePeer::start().await), config }
+        Self {
+            db,
+            receiver,
+            receiver2,
+            server,
+            supplier,
+            peer: std::sync::Arc::new(RemotePeer::start().await),
+            config,
+        }
     }
     pub async fn user(&self, label: &str) -> User {
         ory::login_new_user(label).await
@@ -78,23 +89,50 @@ impl World {
         self.linked_for(user, label, home_index).await
     }
     pub async fn linked_for(&self, user: User, label: &str, home_index: u8) -> Linked {
-        let username = format!("t1_{label}_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+        let username = format!(
+            "t1_{label}_{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
         let (account, profile) = self.server.create_account(&user.jwt, &username).await;
         let link_id = self.register(&user, &profile, home_index).await;
         let profile_id = self.db.profile_id(&profile).await;
-        Linked { user, account, profile, profile_id, link_id }
+        Linked {
+            user,
+            account,
+            profile,
+            profile_id,
+            link_id,
+        }
     }
     /// Registers through the real API, then points delivery at the loopback receiver.
     pub async fn register(&self, user: &User, profile: &str, home_index: u8) -> String {
-        let (status, link) = self.server.register_link(&user.jwt, profile, &home(home_index)).await;
-        assert!(status == 201 || status == 200, "link registration: {status} {link}");
+        let (status, link) = self
+            .server
+            .register_link(&user.jwt, profile, &home(home_index))
+            .await;
+        assert!(
+            status == 201 || status == 200,
+            "link registration: {status} {link}"
+        );
         let id = link["id"].as_str().unwrap().to_string();
         self.db.point_link_at(&id, &self.receiver.origin).await;
         id
     }
-    pub async fn register_at(&self, user: &User, profile: &str, home_index: u8, receiver: &Receiver) -> String {
-        let (status, link) = self.server.register_link(&user.jwt, profile, &home(home_index)).await;
-        assert!(status == 201 || status == 200, "link registration: {status} {link}");
+    pub async fn register_at(
+        &self,
+        user: &User,
+        profile: &str,
+        home_index: u8,
+        receiver: &Receiver,
+    ) -> String {
+        let (status, link) = self
+            .server
+            .register_link(&user.jwt, profile, &home(home_index))
+            .await;
+        assert!(
+            status == 201 || status == 200,
+            "link registration: {status} {link}"
+        );
         let id = link["id"].as_str().unwrap().to_string();
         self.db.point_link_at(&id, &receiver.origin).await;
         id
@@ -102,7 +140,11 @@ impl World {
     /// Instance administrator: the Keto Instance#admins tuple of the user's AuthAccount.
     pub async fn make_admin(&self, user: &User) {
         let sub = ory::jwt_subject(&user.jwt);
-        let id: i64 = sqlx::query_scalar("SELECT id FROM auth_accounts WHERE client_id=$1").bind(&sub).fetch_one(&self.db.iso.pool).await.expect("auth account exists after the first API call");
+        let id: i64 = sqlx::query_scalar("SELECT id FROM auth_accounts WHERE client_id=$1")
+            .bind(&sub)
+            .fetch_one(&self.db.iso.pool)
+            .await
+            .expect("auth account exists after the first API call");
         let r = reqwest::Client::new()
             .put(format!("{KETO_WRITE}/admin/relation-tuples"))
             .json(&serde_json::json!({"namespace":"Instance","object":"singleton","relation":"admins","subject_id":id.to_string()}))
@@ -123,10 +165,17 @@ impl World {
     }
     pub async fn receipts_gone(&self) {
         let db = &self.db;
-        eventually("jobs drained", Duration::from_secs(30), || async { db.count("post_relay_jobs").await == 0 }).await;
+        eventually("jobs drained", Duration::from_secs(30), || async {
+            db.count("post_relay_jobs").await == 0
+        })
+        .await;
     }
     pub async fn envelope_for(&self, n: usize) -> Value {
-        self.receiver.wait_accepted(n, Duration::from_secs(30)).await[n - 1].envelope.clone()
+        self.receiver
+            .wait_accepted(n, Duration::from_secs(30))
+            .await[n - 1]
+            .envelope
+            .clone()
     }
 }
 

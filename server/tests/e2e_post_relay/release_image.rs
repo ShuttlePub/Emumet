@@ -28,7 +28,11 @@ async fn docker(args: &[String], stdin: Option<&[u8]>) -> Cli {
     }
     drop(input);
     let o = child.wait_with_output().await.unwrap();
-    Cli { ok: o.status.success(), stdout: String::from_utf8_lossy(&o.stdout).into(), stderr: String::from_utf8_lossy(&o.stderr).into() }
+    Cli {
+        ok: o.status.success(),
+        stdout: String::from_utf8_lossy(&o.stdout).into(),
+        stderr: String::from_utf8_lossy(&o.stderr).into(),
+    }
 }
 
 struct Image {
@@ -40,7 +44,19 @@ struct Image {
 
 impl Image {
     async fn run(&self, args: &[&str]) -> Cli {
-        let mut a: Vec<String> = ["run", "--rm", "--network", NETWORK, "--user", "10001:10001", "--read-only", "--cap-drop", "ALL"].map(String::from).to_vec();
+        let mut a: Vec<String> = [
+            "run",
+            "--rm",
+            "--network",
+            NETWORK,
+            "--user",
+            "10001:10001",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+        ]
+        .map(String::from)
+        .to_vec();
         a.extend(["-v".into(), format!("{}:/run/secrets:ro", self.volume)]);
         for (k, v) in [
             ("DATABASE_URL", self.database.as_str()),
@@ -62,13 +78,19 @@ impl Image {
 }
 
 fn last_json(text: &str) -> Value {
-    serde_json::from_str(text.lines().filter(|l| l.starts_with('{')).last().unwrap_or_else(|| panic!("no json in {text}"))).unwrap()
+    serde_json::from_str(
+        text.lines()
+            .rfind(|l| l.starts_with('{'))
+            .unwrap_or_else(|| panic!("no json in {text}")),
+    )
+    .unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "needs the T1 stack and T1_RELEASE_IMAGE: bash e2e/post-relay/run.sh"]
 async fn case29_release_image_operator_commands_run_beside_a_live_worker() {
-    let image = std::env::var("T1_RELEASE_IMAGE").expect("T1_RELEASE_IMAGE must name the locally built release image");
+    let image = std::env::var("T1_RELEASE_IMAGE")
+        .expect("T1_RELEASE_IMAGE must name the locally built release image");
     let w = World::setup().await;
     let a = w.linked("c29a", 0).await;
     let b = w.linked("c29b", 1).await;
@@ -86,7 +108,12 @@ async fn case29_release_image_operator_commands_run_beside_a_live_worker() {
     let mut u = url::Url::parse(&db.url()).unwrap();
     u.set_host(Some("postgres")).unwrap();
     u.set_port(Some(5432)).unwrap();
-    let img = Image { image, database: u.to_string(), volume: volume.clone(), test_origin: w.receiver.origin.clone() };
+    let img = Image {
+        image,
+        database: u.to_string(),
+        volume: volume.clone(),
+        test_origin: w.receiver.origin.clone(),
+    };
 
     // Quarantine bodies for Profile a (receiver answers 400), then let the worker serve Profile b live.
     w.receiver.set_default(Behavior::Status(400));
@@ -94,7 +121,10 @@ async fn case29_release_image_operator_commands_run_beside_a_live_worker() {
     assert_eq!((ok, odd), (40, 0));
     let (ok, _, odd, _) = burst(&w, &[(w.server.base.clone(), c.profile.clone())], 5).await;
     assert_eq!((ok, odd), (5, 0));
-    eventually("45 quarantined", Duration::from_secs(60), || async { db.count("post_relay_dead_letters").await == 45 }).await;
+    eventually("45 quarantined", Duration::from_secs(60), || async {
+        db.count("post_relay_dead_letters").await == 45
+    })
+    .await;
     w.receiver.set_default(Behavior::Accept);
     let attempts_before = w.receiver.attempts().len();
     let live_peer = w.peer.clone();
@@ -102,7 +132,15 @@ async fn case29_release_image_operator_commands_run_beside_a_live_worker() {
     let live = tokio::spawn(async move {
         let mut sent = 0usize;
         for i in 0..60 {
-            let r = live_peer.post_at(&base, &profile_b, super::emumet::Inbound::new(serde_json::to_vec(&live_peer.note(&format!("live {i}"))).unwrap())).await;
+            let r = live_peer
+                .post_at(
+                    &base,
+                    &profile_b,
+                    super::emumet::Inbound::new(
+                        serde_json::to_vec(&live_peer.note(&format!("live {i}"))).unwrap(),
+                    ),
+                )
+                .await;
             assert_eq!(r.status(), 202);
             sent += 1;
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -114,7 +152,16 @@ async fn case29_release_image_operator_commands_run_beside_a_live_worker() {
     let operation = uuid::Uuid::new_v4().to_string();
     let pid = a.profile_id.to_string();
     let cpid = c.profile_id.to_string();
-    let common = ["--profile-id", pid.as_str(), "--operation", operation.as_str(), "--operator", "t1-image-operator", "--reason", "t1 release image"];
+    let common = [
+        "--profile-id",
+        pid.as_str(),
+        "--operation",
+        operation.as_str(),
+        "--operator",
+        "t1-image-operator",
+        "--reason",
+        "t1 release image",
+    ];
     let mut preview_args = vec!["post-relay", "preview", "--action", "discard"];
     preview_args.extend(common);
     let p = img.run(&preview_args).await;
@@ -127,13 +174,22 @@ async fn case29_release_image_operator_commands_run_beside_a_live_worker() {
     wrong.extend(["--confirm", "0:0:0"]);
     assert!(!img.run(&wrong).await.ok);
     assert_eq!(db.count("post_relay_operations").await, 0);
-    assert_eq!(db.count("post_relay_dead_letters").await, 45, "a wrong confirmation discards nothing");
+    assert_eq!(
+        db.count("post_relay_dead_letters").await,
+        45,
+        "a wrong confirmation discards nothing"
+    );
     let mut right = vec!["post-relay", "discard"];
     right.extend(common);
     right.extend(["--confirm", confirm.as_str()]);
     let d = img.run(&right).await;
     assert!(d.ok, "{}{}", d.stdout, d.stderr);
-    let (operator, discarded): (String, i64) = sqlx::query_as("SELECT operator, discarded FROM post_relay_operations WHERE id=$1").bind(&operation).fetch_one(&db.iso.pool).await.unwrap();
+    let (operator, discarded): (String, i64) =
+        sqlx::query_as("SELECT operator, discarded FROM post_relay_operations WHERE id=$1")
+            .bind(&operation)
+            .fetch_one(&db.iso.pool)
+            .await
+            .unwrap();
     assert_eq!((operator.as_str(), discarded), ("t1-image-operator", 40));
     let status_args = ["post-relay", "status", "--operation", operation.as_str()];
     let s = img.run(&status_args).await;
@@ -143,26 +199,84 @@ async fn case29_release_image_operator_commands_run_beside_a_live_worker() {
     // Image redeliver: the quarantined links point at the loopback receiver, the release binary has no
     // test-origin exception and the container has no egress: it must refuse and change nothing.
     let redo = uuid::Uuid::new_v4().to_string();
-    let redo_args = ["post-relay", "redeliver", "--profile-id", cpid.as_str(), "--operation", redo.as_str(), "--operator", "t1-image-operator", "--reason", "t1 release image", "--confirm", "5:0:0"];
+    let redo_args = [
+        "post-relay",
+        "redeliver",
+        "--profile-id",
+        cpid.as_str(),
+        "--operation",
+        redo.as_str(),
+        "--operator",
+        "t1-image-operator",
+        "--reason",
+        "t1 release image",
+        "--confirm",
+        "5:0:0",
+    ];
     let r = img.run(&redo_args).await;
-    assert!(!r.ok, "the release image refuses a non-allowlisted loopback destination: {}{}", r.stdout, r.stderr);
+    assert!(
+        !r.ok,
+        "the release image refuses a non-allowlisted loopback destination: {}{}",
+        r.stdout, r.stderr
+    );
     assert_eq!(db.count("post_relay_dead_letters").await, 5);
-    assert_eq!(db.i64(&format!("SELECT count(*) FROM post_relay_bodies WHERE profile_id={}", c.profile_id)).await, 5);
-    assert_eq!(db.i64(&format!("SELECT count(*) FROM post_relay_operations WHERE id='{redo}'")).await, 0, "refused before any audit or staging");
+    assert_eq!(
+        db.i64(&format!(
+            "SELECT count(*) FROM post_relay_bodies WHERE profile_id={}",
+            c.profile_id
+        ))
+        .await,
+        5
+    );
+    assert_eq!(
+        db.i64(&format!(
+            "SELECT count(*) FROM post_relay_operations WHERE id='{redo}'"
+        ))
+        .await,
+        0,
+        "refused before any audit or staging"
+    );
 
     // The live worker was never disturbed: every live request reached the receiver exactly once.
     let sent = live.await.unwrap();
     assert_eq!(sent, 60);
-    eventually("live traffic delivered", Duration::from_secs(60), || async {
-        w.receiver.accepted().iter().filter(|x| String::from_utf8_lossy(&x.raw_body).contains("live ")).count() == 60
+    eventually(
+        "live traffic delivered",
+        Duration::from_secs(60),
+        || async {
+            w.receiver
+                .accepted()
+                .iter()
+                .filter(|x| String::from_utf8_lossy(&x.raw_body).contains("live "))
+                .count()
+                == 60
+        },
+    )
+    .await;
+    assert_eq!(
+        w.receiver.attempts().len() - attempts_before,
+        60,
+        "no attempt came from the image"
+    );
+    for text in [
+        &p.stdout, &p.stderr, &d.stdout, &d.stderr, &r.stdout, &r.stderr, &s.stdout, &s.stderr,
+    ] {
+        assert!(
+            !text.contains("BEGIN")
+                && !text.contains("raw_body")
+                && !text
+                    .contains(&String::from_utf8_lossy(super::emumet::MASTER_PASSWORD).to_string()),
+            "{text}"
+        );
+    }
+    eventually("live bodies purged", Duration::from_secs(30), || async {
+        db.i64("SELECT body_count FROM post_relay_quota").await == 5
     })
     .await;
-    assert_eq!(w.receiver.attempts().len() - attempts_before, 60, "no attempt came from the image");
-    for text in [&p.stdout, &p.stderr, &d.stdout, &d.stderr, &r.stdout, &r.stderr, &s.stdout, &s.stderr] {
-        assert!(!text.contains("BEGIN") && !text.contains("raw_body") && !text.contains(&String::from_utf8_lossy(super::emumet::MASTER_PASSWORD).to_string()), "{text}");
-    }
-    eventually("live bodies purged", Duration::from_secs(30), || async { db.i64("SELECT body_count FROM post_relay_quota").await == 5 }).await;
     let remaining = db.i64("SELECT body_count FROM post_relay_quota").await;
-    assert_eq!(remaining, 5, "only the five refused-redelivery bodies remain reserved");
+    assert_eq!(
+        remaining, 5,
+        "only the five refused-redelivery bodies remain reserved"
+    );
     let _ = docker(&["volume", "rm", "-f", &volume].map(String::from), None).await;
 }

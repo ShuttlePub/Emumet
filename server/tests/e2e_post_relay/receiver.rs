@@ -69,7 +69,10 @@ pub struct Receiver {
 }
 
 fn schema() -> jsonschema::Validator {
-    let path = format!("{}/../docs/contracts/post-relay-v1.schema.json", env!("CARGO_MANIFEST_DIR"));
+    let path = format!(
+        "{}/../docs/contracts/post-relay-v1.schema.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
     let value: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     jsonschema::validator_for(&value).expect("contract schema compiles")
 }
@@ -99,12 +102,18 @@ impl Receiver {
         let s = state.clone();
         tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = listener.accept().await else { return };
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
                 let s = s.clone();
                 tokio::spawn(async move { serve(s, stream).await });
             }
         });
-        Self { state, origin, authority }
+        Self {
+            state,
+            origin,
+            authority,
+        }
     }
     pub fn set_fetch_base(&self, base: &str) {
         *self.state.fetch_base.lock().unwrap() = base.into();
@@ -140,7 +149,11 @@ impl Receiver {
             if accepted.len() >= n {
                 return accepted;
             }
-            assert!(std::time::Instant::now() < end, "receiver accepted {} of {n} envelopes in {bound:?}", accepted.len());
+            assert!(
+                std::time::Instant::now() < end,
+                "receiver accepted {} of {n} envelopes in {bound:?}",
+                accepted.len()
+            );
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
@@ -151,13 +164,25 @@ impl Receiver {
             if attempts.len() >= n {
                 return attempts;
             }
-            assert!(std::time::Instant::now() < end, "receiver saw {} of {n} attempts in {bound:?}", attempts.len());
+            assert!(
+                std::time::Instant::now() < end,
+                "receiver saw {} of {n} attempts in {bound:?}",
+                attempts.len()
+            );
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
     /// The verification entry point, also used directly by the negative-case tests.
-    pub async fn verify_request(&self, method: &str, target: &str, headers: &HashMap<String, String>, body: &[u8]) -> Result<Value, Reject> {
-        verify(&self.state, method, target, headers, body).await.map(|(_, e)| e)
+    pub async fn verify_request(
+        &self,
+        method: &str,
+        target: &str,
+        headers: &HashMap<String, String>,
+        body: &[u8],
+    ) -> Result<Value, Reject> {
+        verify(&self.state, method, target, headers, body)
+            .await
+            .map(|(_, e)| e)
     }
 }
 
@@ -174,8 +199,13 @@ fn params(header: &str) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let mut rest = header.trim();
     while let Some((key, after)) = rest.split_once("=\"") {
-        let Some((value, tail)) = after.split_once('"') else { break };
-        out.insert(key.trim().trim_start_matches(',').trim().to_string(), value.to_string());
+        let Some((value, tail)) = after.split_once('"') else {
+            break;
+        };
+        out.insert(
+            key.trim().trim_start_matches(',').trim().to_string(),
+            value.to_string(),
+        );
         rest = tail.trim_start_matches(',').trim();
     }
     out
@@ -189,29 +219,64 @@ async fn instance_key(state: &State, key_id: &str) -> Result<String, Reject> {
     // 2. The instance actor and its key are fetched over HTTP (SSRF-safe in production; here a
     //    fixed mapping of the configured origin to the real listener, no redirects).
     let base = state.fetch_base.lock().unwrap().clone();
-    let path = actor_url.strip_prefix(&state.trusted_origin).ok_or(reject(403, "unknown_emumet"))?;
-    state.fetches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let client = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(5)).build().unwrap();
-    let response = client.get(format!("{base}{path}")).header("accept", "application/activity+json").send().await.map_err(|_| reject(503, "actor_fetch_failed"))?;
+    let path = actor_url
+        .strip_prefix(&state.trusted_origin)
+        .ok_or(reject(403, "unknown_emumet"))?;
+    state
+        .fetches
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let response = client
+        .get(format!("{base}{path}"))
+        .header("accept", "application/activity+json")
+        .send()
+        .await
+        .map_err(|_| reject(503, "actor_fetch_failed"))?;
     if !response.status().is_success() {
         return Err(reject(401, "actor_fetch_failed"));
     }
-    let doc: Value = response.json().await.map_err(|_| reject(401, "actor_invalid"))?;
+    let doc: Value = response
+        .json()
+        .await
+        .map_err(|_| reject(401, "actor_invalid"))?;
     let expected = format!("{}/ap/instance", state.trusted_origin);
     if doc["id"] != expected || actor_url != expected || doc["type"] != "Application" {
         return Err(reject(403, "not_instance_actor"));
     }
-    let keys = doc["publicKey"].as_array().ok_or(reject(401, "actor_invalid"))?;
-    let key = keys.iter().find(|k| k["id"] == key_id).ok_or(reject(401, "unknown_key"))?;
+    let keys = doc["publicKey"]
+        .as_array()
+        .ok_or(reject(401, "actor_invalid"))?;
+    let key = keys
+        .iter()
+        .find(|k| k["id"] == key_id)
+        .ok_or(reject(401, "unknown_key"))?;
     if key["owner"] != expected {
         return Err(reject(403, "key_owner_mismatch"));
     }
-    let pem = key["publicKeyPem"].as_str().ok_or(reject(401, "actor_invalid"))?.to_string();
-    state.keys.lock().unwrap().insert(key_id.into(), pem.clone());
+    let pem = key["publicKeyPem"]
+        .as_str()
+        .ok_or(reject(401, "actor_invalid"))?
+        .to_string();
+    state
+        .keys
+        .lock()
+        .unwrap()
+        .insert(key_id.into(), pem.clone());
     Ok(pem)
 }
 
-async fn verify(state: &State, method: &str, target: &str, h: &HashMap<String, String>, body: &[u8]) -> Result<(String, Value), Reject> {
+async fn verify(
+    state: &State,
+    method: &str,
+    target: &str,
+    h: &HashMap<String, String>,
+    body: &[u8],
+) -> Result<(String, Value), Reject> {
     use rsa::pkcs1v15::{Signature, VerifyingKey};
     use rsa::pkcs8::DecodePublicKey;
     use rsa::signature::Verifier;
@@ -228,7 +293,10 @@ async fn verify(state: &State, method: &str, target: &str, h: &HashMap<String, S
     if origin_of(key_id).as_deref() != Some(state.trusted_origin.as_str()) {
         return Err(reject(403, "unknown_emumet"));
     }
-    let covered: Vec<&str> = p.get("headers").map(|s| s.split(' ').collect()).unwrap_or_default();
+    let covered: Vec<&str> = p
+        .get("headers")
+        .map(|s| s.split(' ').collect())
+        .unwrap_or_default();
     for need in ["(request-target)", "host", "date", "digest"] {
         if !covered.contains(&need) {
             return Err(reject(401, "signature_does_not_cover_required_headers"));
@@ -239,7 +307,10 @@ async fn verify(state: &State, method: &str, target: &str, h: &HashMap<String, S
     if h.get("host").map(String::as_str) != Some(state.own_authority.as_str()) {
         return Err(reject(401, "host_mismatch"));
     }
-    let date = h.get("date").and_then(|d| httpdate::parse_http_date(d).ok()).ok_or(reject(401, "bad_date"))?;
+    let date = h
+        .get("date")
+        .and_then(|d| httpdate::parse_http_date(d).ok())
+        .ok_or(reject(401, "bad_date"))?;
     let skew = match std::time::SystemTime::now().duration_since(date) {
         Ok(d) => d,
         Err(e) => e.duration(),
@@ -247,22 +318,43 @@ async fn verify(state: &State, method: &str, target: &str, h: &HashMap<String, S
     if skew > Duration::from_secs(300) {
         return Err(reject(401, "date_out_of_range"));
     }
-    let digest = format!("SHA-256={}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, Sha256::digest(body)));
+    let digest = format!(
+        "SHA-256={}",
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            Sha256::digest(body)
+        )
+    );
     if h.get("digest") != Some(&digest) {
         return Err(reject(401, "digest_mismatch"));
     }
     let mut lines = vec![];
     for name in &covered {
         if *name == "(request-target)" {
-            lines.push(format!("(request-target): {} {}", method.to_lowercase(), target));
+            lines.push(format!(
+                "(request-target): {} {}",
+                method.to_lowercase(),
+                target
+            ));
         } else {
-            lines.push(format!("{name}: {}", h.get(*name).ok_or(reject(401, "covered_header_missing"))?));
+            lines.push(format!(
+                "{name}: {}",
+                h.get(*name).ok_or(reject(401, "covered_header_missing"))?
+            ));
         }
     }
-    let raw_sig = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, p.get("signature").ok_or(reject(401, "no_signature"))?).map_err(|_| reject(401, "bad_signature"))?;
-    let public = rsa::RsaPublicKey::from_public_key_pem(&pem).map_err(|_| reject(401, "bad_key"))?;
+    let raw_sig = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        p.get("signature").ok_or(reject(401, "no_signature"))?,
+    )
+    .map_err(|_| reject(401, "bad_signature"))?;
+    let public =
+        rsa::RsaPublicKey::from_public_key_pem(&pem).map_err(|_| reject(401, "bad_key"))?;
     VerifyingKey::<Sha256>::new(public)
-        .verify(lines.join("\n").as_bytes(), &Signature::try_from(raw_sig.as_slice()).map_err(|_| reject(401, "bad_signature"))?)
+        .verify(
+            lines.join("\n").as_bytes(),
+            &Signature::try_from(raw_sig.as_slice()).map_err(|_| reject(401, "bad_signature"))?,
+        )
         .map_err(|_| reject(401, "signature_invalid"))?;
     // 6 (P1 part). Size, version, schema.
     if body.len() > 2 * 1024 * 1024 {
@@ -283,17 +375,29 @@ async fn verify(state: &State, method: &str, target: &str, h: &HashMap<String, S
     }
     // 4. Sender origin / instance actor / Profile actor origin all belong to the trusted Emumet.
     let instance = format!("{}/ap/instance", state.trusted_origin);
-    if envelope["sender"]["origin"] != state.trusted_origin || envelope["sender"]["instance_actor"] != instance {
+    if envelope["sender"]["origin"] != state.trusted_origin
+        || envelope["sender"]["instance_actor"] != instance
+    {
         return Err(reject(403, "sender_mismatch"));
     }
-    if origin_of(envelope["recipient"]["profile_actor"].as_str().unwrap_or_default()).as_deref() != Some(state.trusted_origin.as_str()) {
+    if origin_of(
+        envelope["recipient"]["profile_actor"]
+            .as_str()
+            .unwrap_or_default(),
+    )
+    .as_deref()
+        != Some(state.trusted_origin.as_str())
+    {
         return Err(reject(403, "profile_origin_mismatch"));
     }
     // 5. Addressed to this receiver. link_id / link_generation are trusted claims: no ledger.
     if envelope["recipient"]["origin"] != state.own_origin {
         return Err(reject(403, "recipient_mismatch"));
     }
-    let receipt = envelope["receipt_id"].as_str().unwrap_or_default().to_string();
+    let receipt = envelope["receipt_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     Ok((receipt, envelope))
 }
 
@@ -324,7 +428,10 @@ async fn serve(state: Arc<State>, mut stream: TcpStream) {
             headers.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
         }
     }
-    let length: usize = headers.get("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let length: usize = headers
+        .get("content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let mut body = buf[head_end..].to_vec();
     while body.len() < length {
         match stream.read(&mut chunk).await {
@@ -333,8 +440,15 @@ async fn serve(state: Arc<State>, mut stream: TcpStream) {
         }
     }
     body.truncate(length);
-    let behavior = state.script.lock().unwrap().pop_front().unwrap_or_else(|| state.default.lock().unwrap().clone());
-    let respond = |status: u16, extra: &str| format!("HTTP/1.1 {status} X\r\ncontent-length: 0\r\nconnection: close\r\n{extra}\r\n");
+    let behavior = state
+        .script
+        .lock()
+        .unwrap()
+        .pop_front()
+        .unwrap_or_else(|| state.default.lock().unwrap().clone());
+    let respond = |status: u16, extra: &str| {
+        format!("HTTP/1.1 {status} X\r\ncontent-length: 0\r\nconnection: close\r\n{extra}\r\n")
+    };
     let outcome;
     let mut reply: Option<String> = None;
     match behavior.clone() {
@@ -348,32 +462,64 @@ async fn serve(state: Arc<State>, mut stream: TcpStream) {
         }
         Behavior::Stall => {
             outcome = "stall".into();
-            state.attempts.lock().unwrap().push(Attempt { body: body.clone(), headers: headers.clone(), outcome: outcome.clone() });
+            state.attempts.lock().unwrap().push(Attempt {
+                body: body.clone(),
+                headers: headers.clone(),
+                outcome: outcome.clone(),
+            });
             tokio::time::sleep(Duration::from_secs(300)).await;
             return;
         }
-        Behavior::Accept | Behavior::AcceptThenDisconnect => match verify(&state, &method, &target, &headers, &body).await {
-            Ok((receipt, envelope)) => {
-                let first = state.seen.lock().unwrap().insert((envelope["sender"]["origin"].as_str().unwrap_or_default().to_string(), receipt.clone()));
-                if first {
-                    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, envelope["activity"]["raw_body"].as_str().unwrap_or_default()).unwrap_or_default();
-                    state.accepted.lock().unwrap().push(Accepted { receipt_id: receipt, envelope, outer_body: body.clone(), raw_body: raw, headers: headers.clone() });
+        Behavior::Accept | Behavior::AcceptThenDisconnect => {
+            match verify(&state, &method, &target, &headers, &body).await {
+                Ok((receipt, envelope)) => {
+                    let first = state.seen.lock().unwrap().insert((
+                        envelope["sender"]["origin"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                        receipt.clone(),
+                    ));
+                    if first {
+                        let raw = base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            envelope["activity"]["raw_body"]
+                                .as_str()
+                                .unwrap_or_default(),
+                        )
+                        .unwrap_or_default();
+                        state.accepted.lock().unwrap().push(Accepted {
+                            receipt_id: receipt,
+                            envelope,
+                            outer_body: body.clone(),
+                            raw_body: raw,
+                            headers: headers.clone(),
+                        });
+                    }
+                    if matches!(behavior, Behavior::AcceptThenDisconnect) {
+                        outcome = "accepted-then-disconnect".into();
+                    } else {
+                        outcome = if first {
+                            "accepted".into()
+                        } else {
+                            "duplicate".into()
+                        };
+                        reply = Some(respond(202, ""));
+                    }
                 }
-                if matches!(behavior, Behavior::AcceptThenDisconnect) {
-                    outcome = "accepted-then-disconnect".into();
-                } else {
-                    outcome = if first { "accepted".into() } else { "duplicate".into() };
-                    reply = Some(respond(202, ""));
+                Err(r) => {
+                    outcome = format!("rejected {}", r.code);
+                    reply = Some(respond(r.status, ""));
+                    state.rejected.lock().unwrap().push(r);
                 }
             }
-            Err(r) => {
-                outcome = format!("rejected {}", r.code);
-                reply = Some(respond(r.status, ""));
-                state.rejected.lock().unwrap().push(r);
-            }
-        },
+        }
     }
-    state.attempts.lock().unwrap().push(Attempt { body, headers, outcome });
+    state.attempts.lock().unwrap().push(Attempt {
+        body,
+        headers,
+        outcome,
+    });
     if let Some(reply) = reply {
         let _ = stream.write_all(reply.as_bytes()).await;
         let _ = stream.shutdown().await;

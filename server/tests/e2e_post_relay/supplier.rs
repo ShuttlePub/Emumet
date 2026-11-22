@@ -8,7 +8,10 @@ pub struct Supplier {
 }
 
 fn script() -> String {
-    format!("{}/../e2e/post-relay/capacity-supplier.sh", env!("CARGO_MANIFEST_DIR"))
+    format!(
+        "{}/../e2e/post-relay/capacity-supplier.sh",
+        env!("CARGO_MANIFEST_DIR")
+    )
 }
 
 impl Supplier {
@@ -27,27 +30,56 @@ impl Supplier {
     }
     /// One synchronous sample (the first admission sample must exist before traffic starts).
     pub async fn once(database_url: &str) {
-        let out = Self::command(database_url, 30, true).output().await.unwrap();
-        assert!(out.status.success(), "supplier sample failed: {}", String::from_utf8_lossy(&out.stderr));
-        assert!(out.stderr.is_empty(), "supplier warned: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Self::command(database_url, 30, true)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "supplier sample failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.stderr.is_empty(),
+            "supplier warned: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     /// One sample with an explicit measurement ("FREE_BYTES TOTAL_BYTES" printed by the command),
     /// the way a managed-DB or multi-volume deployment would feed the same script.
     pub async fn report(database_url: &str, free: u64, total: u64) {
-        let out = Self::command(database_url, 30, true).env("SUPPLIER_MEASURE_CMD", format!("echo {free} {total}")).output().await.unwrap();
-        assert!(out.status.success() && out.stderr.is_empty(), "report failed: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Self::command(database_url, 30, true)
+            .env("SUPPLIER_MEASURE_CMD", format!("echo {free} {total}"))
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            out.status.success() && out.stderr.is_empty(),
+            "report failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     /// A failing measurement: the script must report NOTHING (no invented healthy sample).
     pub async fn failing_measurement(database_url: &str) -> String {
-        let out = Self::command(database_url, 30, true).env("SUPPLIER_MEASURE_CMD", "false").output().await.unwrap();
+        let out = Self::command(database_url, 30, true)
+            .env("SUPPLIER_MEASURE_CMD", "false")
+            .output()
+            .await
+            .unwrap();
         assert!(out.status.success());
         String::from_utf8_lossy(&out.stderr).into_owned()
     }
     /// The continuous supplier at the documented period (30 s).
     pub async fn start(database_url: &str) -> Self {
         Self::once(database_url).await;
-        let child = Self::command(database_url, 30, false).env("SUPPLIER_SKIP_FIRST", "1").spawn().unwrap();
-        Self { child: Some(child), database_url: database_url.into() }
+        let child = Self::command(database_url, 30, false)
+            .env("SUPPLIER_SKIP_FIRST", "1")
+            .spawn()
+            .unwrap();
+        Self {
+            child: Some(child),
+            database_url: database_url.into(),
+        }
     }
     pub async fn stop(&mut self) {
         if let Some(mut c) = self.child.take() {

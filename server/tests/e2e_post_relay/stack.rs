@@ -17,7 +17,10 @@ pub const PUBLIC: &str = "https://emumet.e2e.example";
 pub const COMPOSE_PROJECT: &str = "emumet-post-relay-e2e";
 
 pub fn compose_file() -> String {
-    format!("{}/../e2e/post-relay/compose.yml", env!("CARGO_MANIFEST_DIR"))
+    format!(
+        "{}/../e2e/post-relay/compose.yml",
+        env!("CARGO_MANIFEST_DIR")
+    )
 }
 
 /// Makes DATABASE_URL point at the stack's PostgreSQL unless the caller already chose one.
@@ -47,21 +50,48 @@ pub fn compose(args: &[&str]) -> std::process::Output {
 }
 
 pub async fn wait_http(url: &str, what: &str, bound: Duration) {
-    let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(2)).build().unwrap();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
     let end = std::time::Instant::now() + bound;
     loop {
-        if client.get(url).send().await.is_ok_and(|r| r.status().is_success()) {
+        if client
+            .get(url)
+            .send()
+            .await
+            .is_ok_and(|r| r.status().is_success())
+        {
             return;
         }
-        assert!(std::time::Instant::now() < end, "{what} did not become ready ({url})");
+        assert!(
+            std::time::Instant::now() < end,
+            "{what} did not become ready ({url})"
+        );
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
 pub async fn wait_ory() {
-    wait_http(&format!("{KRATOS_PUBLIC}/health/alive"), "Kratos", Duration::from_secs(90)).await;
-    wait_http(&format!("{HYDRA_PUBLIC}/health/alive"), "Hydra", Duration::from_secs(90)).await;
-    wait_http(&format!("{KETO_READ}/health/alive"), "Keto", Duration::from_secs(90)).await;
+    wait_http(
+        &format!("{KRATOS_PUBLIC}/health/alive"),
+        "Kratos",
+        Duration::from_secs(90),
+    )
+    .await;
+    wait_http(
+        &format!("{HYDRA_PUBLIC}/health/alive"),
+        "Hydra",
+        Duration::from_secs(90),
+    )
+    .await;
+    wait_http(
+        &format!("{KETO_READ}/health/alive"),
+        "Keto",
+        Duration::from_secs(90),
+    )
+    .await;
 }
 
 /// Real Ory stop/start/pause used by the outage cases.
