@@ -5,18 +5,25 @@ Base: 7efe25c7b5e5237d4246e74b7c50903996040b14 (Q1, PR #122).
 
 ## Deployment gate — default OFF
 
-POST_RELAY_INBOX_ENABLED defaults to false; only the literal true enables durable relay
-admission. Other values fail startup. Enabling requires a normalized HTTPS PUBLIC_BASE_URL
+POST_RELAY_INBOX_ENABLED defaults to false (unset = false); only the literal true enables durable
+relay admission. Other values fail startup. Enabling requires a normalized HTTPS PUBLIC_BASE_URL
 origin (lowercase ASCII/Punycode DNS, no path/trailing slash/userinfo/query/fragment,
 no explicit default port; at most 255 bytes). Profile identity and signing are not changed.
 
-**Do not enable I1 before S1 (#123/#125) is deployed.** S1 is merged (squash e26fced) and its
-delivery measurements met the approved targets, so I1 was merged with the flag OFF; turning the
-flag on remains a separate deployment decision. A mistakenly
-early deployment remains safe with the flag unset: no relay jobs or unlinked relay aggregates
-are admitted. Existing Follow processing and early-Undo defense continue. Turning the flag off
-affects NEW admission only, not accepted jobs, retries or authorized HTTP sends. It is not an
-operator emergency stop for S1; stop all sender/operator processes or block egress for that.
+**Why it is off by default:** the ShuttlePub receiver for `POST /internal/v1/emumet/activities`
+(receive, verify, de-duplicate, store) does not exist yet. Until it does, keep the flag off:
+turning it on would only make every delivery fail and pile up in the 30-day quarantine. It is
+**not** an operational safety valve. (An earlier revision of this page called it one; that was
+wrong. See host decision D68, `intents/shuttlepub/decisions/2026-11-21-emumet-p1-open-items.md`,
+which also states the conditions for turning it on: the ShuttlePub receiver is implemented and
+deployed; the preparation below is complete; and a federated E2E between both sides passes.)
+The T1 E2E (`server/tests/e2e_post_relay.rs`) sets the flag to true against a mock P1 receiver;
+that does not change the default.
+
+With the flag unset no relay jobs or unlinked relay aggregates are admitted; existing Follow
+processing and early-Undo defense continue. Turning the flag off affects NEW admission only, not
+accepted jobs, retries or authorized HTTP sends. It is not an operator emergency stop for S1;
+stop all sender/operator processes or block egress for that.
 
 Before enabling: apply additive migrations, verify S1 delivery/maintenance is deployed, supply
 fresh DB-volume capacity samples (Q1 capacity-report port/CLI; never container free disk),
