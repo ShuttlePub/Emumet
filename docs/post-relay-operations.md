@@ -187,7 +187,9 @@ redirects and error handling have not changed. They are not promised usable duri
   Failed refresh never replaces known keys with a bypass, and unknown kids are still denied.
 * `SERVER_SHUTDOWN_TIMEOUT_SECS`: default **25**, integer **1..300**. On SIGTERM/SIGINT, new
   relay claims stop immediately, HTTP stops accepting connections, warm-up is cancelled, and
-  worker stop signals are sent **before** waiting for HTTP requests. HTTP, S1 relay drain
+  worker stop signals are sent **before** waiting for HTTP requests. A blocked maintenance
+  transaction is cancelled on stop too, so it cannot delay pending-claim cancellation/drain.
+  HTTP, S1 relay drain
   (at most **12s**) and webhook drain (at most **20s**) run concurrently within this one overall
   deadline. An incomplete inbound body or unresponsive outbound peer cannot extend it. After
   it, the runtime cancels remaining async work and logs a fixed deadline-exceeded warning.

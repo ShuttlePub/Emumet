@@ -94,7 +94,15 @@ pub(crate) fn spawn(
             tokio::select! {
                 biased;
                 _=stopped.changed()=>break,
-                _=maintenance.tick()=>{if worker.maintain().await.is_err(){tracing::warn!("post relay maintenance failed");}},
+                _=maintenance.tick()=>{
+                    // Maintenance may span multiple bounded transactions. Observe stop while it
+                    // waits too, so pending claims are cancelled before starting the send drain.
+                    tokio::select! {
+                        biased;
+                        _=stopped.changed()=>break,
+                        result=worker.maintain()=>{if result.is_err(){tracing::warn!("post relay maintenance failed");}},
+                    }
+                },
                 Some(result)=tasks.join_next(),if !tasks.is_empty()=>{if !matches!(result,Ok(Ok(_))) {tracing::warn!("post relay attempt failed; fenced lease recovery pending");}},
                 Some(result)=claims.join_next(),if !claims.is_empty()=>{
                     match result {
@@ -196,6 +204,37 @@ mod tests {
             }
         }).await.unwrap();
     }
+    #[tokio::test]
+    #[test_with::env(DATABASE_URL)]
+    async fn stalled_maintenance_does_not_delay_claim_stop_or_drain() {
+        let d = driver::database::isolated_db::IsolatedDatabase::create().await;
+        let mut holder = d.pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE post_relay_profile_quota IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let (stop, mut handle) = spawn(module(&d), true);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT profile_id FROM (%')")
+                    .fetch_one(&d.pool).await.unwrap();
+                if waiting { break; }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("maintenance reached its blocked DB read");
+        let _ = stop.send(true);
+        let stopped = tokio::time::timeout(Duration::from_millis(500), &mut handle).await;
+        holder.rollback().await.unwrap();
+        let was_prompt = stopped.is_ok();
+        if !was_prompt {
+            handle.await.unwrap();
+        }
+        assert!(
+            was_prompt,
+            "stop must interrupt maintenance before aborting claims/draining sends"
+        );
+    }
+
     #[tokio::test]
     #[test_with::env(DATABASE_URL)]
     async fn disabled_sender_still_collects_expired_empty_quota() {
