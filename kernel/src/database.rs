@@ -2,7 +2,20 @@ use crate::KernelError;
 use std::future::Future;
 use std::pin::Pin;
 
-pub trait Connection: Send {}
+/// Optional adapter timings. Pool acquisition excludes BEGIN. Explicit relay lock acquisitions
+/// (scheduler, lifecycle/link, quota/slots and job rows) include DB round trips, not pool/semaphore
+/// wait or time holding locks. The scheduler value is a subset of lock_wait_ns.
+#[derive(Default)]
+pub struct ConnectionTimings {
+    pub connection_wait_ns: u64,
+    pub lock_wait_ns: u64,
+    pub scheduler_lock_wait_ns: u64,
+}
+pub trait Connection: Send {
+    fn timings(&self) -> ConnectionTimings {
+        ConnectionTimings::default()
+    }
+}
 
 pub trait Savepoint: Send {
     type Connection: Connection;

@@ -72,7 +72,7 @@ async fn post_relay_capacity_command_publishes_without_migration_or_normal_start
 #[test_with::env(DATABASE_URL)]
 #[tokio::test]
 async fn post_relay_capacity_command_refuses_old_schema_and_does_not_apply_pending_migration() {
-    let db = IsolatedDatabase::create_without_migration(20261122000300).await;
+    let db = IsolatedDatabase::create_before_migration(20261122000300).await;
     let sample = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
     let out = run(
         &[
