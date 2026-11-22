@@ -489,13 +489,40 @@ async fn post_relay_runtime_sigterm_stops_claims_before_http_drain_and_bounds_st
     let db = IsolatedDatabase::create().await;
     let home = MockServer::start().await;
     Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(202).set_delay(Duration::from_secs(120)))
+        .respond_with(ResponseTemplate::new(202).set_delay(Duration::from_millis(500)))
         .mount(&home)
         .await;
     let (_, profiles) = fixture(&db.database, &home.uri()).await;
     let profile = &profiles[0];
-    enqueue(&db, profile, "in-flight").await;
     let dir = working_dir();
+    enqueue(&db, profile, "graceful-in-flight").await;
+    let mut graceful = Running::start(
+        &db,
+        &dir,
+        "http://127.0.0.1:1",
+        &home.uri(),
+        &[("SERVER_SHUTDOWN_TIMEOUT_SECS", "5")],
+    )
+    .await;
+    wait_claim(&db, profile, true).await;
+    graceful.term().await;
+    let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM post_relay_jobs")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "an in-flight success must be persisted during SIGTERM drain"
+    );
+    assert!(!graceful.logs().contains("Runtime drain deadline exceeded"));
+    assert_eq!(home.received_requests().await.unwrap().len(), 1);
+
+    home.reset().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(202).set_delay(Duration::from_secs(120)))
+        .mount(&home)
+        .await;
+    enqueue(&db, profile, "in-flight").await;
     let mut server = Running::start(
         &db,
         &dir,
