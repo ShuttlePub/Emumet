@@ -1,6 +1,6 @@
 //! T1-6 alarm injections (plan 6.6): every alert fires for its injected fault, with fixed labels
 //! only, and clears again. Logs and alert rows never carry bodies, secrets or arbitrary IDs.
-use super::alerts::{evaluate, firing, sustain_filter, Alert};
+use super::alerts::{evaluate, firing, refusal_filter, sustain_filter, Alert};
 use super::db::eventually;
 use super::delivery::expedite;
 use super::receiver::Behavior;
@@ -496,4 +496,219 @@ async fn alarms_sustained_quota_rejection_and_quarantine_full_fire_and_clear() {
         after.is_empty() || !after.iter().any(|l| l.contains("quota_")),
         "{after:?}"
     );
+}
+
+const TELEMETRY_SECS: u64 = 2;
+const REFUSAL_TICKS: u32 = 3;
+
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for n in chars.by_ref() {
+                if n.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn counter(log: &str, key: &str) -> u64 {
+    let log = strip_ansi(log);
+    let line = log
+        .lines()
+        .rev()
+        .find(|l| l.contains("post relay inbox refusals"))
+        .unwrap_or_default();
+    let needle = format!("{key}=");
+    let at = line.find(&needle).expect("fixed reason key in the line") + needle.len();
+    line[at..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .unwrap()
+}
+
+/// Refuses for real (probing the inbox twice a second) until the log alarm fires; then recovers and
+/// checks that it clears. Returns the seconds until it fired.
+async fn refusal_phase(
+    w: &World,
+    profile: &str,
+    status: u16,
+    reason: &str,
+    inject: impl std::future::Future<Output = ()>,
+    recover: impl std::future::Future<Output = ()>,
+) -> f64 {
+    let before = counter(&w.server.logs(), reason);
+    inject.await;
+    let start = std::time::Instant::now();
+    let mut fired = None;
+    while start.elapsed() < Duration::from_secs(30) {
+        assert_eq!(probe(w, profile, "refused").await, status, "{reason}");
+        let out = refusal_filter(&w.server.logs(), REFUSAL_TICKS);
+        if let Some(line) = out.iter().find(|l| l.contains("quota_refusals_sustained")) {
+            assert!(line.starts_with("critical "), "{line}");
+            assert!(
+                line.ends_with(&format!(" {reason}")),
+                "only {reason} rose: {line}"
+            );
+            fired = Some(start.elapsed().as_secs_f64());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let fired = fired.unwrap_or_else(|| panic!("refusals ({reason}) were never reported"));
+    assert!(
+        fired >= (TELEMETRY_SECS * (REFUSAL_TICKS as u64 - 1)) as f64,
+        "not before {REFUSAL_TICKS} consecutive rising intervals: {fired}"
+    );
+    assert!(counter(&w.server.logs(), reason) > before);
+    recover.await;
+    assert_eq!(probe(w, profile, "recovered").await, 202, "{reason}");
+    // Healthy probes only: the counters stop rising and the alarm clears within the next interval.
+    let end = std::time::Instant::now() + Duration::from_secs(TELEMETRY_SECS * 4 + 4);
+    let mut cleared = false;
+    while std::time::Instant::now() < end {
+        assert_eq!(probe(w, profile, "healthy").await, 202);
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        if refusal_filter(&w.server.logs(), REFUSAL_TICKS).is_empty() {
+            cleared = true;
+            break;
+        }
+    }
+    assert!(cleared, "the refusal alarm for {reason} never cleared");
+    fired
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs the T1 stack: bash e2e/post-relay/run.sh"]
+async fn alarms_sustained_refusals_per_reason_fire_from_the_telemetry_log_and_clear() {
+    let mut w = World::setup().await;
+    w.config.extra.push((
+        "POST_RELAY_TELEMETRY_SECS".into(),
+        TELEMETRY_SECS.to_string(),
+    ));
+    w.restart().await;
+    let a = w.linked("al6", 0).await;
+    assert_eq!(probe(&w, &a.profile, "baseline").await, 202);
+    eventually("baseline delivered", Duration::from_secs(30), || async {
+        w.db.count("post_relay_jobs").await == 0
+    })
+    .await;
+    eventually(
+        "telemetry line with fixed reason codes",
+        Duration::from_secs(10),
+        || async { w.server.logs().contains("post relay inbox refusals") },
+    )
+    .await;
+    assert!(
+        refusal_filter(&w.server.logs(), REFUSAL_TICKS).is_empty(),
+        "a healthy server reports no sustained refusals"
+    );
+    let db = &w.db;
+
+    // Profile rate bucket (429): exhausted with a parked refill clock.
+    refusal_phase(
+        &w,
+        &a.profile,
+        429,
+        "profile_rate",
+        async {
+            db.exec("UPDATE post_relay_profile_quota SET tokens=0, token_at=clock_timestamp()+interval '1 hour'").await;
+        },
+        async {
+            db.exec("UPDATE post_relay_profile_quota SET tokens=200, token_at=clock_timestamp()")
+                .await;
+        },
+    )
+    .await;
+    // Global rate bucket (503).
+    refusal_phase(
+        &w,
+        &a.profile,
+        503,
+        "global_rate",
+        async {
+            db.exec("UPDATE post_relay_quota SET tokens=0, token_at=clock_timestamp()+interval '1 hour'").await;
+        },
+        async {
+            db.exec("UPDATE post_relay_quota SET tokens=1000, token_at=clock_timestamp()")
+                .await;
+        },
+    )
+    .await;
+    // Physical capacity sample missing (503).
+    w.supplier.stop().await;
+    let url = w.db.url();
+    refusal_phase(
+        &w,
+        &a.profile,
+        503,
+        "capacity",
+        async {
+            db.exec("UPDATE post_relay_capacity SET sampled_at = NULL")
+                .await;
+        },
+        async {
+            Supplier::report(&url, 50 * GIB, 100 * GIB).await;
+        },
+    )
+    .await;
+    // Quarantine-full Profile (429): a real quarantined body, no delivery in flight, quota full.
+    w.receiver.set_default(Behavior::Status(400));
+    assert_eq!(probe(&w, &a.profile, "to quarantine").await, 202);
+    eventually("quarantined", Duration::from_secs(30), || async {
+        db.count("post_relay_dead_letters").await == 1 && db.count("post_relay_jobs").await == 0
+    })
+    .await;
+    w.receiver.set_default(Behavior::Accept);
+    let count: i64 = sqlx::query_scalar("SELECT body_count FROM post_relay_profile_quota")
+        .fetch_one(&db.iso.pool)
+        .await
+        .unwrap();
+    Supplier::report(&url, 50 * GIB, 100 * GIB).await;
+    refusal_phase(
+        &w,
+        &a.profile,
+        429,
+        "quarantine_full",
+        async {
+            db.exec("UPDATE post_relay_profile_quota SET body_count = 2000")
+                .await;
+        },
+        async {
+            sqlx::query("UPDATE post_relay_profile_quota SET body_count = $1")
+                .bind(count)
+                .execute(&db.iso.pool)
+                .await
+                .unwrap();
+        },
+    )
+    .await;
+
+    // The line carries only fixed reason codes and counts: no body, actor or identifier.
+    let log = w.server.logs();
+    let line = strip_ansi(
+        log.lines()
+            .rev()
+            .find(|l| l.contains("post relay inbox refusals"))
+            .unwrap(),
+    );
+    for marker in [
+        w.peer.actor.as_str(),
+        "capacity probe",
+        "ory_kratos_session",
+        a.profile.as_str(),
+    ] {
+        assert!(!line.contains(marker), "refusal line disclosed {marker}");
+    }
+    for key in ["profile_rate", "global_rate", "capacity", "quarantine_full"] {
+        assert!(counter(&log, key) > 0, "{key} was counted");
+    }
 }

@@ -4,7 +4,8 @@ use crate::inbox_reading::InboxReading;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use kernel::interfaces::http_signing::{SignatureEvidence, SignatureScheme};
 use kernel::interfaces::post_relay::{
-    Admission, DependOnPostRelayStore, LimitScope, PostRelayStore, RelayAdmission, RelayRecipient,
+    Admission, DependOnPostRelayStore, LimitScope, PostRelayStore, RefusalReason, RelayAdmission,
+    RelayRecipient,
 };
 use serde_json::{json, Value};
 
@@ -22,6 +23,7 @@ pub struct ProfileRelayInboxDto {
 pub struct InboxOverload {
     pub status: u16,
     pub retry_after_secs: u32,
+    pub reason: RefusalReason,
 }
 pub trait ProfileRelayInboxUseCase: ProfileInboxUseCase + DependOnPostRelayStore {
     fn admit_profile_inbox(
@@ -249,6 +251,7 @@ async fn admit<T: ProfileRelayInboxUseCase>(
                     Admission::Limited {
                         scope,
                         retry_after_secs,
+                        reason,
                     } => Err(Report::new(KernelError::Rejected).attach(InboxOverload {
                         status: if scope == LimitScope::Profile {
                             429
@@ -256,11 +259,13 @@ async fn admit<T: ProfileRelayInboxUseCase>(
                             503
                         },
                         retry_after_secs,
+                        reason,
                     })),
                     Admission::Unavailable => {
                         Err(Report::new(KernelError::Rejected).attach(InboxOverload {
                             status: 503,
                             retry_after_secs: 1,
+                            reason: RefusalReason::Capacity,
                         }))
                     }
                 }

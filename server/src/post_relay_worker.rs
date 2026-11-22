@@ -68,6 +68,22 @@ impl DependOnPostRelayTransport for PostRelayModule {
     }
 }
 
+/// Period of the cumulative telemetry lines (`post relay cumulative timings`, `post relay inbox
+/// refusals`). `POST_RELAY_TELEMETRY_SECS` (1-3600, default 60 = the previous fixed period) only
+/// exists so that the refusal alarm can be exercised in seconds; an invalid value keeps 60.
+fn telemetry_interval() -> Duration {
+    match dotenvy::var("POST_RELAY_TELEMETRY_SECS") {
+        Ok(v) => match v.parse::<u64>() {
+            Ok(secs) if (1..=3600).contains(&secs) => Duration::from_secs(secs),
+            _ => {
+                tracing::warn!("POST_RELAY_TELEMETRY_SECS must be 1-3600; using 60");
+                Duration::from_secs(60)
+            }
+        },
+        Err(_) => Duration::from_secs(60),
+    }
+}
+
 pub(crate) fn enabled() -> error_stack::Result<bool, KernelError> {
     match dotenvy::var("POST_RELAY_SENDER_ENABLED").as_deref() {
         Ok("true") | Err(dotenvy::Error::EnvVar(std::env::VarError::NotPresent)) => Ok(true),
@@ -89,7 +105,7 @@ pub(crate) fn spawn(
         let mut claims = tokio::task::JoinSet::new();
         let mut poll = tokio::time::interval(Duration::from_millis(20));
         let mut maintenance = tokio::time::interval(Duration::from_secs(1));
-        let mut telemetry = tokio::time::interval(Duration::from_secs(60));
+        let mut telemetry = tokio::time::interval(telemetry_interval());
         loop {
             tokio::select! {
                 biased;
@@ -110,7 +126,10 @@ pub(crate) fn spawn(
                         _=>tracing::warn!("post relay claim failed"),
                     }
                 },
-                _=telemetry.tick()=>tracing::info!(timings=?worker.metrics.snapshot(),"post relay cumulative timings"),
+                _=telemetry.tick()=>{
+                    tracing::info!(timings=?worker.metrics.snapshot(),"post relay cumulative timings");
+                    crate::post_relay_refusals::log_snapshot();
+                },
                 _=poll.tick(),if sender_enabled && tasks.len()<16 && claims.is_empty()=>{
                     let worker=worker.clone();
                     let limit=(16-tasks.len()) as u16;

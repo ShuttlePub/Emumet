@@ -125,6 +125,7 @@ pub(crate) async fn post_profile_inbox(
     .await
     .map_err(|e| {
         if let Some(limit) = e.frames().find_map(|f| f.downcast_ref::<InboxOverload>()) {
+            crate::post_relay_refusals::record(limit.reason);
             return ErrorStatus::RetryAfter(
                 StatusCode::from_u16(limit.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
                 limit.retry_after_secs,
@@ -140,6 +141,7 @@ pub(crate) async fn post_profile_inbox(
             _ => StatusCode::SERVICE_UNAVAILABLE,
         };
         if status == StatusCode::SERVICE_UNAVAILABLE {
+            crate::post_relay_refusals::record_storage();
             ErrorStatus::RetryAfter(status, 1)
         } else {
             ErrorStatus::from(status)

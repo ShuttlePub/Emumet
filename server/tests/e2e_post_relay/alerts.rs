@@ -112,3 +112,34 @@ pub fn sustain_filter(alerts: &[Alert], state: &std::path::Path, window_secs: u6
         .map(str::to_string)
         .collect()
 }
+
+/// The log-based refusal alarm: `refusal-alert.sh` over the server log with a short rule
+/// (`ticks` consecutive rising telemetry intervals). Returns its output lines.
+pub fn refusal_filter(log: &str, ticks: u32) -> Vec<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../e2e/post-relay/refusal-alert.sh"
+    );
+    let mut child = Command::new("bash")
+        .arg(script)
+        .env("REFUSAL_SUSTAIN_TICKS", ticks.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let input = log.to_string();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(input.as_bytes());
+    });
+    let out = child.wait_with_output().unwrap();
+    writer.join().unwrap();
+    assert!(out.status.success(), "refusal-alert.sh failed");
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}

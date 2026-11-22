@@ -317,13 +317,22 @@ never carry a receipt, actor, origin, body or credential.
 | `projector_stalled` (critical) | account projector checkpoint not advancing for > 60 s | restart the projector process; unlink/deactivation are applied late until then |
 | `quota_admission_refusing` (warning) | a Profile (429) or the global quota (503) is at a limit where the next admission is refused: body count/bytes, delivery rows/bytes, evaluated with the admission's own predicates for the smallest new body | find what holds the quota (below); this row alone is instantaneous |
 | `quota_rejection_sustained` (critical, from `alerts-sustain.sh`) | `quota_admission_refusing` was present in **every** evaluation for 5 minutes (`ALERT_SUSTAIN_SECS`, default 300 = ten 30 s evaluations; a longer silence of the monitor than `ALERT_SUSTAIN_GAP_SECS`=120 s restarts the window). It clears at the first evaluation without the refusing row | same as above; senders keep retrying with `Retry-After: 1` meanwhile |
+| `quota_refusals_sustained` (critical, from `refusal-alert.sh` over the **process log**) | the sum of the refusal counters (every reason except `storage`) rose in each of the last 5 consecutive telemetry intervals (`REFUSAL_SUSTAIN_TICKS`, default 5 = about 5 minutes at the default 60 s period). The line shows which reasons rose. It clears at the first interval without a refusal; a counter going down (process restart) restarts the streak | the reason names the cause: `profile_rate` / `global_rate` (shared Q1 token buckets, flood or a too small bucket → edge limiting, check the sender), `profile_quota` / `global_quota` (see `quota_*`), `quarantine_full` (operator recovery, below), `capacity` (stale/low physical sample or reservation flag, see the capacity alerts) |
 | `quarantine_full_rejecting` (critical) | a Profile's quota is full **and nothing of it is still being delivered** (no job): the held bodies are quarantine/operator-held, so new Relays stay refused (429) until recovery or the 30-day expiry (up to 30 days, even if the home recovered) | operator recovery required: Profile capacity → `preview` → bounded `redeliver`, or explicit `discard` with reason (below) |
 
-Scope of the refusal alerts: they observe the *persistent* quota causes through the database. A
-refusal by the token bucket (rate) alone leaves no database trace and is **not** covered; that
-needs the HTTP access log / edge metrics of the deployment (429/503 on
-`/ap/profiles/*/inbox`). Physical-capacity or stale-sample 503s are covered by their own critical
-alerts above. `alerts.sh` exits non-zero if any evaluation part fails (alerts.sql, the reservation
+Scope of the refusal alerts: the database rows (`quota_admission_refusing`, `quota_rejection_sustained`,
+`quarantine_full_rejecting`) observe the *persistent* quota causes. Refusals by the token buckets
+(rate), which leave no database trace, are covered by the log rule: each refusal of the Profile
+inbox (429/503) increments an **in-process counter by fixed reason code** (`global_rate`,
+`profile_rate`, `profile_quota`, `global_quota`, `quarantine_full`, `capacity`; `storage` counts 503s
+caused by a storage failure and is excluded from the rule). Nothing is written to the database per
+refusal (a refusal flood must not add load). The relay runtime's telemetry tick (every
+`POST_RELAY_TELEMETRY_SECS`, default 60) logs the cumulative counts as
+`post relay inbox refusals global_rate=N profile_rate=N ...` (no body, actor, Profile or origin);
+pipe a tail of the process log (at least 6 lines) into `e2e/post-relay/refusal-alert.sh`. With
+several Emumet processes run it per process (counters are per process). Physical-capacity or
+stale-sample 503s additionally have their own critical alerts above. `alerts.sh` exits non-zero if
+any evaluation part fails (alerts.sql, the reservation
 check, its statement file or the sustain filter): a missing evaluation is never "nothing firing".
 
 Not in SQL: Ory outage is visible as fixed JWKS ready/unavailable/timeout log states and
@@ -341,7 +350,14 @@ keeps probing the real inbox while a Profile (429) and then the global quota (50
 limit: the instantaneous row fires at once, the sustained alert only after the window (4 s in the
 test), a refusal that clears inside the window never fires it and the window restarts from zero,
 `quarantine_full_rejecting` fires for the real quarantined body of a full Profile and not for the
-global case, and everything clears after recovery (the next probe is accepted with 202). Recovery steps: restore the cause, wait one sampling period
+global case, and everything clears after recovery (the next probe is accepted with 202).
+`alarms_sustained_refusals_per_reason_fire_from_the_telemetry_log_and_clear` runs the server with
+`POST_RELAY_TELEMETRY_SECS=2` and the rule at 3 intervals, and for each of `profile_rate` (429, bucket
+exhausted with a parked refill clock), `global_rate` (503), `capacity` (503, missing sample),
+`quarantine_full` (429, real quarantined body + full counter) keeps probing the real inbox: the
+alarm names exactly that reason, does not fire before 3 consecutive rising intervals, and clears
+after recovery while healthy probes continue; the telemetry line is checked to contain only the fixed
+codes and counts. Recovery steps: restore the cause, wait one sampling period
 (30 s) and confirm the alert row is gone; for backlog, preview a bounded redelivery
 (`server post-relay preview ...`), confirm it, and inspect `status`. Emergency send stop is
 `POST_RELAY_SENDER_ENABLED=false` on every sending process (reception continues and fills

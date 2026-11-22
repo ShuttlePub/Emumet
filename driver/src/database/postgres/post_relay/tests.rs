@@ -756,7 +756,8 @@ async fn post_relay_unlinked_hourly_bounded_and_exhaustion_does_not_spend_linked
         admit(db, &newly_unlinked[0], "header-full", t, 7).await,
         Admission::Limited {
             scope: LimitScope::Global,
-            retry_after_secs: 1
+            retry_after_secs: 1,
+            reason: RefusalReason::GlobalQuota,
         }
     );
     let (_, linked) = fixture(db, 1, true).await;
@@ -1480,7 +1481,8 @@ async fn post_relay_global_rate_and_db_received_clock_and_renew_hold_are_shared_
         admit(db, &ps[4], "global-full", now, 3).await,
         Admission::Limited {
             scope: LimitScope::Global,
-            retry_after_secs: 1
+            retry_after_secs: 1,
+            reason: RefusalReason::GlobalRate,
         }
     );
     let (_, unlinked) = fixture(db, 1, false).await;
