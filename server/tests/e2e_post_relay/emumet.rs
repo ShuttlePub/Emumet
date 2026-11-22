@@ -166,8 +166,15 @@ impl Emumet {
 
     // ---- authenticated API -------------------------------------------------------------
     pub async fn api(&self, method: &str, path: &str, jwt: &str, body: Option<Value>) -> (u16, Value) {
+        self.api_org(method, path, jwt, None, body).await
+    }
+    /// Same, acting for an organization (X-Organization-Id carries the organization account nanoid).
+    pub async fn api_org(&self, method: &str, path: &str, jwt: &str, org: Option<&str>, body: Option<Value>) -> (u16, Value) {
         let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
         let mut request = client().request(method, self.url(path)).bearer_auth(jwt);
+        if let Some(org) = org {
+            request = request.header("X-Organization-Id", org);
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }

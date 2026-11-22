@@ -20,6 +20,7 @@ impl Supplier {
             .env("SUPPLIER_INTERVAL_SECS", interval.to_string())
             .env("SUPPLIER_ONCE", if once { "1" } else { "0" })
             .env("HYDRA_ISSUER_URL", "http://127.0.0.1:9/")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
             .stdin(Stdio::null())
             .kill_on_drop(true);
         c

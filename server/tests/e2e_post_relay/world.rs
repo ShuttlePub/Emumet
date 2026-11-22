@@ -21,6 +21,8 @@ pub fn homes() -> Vec<String> {
 pub struct World {
     pub db: Db,
     pub receiver: Receiver,
+    /// A second, independent home (relink / old-home isolation cases).
+    pub receiver2: Receiver,
     pub server: Emumet,
     pub supplier: Supplier,
     pub peer: RemotePeer,
@@ -51,6 +53,8 @@ impl World {
         Self::setup_with(Options::default()).await
     }
     pub async fn setup_with(options: Options) -> Self {
+        // TestModule::new moves the process cwd into a (later deleted) server directory.
+        std::env::set_current_dir(env!("CARGO_MANIFEST_DIR")).unwrap();
         wait_ory().await;
         let db = Db::create().await;
         let supplier = Supplier::start(&db.url()).await;
@@ -58,11 +62,13 @@ impl World {
         let mut config = Config::new(&db.url());
         config.sender = options.sender;
         config.port = options.port.or(Some(LOGIN_PORT));
-        config.test_origins = vec![receiver.origin.clone()];
+        let receiver2 = Receiver::start(PUBLIC, "http://127.0.0.1:1").await;
+        config.test_origins = vec![receiver.origin.clone(), receiver2.origin.clone()];
         config.allowed_origins = homes();
         let server = Emumet::start(&config).await;
         receiver.set_fetch_base(&server.base);
-        Self { db, receiver, server, supplier, peer: RemotePeer::start().await, config }
+        receiver2.set_fetch_base(&server.base);
+        Self { db, receiver, receiver2, server, supplier, peer: RemotePeer::start().await, config }
     }
     pub async fn user(&self, label: &str) -> User {
         ory::login_new_user(label).await
@@ -85,6 +91,25 @@ impl World {
         let id = link["id"].as_str().unwrap().to_string();
         self.db.point_link_at(&id, &self.receiver.origin).await;
         id
+    }
+    pub async fn register_at(&self, user: &User, profile: &str, home_index: u8, receiver: &Receiver) -> String {
+        let (status, link) = self.server.register_link(&user.jwt, profile, &home(home_index)).await;
+        assert!(status == 201 || status == 200, "link registration: {status} {link}");
+        let id = link["id"].as_str().unwrap().to_string();
+        self.db.point_link_at(&id, &receiver.origin).await;
+        id
+    }
+    /// Instance administrator: the Keto Instance#admins tuple of the user's AuthAccount.
+    pub async fn make_admin(&self, user: &User) {
+        let sub = ory::jwt_subject(&user.jwt);
+        let id: i64 = sqlx::query_scalar("SELECT id FROM auth_accounts WHERE client_id=$1").bind(&sub).fetch_one(&self.db.iso.pool).await.expect("auth account exists after the first API call");
+        let r = reqwest::Client::new()
+            .put(format!("{KETO_WRITE}/admin/relation-tuples"))
+            .json(&serde_json::json!({"namespace":"Instance","object":"singleton","relation":"admins","subject_id":id.to_string()}))
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success(), "keto grant: {}", r.status());
     }
     pub async fn receipts_gone(&self) {
         let db = &self.db;

@@ -17,6 +17,13 @@ pub struct User {
     pub jwt: String,
 }
 
+pub fn jwt_subject(jwt: &str) -> String {
+    let payload = jwt.split('.').nth(1).expect("jwt payload");
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    v["sub"].as_str().unwrap().to_string()
+}
+
 pub fn email(label: &str) -> String {
     format!("{label}-{}@t1-e2e.example", uuid::Uuid::new_v4().simple())
 }
