@@ -854,7 +854,8 @@ fn main_serves_only_the_root_router() {
 /// The production entrypoint starts projection, Registration Gate webhook, provider maintenance,
 /// independent enforcement probing and (since the P4 cutover) the Profile delivery worker. Whoever
 /// adds another worker has to update this list deliberately. S1 adds the separately stoppable
-/// post-relay sender after both signing identities have been provisioned.
+/// post-relay sender after both signing identities have been provisioned. B1 adds independent
+/// bounded JWKS warm-up, not an awaited startup dependency.
 #[test]
 fn main_starts_the_expected_workers() {
     let main_rs = include_str!("../main.rs");
@@ -868,27 +869,23 @@ fn main_starts_the_expected_workers() {
         .collect();
     assert_eq!(
         spawns.len(),
-        6,
+        7,
         "unexpected worker start in main.rs: {spawns:?}"
     );
-    assert!(spawns[0].contains("ProjectionWorker::spawn"), "{spawns:?}");
-    assert!(spawns[1].contains("webhook_worker::spawn("), "{spawns:?}");
-    assert!(
-        spawns[2].contains("registration_guard::spawn_if_enabled"),
-        "{spawns:?}"
-    );
-    assert!(
-        spawns[3].contains("registration_guard::spawn_monitor"),
-        "{spawns:?}"
-    );
-    assert!(
-        spawns[4].contains("spawn_profile_delivery_worker("),
-        "{spawns:?}"
-    );
-    assert!(
-        spawns[5].contains("post_relay_worker::spawn("),
-        "{spawns:?}"
-    );
+    for (index, expected) in [
+        "spawn_warmup()",
+        "ProjectionWorker::spawn",
+        "webhook_worker::spawn(",
+        "registration_guard::spawn_if_enabled",
+        "registration_guard::spawn_monitor",
+        "spawn_profile_delivery_worker(",
+        "post_relay_worker::spawn(",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert!(spawns[index].contains(expected), "{spawns:?}");
+    }
     assert!(main_rs.contains("post_relay_worker::enabled()?"));
     assert!(
         !main_rs.contains("tokio::spawn"),

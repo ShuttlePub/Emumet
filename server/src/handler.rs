@@ -134,10 +134,22 @@ impl AppModule {
             cache: self.instance_key_cache.clone(),
             password: self.password_provider.clone(),
             origin: self.public_base_url.clone(),
-            transport: driver::post_relay_delivery::HttpPostRelayTransport::new(
-                self.home_origin_policy.clone(),
-            ),
+            transport: self.post_relay_transport(),
         }
+    }
+    fn post_relay_transport(&self) -> driver::post_relay_delivery::HttpPostRelayTransport {
+        let transport = driver::post_relay_delivery::HttpPostRelayTransport::new(
+            self.home_origin_policy.clone(),
+        );
+        // Process-level B1 outage tests use real HTTP peers. This constructor and its environment
+        // switch are absent from normal builds; production retains strict HTTPS/SSRF enforcement.
+        #[cfg(feature = "test-mode")]
+        if let Ok(raw) = std::env::var("EMUMET_TEST_RELAY_ORIGINS") {
+            if let Ok(origins) = serde_json::from_str::<Vec<String>>(&raw) {
+                return transport.with_test_origins(origins);
+            }
+        }
+        transport
     }
     pub(crate) fn inbox_module(&self) -> Self {
         let mut module = self.clone();

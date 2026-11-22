@@ -34,8 +34,20 @@ jobs:
           cargo test -p server --test post_relay_capacity -- --nocapture | tee q1-capacity.log
           test -z "$(grep -L -E 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' q1-*.log)"
           ! grep -E 'test result: .* [1-9][0-9]* ignored;' q1-*.log
+      - name: Ory-independent startup, fail-closed JWKS and process shutdown/recovery (B1)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p server --bin server auth:: -- --nocapture | tee b1-auth.log
+          cargo test -p server --bin server runtime_config:: -- --nocapture | tee b1-config.log
+          cargo test -p server --features test-mode --test post_relay_runtime -- --nocapture --test-threads=2 | tee b1-runtime.log
+          grep -Eq 'test result: ok\. 5 passed; 0 failed; 0 ignored;' b1-runtime.log
+          test -z "$(grep -L -E 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' b1-*.log)"
+          ! grep -E 'test result: .* [1-9][0-9]* ignored;' b1-*.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: post-relay-storage-db
-          path: q1-*.log
+          path: |
+            q1-*.log
+            b1-*.log
