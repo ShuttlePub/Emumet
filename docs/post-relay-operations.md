@@ -261,12 +261,21 @@ container) every `SUPPLIER_INTERVAL_SECS` (default 30; at most 30 s) and reports
 `server capacity report`; admission fails closed 90 s after the last sample. A failed measurement
 reports nothing (freshness expires) and never invents healthy data. Environment: `DATABASE_URL`,
 `SERVER_CMD` (a binary or a `docker run` of the release image), `SUPPLIER_MEASURE_CMD` (prints
-`FREE_BYTES TOTAL_BYTES`; use it for a managed database or another volume), `SUPPLIER_INTERVAL_SECS`,
+`FREE_BYTES TOTAL_BYTES`; use it for a managed database or another volume), `SUPPLIER_CLOCK_CMD`
+(prints RFC3339 from the validating DB's clock; default: compose PostgreSQL `clock_timestamp()`),
+`SUPPLIER_INTERVAL_SECS`,
 `SUPPLIER_ONCE=1`. In production the same contract is supplied by the deployment monitor; this
 script is the reference for the test stack.
 
+The timestamp is obtained **before** measuring, so collection/reporting time consumes the
+90 s freshness budget. A monitor-host clock ahead of PostgreSQL is not a valid sampling clock:
+future samples are refused without tolerance. The supplier uses the DB clock, and one-shot
+E2E setup no longer retries refusals. `capacity_monitor_clock_diagnostic` separately exercises
+50 former host-date → CLI reports and records accepted/future-refused counts without weakening
+the production validation. Clock/measurement failures report nothing.
+
 Refusals expose only a fixed `reason` code, never the underlying SQL error/URL:
-`schema_mismatch`, `invalid_sample` (dimensions or sample outside the past 90 s),
+`schema_mismatch`, `invalid_sample` (dimensions), `sample_in_future`, `sample_expired` (>90 s),
 `sample_not_newer`, `connection_timeout`, `connection_failed`, `lock_timeout`,
 `statement_timeout`, `deadlock`, `database_error`, or `unavailable`. Schema/sample errors
 require correcting the input/deployed version; do not retry them blindly. A failed report

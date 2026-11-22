@@ -6,6 +6,52 @@ use std::time::Duration;
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
+#[tokio::test]
+#[ignore = "needs the T1 stack: bash e2e/post-relay/run.sh"]
+async fn capacity_monitor_clock_diagnostic() {
+    // Reproduce the former supplier's host-date -> CLI path independently of the new DB-clock
+    // supplier. A monitor ahead of the DB must be refused, not silently accepted or retried.
+    let db = super::db::Db::create().await;
+    let (mut accepted, mut future) = (0, 0);
+    for _ in 0..50 {
+        let date = tokio::process::Command::new("date")
+            .args(["-u", "+%Y-%m-%dT%H:%M:%S.%6NZ"])
+            .output()
+            .await
+            .unwrap();
+        assert!(date.status.success());
+        let sample = String::from_utf8(date.stdout).unwrap();
+        let out = tokio::process::Command::new(env!("CARGO_BIN_EXE_server"))
+            .args([
+                "capacity",
+                "report",
+                "--free-bytes",
+                "53687091200",
+                "--total-bytes",
+                "107374182400",
+                "--sampled-at",
+                sample.trim(),
+            ])
+            .env("DATABASE_URL", db.url())
+            .output()
+            .await
+            .unwrap();
+        if out.status.success() {
+            accepted += 1;
+        } else {
+            let reason = String::from_utf8_lossy(&out.stderr);
+            assert!(reason.contains("reason=sample_in_future"), "{reason}");
+            future += 1;
+        }
+    }
+    eprintln!("T1_MONITOR_CLOCK accepted={accepted} sample_in_future={future}");
+    // Real volume measurements must publish with the DB clock even when the actual free
+    // capacity is below the admission threshold. No fake healthy value or retry is used.
+    for _ in 0..3 {
+        Supplier::once(&db.url()).await;
+    }
+}
+
 async fn probe(w: &World, profile: &str) -> (u16, Option<String>) {
     let r = w
         .peer

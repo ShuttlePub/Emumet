@@ -29,30 +29,18 @@ impl Supplier {
         c
     }
     /// One synchronous sample (the first admission sample must exist before traffic starts).
-    /// A single failed sample is tolerated by the design (the periodic supplier simply reports
-    /// again next period and nothing invented is stored), so a loaded CI runner may need a retry;
-    /// every attempt's stderr is kept so a persistent failure is diagnosable.
+    /// No retries: the supplier uses the DB clock, so a future monitor-host timestamp cannot
+    /// be hidden by retrying. The continuous supplier may still lose a sample and fail closed.
     pub async fn once(database_url: &str) {
-        let mut failures = Vec::new();
-        for attempt in 1..=5 {
-            let out = Self::command(database_url, 30, true)
-                .output()
-                .await
-                .unwrap();
-            if out.status.success() && out.stderr.is_empty() {
-                if !failures.is_empty() {
-                    eprintln!("supplier sample needed {attempt} attempts: {failures:?}");
-                }
-                return;
-            }
-            failures.push(format!(
-                "attempt {attempt}: status {:?}: {}",
-                out.status.code(),
-                String::from_utf8_lossy(&out.stderr)
-            ));
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-        panic!("supplier sample failed 5 times: {failures:#?}");
+        let out = Self::command(database_url, 30, true)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            out.status.success() && out.stderr.is_empty(),
+            "supplier warned: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     /// One sample with an explicit measurement ("FREE_BYTES TOTAL_BYTES" printed by the command),
     /// the way a managed-DB or multi-volume deployment would feed the same script.

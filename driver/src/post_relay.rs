@@ -66,6 +66,12 @@ pub async fn operation_status(
 }
 /// A fixed, body/credential-free reason for the capacity CLI. Never format the source error.
 pub fn capacity_refusal_reason(error: &Report<KernelError>) -> &'static str {
+    if let Some(time) = error.downcast_ref::<CapacitySampleTime>() {
+        return match time {
+            CapacitySampleTime::Future => "sample_in_future",
+            CapacitySampleTime::Expired => "sample_expired",
+        };
+    }
     if let Some(error) = error.downcast_ref::<sqlx::Error>() {
         return match error {
             sqlx::Error::PoolTimedOut => "connection_timeout",
@@ -85,6 +91,11 @@ pub fn capacity_refusal_reason(error: &Report<KernelError>) -> &'static str {
         KernelError::Concurrency => "sample_not_newer",
         _ => "unavailable",
     }
+}
+#[derive(Debug)]
+pub(crate) enum CapacitySampleTime {
+    Future,
+    Expired,
 }
 pub async fn publish_capacity(
     url: &str,

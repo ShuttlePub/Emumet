@@ -115,11 +115,11 @@ async fn capacity_refusal_distinguishes_invalid_old_samples_and_lock_timeout() {
     for (sample, reason) in [
         (
             OffsetDateTime::now_utc() + time::Duration::hours(1),
-            "invalid_sample",
+            "sample_in_future",
         ),
         (
             OffsetDateTime::now_utc() - time::Duration::hours(1),
-            "invalid_sample",
+            "sample_expired",
         ),
     ] {
         let sample = sample.format(&Rfc3339).unwrap();

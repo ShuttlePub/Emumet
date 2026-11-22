@@ -16,6 +16,8 @@
 #   COMPOSE_PROJECT / COMPOSE_FILE / PG_SERVICE / PGDATA_PATH  where to measure (test stack)
 #   SUPPLIER_MEASURE_CMD    override: a command printing "FREE_BYTES TOTAL_BYTES" for the volume
 #                           (managed DB / other deployment); replaces the docker exec df probe
+#   SUPPLIER_CLOCK_CMD      override: command printing RFC3339 UTC using the database clock
+#                           (default: PostgreSQL clock_timestamp via the compose PostgreSQL)
 set -u
 : "${DATABASE_URL:?DATABASE_URL is required}"
 INTERVAL="${SUPPLIER_INTERVAL_SECS:-30}"
@@ -36,11 +38,23 @@ measure() {
   fi
 }
 
+sample_time() {
+  if [ -n "${SUPPLIER_CLOCK_CMD:-}" ]; then
+    # shellcheck disable=SC2086
+    $SUPPLIER_CLOCK_CMD
+  else
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" exec -T "$PG_SERVICE" \
+      psql -U postgres -d postgres -Atc \
+      "SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')"
+  fi
+}
+
 [ "${SUPPLIER_SKIP_FIRST:-0}" = 1 ] && sleep "$INTERVAL"
 while true; do
-  if sample="$(measure 2>/dev/null)" && read -r free total _ <<<"$sample" \
+  # Use the validating database's clock, not the monitor host's wall clock. Record the start
+  # of collection so time spent measuring/reporting consumes freshness rather than renewing it.
+  if now="$(sample_time 2>/dev/null)" && sample="$(measure 2>/dev/null)" && read -r free total _ <<<"$sample" \
      && [[ "${free:-}" =~ ^[0-9]+$ && "${total:-}" =~ ^[0-9]+$ && "$total" -gt 0 && "$free" -le "$total" ]]; then
-    now="$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)"
     "${SERVER_ARGV[@]}" capacity report --free-bytes "$free" --total-bytes "$total" --sampled-at "$now" >/dev/null \
       || echo "capacity report failed" >&2
   else
