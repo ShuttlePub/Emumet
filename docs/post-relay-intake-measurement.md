@@ -61,7 +61,7 @@ result above. The final run uses the private fsync=on cluster and final dedicate
 The first full workspace test attempt against the shared default DB encountered pre-existing Q1
 migration checksum drift. No checksum was edited: a new I1-owned workspace database was used.
 
-Reproduce using the release probe command in post-relay-operations.md with DATABASE_URL pointing
+Reproduce using the release probe command in post-relay-inbox-intake.md with DATABASE_URL pointing
 to an isolated durable PostgreSQL and the receiver/DB on the same four logical CPUs. The complete
 fixed-field measurements below preserve the phase extrema and sampling limitations:
 

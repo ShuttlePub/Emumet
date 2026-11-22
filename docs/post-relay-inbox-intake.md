@@ -10,8 +10,9 @@ admission. Other values fail startup. Enabling requires a normalized HTTPS PUBLI
 origin (lowercase ASCII/Punycode DNS, no path/trailing slash/userinfo/query/fragment,
 no explicit default port; at most 255 bytes). Profile identity and signing are not changed.
 
-**Do not merge or enable I1 before S1 (#123) is merged. If S1 delivery measurements miss the
-approved target, wait for the lead's explicit decision before merging/enabling.** A mistakenly
+**Do not enable I1 before S1 (#123/#125) is deployed.** S1 is merged (squash e26fced) and its
+delivery measurements met the approved targets, so I1 was merged with the flag OFF; turning the
+flag on remains a separate deployment decision. A mistakenly
 early deployment remains safe with the flag unset: no relay jobs or unlinked relay aggregates
 are admitted. Existing Follow processing and early-Undo defense continue. Turning the flag off
 affects NEW admission only, not accepted jobs, retries or authorized HTTP sends. It is not an
