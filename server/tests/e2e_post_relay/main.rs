@@ -14,6 +14,7 @@ mod operator;
 mod ory;
 mod ory_outage;
 mod receiver;
+mod release_image;
 mod receiver_p1;
 mod stack;
 mod supplier;
