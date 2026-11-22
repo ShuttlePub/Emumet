@@ -245,7 +245,7 @@ async fn case24_profile_bulk_redeliver_and_discard_via_cli_with_competing_worker
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "needs the T1 stack: bash e2e/post-relay/run.sh"]
-async fn case28_redelivery_of_a_31_day_old_body_has_a_fresh_outer_signature_and_keeps_expiry() {
+async fn case28_redelivery_near_the_retention_limit_has_a_fresh_signature_keeps_expiry_and_bytes() {
     let w = World::setup().await;
     let a = w.linked("c28", 0).await;
     let db = &w.db;
@@ -265,13 +265,14 @@ async fn case28_redelivery_of_a_31_day_old_body_has_a_fresh_outer_signature_and_
         .fetch_one(&db.iso.pool)
         .await
         .unwrap();
-    // Age the evidence: received 31 days ago, cut off 28 days ago, quarantine expires in ~2 days.
+    // Age the evidence to the retention edge: received 32 days 23 hours ago, cut off at 72 h (29 days
+    // 23 hours ago), so the 30-day quarantine has 1 hour left.
     db.exec("ALTER TABLE post_relay_bodies DISABLE TRIGGER post_relay_immutable_body")
         .await;
     // The immutable envelope bytes carry the same instant: age them too (trigger disabled); the CLI
     // under test must then resend exactly these old bytes.
     let old_text: String = sqlx::query_scalar(
-        "SELECT to_char((received_at - interval '31 days') AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') FROM post_relay_bodies",
+        "SELECT to_char((received_at - interval '32 days 23 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') FROM post_relay_bodies",
     )
     .fetch_one(&db.iso.pool)
     .await
@@ -280,15 +281,51 @@ async fn case28_redelivery_of_a_31_day_old_body_has_a_fresh_outer_signature_and_
         "UPDATE post_relay_bodies SET envelope = convert_to(regexp_replace(convert_from(envelope, 'UTF8'), '\"received_at\":\"[^\"]+\"', '\"received_at\":\"{old_text}\"'), 'UTF8')"
     ))
     .await;
-    db.exec("UPDATE post_relay_bodies SET received_at = received_at - interval '31 days', automatic_expires_at = automatic_expires_at - interval '31 days'").await;
+    db.exec("UPDATE post_relay_bodies SET received_at = received_at - interval '32 days 23 hours', automatic_expires_at = automatic_expires_at - interval '32 days 23 hours'").await;
     db.exec("ALTER TABLE post_relay_bodies ENABLE TRIGGER post_relay_immutable_body")
         .await;
-    db.exec("UPDATE post_relay_dead_letters SET terminal_at = terminal_at - interval '28 days', expires_at = expires_at - interval '28 days'").await;
-    db.exec("UPDATE post_relay_audits SET terminal_at = terminal_at - interval '28 days', expires_at = expires_at - interval '28 days'").await;
+    db.exec("UPDATE post_relay_dead_letters SET terminal_at = terminal_at - interval '29 days 23 hours', expires_at = expires_at - interval '29 days 23 hours'").await;
+    db.exec("UPDATE post_relay_audits SET terminal_at = terminal_at - interval '29 days 23 hours', expires_at = expires_at - interval '29 days 23 hours'").await;
     let expiry: String = sqlx::query_scalar("SELECT expires_at::text FROM post_relay_dead_letters")
         .fetch_one(&db.iso.pool)
         .await
         .unwrap();
+    let audit_expiry: String = sqlx::query_scalar(
+        "SELECT expires_at::text FROM post_relay_audits ORDER BY expires_at LIMIT 1",
+    )
+    .fetch_one(&db.iso.pool)
+    .await
+    .unwrap();
+    let remaining_secs: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch FROM expires_at - clock_timestamp())::float8 FROM post_relay_dead_letters",
+    )
+    .fetch_one(&db.iso.pool)
+    .await
+    .unwrap();
+    assert!(
+        (3000.0..=3600.0).contains(&remaining_secs),
+        "about one hour of quarantine is left: {remaining_secs}"
+    );
+    let stored: Vec<u8> = sqlx::query_scalar("SELECT envelope FROM post_relay_bodies")
+        .fetch_one(&db.iso.pool)
+        .await
+        .unwrap();
+    let stored_received_at = serde_json::from_slice::<serde_json::Value>(&stored).unwrap()
+        ["received_at"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let stored_age = time::OffsetDateTime::now_utc()
+        - time::OffsetDateTime::parse(
+            &stored_received_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+    assert!(
+        stored_age > time::Duration::days(32) + time::Duration::hours(22)
+            && stored_age < time::Duration::days(33),
+        "the stored envelope is about 32 days 23 hours old ({stored_age})"
+    );
 
     // A failing redelivery returns to quarantine with the ORIGINAL expiry (never reset).
     w.receiver.set_default(Behavior::Status(503));
@@ -312,6 +349,30 @@ async fn case28_redelivery_of_a_31_day_old_body_has_a_fresh_outer_signature_and_
     assert_eq!(
         after, expiry,
         "a manual redelivery never extends the 30-day quarantine"
+    );
+    let audit_after: String = sqlx::query_scalar(
+        "SELECT expires_at::text FROM post_relay_audits ORDER BY expires_at LIMIT 1",
+    )
+    .fetch_one(&db.iso.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        audit_after, audit_expiry,
+        "the audit expiry is not extended either"
+    );
+    let stored_after_failure: Vec<u8> =
+        sqlx::query_scalar("SELECT envelope FROM post_relay_bodies")
+            .fetch_one(&db.iso.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored_after_failure, stored,
+        "the stored envelope is byte-identical after a failed redelivery"
+    );
+    assert_eq!(
+        w.receiver.attempts().last().map(|x| x.body.clone()),
+        Some(stored.clone()),
+        "even the failed attempt sent exactly the stored bytes"
     );
 
     // Success: the receiver verifies a FRESH outer Date/Digest/signature over the OLD immutable envelope.
@@ -341,8 +402,24 @@ async fn case28_redelivery_of_a_31_day_old_body_has_a_fresh_outer_signature_and_
             .unwrap();
     let age = time::OffsetDateTime::now_utc() - received;
     assert!(
-        age > time::Duration::days(30),
+        age > time::Duration::days(32) + time::Duration::hours(22),
         "the envelope keeps its original received_at ({received_at})"
+    );
+    assert_eq!(
+        got[0].outer_body, stored,
+        "the outer body is byte-identical to the stored envelope"
+    );
+    assert_eq!(got[0].envelope["received_at"], stored_received_at.as_str());
+    let first_signature = w
+        .receiver
+        .attempts()
+        .iter()
+        .find(|x| x.outcome == "status 503")
+        .map(|x| x.headers["signature"].clone());
+    assert_ne!(
+        first_signature.as_deref(),
+        Some(got[0].headers["signature"].as_str()),
+        "each redelivery carries a new outer signature"
     );
     assert_eq!(db.count("post_relay_bodies").await, 0);
     let _ = Inbound::new(Vec::new());

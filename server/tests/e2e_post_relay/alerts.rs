@@ -26,6 +26,8 @@ pub const ALLOWED: &[&str] = &[
     "db_lock_wait",
     "db_connection_pressure",
     "projector_stalled",
+    "quota_admission_refusing",
+    "quarantine_full_rejecting",
 ];
 
 #[derive(Debug, Clone)]
@@ -74,4 +76,39 @@ pub async fn evaluate(db: &Db) -> Vec<Alert> {
 
 pub fn firing(alerts: &[Alert], name: &str) -> Option<Alert> {
     alerts.iter().find(|a| a.name == name).cloned()
+}
+
+/// Pipes alert rows through `alerts-sustain.sh` (the monitor's window filter) with a short window.
+pub fn sustain_filter(alerts: &[Alert], state: &std::path::Path, window_secs: u64) -> Vec<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../e2e/post-relay/alerts-sustain.sh"
+    );
+    let mut child = Command::new("bash")
+        .arg(script)
+        .env("ALERT_STATE_FILE", state)
+        .env("ALERT_SUSTAIN_SECS", window_secs.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input: String = alerts
+        .iter()
+        .map(|a| format!("{} {} {}\n", a.severity, a.name, a.value))
+        .collect();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "alerts-sustain.sh failed");
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
 }

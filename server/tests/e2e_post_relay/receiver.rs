@@ -373,6 +373,7 @@ async fn verify(
     if !state.validator.is_valid(&checked) {
         return Err(reject(400, "schema_violation"));
     }
+    outside_schema_checks(&envelope)?;
     // 4. Sender origin / instance actor / Profile actor origin all belong to the trusted Emumet.
     let instance = format!("{}/ap/instance", state.trusted_origin);
     if envelope["sender"]["origin"] != state.trusted_origin
@@ -399,6 +400,87 @@ async fn verify(
         .unwrap_or_default()
         .to_string();
     Ok((receipt, envelope))
+}
+
+const INBOX_BODY_MAX_BYTES: usize = 1_048_576;
+const EVIDENCE_BUDGET_BYTES: usize = 16_384;
+
+fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+/// Contract 4.5 / 4.4 item 5: the day exists in that month and year. Only applied to strings
+/// that already passed the schema pattern (`YYYY-MM-DDT...`).
+fn calendar_day_exists(timestamp: &str) -> bool {
+    let (Some(y), Some(m), Some(d)) = (
+        timestamp.get(0..4),
+        timestamp.get(5..7),
+        timestamp.get(8..10),
+    ) else {
+        return false;
+    };
+    let (Ok(y), Ok(m), Ok(d)) = (y.parse::<i64>(), m.parse::<i64>(), d.parse::<i64>()) else {
+        return false;
+    };
+    (1..=days_in_month(y, m)).contains(&d)
+}
+
+/// Contract 4.4 items 2, 3 and 5: the checks JSON Schema cannot express. Item 1 (the request
+/// body size) and item 4 (cross-field rules) are performed by the caller.
+fn outside_schema_checks(envelope: &Value) -> Result<(), Reject> {
+    // 2. The decoded original body is at most INBOX_BODY_MAX_BYTES (the schema's Base64 character
+    //    limit is slightly larger than the exact byte limit).
+    let raw = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        envelope["activity"]["raw_body"]
+            .as_str()
+            .unwrap_or_default(),
+    )
+    .map_err(|_| reject(400, "schema_violation"))?;
+    if raw.len() > INBOX_BODY_MAX_BYTES {
+        return Err(reject(413, "activity_too_large"));
+    }
+    // 3. Retained evidence headers plus the omitted names stay within the budget.
+    let kept: usize = envelope["original_request"]["signature_headers"]
+        .as_array()
+        .map(|headers| {
+            headers
+                .iter()
+                .map(|h| {
+                    h["name"].as_str().unwrap_or_default().len()
+                        + h["value"].as_str().unwrap_or_default().len()
+                })
+                .sum()
+        })
+        .unwrap_or(0);
+    let omitted: usize = envelope["omitted_header_names"]
+        .as_array()
+        .map(|names| {
+            names
+                .iter()
+                .map(|n| n.as_str().unwrap_or_default().len())
+                .sum()
+        })
+        .unwrap_or(0);
+    if kept + omitted > EVIDENCE_BUDGET_BYTES {
+        return Err(reject(400, "evidence_budget_exceeded"));
+    }
+    // 5. received_at / verified_at name an existing calendar date.
+    for timestamp in [
+        &envelope["received_at"],
+        &envelope["verification"]["verified_at"],
+    ] {
+        if !calendar_day_exists(timestamp.as_str().unwrap_or_default()) {
+            return Err(reject(400, "schema_violation"));
+        }
+    }
+    Ok(())
 }
 
 async fn serve(state: Arc<State>, mut stream: TcpStream) {

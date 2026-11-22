@@ -397,6 +397,116 @@ async fn case26_27_receiver_p1_procedure_rejects_every_defect_and_needs_no_link_
         got.is_err(),
         "an envelope addressed to another receiver is refused: {got:?}"
     );
+    // Checks outside the schema (contract 4.4 items 2, 3 and 5): every request below is
+    // correctly signed and schema-valid, only the one limit under test is crossed.
+    let with_raw_len = |n: usize| {
+        let mut e = envelope_for(&template, &fresh);
+        e["activity"]["raw_body"] = json!(b64(&vec![b'a'; n]));
+        e
+    };
+    let at_limit = bytes(&with_raw_len(1_048_576));
+    fresh
+        .verify_request(
+            "POST",
+            TARGET,
+            &fake.request(&fresh, &at_limit, Spec::default()).0,
+            &at_limit,
+        )
+        .await
+        .expect("a decoded body of exactly 1 MiB is accepted");
+    let over_limit = bytes(&with_raw_len(1_048_577));
+    assert!(
+        over_limit.len() < 2 * 1024 * 1024,
+        "the oversized body must be refused by the decoded limit, not the request size limit"
+    );
+    expect(
+        &fresh,
+        fake.request(&fresh, &over_limit, Spec::default()),
+        413,
+        "activity_too_large",
+    )
+    .await;
+    let with_evidence = |headers: Vec<(&str, usize)>, omitted: &[&str]| {
+        let mut e = envelope_for(&template, &fresh);
+        e["original_request"]["signature_headers"] = Value::Array(
+            headers
+                .into_iter()
+                .map(|(name, len)| json!({"name": name, "value": "a".repeat(len)}))
+                .collect(),
+        );
+        if !omitted.is_empty() {
+            e["omitted_header_names"] = json!(omitted);
+            e["omitted_header_count"] = json!(omitted.len());
+            e["evidence_complete"] = json!(false);
+        }
+        e
+    };
+    let at_budget = bytes(&with_evidence(vec![("x", 8000), ("y", 8382)], &[]));
+    fresh
+        .verify_request(
+            "POST",
+            TARGET,
+            &fake.request(&fresh, &at_budget, Spec::default()).0,
+            &at_budget,
+        )
+        .await
+        .expect("evidence of exactly 16 KiB is accepted");
+    expect(
+        &fresh,
+        fake.request(
+            &fresh,
+            &bytes(&with_evidence(vec![("x", 8000), ("y", 8383)], &[])),
+            Spec::default(),
+        ),
+        400,
+        "evidence_budget_exceeded",
+    )
+    .await;
+    expect(
+        &fresh,
+        fake.request(
+            &fresh,
+            &bytes(&with_evidence(vec![("x", 8000), ("y", 8382)], &["z"])),
+            Spec::default(),
+        ),
+        400,
+        "evidence_budget_exceeded",
+    )
+    .await;
+    for (field, value) in [
+        ("received_at", "2026-02-30T00:00:00Z"),
+        ("received_at", "2025-02-29T12:00:00.5Z"),
+        ("received_at", "2026-04-31T00:00:00Z"),
+        ("received_at", "1900-02-29T00:00:00Z"),
+        ("verified_at", "2026-06-31T00:00:00Z"),
+    ] {
+        let mut e = envelope_for(&template, &fresh);
+        if field == "received_at" {
+            e["received_at"] = json!(value);
+        } else {
+            e["verification"]["verified_at"] = json!(value);
+        }
+        expect(
+            &fresh,
+            fake.request(&fresh, &bytes(&e), Spec::default()),
+            400,
+            "schema_violation",
+        )
+        .await;
+    }
+    let mut leap_day = envelope_for(&template, &fresh);
+    leap_day["received_at"] = json!("2024-02-29T23:59:59Z");
+    leap_day["verification"]["verified_at"] = json!("2000-02-29T00:00:00.123456789Z");
+    let leap_bytes = bytes(&leap_day);
+    fresh
+        .verify_request(
+            "POST",
+            TARGET,
+            &fake.request(&fresh, &leap_bytes, Spec::default()).0,
+            &leap_bytes,
+        )
+        .await
+        .expect("real leap days are accepted");
     // Wrong method / target.
     let (h, b) = fake.request(&fresh, &good_f, Spec::default());
     assert_eq!(

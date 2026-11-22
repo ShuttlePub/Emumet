@@ -1,6 +1,6 @@
 //! T1-6 alarm injections (plan 6.6): every alert fires for its injected fault, with fixed labels
 //! only, and clears again. Logs and alert rows never carry bodies, secrets or arbitrary IDs.
-use super::alerts::{evaluate, firing, Alert};
+use super::alerts::{evaluate, firing, sustain_filter, Alert};
 use super::db::eventually;
 use super::delivery::expedite;
 use super::receiver::Behavior;
@@ -316,4 +316,184 @@ async fn alarms_lock_wait_connection_pressure_and_projector_failure() {
     expect_clear(&w, "projector_stalled").await;
     let alerts = evaluate(&w.db).await;
     assert_clean(&w, &alerts, &[&w.peer.actor, "ory_kratos_session"]);
+}
+
+const WINDOW_SECS: u64 = 4;
+
+/// One evaluation as the monitor runs it: alerts.sql rows + reservation check, then the window
+/// filter. Returns the alerts that would be reported.
+async fn monitored(w: &World, state: &std::path::Path) -> Vec<String> {
+    sustain_filter(&evaluate(&w.db).await, state, WINDOW_SECS)
+}
+
+/// Keeps probing the real inbox once per second while the refusal is injected, evaluating after
+/// each probe. Returns (seconds until quota_rejection_sustained first appeared, statuses seen).
+async fn refuse_until_sustained(
+    w: &World,
+    profile: &str,
+    state: &std::path::Path,
+    expected_status: u16,
+) -> f64 {
+    let start = std::time::Instant::now();
+    let mut fired_at = None;
+    while start.elapsed() < Duration::from_secs(WINDOW_SECS + 8) {
+        assert_eq!(
+            probe(w, profile, "refused").await,
+            expected_status,
+            "admission keeps refusing with {expected_status}"
+        );
+        let reported = monitored(w, state).await;
+        assert!(
+            reported
+                .iter()
+                .any(|l| l.contains(" quota_admission_refusing ")),
+            "the instantaneous refusal row is present: {reported:?}"
+        );
+        let sustained = reported
+            .iter()
+            .any(|l| l.starts_with("critical quota_rejection_sustained "));
+        let elapsed = start.elapsed().as_secs_f64();
+        if sustained {
+            fired_at = Some(elapsed);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(700)).await;
+    }
+    fired_at.expect("quota_rejection_sustained never fired while the refusal continued")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs the T1 stack: bash e2e/post-relay/run.sh"]
+async fn alarms_sustained_quota_rejection_and_quarantine_full_fire_and_clear() {
+    let w = World::setup().await;
+    let a = w.linked("al5", 0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("sustain.state");
+    assert_eq!(probe(&w, &a.profile, "baseline").await, 202);
+    eventually("baseline delivered", Duration::from_secs(30), || async {
+        w.db.count("post_relay_jobs").await == 0
+    })
+    .await;
+    assert!(monitored(&w, &state).await.is_empty(), "healthy: nothing");
+
+    // Real quarantine: a permanent 400 moves one body to quarantine and leaves no job.
+    w.receiver.set_default(Behavior::Status(400));
+    assert_eq!(probe(&w, &a.profile, "to quarantine").await, 202);
+    eventually("quarantined", Duration::from_secs(30), || async {
+        w.db.count("post_relay_dead_letters").await == 1 && w.db.count("post_relay_jobs").await == 0
+    })
+    .await;
+    w.receiver.set_default(Behavior::Accept);
+    let (count, bytes, rows, delivery_bytes): (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT body_count, body_bytes, delivery_rows, delivery_bytes FROM post_relay_profile_quota",
+    )
+    .fetch_one(&w.db.iso.pool)
+    .await
+    .unwrap();
+
+    // A refusal that clears inside the window never becomes the sustained alert, and the window
+    // restarts from zero the next time.
+    w.db.exec("UPDATE post_relay_profile_quota SET body_count = 2000")
+        .await;
+    assert_eq!(probe(&w, &a.profile, "blip").await, 429);
+    let blip = monitored(&w, &state).await;
+    assert!(blip
+        .iter()
+        .any(|l| l.contains(" quota_admission_refusing ")));
+    assert!(!blip.iter().any(|l| l.contains("quota_rejection_sustained")));
+    sqlx::query("UPDATE post_relay_profile_quota SET body_count = $1")
+        .bind(count)
+        .execute(&w.db.iso.pool)
+        .await
+        .unwrap();
+    assert!(!monitored(&w, &state)
+        .await
+        .iter()
+        .any(|l| l.contains("quota_admission_refusing")));
+    assert!(!state.exists(), "the window state is dropped on recovery");
+    tokio::time::sleep(Duration::from_secs(WINDOW_SECS + 1)).await;
+    w.db.exec("UPDATE post_relay_profile_quota SET body_count = 2000")
+        .await;
+    assert!(
+        !monitored(&w, &state)
+            .await
+            .iter()
+            .any(|l| l.contains("quota_rejection_sustained")),
+        "time spent healthy between two refusals is not counted"
+    );
+    sqlx::query("UPDATE post_relay_profile_quota SET body_count = $1")
+        .bind(count)
+        .execute(&w.db.iso.pool)
+        .await
+        .unwrap();
+    assert!(monitored(&w, &state).await.is_empty());
+
+    // Per-Profile quarantine-full refusal (429): continues, the sustained alert fires after the
+    // window, the quarantine-full alert (no delivery in flight, operator recovery needed) fires.
+    w.db.exec("UPDATE post_relay_profile_quota SET body_count = 2000")
+        .await;
+    let fired = refuse_until_sustained(&w, &a.profile, &state, 429).await;
+    assert!(
+        fired >= WINDOW_SECS as f64 - 1.0,
+        "not before the window: {fired}"
+    );
+    assert!(
+        fired <= WINDOW_SECS as f64 + 3.0,
+        "promptly after the window: {fired}"
+    );
+    let reported = monitored(&w, &state).await;
+    assert!(
+        reported
+            .iter()
+            .any(|l| l.starts_with("critical quarantine_full_rejecting ")),
+        "{reported:?}"
+    );
+    // Recovery: capacity is freed; admission accepts again and every refusal alert clears.
+    sqlx::query("UPDATE post_relay_profile_quota SET body_count=$1, body_bytes=$2, delivery_rows=$3, delivery_bytes=$4")
+        .bind(count)
+        .bind(bytes)
+        .bind(rows)
+        .bind(delivery_bytes)
+        .execute(&w.db.iso.pool)
+        .await
+        .unwrap();
+    assert_eq!(probe(&w, &a.profile, "recovered").await, 202);
+    let after = monitored(&w, &state).await;
+    assert!(
+        !after.iter().any(|l| l.contains("quota_rejection_sustained")
+            || l.contains("quota_admission_refusing")
+            || l.contains("quarantine_full_rejecting")),
+        "refusal alerts clear after recovery: {after:?}"
+    );
+    assert!(!state.exists());
+
+    // Global quota refusal (503): sustained fires; it is NOT reported as a quarantine-full Profile.
+    eventually(
+        "recovered relay delivered",
+        Duration::from_secs(30),
+        || async { w.db.count("post_relay_jobs").await == 0 },
+    )
+    .await;
+    w.db.exec("UPDATE post_relay_quota SET body_count = 100000")
+        .await;
+    let fired = refuse_until_sustained(&w, &a.profile, &state, 503).await;
+    assert!(fired >= WINDOW_SECS as f64 - 1.0 && fired <= WINDOW_SECS as f64 + 3.0);
+    let reported = monitored(&w, &state).await;
+    assert!(!reported
+        .iter()
+        .any(|l| l.contains("quarantine_full_rejecting")));
+    w.db.exec("UPDATE post_relay_quota SET body_count = (SELECT count(*) FROM post_relay_bodies)")
+        .await;
+    let after = monitored(&w, &state).await;
+    assert!(
+        !after
+            .iter()
+            .any(|l| l.contains("quota_rejection_sustained")
+                || l.contains("quota_admission_refusing")),
+        "{after:?}"
+    );
+    assert!(
+        after.is_empty() || !after.iter().any(|l| l.contains("quota_")),
+        "{after:?}"
+    );
 }

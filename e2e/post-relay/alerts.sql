@@ -79,6 +79,31 @@ SELECT 'db_connection_pressure', 'warning',
        (SELECT count(*) FROM pg_stat_activity)::float8 / current_setting('max_connections')::float8
 WHERE (SELECT count(*) FROM pg_stat_activity)::float8 / current_setting('max_connections')::float8 >= 0.8
 UNION ALL
+-- Admission refuses new Relays right now for a persistent quota reason: the same predicates as the
+-- admission (429 per Profile, 503 global) evaluated for the smallest possible new body
+-- (1 byte envelope + BODY_METADATA_BYTES 4096) and one delivery reservation (17 rows, 9216 bytes).
+-- alerts-sustain.sh turns "present in every evaluation for 5 minutes" into quota_rejection_sustained.
+-- Token-bucket (rate) refusals are transient by design and leave no database trace: not covered here.
+SELECT 'quota_admission_refusing', 'warning', n::float8 FROM (
+  SELECT (SELECT count(*) FROM post_relay_profile_quota
+           WHERE body_count >= 2000 OR body_bytes + 4097 > 536870912
+              OR delivery_rows + 17 > 48000 OR delivery_bytes + 9216 > 62914560)
+       + (SELECT count(*) FROM q
+           WHERE body_count >= 100000 OR body_bytes + 4097 > 21474836480
+              OR delivery_rows + 17 > 1800000 OR delivery_bytes + 9216 > 1887436800) AS n
+) x WHERE n > 0
+UNION ALL
+-- A Profile whose quota is full while NOTHING of it is still being delivered: the held bodies are
+-- quarantine / operator-held, so new Relays stay refused (429) until an operator redelivers or
+-- discards them, or the 30-day expiry passes. Operator recovery is required.
+SELECT 'quarantine_full_rejecting', 'critical', count(*)::float8
+FROM post_relay_profile_quota pq
+WHERE (pq.body_count >= 2000 OR pq.body_bytes + 4097 > 536870912
+       OR pq.delivery_rows + 17 > 48000 OR pq.delivery_bytes + 9216 > 62914560)
+  AND NOT EXISTS (SELECT 1 FROM post_relay_jobs j JOIN post_relay_bodies b USING (receipt)
+                  WHERE b.profile_id = pq.profile_id)
+HAVING count(*) > 0
+UNION ALL
 SELECT 'projector_stalled', 'critical', ((SELECT max(seq) FROM account_events) - k.last_seq)::float8
 FROM projection_checkpoints k
 WHERE k.projector_name = 'account_projector'

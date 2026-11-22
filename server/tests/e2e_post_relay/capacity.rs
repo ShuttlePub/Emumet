@@ -115,12 +115,22 @@ async fn capacity_supply_every_30s_fails_closed_after_90s_and_applies_thresholds
         }
     }
     let period = advances[1] - advances[0];
+    // Both stored sample times are cycle starts on the supplier's fixed 30 s grid, so the period
+    // is 30 s itself. The +-2 s allowance covers only the jitter of the DB-clock read that follows
+    // the grid tick (a docker exec on a loaded CI runner: observed 0.1-1 s) and polling at 250 ms;
+    // 45 s (the old allowance, a sleep-after-work drift) is NOT a pass: 90 s freshness must hold
+    // with three periods.
     assert!(
-        (25.0..=45.0).contains(&period),
-        "supplier period was {period}s"
+        (28.0..=32.0).contains(&period),
+        "supplier period was {period}s (must be 30 s +- 2 s)"
+    );
+    let overruns = w.supplier.overruns();
+    assert!(
+        overruns.is_empty(),
+        "supplier cycles overran 30 s: {overruns:?}"
     );
     let age = w.db.i64("SELECT extract(epoch FROM clock_timestamp()-sampled_at)::bigint FROM post_relay_capacity").await;
-    assert!(age <= 45, "sample age {age}s");
+    assert!(age <= 33, "sample age {age}s");
     w.supplier.stop().await;
 
     // Freshness: 90 s. Time injection moves the stored sample into the past.
