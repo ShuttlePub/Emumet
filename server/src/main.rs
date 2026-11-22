@@ -9,6 +9,7 @@ mod logging;
 mod openapi;
 mod post_relay_cli;
 mod post_relay_operator;
+mod post_relay_refusals;
 mod post_relay_worker;
 mod projection_worker;
 mod registration_guard;

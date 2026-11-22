@@ -28,7 +28,7 @@ use kernel::interfaces::http_signing::{HttpSignatureVerificationInput, Signature
 #[utoipa::path(
     post,
     path = "/ap/profiles/{profile_nanoid}/inbox",
-    description = "Signed Profile inbox. Raw Activity bytes relay only when POST_RELAY_INBOX_ENABLED=true (default false; S1 merge and lead approval required). Follow/Block are excluded; Undo/Accept/Reject are excluded only when every reference is a known Follow/Block. Create/Update/Delete/Like/Announce, unknown references and extension types forward unchanged. Existing Follow/domain-control and early-Undo rules remain. Body <=1 MiB; duplicate keys at every depth are rejected. ActivityPub JSON and ld+json with supported parameters are accepted. 202 follows durable commit; Profile overload is 429 and global/physical capacity unavailable is 503 with Retry-After.",
+    description = "Signed Profile inbox. Raw Activity bytes relay only when POST_RELAY_INBOX_ENABLED=true (default false: kept off until the ShuttlePub receiver exists; see host decision D68 for the conditions to enable it). Follow/Block are excluded; Undo/Accept/Reject are excluded only when every reference is a known Follow/Block. Create/Update/Delete/Like/Announce, unknown references and extension types forward unchanged. Existing Follow/domain-control and early-Undo rules remain. Body <=1 MiB; duplicate keys at every depth are rejected. ActivityPub JSON and ld+json with supported parameters are accepted. 202 follows durable commit; Profile overload is 429 and global/physical capacity unavailable is 503 with Retry-After.",
     params(("profile_nanoid" = String, Path, description = "Profile nanoid")),
     request_body(content((serde_json::Value = "application/activity+json"), (serde_json::Value = "application/ld+json"))),
     responses(
@@ -125,6 +125,7 @@ pub(crate) async fn post_profile_inbox(
     .await
     .map_err(|e| {
         if let Some(limit) = e.frames().find_map(|f| f.downcast_ref::<InboxOverload>()) {
+            crate::post_relay_refusals::record(limit.reason);
             return ErrorStatus::RetryAfter(
                 StatusCode::from_u16(limit.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
                 limit.retry_after_secs,
@@ -140,6 +141,7 @@ pub(crate) async fn post_profile_inbox(
             _ => StatusCode::SERVICE_UNAVAILABLE,
         };
         if status == StatusCode::SERVICE_UNAVAILABLE {
+            crate::post_relay_refusals::record_storage();
             ErrorStatus::RetryAfter(status, 1)
         } else {
             ErrorStatus::from(status)

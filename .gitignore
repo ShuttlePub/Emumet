@@ -12,3 +12,5 @@ e2e/certs/*.key
 
 /e2e/registration-enforcement/runtime/
 /e2e/registration-enforcement/result.log
+/e2e/post-relay/result.log
+/e2e/post-relay/stack.log

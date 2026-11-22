@@ -59,6 +59,36 @@ pub enum LimitScope {
     Profile,
     Global,
 }
+/// Fixed, non-confidential reason of a refused admission (counted, never carries identifiers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefusalReason {
+    GlobalRate,
+    ProfileRate,
+    ProfileQuota,
+    GlobalQuota,
+    QuarantineFull,
+    Capacity,
+}
+impl RefusalReason {
+    pub const ALL: [RefusalReason; 6] = [
+        RefusalReason::GlobalRate,
+        RefusalReason::ProfileRate,
+        RefusalReason::ProfileQuota,
+        RefusalReason::GlobalQuota,
+        RefusalReason::QuarantineFull,
+        RefusalReason::Capacity,
+    ];
+    pub const fn code(self) -> &'static str {
+        match self {
+            RefusalReason::GlobalRate => "global_rate",
+            RefusalReason::ProfileRate => "profile_rate",
+            RefusalReason::ProfileQuota => "profile_quota",
+            RefusalReason::GlobalQuota => "global_quota",
+            RefusalReason::QuarantineFull => "quarantine_full",
+            RefusalReason::Capacity => "capacity",
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Admission {
     Queued,
@@ -66,6 +96,7 @@ pub enum Admission {
     Limited {
         scope: LimitScope,
         retry_after_secs: u32,
+        reason: RefusalReason,
     },
     Unavailable,
 }

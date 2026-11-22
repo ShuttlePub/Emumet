@@ -81,7 +81,19 @@ pub async fn dispatch(args: impl IntoIterator<Item = String>) -> Result<bool, St
                     .attach_printable("capacity report requires DATABASE_URL")
             })?;
             // Do not print DB errors or connection URLs (credentials), payloads or environment values.
-            let result=driver::post_relay::publish_capacity(&url,&CapacityReport{free_bytes:free,total_bytes:total,sampled_at}).await.map_err(|_|Report::new(KernelError::Rejected).attach_printable("capacity report refused: check DB reachability, exact schema, dimensions and a fresh, monotonically newer sample; no migrations were applied"))?;
+            let result = driver::post_relay::publish_capacity(
+                &url,
+                &CapacityReport { free_bytes: free, total_bytes: total, sampled_at },
+            )
+            .await
+            .map_err(|error| {
+                // Only an allowlisted reason is exposed, never the underlying report: sqlx
+                // errors can contain connection credentials, SQL values or remote text.
+                Report::new(KernelError::Rejected).attach_printable(format!(
+                    "capacity report refused: reason={}; check DB reachability, exact schema, dimensions and a fresh, monotonically newer sample; no migrations were applied",
+                    driver::post_relay::capacity_refusal_reason(&error)
+                ))
+            })?;
             println!(
                 "{}",
                 serde_json::to_string(&result).map_err(|_| Report::new(KernelError::Internal))?
@@ -90,9 +102,39 @@ pub async fn dispatch(args: impl IntoIterator<Item = String>) -> Result<bool, St
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn capacity_reasons_are_fixed_codes_not_underlying_errors() {
+        for (context, expected) in [
+            (KernelError::Rejected, "schema_mismatch"),
+            (KernelError::Validation, "invalid_sample"),
+            (KernelError::Concurrency, "sample_not_newer"),
+            (KernelError::Internal, "unavailable"),
+        ] {
+            let error =
+                Report::new(context).attach_printable("secret payload / postgres://password");
+            assert_eq!(
+                driver::post_relay::capacity_refusal_reason(&error),
+                expected
+            );
+        }
+        let error = Report::from(sqlx::Error::Io(std::io::Error::other(
+            "secret payload / postgres://password",
+        )))
+        .change_context(KernelError::Internal);
+        assert_eq!(
+            driver::post_relay::capacity_refusal_reason(&error),
+            "connection_failed"
+        );
+        let error = Report::from(sqlx::Error::PoolTimedOut).change_context(KernelError::Timeout);
+        assert_eq!(
+            driver::post_relay::capacity_refusal_reason(&error),
+            "connection_timeout"
+        );
+    }
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(str::to_owned).collect()
     }

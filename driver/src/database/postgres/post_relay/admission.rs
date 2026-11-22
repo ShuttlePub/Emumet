@@ -48,6 +48,7 @@ impl PostgresPostRelayStore {
             Err(e) if matches!(e.current_context(), KernelError::Rejected) => {
                 return Ok(Admission::Limited {
                     scope: LimitScope::Global,
+                    reason: RefusalReason::GlobalQuota,
                     retry_after_secs: 1,
                 })
             }
@@ -57,13 +58,14 @@ impl PostgresPostRelayStore {
         if r.received_at > now {
             return Err(Report::new(KernelError::Validation));
         }
-        let available:bool=sqlx::query_scalar("SELECT q.consistent AND c.accepting AND c.sampled_at>=$1-interval '90 seconds' AND c.sampled_at<=$1 FROM post_relay_quota q CROSS JOIN post_relay_capacity c").bind(now).fetch_one(&mut **c).await.convert_error()?;
+        let available:bool=sqlx::query_scalar("SELECT coalesce(q.consistent AND c.accepting AND c.sampled_at>=$1-interval '90 seconds' AND c.sampled_at<=$1, false) FROM post_relay_quota q CROSS JOIN post_relay_capacity c").bind(now).fetch_one(&mut **c).await.convert_error()?;
         if !available {
             return Ok(Admission::Unavailable);
         }
-        let global = |scope| Admission::Limited {
+        let global = |scope, reason| Admission::Limited {
             scope,
             retry_after_secs: 1,
+            reason,
         };
         let Some(recipient) = current else {
             if let Some(limited) = self.rate(c, &g, &q, &p, true, now).await? {
@@ -79,10 +81,10 @@ impl PostgresPostRelayStore {
             let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM post_relay_unlinked WHERE profile_id=$1 AND reason='no_home' AND bucket=$2)").bind(g.profile).bind(bucket).fetch_one(&mut **c).await.convert_error()?;
             if !exists {
                 if p.unlinked_rows >= 1000 {
-                    return Ok(global(LimitScope::Profile));
+                    return Ok(global(LimitScope::Profile, RefusalReason::ProfileQuota));
                 }
                 if q.unlinked_rows >= 100000 {
-                    return Ok(global(LimitScope::Global));
+                    return Ok(global(LimitScope::Global, RefusalReason::GlobalQuota));
                 }
                 sqlx::query(
                     "UPDATE post_relay_quota SET unlinked_rows=unlinked_rows+1 WHERE singleton",
@@ -101,14 +103,28 @@ impl PostgresPostRelayStore {
             || p.delivery_rows + RESERVATION_ROWS > 48000
             || p.delivery_bytes + RESERVATION_BYTES > 62_914_560
         {
-            return Ok(global(LimitScope::Profile));
+            let none_in_flight: bool = sqlx::query_scalar(
+                "SELECT NOT EXISTS(SELECT 1 FROM post_relay_jobs j JOIN post_relay_bodies b USING (receipt) WHERE b.profile_id=$1)",
+            )
+            .bind(g.profile)
+            .fetch_one(&mut **c)
+            .await
+            .convert_error()?;
+            return Ok(global(
+                LimitScope::Profile,
+                if none_in_flight {
+                    RefusalReason::QuarantineFull
+                } else {
+                    RefusalReason::ProfileQuota
+                },
+            ));
         }
         if q.body_count >= 100000
             || q.body_bytes + bytes > 21_474_836_480
             || q.delivery_rows + RESERVATION_ROWS > 1_800_000
             || q.delivery_bytes + RESERVATION_BYTES > 1_887_436_800
         {
-            return Ok(global(LimitScope::Global));
+            return Ok(global(LimitScope::Global, RefusalReason::GlobalQuota));
         }
         if let Some(limited) = self.rate(c, &g, &q, &p, false, now).await? {
             return Ok(limited);
@@ -150,12 +166,14 @@ impl PostgresPostRelayStore {
         if pt < 1.0 {
             return Ok(Some(Admission::Limited {
                 scope: LimitScope::Profile,
+                reason: RefusalReason::ProfileRate,
                 retry_after_secs: 1,
             }));
         }
         if gt < 1.0 {
             return Ok(Some(Admission::Limited {
                 scope: LimitScope::Global,
+                reason: RefusalReason::GlobalRate,
                 retry_after_secs: 1,
             }));
         }

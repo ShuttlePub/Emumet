@@ -107,13 +107,16 @@ impl PostgresPostRelayStore {
     ) -> error_stack::Result<(), KernelError> {
         tx(c)?;
         let now = self.now(c).await?;
-        if r.free_bytes < 0
-            || r.total_bytes <= 0
-            || r.free_bytes > r.total_bytes
-            || r.sampled_at > now
-            || r.sampled_at < now - Duration::seconds(90)
-        {
+        if r.free_bytes < 0 || r.total_bytes <= 0 || r.free_bytes > r.total_bytes {
             return Err(Report::new(KernelError::Validation));
+        }
+        if r.sampled_at > now {
+            return Err(Report::new(KernelError::Validation)
+                .attach(crate::post_relay::CapacitySampleTime::Future));
+        }
+        if r.sampled_at < now - Duration::seconds(90) {
+            return Err(Report::new(KernelError::Validation)
+                .attach(crate::post_relay::CapacitySampleTime::Expired));
         }
         let row = sqlx::query(
             "SELECT accepting,sampled_at FROM post_relay_capacity WHERE singleton FOR UPDATE",

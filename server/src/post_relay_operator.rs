@@ -131,6 +131,20 @@ pub(crate) async fn dispatch(args: Vec<String>) -> Result<bool, StackTrace> {
     execute(c, &url, &mut phase).await.map_err(|_| Report::new(KernelError::Rejected).attach_printable(format!("post-relay operation refused at {phase}; check schema, eligibility, confirmation, policy, expiry and database availability; no migrations applied")))?;
     Ok(true)
 }
+/// Production: strict HTTPS allowlist and SSRF checks only. The test-mode build (never the release image)
+/// can additionally allow loopback HTTP peers named in EMUMET_TEST_RELAY_ORIGINS, exactly like the
+/// server's own sender (B1), so E2E can run the operator against a mock receiver.
+fn operator_transport() -> error_stack::Result<HttpPostRelayTransport, KernelError> {
+    let transport = HttpPostRelayTransport::new(HomeOriginAllowlist::from_env()?);
+    #[cfg(feature = "test-mode")]
+    if let Ok(raw) = std::env::var("EMUMET_TEST_RELAY_ORIGINS") {
+        if let Ok(origins) = serde_json::from_str::<Vec<String>>(&raw) {
+            return Ok(transport.with_test_origins(origins));
+        }
+    }
+    Ok(transport)
+}
+
 async fn execute(c: Command, url: &str, phase: &mut &'static str) -> Result<(), StackTrace> {
     let db = driver::post_relay::connect_operator(url).await?;
     if c.action == Action::Status {
@@ -182,7 +196,7 @@ async fn execute(c: Command, url: &str, phase: &mut &'static str) -> Result<(), 
             cache: Arc::new(InstanceKeyCache::default()),
             password: FilePasswordProvider::new(),
             origin: PublicBaseUrl::new(dotenvy::var("PUBLIC_BASE_URL").map_err(|_| invalid())?),
-            transport: HttpPostRelayTransport::new(HomeOriginAllowlist::from_env()?),
+            transport: operator_transport()?,
         })
     } else {
         None

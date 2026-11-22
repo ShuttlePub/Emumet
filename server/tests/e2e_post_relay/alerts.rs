@@ -1,0 +1,145 @@
+//! Alert evaluation of the test environment: alerts.sql (+ the read-only reservation check).
+use super::db::Db;
+use sqlx::Row;
+
+pub const ALLOWED: &[&str] = &[
+    "quota_global_body_count",
+    "quota_global_body_bytes",
+    "quota_global_delivery_rows",
+    "quota_global_delivery_bytes",
+    "quota_global_audit_rows",
+    "quota_global_operator_rows",
+    "quota_profile_body_count",
+    "quota_profile_body_bytes",
+    "quota_profile_audit_rows",
+    "quota_profile_operator_rows",
+    "quota_profile_delivery_rows",
+    "quota_profile_delivery_bytes",
+    "physical_capacity_missing_or_stale",
+    "physical_capacity_threshold",
+    "reservation_flag_inconsistent",
+    "reservation_mismatch",
+    "purge_delay",
+    "cancelled_body_backlog",
+    "deadline_near_backlog",
+    "repeated_401",
+    "db_lock_wait",
+    "db_connection_pressure",
+    "projector_stalled",
+    "quota_admission_refusing",
+    "quarantine_full_rejecting",
+];
+
+#[derive(Debug, Clone)]
+pub struct Alert {
+    pub name: String,
+    pub severity: String,
+    pub value: f64,
+}
+
+pub async fn evaluate(db: &Db) -> Vec<Alert> {
+    let rows = sqlx::query(include_str!("../../../e2e/post-relay/alerts.sql"))
+        .fetch_all(&db.iso.pool)
+        .await
+        .expect("alerts.sql");
+    let mut alerts: Vec<Alert> = rows
+        .iter()
+        .map(|r| Alert {
+            name: r.get("alert"),
+            severity: r.get("severity"),
+            value: r.get("value"),
+        })
+        .collect();
+    let ok: bool = sqlx::query_scalar(include_str!(
+        "../../../driver/src/database/postgres/post_relay/consistency.sql"
+    ))
+    .fetch_one(&db.iso.pool)
+    .await
+    .expect("consistency.sql");
+    if !ok {
+        alerts.push(Alert {
+            name: "reservation_mismatch".into(),
+            severity: "critical".into(),
+            value: 1.0,
+        });
+    }
+    for a in &alerts {
+        assert!(
+            ALLOWED.contains(&a.name.as_str()),
+            "alert name outside the fixed set: {}",
+            a.name
+        );
+        assert!(a.severity == "warning" || a.severity == "critical");
+    }
+    alerts
+}
+
+pub fn firing(alerts: &[Alert], name: &str) -> Option<Alert> {
+    alerts.iter().find(|a| a.name == name).cloned()
+}
+
+/// Pipes alert rows through `alerts-sustain.sh` (the monitor's window filter) with a short window.
+pub fn sustain_filter(alerts: &[Alert], state: &std::path::Path, window_secs: u64) -> Vec<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../e2e/post-relay/alerts-sustain.sh"
+    );
+    let mut child = Command::new("bash")
+        .arg(script)
+        .env("ALERT_STATE_FILE", state)
+        .env("ALERT_SUSTAIN_SECS", window_secs.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input: String = alerts
+        .iter()
+        .map(|a| format!("{} {} {}\n", a.severity, a.name, a.value))
+        .collect();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "alerts-sustain.sh failed");
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// The log-based refusal alarm: `refusal-alert.sh` over the server log with a short rule
+/// (`ticks` consecutive rising telemetry intervals). Returns its output lines.
+pub fn refusal_filter(log: &str, ticks: u32) -> Vec<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../e2e/post-relay/refusal-alert.sh"
+    );
+    let mut child = Command::new("bash")
+        .arg(script)
+        .env("REFUSAL_SUSTAIN_TICKS", ticks.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let input = log.to_string();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(input.as_bytes());
+    });
+    let out = child.wait_with_output().unwrap();
+    writer.join().unwrap();
+    assert!(out.status.success(), "refusal-alert.sh failed");
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}

@@ -228,3 +228,144 @@ configuration or timeout default. The suite seeds links directly; the real-user
 registration/full relay E2E belongs to T1. The `test-mode`-only
 `EMUMET_TEST_RELAY_ORIGINS` JSON peer list permits loopback HTTP solely in that test build;
 the switch/constructor are compiled out of normal builds. Never deploy `test-mode` images.
+
+## T1: end-to-end acceptance, capacity supply and alarms
+
+T1 proves the Emumet → P1 mock receiver path with real Kratos/Hydra/Keto, the server built from
+source, and the locally built release image. It does **not** certify ShuttlePub's production
+receiver or the whole P1 service set, and it does not change a default: `POST_RELAY_INBOX_ENABLED`
+stays false (the T1 suite turns it on in its own test processes; see
+[post-relay-inbox-intake.md](post-relay-inbox-intake.md) and host decision D68 for the
+conditions to enable it).
+
+### Running it
+
+    bash e2e/post-relay/run.sh
+
+`e2e/post-relay/compose.yml` (project `emumet-post-relay-e2e`, loopback ports 15450 / 14433-14434 /
+14444-14445 / 14466-14467) starts PostgreSQL and the upstream Ory images. `run.sh` builds the
+release `Dockerfile` **locally** (`emumet-t1-release:local`; nothing is pushed, tagged or released),
+runs `server/tests/e2e_post_relay/` (`cargo test -p server --features test-mode --test
+e2e_post_relay -- --ignored --test-threads=1`), keeps `result.log` / `stack.log`, and removes its own
+stack afterwards (`T1_KEEP_STACK=1` keeps it). CI job `post-relay` in `.github/workflows/e2e.yml` runs
+the same script. A missing stack, DB or image fails the run; nothing is skipped. The mock receiver
+(`receiver.rs`) keeps no link state and verifies exactly contract section 3.3's P1 procedure,
+including the checks JSON Schema cannot express (section 4.4: decoded body at most 1 MiB → 413
+`activity_too_large`, evidence budget 16 KiB → 400 `evidence_budget_exceeded`, `received_at` /
+`verified_at` naming an existing calendar day → 400 `schema_violation`); case 26/27 sends each
+limit exactly at and one past the boundary with a correct outer signature.
+`test-mode` is used only for `EMUMET_TEST_RELAY_ORIGINS` (loopback HTTP peers) in the test-owned
+server and operator processes; the release image is run beside them without it and refuses a
+non-allowlisted destination.
+
+### Physical capacity supply (Q1 rules)
+
+`e2e/post-relay/capacity-supplier.sh` measures the PostgreSQL **data volume** (not the Emumet
+container) every `SUPPLIER_INTERVAL_SECS` (default 30; at most 30 s) and reports it with
+`server capacity report`; admission fails closed 90 s after the last sample. A failed measurement
+reports nothing (freshness expires) and never invents healthy data. Environment: `DATABASE_URL`,
+`SERVER_CMD` (a binary or a `docker run` of the release image), `SUPPLIER_MEASURE_CMD` (prints
+`FREE_BYTES TOTAL_BYTES`; use it for a managed database or another volume), `SUPPLIER_CLOCK_CMD`
+(prints RFC3339 from the validating DB's clock; default: compose PostgreSQL `clock_timestamp()`),
+`SUPPLIER_INTERVAL_SECS`, `SUPPLIER_STATS_FILE`,
+`SUPPLIER_ONCE=1`. In production the same contract is supplied by the deployment monitor; this
+script is the reference for the test stack.
+
+The period is a **fixed rate**: cycle N starts at `first_start + N x interval` and the time spent
+measuring/reporting is deducted from the sleep (a sleep after the work would stretch 30 s to 30 s
+plus the work time). A cycle that takes longer than the period is never hidden: it is written to
+stderr (`capacity supplier cycle overran its period`) and to `SUPPLIER_STATS_FILE` as
+`cycle <start_epoch_ms> <elapsed_ms> ok|overrun|failed`; the next cycle then starts immediately
+(the missed slot is skipped, no burst). T1 checks the period of the real supplier as 30 s ± 2 s
+(the allowance covers the DB-clock read after the grid tick and the 250 ms poll; 45 s is not a
+pass, because the 90 s freshness must hold with three periods), that the real supplier recorded no
+overrun, and, with stubbed work, that the period stays fixed and overruns are recorded
+(`supplier::capacity_supplier_keeps_a_fixed_period_deducting_work_time_and_records_overruns`).
+
+The timestamp is obtained **before** measuring, so collection/reporting time consumes the
+90 s freshness budget. A monitor-host clock ahead of PostgreSQL is not a valid sampling clock:
+future samples are refused without tolerance. The supplier uses the DB clock, and one-shot
+E2E setup no longer retries refusals. `capacity_monitor_clock_diagnostic` separately exercises
+50 former host-date → CLI reports and records accepted/future-refused counts without weakening
+the production validation. Clock/measurement failures report nothing.
+
+Refusals expose only a fixed `reason` code, never the underlying SQL error/URL:
+`schema_mismatch`, `invalid_sample` (dimensions), `sample_in_future`, `sample_expired` (>90 s),
+`sample_not_newer`, `connection_timeout`, `connection_failed`, `lock_timeout`,
+`statement_timeout`, `deadlock`, `database_error`, or `unavailable`. Schema/sample errors
+require correcting the input/deployed version; do not retry them blindly. A failed report
+does not refresh capacity. Restore database availability or clear a blocker before the next
+fresh measurement; the 90 s fail-closed rule remains unchanged.
+
+### Alarm conditions
+
+`e2e/post-relay/alerts.sql` is a read-only query (run every 30 s by `alerts.sh`, which also runs
+`consistency.sql`) returning one row per firing alert: fixed alert name, severity, value. Names
+never carry a receipt, actor, origin, body or credential.
+
+| alert | fires when | first response |
+|---|---|---|
+| `physical_capacity_missing_or_stale` (critical) | no sample, a sample older than 90 s, or one from the future | restore the supplier; admission is already failing closed (503) |
+| `physical_capacity_threshold` (critical) | accepting=false: free < 10 GiB or < 10% (admission resumes only at 12 GiB and 12%) | free space; do not discard quarantine early |
+| `quota_*` (warning ≥ 80%, critical ≥ 95%) | global or per-Profile body count/bytes, delivery rows/bytes, audit/operator rows | find the failing destination; quarantine is never discarded automatically |
+| `reservation_flag_inconsistent` / `reservation_mismatch` (critical) | quota reservations differ from the stored rows | stop new load, run the read-only consistency query, open an incident |
+| `purge_delay` (warning) | expired bodies, quarantine, audits, operator or unlinked rows are > 5 min past expiry | check maintenance process / DB locks |
+| `cancelled_body_backlog` (warning) | bodies of unlinked/replaced links are > 5 min old | same as above |
+| `deadline_near_backlog` (warning) | automatic jobs whose 72 h cutoff is within 6 h | restore the destination or accept quarantine at the cutoff |
+| `repeated_401` (critical) | a job got 401 three times (receiver cannot verify us) | check instance key/origin configuration with the receiver |
+| `db_lock_wait` / `db_connection_pressure` (warning) | sessions waiting on a lock > 1 s / connections ≥ 80% of `max_connections` | find the blocker; lower the processes' pools |
+| `projector_stalled` (critical) | account projector checkpoint not advancing for > 60 s | restart the projector process; unlink/deactivation are applied late until then |
+| `quota_admission_refusing` (warning) | a Profile (429) or the global quota (503) is at a limit where the next admission is refused: body count/bytes, delivery rows/bytes, evaluated with the admission's own predicates for the smallest new body | find what holds the quota (below); this row alone is instantaneous |
+| `quota_rejection_sustained` (critical, from `alerts-sustain.sh`) | `quota_admission_refusing` was present in **every** evaluation for 5 minutes (`ALERT_SUSTAIN_SECS`, default 300 = ten 30 s evaluations; a longer silence of the monitor than `ALERT_SUSTAIN_GAP_SECS`=120 s restarts the window). It clears at the first evaluation without the refusing row | same as above; senders keep retrying with `Retry-After: 1` meanwhile |
+| `quota_refusals_sustained` (critical, from `refusal-alert.sh` over the **process log**) | the sum of the refusal counters (every reason except `storage`) rose in each of the last 5 consecutive telemetry intervals (`REFUSAL_SUSTAIN_TICKS`, default 5 = about 5 minutes at the default 60 s period). The line shows which reasons rose. It clears at the first interval without a refusal; a counter going down (process restart) restarts the streak | the reason names the cause: `profile_rate` / `global_rate` (shared Q1 token buckets, flood or a too small bucket → edge limiting, check the sender), `profile_quota` / `global_quota` (see `quota_*`), `quarantine_full` (operator recovery, below), `capacity` (stale/low physical sample or reservation flag, see the capacity alerts) |
+| `quarantine_full_rejecting` (critical) | a Profile's quota is full **and nothing of it is still being delivered** (no job): the held bodies are quarantine/operator-held, so new Relays stay refused (429) until recovery or the 30-day expiry (up to 30 days, even if the home recovered) | operator recovery required: Profile capacity → `preview` → bounded `redeliver`, or explicit `discard` with reason (below) |
+
+Scope of the refusal alerts: the database rows (`quota_admission_refusing`, `quota_rejection_sustained`,
+`quarantine_full_rejecting`) observe the *persistent* quota causes. Refusals by the token buckets
+(rate), which leave no database trace, are covered by the log rule: each refusal of the Profile
+inbox (429/503) increments an **in-process counter by fixed reason code** (`global_rate`,
+`profile_rate`, `profile_quota`, `global_quota`, `quarantine_full`, `capacity`; `storage` counts 503s
+caused by a storage failure and is excluded from the rule). Nothing is written to the database per
+refusal (a refusal flood must not add load). The relay runtime's telemetry tick (every
+`POST_RELAY_TELEMETRY_SECS`, default 60) logs the cumulative counts as
+`post relay inbox refusals global_rate=N profile_rate=N ...` (no body, actor, Profile or origin);
+pipe a tail of the process log (at least 6 lines) into `e2e/post-relay/refusal-alert.sh`. With
+several Emumet processes run it per process (counters are per process). Physical-capacity or
+stale-sample 503s additionally have their own critical alerts above. `alerts.sh` exits non-zero if
+any evaluation part fails (alerts.sql, the reservation
+check, its statement file or the sustain filter): a missing evaluation is never "nothing firing".
+
+Not in SQL: Ory outage is visible as fixed JWKS ready/unavailable/timeout log states and
+protected-API failures (the relay itself keeps delivering; case 20); shutdown-bound exceeded is the
+fixed deadline-exceeded warning; cumulative timings are the `post relay cumulative timings` line.
+
+### T1 alarm runbook (what the E2E injects)
+
+`alarms.rs` injects each condition against the real server and database and checks that the
+query fires, that admission/delivery behave as designed, and that the alarm clears on recovery:
+missing/stale/low capacity and hysteresis (`capacity.rs`), quota saturation, a deliberately
+inflated reservation, purge delay, a near deadline, repeated 401, a held lock, connection
+pressure and a stalled projector. `alarms_sustained_quota_rejection_and_quarantine_full_fire_and_clear`
+keeps probing the real inbox while a Profile (429) and then the global quota (503) are at the
+limit: the instantaneous row fires at once, the sustained alert only after the window (4 s in the
+test), a refusal that clears inside the window never fires it and the window restarts from zero,
+`quarantine_full_rejecting` fires for the real quarantined body of a full Profile and not for the
+global case, and everything clears after recovery (the next probe is accepted with 202).
+`alarms_sustained_refusals_per_reason_fire_from_the_telemetry_log_and_clear` runs the server with
+`POST_RELAY_TELEMETRY_SECS=2` and the rule at 3 intervals, and for each of `profile_rate` (429, bucket
+exhausted with a parked refill clock), `global_rate` (503), `capacity` (503, missing sample),
+`quarantine_full` (429, real quarantined body + full counter) keeps probing the real inbox: the
+alarm names exactly that reason, does not fire before 3 consecutive rising intervals, and clears
+after recovery while healthy probes continue; the telemetry line is checked to contain only the fixed
+codes and counts. Recovery steps: restore the cause, wait one sampling period
+(30 s) and confirm the alert row is gone; for backlog, preview a bounded redelivery
+(`server post-relay preview ...`), confirm it, and inspect `status`. Emergency send stop is
+`POST_RELAY_SENDER_ENABLED=false` on every sending process (reception continues and fills
+quarantine/quota; watch the alarms above).
+
+### What T1 does not claim
+
+`check_reservations` has no production caller; the supported check is the read-only
+`consistency.sql` statement used by `alerts.sh`. Debug-build E2E timing is not performance
+evidence; throughput and the 10-minute run are recorded in
+[post-relay-measurements.md](post-relay-measurements.md) with their environment.

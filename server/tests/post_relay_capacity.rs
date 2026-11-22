@@ -91,6 +91,7 @@ async fn post_relay_capacity_command_refuses_old_schema_and_does_not_apply_pendi
     assert!(!out.status.success());
     let error = String::from_utf8(out.stderr).unwrap();
     assert!(error.contains("exact schema"));
+    assert!(error.contains("reason=schema_mismatch"));
     assert!(!error.contains("postgres://"));
     let applied: i64 =
         sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE version=20261122000300")
@@ -104,4 +105,71 @@ async fn post_relay_capacity_command_refuses_old_schema_and_does_not_apply_pendi
             .await
             .unwrap();
     assert!(table.is_none());
+}
+
+#[test_with::env(DATABASE_URL)]
+#[tokio::test]
+async fn capacity_refusal_distinguishes_invalid_old_samples_and_lock_timeout() {
+    let db = IsolatedDatabase::create().await;
+    let database = url(&db);
+    for (sample, reason) in [
+        (
+            OffsetDateTime::now_utc() + time::Duration::hours(1),
+            "sample_in_future",
+        ),
+        (
+            OffsetDateTime::now_utc() - time::Duration::hours(1),
+            "sample_expired",
+        ),
+    ] {
+        let sample = sample.format(&Rfc3339).unwrap();
+        let out = run(
+            &[
+                "capacity",
+                "report",
+                "--free-bytes",
+                "50",
+                "--total-bytes",
+                "100",
+                "--sampled-at",
+                &sample,
+            ],
+            &database,
+        )
+        .await;
+        assert!(!out.status.success());
+        let error = String::from_utf8_lossy(&out.stderr);
+        assert!(error.contains(&format!("reason={reason}")), "{error}");
+        assert!(!error.contains("postgres://"));
+    }
+    sqlx::query("UPDATE post_relay_capacity SET sampled_at=clock_timestamp()+interval '1 minute'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let sample = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
+    let args = [
+        "capacity",
+        "report",
+        "--free-bytes",
+        "50",
+        "--total-bytes",
+        "100",
+        "--sampled-at",
+        &sample,
+    ];
+    let out = run(&args, &database).await;
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("reason=sample_not_newer"));
+
+    let mut lock = db.pool.begin().await.unwrap();
+    sqlx::query("SELECT singleton FROM post_relay_capacity FOR UPDATE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let out = run(&args, &database).await;
+    assert!(!out.status.success());
+    let error = String::from_utf8_lossy(&out.stderr);
+    assert!(error.contains("reason=lock_timeout"), "{error}");
+    assert!(!error.contains("postgres://"));
+    lock.rollback().await.unwrap();
 }
