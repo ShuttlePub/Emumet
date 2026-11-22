@@ -8,7 +8,7 @@ use super::receiver::Behavior;
 use super::world::*;
 use std::time::{Duration, Instant};
 
-async fn burst(w: &World, targets: &[(String, String)], per_target: usize) -> (usize, usize, usize, Duration) {
+pub async fn burst(w: &World, targets: &[(String, String)], per_target: usize) -> (usize, usize, usize, Duration) {
     let mut prepared = std::collections::HashMap::new();
     for (_, profile) in targets {
         if !prepared.contains_key(profile) {

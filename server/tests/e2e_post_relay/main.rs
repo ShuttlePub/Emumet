@@ -10,6 +10,7 @@ mod delivery;
 mod emumet;
 mod intake;
 mod lifecycle;
+mod operator;
 mod ory;
 mod ory_outage;
 mod receiver;
