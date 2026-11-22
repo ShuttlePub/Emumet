@@ -9,6 +9,7 @@ mod db;
 mod delivery;
 mod emumet;
 mod intake;
+mod leak;
 mod lifecycle;
 mod operator;
 mod ory;
