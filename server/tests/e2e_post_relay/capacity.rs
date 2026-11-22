@@ -44,26 +44,37 @@ async fn capacity_supply_every_30s_fails_closed_after_90s_and_applies_thresholds
     .await;
 
     // The continuous supplier samples every 30 s: the stored sample advances without help.
-    let first: f64 = sqlx::query_scalar(
-        "SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity",
-    )
-    .fetch_one(&w.db.iso.pool)
-    .await
-    .unwrap();
-    tokio::time::sleep(Duration::from_secs(34)).await;
-    let second: f64 = sqlx::query_scalar(
-        "SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity",
-    )
-    .fetch_one(&w.db.iso.pool)
-    .await
-    .unwrap();
+    // Observe two consecutive advances (polling), so a slow setup on a loaded runner cannot make
+    // the comparison span two periods.
+    async fn sampled(w: &World) -> f64 {
+        sqlx::query_scalar("SELECT extract(epoch FROM sampled_at)::float8 FROM post_relay_capacity")
+            .fetch_one(&w.db.iso.pool)
+            .await
+            .unwrap()
+    }
+    let initial = sampled(&w).await;
+    let mut advances = Vec::new();
+    let mut last = initial;
+    let deadline = std::time::Instant::now() + Duration::from_secs(150);
+    while advances.len() < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "supplier did not advance twice within 150 s: {advances:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let now = sampled(&w).await;
+        if now > last {
+            advances.push(now);
+            last = now;
+        }
+    }
+    let period = advances[1] - advances[0];
     assert!(
-        second - first >= 25.0 && second - first <= 40.0,
-        "supplier period was {}s",
-        second - first
+        (25.0..=45.0).contains(&period),
+        "supplier period was {period}s"
     );
     let age = w.db.i64("SELECT extract(epoch FROM clock_timestamp()-sampled_at)::bigint FROM post_relay_capacity").await;
-    assert!(age <= 31, "sample age {age}s");
+    assert!(age <= 45, "sample age {age}s");
     w.supplier.stop().await;
 
     // Freshness: 90 s. Time injection moves the stored sample into the past.

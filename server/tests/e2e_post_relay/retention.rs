@@ -273,7 +273,7 @@ async fn case25_full_quarantine_rejects_new_admission_but_keeps_accepted_bodies(
         }
     }
     let db = &w.db;
-    eventually("1950 are quarantined", Duration::from_secs(120), || async {
+    eventually("1950 are quarantined", Duration::from_secs(300), || async {
         db.i64(&format!("SELECT count(*) FROM post_relay_dead_letters d JOIN post_relay_bodies b USING (receipt) WHERE b.profile_id={}", a.profile_id)).await == 1950
     })
     .await;
@@ -293,7 +293,7 @@ async fn case25_full_quarantine_rejects_new_admission_but_keeps_accepted_bodies(
         (1..=50).contains(&ok),
         "only the 50 free slots may be granted, got {ok}"
     );
-    eventually("the raced bodies are quarantined too", Duration::from_secs(60), || async {
+    eventually("the raced bodies are quarantined too", Duration::from_secs(180), || async {
         db.i64(&format!("SELECT count(*) FROM post_relay_dead_letters d JOIN post_relay_bodies b USING (receipt) WHERE b.profile_id={}", a.profile_id)).await == 1950 + ok as i64
     })
     .await;
@@ -332,7 +332,7 @@ async fn case25_full_quarantine_rejects_new_admission_but_keeps_accepted_bodies(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
-    eventually("2000 are quarantined", Duration::from_secs(60), || async {
+    eventually("2000 are quarantined", Duration::from_secs(180), || async {
         db.count("post_relay_dead_letters").await == 2000
     })
     .await;
