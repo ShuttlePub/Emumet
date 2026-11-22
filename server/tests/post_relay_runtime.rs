@@ -665,3 +665,104 @@ async fn post_relay_runtime_sigkill_before_and_after_authorization_recovers_orig
         server.term().await;
     }
 }
+
+// LD_PRELOAD interception exercises reqwest's real blocking resolver, not an async mock.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn post_relay_runtime_sigterm_bounds_blocking_dns_runtime_teardown() {
+    let db = IsolatedDatabase::create().await;
+    let dir = working_dir();
+    let library = dir.path().join("b1-stall-dns.so");
+    let compiled = std::process::Command::new("cc")
+        .args(["-shared", "-fPIC", "-Wall", "-Wextra", "-Werror"])
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/b1_stall_dns.c"
+        ))
+        .args(["-ldl", "-o"])
+        .arg(&library)
+        .output()
+        .expect("Linux DNS regression requires a C compiler");
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let home = MockServer::start().await;
+    for stalled_http in [false, true] {
+        let marker = dir.path().join(format!("dns-started-{stalled_http}"));
+        let mut server = Running::start(
+            &db,
+            &dir,
+            "http://b1-stalled-dns.invalid",
+            &home.uri(),
+            &[
+                ("LD_PRELOAD", library.to_str().unwrap()),
+                ("EMUMET_TEST_DNS_MARKER", marker.to_str().unwrap()),
+                ("NO_PROXY", "*"),
+                ("no_proxy", "*"),
+                ("JWKS_TIMEOUT_MS", "200"),
+                ("SERVER_SHUTDOWN_TIMEOUT_SECS", "2"),
+                ("POST_RELAY_SENDER_ENABLED", "false"),
+            ],
+        )
+        .await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !marker.exists() {
+                assert!(
+                    server.child.try_wait().unwrap().is_none(),
+                    "{}",
+                    server.logs()
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the real blocking getaddrinfo must be entered");
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        assert!(
+            server.logs().contains("JWKS refresh deadline exceeded")
+                || server.logs().contains("JWKS refresh failed"),
+            "request already timed out: {}",
+            server.logs()
+        );
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "started\n");
+        // A public JSON-body route keeps HTTP drain pending without making another Ory call.
+        // This must not grant runtime teardown a fresh 2s budget after async drain used it all.
+        let _pending_body = if stalled_http {
+            let mut socket =
+                tokio::net::TcpStream::connect(server.base.trim_start_matches("http://"))
+                    .await
+                    .unwrap();
+            socket.write_all(b"POST /oauth2/consent HTTP/1.1\r\nHost: emumet.example\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            Some(socket)
+        } else {
+            None
+        };
+        let started = Instant::now();
+        server.signal("TERM");
+        let status = tokio::time::timeout(Duration::from_secs(3), server.child.wait())
+            .await
+            .expect("2s shutdown must include runtime teardown, not wait for 20s libc DNS")
+            .unwrap();
+        assert!(status.success(), "{}", server.logs());
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            "started\n",
+            "process exits before the blocking resolver finishes"
+        );
+        if stalled_http {
+            assert!(
+                server.logs().contains("Runtime drain deadline exceeded"),
+                "HTTP actually exhausted the shared deadline: {}",
+                server.logs()
+            );
+        }
+        println!(
+            "blocking-DNS SIGTERM stalled_http={stalled_http} exit elapsed: {:?}",
+            started.elapsed()
+        );
+    }
+}

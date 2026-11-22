@@ -36,8 +36,25 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 
-#[tokio::main]
-async fn main() -> Result<(), StackTrace> {
+fn main() -> Result<(), StackTrace> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .change_context_lazy(|| KernelError::Internal)
+        .attach_printable("Failed to initialize the Tokio runtime")?;
+    let mut shutdown_deadline = None;
+    let result = runtime.block_on(run_server(&mut shutdown_deadline));
+    // Aborting/time-limiting reqwest does not cancel libc DNS running in spawn_blocking.
+    // Implicit Runtime::drop would wait for it indefinitely. Spend only the SAME deadline
+    // left after async drain; CLI/start-up exits have no serving work to drain.
+    let remaining = shutdown_deadline.map_or(Duration::ZERO, |deadline| {
+        deadline.saturating_duration_since(std::time::Instant::now())
+    });
+    runtime.shutdown_timeout(remaining);
+    result
+}
+
+async fn run_server(shutdown_deadline: &mut Option<std::time::Instant>) -> Result<(), StackTrace> {
     if post_relay_cli::dispatch(std::env::args().skip(1)).await? {
         return Ok(());
     }
@@ -48,7 +65,7 @@ async fn main() -> Result<(), StackTrace> {
         .attach_printable("Failed to install the SIGTERM / SIGINT handlers")?;
 
     let startup_started = std::time::Instant::now();
-    // Keep the guard alive until the end of `main`: it flushes the optional log file.
+    // Keep the guard alive until async serving/drain finishes: it flushes the optional log file.
     let _log_guard = logging::init()?;
 
     // Initialize Snowflake ID generator (must happen before any ID generation)
@@ -160,6 +177,8 @@ async fn main() -> Result<(), StackTrace> {
         result = &mut serving => Some(result),
     };
 
+    let deadline = std::time::Instant::now() + limits.shutdown_timeout;
+    *shutdown_deadline = Some(deadline);
     tracing::info!("Stop requested; shutting down");
     // Stop new claims at signal receipt, NOT after HTTP's graceful shutdown (a request can hang).
     // Already claimed/authorized work retains S1's bounded drain and original fenced lease.
@@ -176,7 +195,7 @@ async fn main() -> Result<(), StackTrace> {
         shutdown.trigger();
     }
     profile_delivery_shutdown.trigger();
-    let drained = tokio::time::timeout(limits.shutdown_timeout, async {
+    let drained = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), async {
         let http_drain = async {
             match serve_result {
                 Some(result) => result,

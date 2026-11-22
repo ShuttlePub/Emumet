@@ -193,8 +193,12 @@ redirects and error handling have not changed. They are not promised usable duri
   transaction is cancelled on stop too, so it cannot delay pending-claim cancellation/drain.
   HTTP, S1 relay drain
   (at most **12s**) and webhook drain (at most **20s**) run concurrently within this one overall
-  deadline. An incomplete inbound body or unresponsive outbound peer cannot extend it. After
-  it, the runtime cancels remaining async work and logs a fixed deadline-exceeded warning.
+  deadline. This same deadline includes explicit Tokio runtime teardown: after async drain,
+  `shutdown_timeout` receives only the remaining budget, not a new grace period. libc DNS
+  (`getaddrinfo`) can outlive a reqwest timeout/abort in a blocking task; runtime destruction
+  must not wait indefinitely for that task. At the deadline the process stops waiting for
+  uncancellable blocking work. An incomplete inbound body or unresponsive outbound peer
+  cannot extend the drain; a fixed deadline-exceeded warning records an async drain cutoff.
   Set the deployment termination grace **above** this configured bound, with scheduling margin.
 
 Signals received during migrations/key provisioning remain latched and are honored before
@@ -214,7 +218,13 @@ startup, stop/drain bound and deadline-exceeded logs together with queue/lease t
 
 B1 acceptance is `cargo test -p server --features test-mode --test post_relay_runtime` with
 `DATABASE_URL` set (missing DB fails, never skips). It uses real child processes, PostgreSQL,
-HTTP-signature inbox requests and HTTP receivers, but seeds links directly; the real-user
+HTTP-signature inbox requests and HTTP receivers. Linux CI also intercepts the child
+process's real `getaddrinfo` with an `LD_PRELOAD` C fixture: DNS sleeps 20s, the JWKS request
+times out after 200ms, and SIGTERM must still exit within the 2s configured shutdown budget
+(3s assertion ceiling allows scheduling margin), before DNS finishes. Both DNS-only and
+DNS plus an incomplete HTTP body are exercised: exhausting async drain must not grant
+runtime teardown a fresh grace period. This adds no production
+configuration or timeout default. The suite seeds links directly; the real-user
 registration/full relay E2E belongs to T1. The `test-mode`-only
 `EMUMET_TEST_RELAY_ORIGINS` JSON peer list permits loopback HTTP solely in that test build;
 the switch/constructor are compiled out of normal builds. Never deploy `test-mode` images.
