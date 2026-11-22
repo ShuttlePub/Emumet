@@ -13,6 +13,7 @@ mod lifecycle;
 mod ory;
 mod ory_outage;
 mod receiver;
+mod receiver_p1;
 mod stack;
 mod supplier;
 mod races;
