@@ -2,12 +2,16 @@
 //! PostgreSQL (e2e/post-relay/compose.yml), the source-built server and mock P1 receiver.
 //! Run: bash e2e/post-relay/run.sh   (starts the stack, builds the release image, runs this suite)
 #![allow(dead_code)]
+mod alarms;
+mod alerts;
+mod capacity;
 mod db;
 mod delivery;
 mod emumet;
 mod intake;
 mod lifecycle;
 mod ory;
+mod ory_outage;
 mod receiver;
 mod stack;
 mod supplier;

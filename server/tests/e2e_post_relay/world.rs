@@ -111,6 +111,16 @@ impl World {
             .unwrap();
         assert!(r.status().is_success(), "keto grant: {}", r.status());
     }
+    /// Kills (SIGKILL) and starts the server again on the same DB/port; returns the start time.
+    pub async fn restart(&mut self) -> Duration {
+        self.server.kill().await;
+        let started = std::time::Instant::now();
+        self.server = Emumet::start(&self.config).await;
+        let took = started.elapsed();
+        self.receiver.set_fetch_base(&self.server.base);
+        self.receiver2.set_fetch_base(&self.server.base);
+        took
+    }
     pub async fn receipts_gone(&self) {
         let db = &self.db;
         eventually("jobs drained", Duration::from_secs(30), || async { db.count("post_relay_jobs").await == 0 }).await;

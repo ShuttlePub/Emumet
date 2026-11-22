@@ -36,6 +36,7 @@ measure() {
   fi
 }
 
+[ "${SUPPLIER_SKIP_FIRST:-0}" = 1 ] && sleep "$INTERVAL"
 while true; do
   if sample="$(measure 2>/dev/null)" && read -r free total _ <<<"$sample" \
      && [[ "${free:-}" =~ ^[0-9]+$ && "${total:-}" =~ ^[0-9]+$ && "$total" -gt 0 && "$free" -le "$total" ]]; then
