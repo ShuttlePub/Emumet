@@ -1,0 +1,34 @@
+# E2E-only Hydra configuration (ory/hydra/hydra.yml is NOT used or modified).
+# Differences: dedicated ports/issuer, and the login/consent provider is the source-built server
+# that the tests spawn on 127.0.0.1:18080.
+serve:
+  public:
+    port: 14444
+  admin:
+    port: 14445
+
+urls:
+  self:
+    issuer: http://127.0.0.1:14444/
+  login: http://127.0.0.1:18080/oauth2/login
+  consent: http://127.0.0.1:18080/oauth2/consent
+  post_logout_redirect: http://127.0.0.1:3000/
+
+secrets:
+  system:
+    - "e2e-secret-do-not-use-in-production-32ch"
+
+strategies:
+  access_token: jwt
+
+oidc:
+  subject_identifiers:
+    supported_types:
+      - public
+
+log:
+  level: info
+
+ttl:
+  access_token: 1h
+  refresh_token: 720h

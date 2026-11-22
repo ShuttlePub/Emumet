@@ -1,0 +1,82 @@
+# T1 post-relay E2E stack: real PostgreSQL + real Ory (Kratos, Hydra, Keto) built from the
+# upstream images already used by compose.yml. Emumet itself is NOT in this stack: the tests spawn
+# the source-built server (and a source-built release image for the operator checks).
+#
+# Dedicated project name, dedicated loopback ports (so it can run next to the dev stack):
+#   PostgreSQL 15450, Kratos 14433/14434, Hydra 14444/14445, Keto 14466/14467.
+# PostgreSQL data lives on a named volume of the host disk: the physical-capacity supplier
+# measures that volume (not the Emumet container). No Ory config in ory/ is modified.
+name: emumet-post-relay-e2e
+services:
+  postgres:
+    image: docker.io/postgres:16
+    environment:
+      POSTGRES_PASSWORD: develop
+      POSTGRES_USER: postgres
+    ports: ["127.0.0.1:15450:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../../docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
+    command: ["postgres", "-c", "max_connections=300"]
+    networks: [default, internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  kratos-migrate:
+    image: docker.io/oryd/kratos:v1.3.1
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/kratos?sslmode=disable
+    command: migrate sql -e --yes
+    depends_on: {postgres: {condition: service_healthy}}
+  kratos:
+    image: docker.io/oryd/kratos:v1.3.1
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/kratos?sslmode=disable
+    volumes:
+      - ./kratos.yml:/etc/e2e/kratos.yml:ro
+      - ../../ory/kratos/identity.schema.json:/etc/e2e/identity.schema.json:ro
+    command: serve -c /etc/e2e/kratos.yml --dev
+    ports: ["127.0.0.1:14433:14433", "127.0.0.1:14434:14434"]
+    depends_on: {kratos-migrate: {condition: service_completed_successfully}}
+  hydra-migrate:
+    image: docker.io/oryd/hydra:v2.3.0
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/hydra?sslmode=disable
+    command: migrate sql -e --yes
+    depends_on: {postgres: {condition: service_healthy}}
+  hydra:
+    image: docker.io/oryd/hydra:v2.3.0
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/hydra?sslmode=disable
+    volumes:
+      - ./hydra.yml:/etc/e2e/hydra.yml:ro
+    command: serve all -c /etc/e2e/hydra.yml --dev
+    ports: ["127.0.0.1:14444:14444", "127.0.0.1:14445:14445"]
+    depends_on: {hydra-migrate: {condition: service_completed_successfully}}
+  keto-migrate:
+    image: docker.io/oryd/keto:v0.12.0
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/keto?sslmode=disable
+    volumes:
+      - ../../ory/keto:/etc/config/keto:ro
+    command: migrate up -y -c /etc/config/keto/keto.yml
+    depends_on: {postgres: {condition: service_healthy}}
+  keto:
+    image: docker.io/oryd/keto:v0.12.0
+    environment:
+      DSN: postgres://postgres:develop@postgres:5432/keto?sslmode=disable
+    volumes:
+      - ../../ory/keto:/etc/config/keto:ro
+    command: serve -c /etc/config/keto/keto.yml
+    ports: ["127.0.0.1:14466:4466", "127.0.0.1:14467:4467"]
+    depends_on: {keto-migrate: {condition: service_completed_successfully}}
+volumes:
+  pgdata:
+networks:
+  default: {}
+  # No external route: the release image runs here to reach PostgreSQL only, so a normal
+  # (non test-mode) build can never connect anywhere else during the operator checks.
+  internal:
+    internal: true
