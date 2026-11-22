@@ -252,6 +252,9 @@ impl RemotePeer {
         self.activity("Create", json!({"type": "Note", "content": text}))
     }
     pub async fn post(&self, server: &Emumet, profile_nanoid: &str, inbound: Inbound<'_>) -> reqwest::Response {
+        self.post_at(&server.base, profile_nanoid, inbound).await
+    }
+    pub async fn prepare(&self, profile_nanoid: &str, inbound: Inbound<'_>) -> Prepared {
         use driver::http_signing::HttpSignerImpl;
         use kernel::interfaces::crypto::SigningAlgorithm;
         use kernel::interfaces::http_signing::{HttpSigner, HttpSigningRequest};
@@ -304,16 +307,33 @@ impl RemotePeer {
             );
             std::collections::HashMap::from([("signature".to_string(), header)])
         };
-        let mut request = client().post(server.url(&target)).header("content-type", inbound.content_type).body(inbound.body.clone());
-        for (k, v) in headers.into_iter().chain(cavage_headers) {
-            request = request.header(k, v);
-        }
-        for (k, v) in inbound.plain_headers {
-            request = request.header(k, v);
-        }
-        request.send().await.expect("inbox request failed")
+        let mut all: Vec<(String, String)> = headers.into_iter().chain(cavage_headers).collect();
+        all.extend(inbound.plain_headers.clone());
+        Prepared { target, content_type: inbound.content_type.to_string(), body: inbound.body.clone(), headers: all }
+    }
+    pub async fn post_at(&self, base: &str, profile_nanoid: &str, inbound: Inbound<'_>) -> reqwest::Response {
+        let prepared = self.prepare(profile_nanoid, inbound).await;
+        send_prepared(base, &prepared).await
     }
     pub async fn deliver_json(&self, server: &Emumet, profile_nanoid: &str, activity: &Value) -> reqwest::Response {
         self.post(server, profile_nanoid, Inbound::new(serde_json::to_vec(activity).unwrap())).await
     }
+}
+
+/// A fully signed inbound request that can be replayed many times (RSA signing in a debug build is
+/// far slower than the server, so bursts replay a few distinct signed requests).
+#[derive(Clone)]
+pub struct Prepared {
+    pub target: String,
+    pub content_type: String,
+    pub body: Vec<u8>,
+    pub headers: Vec<(String, String)>,
+}
+
+pub async fn send_prepared(base: &str, p: &Prepared) -> reqwest::Response {
+    let mut request = client().post(format!("{base}{}", p.target)).header("content-type", &p.content_type).body(p.body.clone());
+    for (k, v) in &p.headers {
+        request = request.header(k, v);
+    }
+    request.send().await.expect("inbox request failed")
 }

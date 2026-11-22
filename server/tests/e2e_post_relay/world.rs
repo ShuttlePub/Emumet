@@ -25,7 +25,7 @@ pub struct World {
     pub receiver2: Receiver,
     pub server: Emumet,
     pub supplier: Supplier,
-    pub peer: RemotePeer,
+    pub peer: std::sync::Arc<RemotePeer>,
     pub config: Config,
 }
 
@@ -68,7 +68,7 @@ impl World {
         let server = Emumet::start(&config).await;
         receiver.set_fetch_base(&server.base);
         receiver2.set_fetch_base(&server.base);
-        Self { db, receiver, receiver2, server, supplier, peer: RemotePeer::start().await, config }
+        Self { db, receiver, receiver2, server, supplier, peer: std::sync::Arc::new(RemotePeer::start().await), config }
     }
     pub async fn user(&self, label: &str) -> User {
         ory::login_new_user(label).await
