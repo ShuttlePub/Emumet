@@ -389,3 +389,98 @@ async fn case25_full_quarantine_rejects_new_admission_but_keeps_accepted_bodies(
         202
     );
 }
+
+async fn relay_row_counts(w: &World) -> Vec<(String, i64)> {
+    let tables: Vec<String> =
+        sqlx::query_scalar("SELECT table_name::text FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'post_relay_%' ORDER BY 1")
+            .fetch_all(&w.db.iso.pool)
+            .await
+            .unwrap();
+    let mut out = vec![];
+    for t in tables {
+        out.push((t.clone(), w.db.count(&t).await));
+    }
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs the T1 stack: bash e2e/post-relay/run.sh"]
+async fn case22_success_and_cancel_leave_no_job_attempt_or_terminal_rows() {
+    let w = World::setup().await;
+    let a = w.linked("c22", 0).await;
+    let db = &w.db;
+    // One delivery first: the per-Profile quota and per-origin schedule rows are created lazily and are
+    // bounded by the number of Profiles/origins, not by deliveries.
+    assert_eq!(
+        w.peer
+            .deliver_json(&w.server, &a.profile, &w.peer.note("warm up"))
+            .await
+            .status(),
+        202
+    );
+    w.receiver.wait_accepted(1, Duration::from_secs(30)).await;
+    w.receipts_gone().await;
+    let baseline = relay_row_counts(&w).await;
+    let counters_before = db.i64("SELECT succeeded FROM post_relay_counters").await;
+    for i in 0..25 {
+        assert_eq!(
+            w.peer
+                .deliver_json(&w.server, &a.profile, &w.peer.note(&format!("ok {i}")))
+                .await
+                .status(),
+            202
+        );
+    }
+    w.receiver.wait_accepted(26, Duration::from_secs(60)).await;
+    w.receipts_gone().await;
+    eventually("success counter", Duration::from_secs(30), || async {
+        db.i64("SELECT succeeded FROM post_relay_counters").await == counters_before + 25
+    })
+    .await;
+    // Live relation rows do not grow with the number of successes; only the fixed counter moved.
+    let after = relay_row_counts(&w).await;
+    assert_eq!(
+        baseline, after,
+        "25 successes added no per-delivery row anywhere"
+    );
+
+    // Cancellation (unlink while a body is still being retried) leaves nothing either.
+    w.receiver.set_default(Behavior::Status(503));
+    assert_eq!(
+        w.peer
+            .deliver_json(&w.server, &a.profile, &w.peer.note("to be cancelled"))
+            .await
+            .status(),
+        202
+    );
+    eventually("retrying", Duration::from_secs(30), || async {
+        db.i64("SELECT coalesce(max(total_attempts),0)::bigint FROM post_relay_jobs")
+            .await
+            >= 1
+    })
+    .await;
+    let cancelled_before = db.i64("SELECT cancelled FROM post_relay_counters").await;
+    let (status, _) = w.server.unlink(&a.user.jwt, &a.profile, &a.link_id).await;
+    assert!(status == 200 || status == 204, "{status}");
+    eventually("cancelled", Duration::from_secs(30), || async {
+        db.count("post_relay_jobs").await == 0
+            && db.count("post_relay_bodies").await == 0
+            && db.i64("SELECT cancelled FROM post_relay_counters").await == cancelled_before + 1
+    })
+    .await;
+    assert_eq!(
+        (
+            db.count("post_relay_dead_letters").await,
+            db.count("post_relay_audits").await
+        ),
+        (0, 0)
+    );
+    for (table, rows) in relay_row_counts(&w).await {
+        if let Some((_, base)) = baseline.iter().find(|(t, _)| *t == table) {
+            assert!(
+                rows <= *base + 1,
+                "{table}: {rows} rows after a cancellation (baseline {base})"
+            );
+        }
+    }
+}
