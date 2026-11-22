@@ -231,7 +231,14 @@ impl Emumet {
         body: Option<Value>,
     ) -> (u16, Value) {
         let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
-        let mut request = client().request(method, self.url(path)).bearer_auth(jwt);
+        let mut request = client()
+            .request(method.clone(), self.url(path))
+            .bearer_auth(jwt);
+        if method == reqwest::Method::POST && path == "/api/v1/accounts" {
+            // Setup includes real RSA key generation in a debug build. It is not a relay
+            // latency assertion: allow the slow CI runner more than the ordinary 20 s bound.
+            request = request.timeout(Duration::from_secs(90));
+        }
         if let Some(org) = org {
             request = request.header("X-Organization-Id", org);
         }

@@ -33,5 +33,7 @@ export T1_RELEASE_IMAGE
 "${compose[@]}" up -d
 export DATABASE_URL=postgres://postgres:develop@127.0.0.1:15450/postgres
 
-cargo test -p server --features test-mode --test e2e_post_relay -- --ignored --test-threads=1 ${T1_FILTER:-} 2>&1 | tee "$result"
+# Keep successful tests' captured supplier diagnostics as well as failures: otherwise a retried
+# capacity sample can hide its refusal reason from the CI artifact.
+cargo test -p server --features test-mode --test e2e_post_relay -- --ignored --test-threads=1 --show-output ${T1_FILTER:-} 2>&1 | tee "$result"
 grep -Eq 'test result: ok\. [0-9]+ passed; 0 failed; 0 ignored;' "$result"

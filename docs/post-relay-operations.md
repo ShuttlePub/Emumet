@@ -265,6 +265,14 @@ reports nothing (freshness expires) and never invents healthy data. Environment:
 `SUPPLIER_ONCE=1`. In production the same contract is supplied by the deployment monitor; this
 script is the reference for the test stack.
 
+Refusals expose only a fixed `reason` code, never the underlying SQL error/URL:
+`schema_mismatch`, `invalid_sample` (dimensions or sample outside the past 90 s),
+`sample_not_newer`, `connection_timeout`, `connection_failed`, `lock_timeout`,
+`statement_timeout`, `deadlock`, `database_error`, or `unavailable`. Schema/sample errors
+require correcting the input/deployed version; do not retry them blindly. A failed report
+does not refresh capacity. Restore database availability or clear a blocker before the next
+fresh measurement; the 90 s fail-closed rule remains unchanged.
+
 ### Alarm conditions
 
 `e2e/post-relay/alerts.sql` is a read-only query (run every 30 s by `alerts.sh`, which also runs
